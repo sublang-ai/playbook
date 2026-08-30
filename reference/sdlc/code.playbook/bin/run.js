@@ -27,6 +27,7 @@ import {
   snapshotRegistryEntry,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
+import { createRepositoryEffectCapabilities } from './repository-effects.js';
 import {
   assertCaptainSessionExecutionCompatible,
   captainSessionSelectedMembers,
@@ -445,6 +446,7 @@ export async function runPlaybookRun(options = {}) {
       input,
       sessionId,
       cwd,
+      sessionLease: lease,
       loadModule,
       stderr,
       verbose: args.verbose,
@@ -459,6 +461,12 @@ export async function runPlaybookRun(options = {}) {
         : {}),
       ...(options.createHostRuntime
         ? { createHostRuntime: options.createHostRuntime }
+        : {}),
+      ...(options.createEffectLedgerWriteAhead
+        ? {
+            createEffectLedgerWriteAhead:
+              options.createEffectLedgerWriteAhead,
+          }
         : {}),
       ...(restoreSnapshot !== undefined
         ? { restoreSnapshot }
@@ -642,6 +650,7 @@ export async function driveHeadlessCaptainTurn({
   input,
   sessionId,
   cwd,
+  sessionLease,
   loadModule,
   stderr,
   verbose = false,
@@ -649,6 +658,7 @@ export async function driveHeadlessCaptainTurn({
   createCaptainRuntime,
   createCaptainSessionId,
   createHostRuntime = createTmuxPlayRuntime,
+  createEffectLedgerWriteAhead,
   restoreSnapshot,
   beforeBossTurn,
   assertBeforeBossTurn,
@@ -665,6 +675,7 @@ export async function driveHeadlessCaptainTurn({
         config,
         sessionId,
         cwd,
+        sessionLease,
         loadModule,
         observers: [
           {
@@ -684,6 +695,9 @@ export async function driveHeadlessCaptainTurn({
         ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
         ...(createCaptainSessionId ? { createCaptainSessionId } : {}),
         createHostRuntime,
+        ...(createEffectLedgerWriteAhead
+          ? { createEffectLedgerWriteAhead }
+          : {}),
         ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
       });
       ({ shell, host, snapshot: baselineSnapshot } = created);
@@ -774,17 +788,27 @@ export async function createCaptainSessionHost({
   config,
   sessionId,
   cwd,
+  sessionLease,
   loadModule,
   observers,
   adapterImports,
   createCaptainRuntime,
   createCaptainSessionId,
   createHostRuntime = createTmuxPlayRuntime,
+  createEffectLedgerWriteAhead,
   restoreSnapshot,
   signal,
 }) {
+  const hostCapabilities = await createRepositoryEffectCapabilities({
+    cwd,
+    catalog: config.catalog,
+    sessionId,
+    sessionLease,
+    createWriteAhead: createEffectLedgerWriteAhead,
+  });
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
+    hostCapabilities,
     ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
     ...(createCaptainSessionId
       ? { createSessionId: createCaptainSessionId }

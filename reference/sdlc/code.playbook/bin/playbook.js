@@ -116,6 +116,12 @@ export async function runPlaybookCli(options = {}) {
       ...(options.createHostRuntime
         ? { createHostRuntime: options.createHostRuntime }
         : {}),
+      ...(options.createEffectLedgerWriteAhead
+        ? {
+            createEffectLedgerWriteAhead:
+              options.createEffectLedgerWriteAhead,
+          }
+        : {}),
       ...(options.sessionStore
         ? { sessionStore: options.sessionStore }
         : {}),

@@ -24,6 +24,7 @@ type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface PlaybookCaptainDeps {
     loadModule?: (specifier: string) => Promise<unknown>;
     createSessionId?: () => string;
+    hostCapabilities?: Readonly<Record<string, PlaybookHostConstructionCapabilities>>;
     createCaptainRuntime?: (options: {
         readonly enabledPlaybooks: readonly {
             readonly id: string;
@@ -35,7 +36,32 @@ export interface PlaybookCaptainDeps {
 }
 /** Live, artifact-typed host facilities supplied outside configured options. */
 export interface PlaybookHostConstructionCapabilities {
-    readonly [capability: string]: unknown;
+    readonly authority: {
+        readonly playbookId: string;
+        readonly artifactSchema: 3;
+        readonly cwd: string;
+        readonly sessionId: string;
+        readonly leaseOwnerToken: string;
+        readonly canonicalWorktree: {
+            readonly worktree: string;
+            readonly gitDir: string;
+        };
+        readonly requiredRoleIds: readonly string[];
+        readonly concurrentRoleSets: readonly (readonly string[])[];
+    };
+    readonly repository: {
+        readonly identity: {
+            readonly worktree: string;
+            readonly gitDir: string;
+        };
+        readonly observe: (options?: unknown) => Promise<unknown>;
+        readonly acquire: (options?: unknown) => Promise<unknown>;
+        readonly runExclusive: (options: unknown) => Promise<unknown>;
+        readonly runCohort: (options: unknown) => Promise<unknown>;
+    };
+    readonly effectLedger: {
+        readonly writeAhead: (command: unknown) => Promise<unknown>;
+    };
 }
 export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> = {
     readonly kind: 'shared-factory';

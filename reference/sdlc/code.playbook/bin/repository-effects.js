@@ -1217,6 +1217,190 @@ export function createRepositoryEffectCoordinator(options = {}) {
   return Object.freeze({ acquire, runExclusive, runCohort });
 }
 
+function detachedSchema3CatalogEntries(catalog) {
+  if (!isPlainObject(catalog)) {
+    throw new TypeError('repository capability catalog must be an object');
+  }
+  const entries = [];
+  for (const [playbookId, item] of Object.entries(catalog)) {
+    if (!isPlainObject(item) || item.artifactSchema !== 3) continue;
+    if (
+      typeof playbookId !== 'string' ||
+      playbookId.length === 0 ||
+      item.id !== playbookId
+    ) {
+      throw new TypeError(
+        'schema-3 repository capability catalog keys must equal playbook ids',
+      );
+    }
+    if (
+      !Array.isArray(item.requiredRoleIds) ||
+      item.requiredRoleIds.some(
+        (roleId) => typeof roleId !== 'string' || roleId.length === 0,
+      ) ||
+      new Set(item.requiredRoleIds).size !== item.requiredRoleIds.length
+    ) {
+      throw new TypeError(
+        `schema-3 repository capability ${JSON.stringify(playbookId)} has invalid required roles`,
+      );
+    }
+    const requiredRoleIds = Object.freeze([...item.requiredRoleIds]);
+    const required = new Set(requiredRoleIds);
+    if (
+      !Array.isArray(item.concurrentRoleSets) ||
+      item.concurrentRoleSets.some(
+        (set) =>
+          !Array.isArray(set) ||
+          set.length < 2 ||
+          set.some(
+            (roleId) => typeof roleId !== 'string' || !required.has(roleId),
+          ) ||
+          new Set(set).size !== set.length,
+      ) ||
+      new Set(item.concurrentRoleSets.map((set) => JSON.stringify(set))).size !==
+        item.concurrentRoleSets.length
+    ) {
+      throw new TypeError(
+        `schema-3 repository capability ${JSON.stringify(playbookId)} has invalid concurrent roles`,
+      );
+    }
+    entries.push(
+      Object.freeze({
+        playbookId,
+        requiredRoleIds,
+        concurrentRoleSets: Object.freeze(
+          item.concurrentRoleSets.map((set) => Object.freeze([...set])),
+        ),
+      }),
+    );
+  }
+  return Object.freeze(entries);
+}
+
+function rejectBoundRepositoryOverride(options, member, forbiddenKeys) {
+  if (!isPlainObject(options)) {
+    throw new TypeError(`repository capability ${member} options must be an object`);
+  }
+  for (const key of forbiddenKeys) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      throw new TypeError(
+        `repository capability ${member} cannot override host-owned ${key}`,
+      );
+    }
+  }
+}
+
+// PBCLI-20/49: assemble live schema-3 facilities only after the caller owns
+// the durable Captain session and has selected its compatible working
+// directory. Schema-2-only catalogs intentionally avoid every lease, Git,
+// and write-ahead dependency.
+export async function createRepositoryEffectCapabilities({
+  cwd,
+  catalog,
+  sessionId,
+  sessionLease,
+  createWriteAhead,
+} = {}) {
+  const schema3Entries = detachedSchema3CatalogEntries(catalog);
+  if (schema3Entries.length === 0) return Object.freeze({});
+
+  if (typeof cwd !== 'string' || cwd.length === 0) {
+    throw new TypeError(
+      'schema-3 repository capability working directory must be nonempty',
+    );
+  }
+  if (
+    typeof sessionId !== 'string' ||
+    !UUID_PATTERN.test(sessionId) ||
+    !isPlainObject(sessionLease) ||
+    typeof sessionLease.sessionId !== 'string' ||
+    !UUID_PATTERN.test(sessionLease.sessionId) ||
+    typeof sessionLease.ownerToken !== 'string' ||
+    !UUID_PATTERN.test(sessionLease.ownerToken) ||
+    typeof sessionLease.assertOwner !== 'function'
+  ) {
+    throw new TypeError(
+      'schema-3 repository capability requires an active lease for its logical Captain session',
+    );
+  }
+  if (sessionLease.sessionId !== sessionId) {
+    throw new TypeError(
+      'schema-3 Captain host lease authority does not match its logical session',
+    );
+  }
+  if (typeof createWriteAhead !== 'function') {
+    throw new TypeError(
+      'schema-3 repository capability requires an effect-ledger write-ahead factory',
+    );
+  }
+
+  await sessionLease.assertOwner();
+  const writeAhead = await createWriteAhead(sessionLease);
+  if (typeof writeAhead !== 'function') {
+    throw new TypeError(
+      'schema-3 repository capability write-ahead factory must return a function',
+    );
+  }
+  const identity = await resolveCanonicalGitWorktree(cwd);
+  await sessionLease.assertOwner();
+  const coordinator = createRepositoryEffectCoordinator();
+
+  const capabilities = schema3Entries.map(
+    ({ playbookId, requiredRoleIds, concurrentRoleSets }) => {
+      const authority = deepFreeze({
+        playbookId,
+        artifactSchema: 3,
+        cwd,
+        sessionId,
+        leaseOwnerToken: sessionLease.ownerToken,
+        canonicalWorktree: identity,
+        requiredRoleIds,
+        concurrentRoleSets,
+      });
+      const observe = async (options = {}) => {
+        rejectBoundRepositoryOverride(options, 'observe', ['cwd']);
+        return observeResolvedWorktree(identity, options);
+      };
+      const acquire = async (options = {}) => {
+        rejectBoundRepositoryOverride(options, 'acquire', ['cwd']);
+        return coordinator.acquire(identity.worktree, options);
+      };
+      const runExclusive = async (options) => {
+        rejectBoundRepositoryOverride(options, 'runExclusive', ['cwd']);
+        return coordinator.runExclusive({ ...options, cwd: identity.worktree });
+      };
+      const runCohort = async (options) => {
+        rejectBoundRepositoryOverride(options, 'runCohort', [
+          'cwd',
+          'concurrentRoleSets',
+        ]);
+        return coordinator.runCohort({
+          ...options,
+          cwd: identity.worktree,
+          concurrentRoleSets,
+        });
+      };
+      return [
+        playbookId,
+        deepFreeze({
+          authority,
+          repository: {
+            identity,
+            observe,
+            acquire,
+            runExclusive,
+            runCohort,
+          },
+          effectLedger: {
+            writeAhead: async (command) => writeAhead(authority, command),
+          },
+        }),
+      ];
+    },
+  );
+  return Object.freeze(Object.fromEntries(capabilities));
+}
+
 export const _internal = Object.freeze({
   claimRootName: CLAIM_ROOT_NAME,
 });

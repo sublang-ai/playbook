@@ -626,6 +626,12 @@ async function headlessHarness(
   argv: string[],
   extra: Record<string, unknown> = {},
 ) {
+  const entryTransform =
+    (extra.entryTransform as
+      | ((entry: ReturnType<typeof nestedEntries>['code']) => unknown)
+      | undefined) ?? ((entry: unknown) => entry);
+  const runOptions = { ...extra };
+  delete runOptions.entryTransform;
   const events: string[] = [];
   const inputs: string[] = [];
   const entries = nestedEntries(events);
@@ -636,8 +642,8 @@ async function headlessHarness(
   const stdout = writer();
   const stderr = writer();
   const modules: Record<string, unknown> = {
-    'mod://code': { default: entries.code },
-    'mod://review': { default: entries.review },
+    'mod://code': { default: entryTransform(entries.code) },
+    'mod://review': { default: entryTransform(entries.review) },
   };
   const result = await runPlaybookCli({
     argv,
@@ -659,7 +665,7 @@ async function headlessHarness(
     spawn: () => {
       throw new Error('headless run must not spawn tmux-play');
     },
-    ...extra,
+    ...runOptions,
   });
   return {
     result,
@@ -746,6 +752,59 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       },
     });
     expect(out.result.config).not.toHaveProperty('presentation');
+  });
+
+  it('injects current-lease capabilities into schema-3 root and nested runtimes', async () => {
+    const constructed: Array<{
+      playbookId: string;
+      options: unknown;
+      capability: any;
+    }> = [];
+    let writerLease: any;
+    const out = await headlessHarness(['run', '/code implement it'], {
+      entryTransform: (entry: any) => ({
+        ...entry,
+        artifactSchema: 3,
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+        createRuntime(options: unknown, capability: unknown) {
+          constructed.push({ playbookId: entry.id, options, capability });
+          return entry.createRuntime(options);
+        },
+      }),
+      createEffectLedgerWriteAhead: (lease: unknown) => {
+        writerLease = lease;
+        return async () => undefined;
+      },
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    expect(constructed.map(({ playbookId }) => playbookId)).toEqual([
+      'code',
+      'review',
+    ]);
+    for (const construction of constructed) {
+      expect(construction.options).toEqual({});
+      expect(construction.capability.authority).toMatchObject({
+        playbookId: construction.playbookId,
+        artifactSchema: 3,
+        cwd: process.cwd(),
+        sessionId: out.result.sessionId,
+        leaseOwnerToken: writerLease.ownerToken,
+      });
+      expect(construction.capability.repository.identity).toBe(
+        construction.capability.authority.canonicalWorktree,
+      );
+      expect(construction.capability.effectLedger.writeAhead).toEqual(
+        expect.any(Function),
+      );
+    }
+    expect(JSON.stringify(out.result.config)).not.toContain(
+      writerLease.ownerToken,
+    );
+    expect(JSON.stringify(out.result.snapshot)).not.toContain(
+      writerLease.ownerToken,
+    );
+    expect(out.result.config).not.toHaveProperty('hostCapabilities');
   });
 
   it('runs configured REVIEW as a root through the same Captain', async () => {
@@ -1687,8 +1746,33 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       reviewInits: 0,
       reviewRestores: 0,
     };
-    const entries = nestedParkedEntries(events, lifecycle);
-    entries.review.validateOptions = () => ({ normalizedByRegistry: true });
+    const schema2Entries = nestedParkedEntries(events, lifecycle);
+    schema2Entries.review.validateOptions = () => ({
+      normalizedByRegistry: true,
+    });
+    const constructions: Array<{
+      playbookId: string;
+      options: unknown;
+      capability: any;
+    }> = [];
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+      createRuntime(options: unknown, capability: unknown) {
+        constructions.push({ playbookId: entry.id, options, capability });
+        return entry.createRuntime(options);
+      },
+    });
+    const entries = {
+      code: promoteEntry(schema2Entries.code),
+      review: promoteEntry(schema2Entries.review),
+    };
+    const writerLeases: any[] = [];
+    const createEffectLedgerWriteAhead = (lease: unknown) => {
+      writerLeases.push(lease);
+      return async () => undefined;
+    };
     const captainRuntime = scriptedCaptainRuntime([], { action: 'deliver' });
     const loadModule = async (specifier: string) => ({
       default: specifier === 'mod://code' ? entries.code : entries.review,
@@ -1699,6 +1783,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       loadModule,
       createCaptainRuntime: captainRuntime,
       createLogicalSessionId: () => firstId,
+      createEffectLedgerWriteAhead,
     });
     expect(first.result.code).toBe(0);
     const parked = JSON.parse(
@@ -1732,6 +1817,15 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect(parked.structuralProjection.catalog.review.options).toEqual({});
     expect(lifecycle.childCalls).toBe(1);
+    const parkedProjection = JSON.stringify(parked);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+      'canonicalWorktree',
+      'effectLedger',
+    ]) {
+      expect(parkedProjection).not.toContain(`"${key}"`);
+    }
 
     const exactReply = '  exact review reply\nwith context\n';
     const second = await headlessHarness(
@@ -1741,6 +1835,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         loadModule,
         createCaptainRuntime: captainRuntime,
         readStdin: async () => exactReply,
+        cwd: '/must/not/replace/stored/schema-3/cwd',
+        createEffectLedgerWriteAhead,
       },
     );
     expect(second.result.code).toBe(0);
@@ -1759,10 +1855,42 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       reviewInits: 1,
       reviewRestores: 1,
     });
+    expect(writerLeases).toHaveLength(2);
+    expect(writerLeases[0].ownerToken).not.toBe(writerLeases[1].ownerToken);
+    expect(constructions.map(({ playbookId }) => playbookId)).toEqual([
+      'code',
+      'review',
+      'code',
+      'review',
+    ]);
+    for (const [index, construction] of constructions.entries()) {
+      const lease = writerLeases[index < 2 ? 0 : 1];
+      expect(construction.capability.authority).toMatchObject({
+        playbookId: construction.playbookId,
+        sessionId: firstId,
+        leaseOwnerToken: lease.ownerToken,
+        cwd: process.cwd(),
+      });
+      expect(construction.capability.authority.canonicalWorktree.worktree).toBe(
+        process.cwd(),
+      );
+    }
     expect(second.stderr).not.toContain('/review called by /code');
     const settled = JSON.parse(
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
+    const settledProjection = JSON.stringify(settled);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+      'canonicalWorktree',
+      'effectLedger',
+    ]) {
+      expect(settledProjection).not.toContain(`"${key}"`);
+    }
+    for (const lease of writerLeases) {
+      expect(settledProjection).not.toContain(lease.ownerToken);
+    }
     expect(settled.snapshot.mode).toBe('chat');
     expect(settled.retainedGenerations).toEqual({});
   });

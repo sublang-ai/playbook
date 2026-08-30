@@ -429,6 +429,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           config: executionProjection,
           sessionId: payload.sessionId,
           cwd: payload.cwd,
+          sessionLease: lease,
           loadModule,
           observers: context.observers,
           ...(options.adapterImports
@@ -442,6 +443,12 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
             : {}),
           ...(options.createHostRuntime
             ? { createHostRuntime: options.createHostRuntime }
+            : {}),
+          ...(options.createEffectLedgerWriteAhead
+            ? {
+                createEffectLedgerWriteAhead:
+                  options.createEffectLedgerWriteAhead,
+              }
             : {}),
           ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
         });

@@ -6,9 +6,13 @@ import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
 import { assertPlaybookRuntimeSnapshot, hiddenControlEnvelope, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
-function createRuntimeForEnablement(enablement) {
+function createRuntimeForEnablement(enablement, hostCapabilitiesById) {
     if (enablement.artifactSchema === 3) {
-        throw new Error(`/${enablement.command} schema-3 runtime requires current-host construction capabilities`);
+        const hostCapabilities = hostCapabilitiesById.get(enablement.entry.id);
+        if (hostCapabilities === undefined) {
+            throw new Error(`/${enablement.command} schema-3 runtime requires current-host construction capabilities`);
+        }
+        return enablement.entry.createRuntime(enablement.options, hostCapabilities);
     }
     return enablement.entry.createRuntime(enablement.options);
 }
@@ -511,6 +515,75 @@ function exactOwnDataRecord(value, keys) {
         return undefined;
     }
     return Object.fromEntries(keys.map((key) => [key, descriptors[key].value]));
+}
+function captureHostCapabilityRecord(value) {
+    if (value === undefined)
+        return Object.freeze({});
+    const captured = exactOwnDataRecord(value, Object.keys(value));
+    if (captured === undefined) {
+        throw new TypeError('current-host construction capabilities must be an exact data-property record');
+    }
+    return captured;
+}
+function validateHostCapabilities(value, entry, command) {
+    if (value === undefined) {
+        throw new Error(`/${command} schema-3 runtime requires current-host construction capabilities`);
+    }
+    const capability = exactOwnDataRecord(value, [
+        'authority',
+        'repository',
+        'effectLedger',
+    ]);
+    const authority = exactOwnDataRecord(capability?.authority, [
+        'playbookId',
+        'artifactSchema',
+        'cwd',
+        'sessionId',
+        'leaseOwnerToken',
+        'canonicalWorktree',
+        'requiredRoleIds',
+        'concurrentRoleSets',
+    ]);
+    const canonicalWorktree = exactOwnDataRecord(authority?.canonicalWorktree, ['worktree', 'gitDir']);
+    const repository = exactOwnDataRecord(capability?.repository, [
+        'identity',
+        'observe',
+        'acquire',
+        'runExclusive',
+        'runCohort',
+    ]);
+    const identity = exactOwnDataRecord(repository?.identity, [
+        'worktree',
+        'gitDir',
+    ]);
+    const effectLedger = exactOwnDataRecord(capability?.effectLedger, [
+        'writeAhead',
+    ]);
+    if (authority?.playbookId !== entry.id ||
+        authority.artifactSchema !== 3 ||
+        typeof authority.cwd !== 'string' ||
+        authority.cwd.length === 0 ||
+        typeof authority.sessionId !== 'string' ||
+        authority.sessionId.length === 0 ||
+        typeof authority.leaseOwnerToken !== 'string' ||
+        authority.leaseOwnerToken.length === 0 ||
+        canonicalWorktree === undefined ||
+        typeof canonicalWorktree.worktree !== 'string' ||
+        canonicalWorktree.worktree.length === 0 ||
+        typeof canonicalWorktree.gitDir !== 'string' ||
+        canonicalWorktree.gitDir.length === 0 ||
+        !isDeepStrictEqual(authority.requiredRoleIds, entry.requiredRoleIds) ||
+        !isDeepStrictEqual(authority.concurrentRoleSets, entry.concurrentRoleSets) ||
+        identity === undefined ||
+        !isDeepStrictEqual(identity, canonicalWorktree) ||
+        typeof repository?.observe !== 'function' ||
+        typeof repository.acquire !== 'function' ||
+        typeof repository.runExclusive !== 'function' ||
+        typeof repository.runCohort !== 'function' ||
+        typeof effectLedger?.writeAhead !== 'function') {
+        throw new Error(`/${command} schema-3 current-host capability authority does not match its imported artifact`);
+    }
+    return value;
 }
 function validateRuntimeProfile(value) {
     const shared = exactOwnDataRecord(value, ['kind', 'compat']);
@@ -1169,11 +1242,14 @@ function rejectConfiguredHostCapabilities(value, path) {
 // Resolve the active registry at init from exact normalized role and session
 // agent projections (CAPTAIN-16). No role, ancestor, or generated-name fallback
 // exists at this boundary.
-async function buildEnablements(options, loadModule) {
+async function buildEnablements(options, loadModule, hostCapabilities) {
     const entries = [];
     const byCommand = new Map();
     const byId = new Map();
     const enablementById = new Map();
+    const hostCapabilitiesById = new Map();
+    const suppliedHostCapabilities = captureHostCapabilityRecord(hostCapabilities);
+    const expectedHostCapabilityIds = [];
     const detached = snapshotJsonValue(options, 'captain.options');
     const top = snapshotRecord(detached, 'captain.options');
     rejectSnapshotKeys(top, ['playbooks', 'sessionAgents', 'captainAdapter'], 'captain.options');
@@ -1225,15 +1301,20 @@ async function buildEnablements(options, loadModule) {
         catch (cause) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" failed to import: ${String(cause?.message ?? cause)}`);
         }
-        const entry = captureRegistryEntry(mod?.default);
-        const artifactSchema = entry
+        const capturedEntry = captureRegistryEntry(mod?.default);
+        const artifactSchema = capturedEntry
             ?.artifactSchema;
-        const runtimeProfile = validateRuntimeProfile(entry?.runtimeProfile);
+        const runtimeProfile = validateRuntimeProfile(capturedEntry?.runtimeProfile);
         if ((artifactSchema !== 2 && artifactSchema !== 3) ||
             runtimeProfile === undefined ||
-            !isValidRegistryEntry(entry, artifactSchema)) {
+            !isValidRegistryEntry(capturedEntry, artifactSchema)) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`);
         }
+        const entry = Object.freeze({
+            ...capturedEntry,
+            requiredRoleIds: Object.freeze([...capturedEntry.requiredRoleIds]),
+            concurrentRoleSets: Object.freeze(capturedEntry.concurrentRoleSets.map((roles) => Object.freeze([...roles]))),
+        });
         if (runtimeProfile.artifactSchema !== artifactSchema) {
             const implementation = runtimeProfile.kind === 'shared-factory'
                 ? 'shared factory'
@@ -1295,6 +1376,14 @@ async function buildEnablements(options, loadModule) {
         entries.push(entry);
         byId.set(entry.id, entry);
         byCommand.set(command, entry);
+        const hostCapability = artifactSchema === 3
+            ? validateHostCapabilities(suppliedHostCapabilities[entry.id], entry, command)
+            : undefined;
+        if (artifactSchema === 3)
+            expectedHostCapabilityIds.push(entry.id);
+        if (hostCapability !== undefined) {
+            hostCapabilitiesById.set(entry.id, hostCapability);
+        }
         enablementById.set(entry.id, {
             entry,
             artifactSchema,
@@ -1302,6 +1391,11 @@ async function buildEnablements(options, loadModule) {
             options: validatedOptions,
             roleBindings,
         });
+    }
+    const suppliedHostCapabilityIds = Object.keys(suppliedHostCapabilities).sort();
+    expectedHostCapabilityIds.sort();
+    if (!isDeepStrictEqual(suppliedHostCapabilityIds, expectedHostCapabilityIds)) {
+        throw new Error('current-host construction capabilities must exactly cover schema-3 playbooks');
     }
     const referenced = new Set([...enablementById.values()].flatMap((enablement) => [...enablement.roleBindings.values()].map((binding) => binding.playerId)));
     const unreferenced = [...playerAgents.keys()].find((id) => !referenced.has(id));
@@ -1313,6 +1407,7 @@ async function buildEnablements(options, loadModule) {
         byCommand,
         byId,
         enablementById,
+        hostCapabilitiesById,
         captainAgent,
         playerAgents,
     };
@@ -1321,6 +1416,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const loadModule = deps.loadModule ?? ((specifier) => import(specifier));
     const createSessionId = deps.createSessionId ?? randomUUID;
     const createCaptainRuntime = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
+    let pendingHostCapabilities = deps.hostCapabilities;
+    // The returned shell must not retain the caller's aggregate dependency
+    // object after its one live capability input has moved to a clearable slot.
+    deps = {};
+    const buildCurrentEnablements = async () => {
+        const hostCapabilities = pendingHostCapabilities;
+        pendingHostCapabilities = undefined;
+        return buildEnablements(options, loadModule, hostCapabilities);
+    };
     let captainAgent;
     let captainAdapter;
     let playerAgents = new Map();
@@ -1330,6 +1434,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     let byCommand = new Map();
     let byId = new Map();
     let enablementById = new Map();
+    let hostCapabilitiesById = new Map();
     let session;
     let sessionEmissionsOpen = false;
     let closedGateAttempted = false;
@@ -1656,7 +1761,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             try {
                 for (const sourceFrame of generation.frames) {
                     const enablement = enablementById.get(sourceFrame.playbookId);
-                    runtimes.push(createRuntimeForEnablement(enablement));
+                    runtimes.push(createRuntimeForEnablement(enablement, hostCapabilitiesById));
                 }
                 if (runtimes.some((runtime) => !runtimeRetainsGenerations(runtime))) {
                     const rootRetainsGenerations = runtimeRetainsGenerations(runtimes[0]);
@@ -2184,7 +2289,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const entry = enablement.entry;
         const sessionId = allocateSessionId();
         const playerBindings = makePlayerBindings(enablement);
-        const runtime = createRuntimeForEnablement(enablement);
+        const runtime = createRuntimeForEnablement(enablement, hostCapabilitiesById);
         return {
             entry,
             enablement,
@@ -2200,7 +2305,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const makeRestoredFrame = (enablement, snapshot, parent) => {
         const entry = enablement.entry;
         const playerBindings = makePlayerBindings(enablement);
-        const runtime = createRuntimeForEnablement(enablement);
+        const runtime = createRuntimeForEnablement(enablement, hostCapabilitiesById);
         return {
             entry,
             enablement,
@@ -4916,6 +5021,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         byCommand = new Map();
         byId = new Map();
         enablementById = new Map();
+        hostCapabilitiesById = new Map();
+        pendingHostCapabilities = undefined;
         captainAgent = undefined;
         captainAdapter = undefined;
         playerAgents = new Map();
@@ -4960,7 +5067,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         lifecycle = 'restoring';
         try {
             const snapshot = assertPlaybookCaptainShellSnapshot(untrusted);
-            const built = await buildEnablements(options, loadModule);
+            const built = await buildCurrentEnablements();
             captainAgent = built.captainAgent;
             captainAdapter = captainAgent.adapter;
             playerAgents = built.playerAgents;
@@ -4970,6 +5077,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             byCommand = built.byCommand;
             byId = built.byId;
             enablementById = built.enablementById;
+            hostCapabilitiesById = new Map(built.hostCapabilitiesById);
             for (const [playerId, saved] of Object.entries(snapshot.playerSessions)) {
                 playerLedger.set(playerId, {
                     adapter: saved.adapter,
@@ -5126,11 +5234,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             lifecycle = 'initializing';
             try {
                 installSession(initSession, true);
-                const built = await buildEnablements(options, loadModule);
+                const built = await buildCurrentEnablements();
                 entries = built.entries;
                 byCommand = built.byCommand;
                 byId = built.byId;
                 enablementById = built.enablementById;
+                hostCapabilitiesById = new Map(built.hostCapabilitiesById);
                 captainAgent = built.captainAgent;
                 captainAdapter = captainAgent.adapter;
                 playerAgents = built.playerAgents;
@@ -5332,6 +5441,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         // Quarantine is session-wide by design. Only terminal teardown may drop
         // its ownership after every frame host call and the Captain are drained.
         playerTransactions.clear();
+        hostCapabilitiesById = new Map();
+        pendingHostCapabilities = undefined;
         lifecycle = 'closed';
         if (failure !== undefined)
             throw failure;

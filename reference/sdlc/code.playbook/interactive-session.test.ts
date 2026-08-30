@@ -74,6 +74,96 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     expect(acquired).toBe(0);
   });
 
+  it('assembles schema-3 capabilities under the managed child lease', async () => {
+    const execution = executionProjection();
+    (execution.catalog.code as { artifactSchema: number }).artifactSchema = 3;
+    const fixture = await lifecycleFixture(execution);
+    const payload = { ...fixture.payload, cwd: process.cwd() };
+    const context = { ...fixture.context, cwd: process.cwd() };
+    const events: string[] = [];
+    let writerLease: any;
+    const lifecycle = createManagedInteractiveLifecycle(payload, {
+      sessionStore: fixture.store,
+      loadModule: registryLoader(execution),
+      createEffectLedgerWriteAhead: (lease: unknown) => {
+        writerLease = lease;
+        return async () => undefined;
+      },
+      createHostRuntime: async (options: any) => {
+        await options.captain.init({
+          signal: new AbortController().signal,
+          players: options.players.map(({ id, adapter }: any) => ({
+            id,
+            adapter,
+          })),
+          async emitStatus() {},
+          async emitTelemetry() {},
+          async setVisiblePlayers() {},
+        });
+        return {
+          ...fakeHost(events),
+          async dispose() {
+            await options.captain.dispose();
+            events.push('disposed');
+          },
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(context);
+    expect(writerLease).toMatchObject({ sessionId: logicalSessionId });
+    const record = await fixture.store.read(logicalSessionId);
+    expect(record.cwd).toBe(process.cwd());
+    const durable = JSON.stringify(record);
+    expect(durable).not.toContain(writerLease.ownerToken);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+      'canonicalWorktree',
+      'effectLedger',
+    ]) {
+      expect(durable).not.toContain(`"${key}"`);
+    }
+
+    await runtime.dispose();
+    await lifecycle.shutdown();
+    expect(events).toEqual(['disposed']);
+  });
+
+  it('rejects schema-3 host construction under a different session lease', async () => {
+    const execution = executionProjection();
+    (execution.catalog.code as { artifactSchema: number }).artifactSchema = 3;
+    const fixture = await lifecycleFixture(execution);
+    let writerCreations = 0;
+    let hostCreations = 0;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: {
+        ...fixture.store,
+        async acquire(sessionId: string) {
+          const lease = await fixture.store.acquire(sessionId);
+          return { ...lease, sessionId: predecessorSessionId };
+        },
+      },
+      loadModule: registryLoader(execution),
+      createEffectLedgerWriteAhead: () => {
+        writerCreations += 1;
+        return async () => undefined;
+      },
+      createHostRuntime: async () => {
+        hostCreations += 1;
+        throw new Error('must not construct a host under the wrong lease');
+      },
+    });
+
+    await expect(
+      lifecycle.initializeRuntime(fixture.context),
+    ).rejects.toThrow(/lease authority does not match its logical session/);
+    expect({ writerCreations, hostCreations }).toEqual({
+      writerCreations: 0,
+      hostCreations: 0,
+    });
+  });
+
   it('persists turn zero before readiness, brackets each reply, and retains the lease until shutdown', async () => {
     const fixture = await lifecycleFixture();
     let snapshot = shellSnapshot(fixture.execution, 0);

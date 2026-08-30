@@ -190,7 +190,8 @@ The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`,
 Artifact schema `2` shall omit `outcomeAuthority` and shall retain the existing one-argument `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` contract.
 Artifact schema `3` shall require `outcomeAuthority` as an own plain-JSON data property and shall instantiate the shared factory with exactly `{ configuredOptions, hostCapabilities }`, where `configuredOptions` is the registry-validated plain-JSON workflow slice and `hostCapabilities` is a non-null live current-host object.
 For schema `3`, the `Options` argument of the one-argument shared `PlaybookRuntimeFactory<Options>` shall be `XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>`; the registry's public entry receives the two members separately and composes that one internal argument only at the artifact boundary.
-Only `configuredOptions` may reach option snapshotting and FSM input, while `hostCapabilities` shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, nor continuation identity.
+For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations; and the ledger exposes the current host's atomic write-ahead operation.
+Only `configuredOptions` may reach option snapshotting and FSM input, while `hostCapabilities` and every nested callback, lease token, or repository identity shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, retained generations, nor continuation identity.
 
 ```typescript
 type XStateOutcomeFieldAuthority =
@@ -2021,8 +2022,10 @@ The thin emitted module:
   alone; a schema-3 registry factory accepts configured options and current
   host capabilities separately and composes the linked runtime's exact
   `{ configuredOptions, hostCapabilities }` input. The Captain host shall
-  capture the imported manifest fields once and reject a missing, malformed,
-  or disagreeing profile before option validation or runtime construction.
+  capture the imported manifest fields once, require capabilities for every
+  and only enabled schema-3 id, validate each capability's artifact, role,
+  cohort, and canonical-worktree authority, and reject a missing, extra,
+  malformed, or mismatched capability before runtime construction.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `XStatePlaybookRuntimeFactory<PlaybookRuntimeOptions, 2>` for schema `2` or as a
   `XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>, 3>`

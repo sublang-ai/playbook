@@ -17,13 +17,14 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   RepositoryObservationAmbiguousError,
   _internal,
   captureRepositoryReceipt,
   classifyRepositoryReceipt,
+  createRepositoryEffectCapabilities,
   createRepositoryEffectCoordinator,
   observeGitRepository,
   resolveCanonicalGitWorktree,
@@ -1000,5 +1001,130 @@ describe('canonical-worktree cooperative claims (PBCLI-58)', () => {
     expect(secondAcquired).toBe(true);
     expect(first.identity.worktree).not.toBe(second.identity.worktree);
     await Promise.all([first.release(), second.release()]);
+  });
+});
+
+describe('schema-3 repository host capabilities', () => {
+  it('leaves schema-2-only catalogs independent of Git, leases, and ledgers', async () => {
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: '/not/a/repository',
+      catalog: {
+        code: { id: 'code', artifactSchema: 2 },
+      },
+    });
+
+    expect(capabilities).toEqual({});
+    expect(Object.isFrozen(capabilities)).toBe(true);
+  });
+
+  it('assembles immutable artifact-bound facilities from the active lease', async () => {
+    const repo = await initRepository();
+    const authorityOrder: string[] = [];
+    const assertOwner = vi.fn(async () => {
+      authorityOrder.push('lease');
+    });
+    const sessionLease = Object.freeze({
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      ownerToken: '20000000-0000-4000-8000-000000000002',
+      assertOwner,
+    });
+    const writeAhead = vi.fn(async () => 'persisted');
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog: {
+        decide: {
+          id: 'decide',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder', 'reviewer'],
+          concurrentRoleSets: [['coder', 'reviewer']],
+        },
+      },
+      sessionId: sessionLease.sessionId,
+      sessionLease,
+      createWriteAhead: () => {
+        authorityOrder.push('writer');
+        return writeAhead;
+      },
+    });
+    const capability = capabilities.decide;
+
+    expect(assertOwner).toHaveBeenCalledTimes(2);
+    expect(authorityOrder).toEqual(['lease', 'writer', 'lease']);
+    expect(Object.keys(capabilities)).toEqual(['decide']);
+    expect(capability.authority).toMatchObject({
+      playbookId: 'decide',
+      artifactSchema: 3,
+      cwd: repo,
+      sessionId: sessionLease.sessionId,
+      leaseOwnerToken: sessionLease.ownerToken,
+      requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [['coder', 'reviewer']],
+    });
+    expect(capability.repository.identity).toBe(
+      capability.authority.canonicalWorktree,
+    );
+    expect(Object.isFrozen(capability)).toBe(true);
+    expect(Object.isFrozen(capability.authority.concurrentRoleSets[0])).toBe(
+      true,
+    );
+
+    const observation = await capability.repository.observe();
+    expect(observation.worktree).toBe(
+      capability.authority.canonicalWorktree.worktree,
+    );
+    const cohort = await capability.repository.runCohort({
+      invocationId: 'decide-proposal',
+      roleIds: ['coder', 'reviewer'],
+      dispositionsByRole: {
+        coder: ['unchanged'],
+        reviewer: ['unchanged'],
+      },
+      operations: {
+        coder: async () => 'coder',
+        reviewer: async () => 'reviewer',
+      },
+    });
+    expect(cohort.receipts.coder.classification).toBe('unchanged');
+    expect(cohort.receipts.reviewer).toBe(cohort.receipts.coder);
+    await expect(
+      capability.repository.runCohort({
+        cwd: repo,
+        concurrentRoleSets: [],
+      }),
+    ).rejects.toThrow(/cannot override host-owned cwd/);
+
+    const command = { type: 'boundary-started' };
+    await expect(capability.effectLedger.writeAhead(command)).resolves.toBe(
+      'persisted',
+    );
+    expect(writeAhead).toHaveBeenCalledWith(capability.authority, command);
+  });
+
+  it('rejects a lease for a different logical session before host work', async () => {
+    const assertOwner = vi.fn(async () => undefined);
+    const writeAhead = vi.fn(async () => undefined);
+
+    await expect(
+      createRepositoryEffectCapabilities({
+        cwd: '/must/not/reach/git',
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000002',
+          ownerToken: '20000000-0000-4000-8000-000000000003',
+          assertOwner,
+        },
+        createWriteAhead: () => writeAhead,
+      }),
+    ).rejects.toThrow(/lease authority does not match its logical session/);
+    expect(assertOwner).not.toHaveBeenCalled();
+    expect(writeAhead).not.toHaveBeenCalled();
   });
 });
