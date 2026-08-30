@@ -33,7 +33,7 @@
 //                controller-port submission, and status formatting.
 // Compat:        spec.compat = { artifactSchema: 3, runtimeAbi: 1 }
 //                (DR-022; checked at construction by the loading engine).
-import { createXStatePlaybookRuntime, defaultComposeCaptainPrompt, normalizeError, normalizeErrorCompact, parseJudgeJson, snapshotJsonValue, } from '../../../src/xstate-runtime.js';
+import { createXStatePlaybookRuntime, defaultComposeCaptainPrompt, emptyPlaybookEffectLedger, normalizeError, normalizeErrorCompact, parseJudgeJson, snapshotJsonValue, } from '../../../src/xstate-runtime.js';
 import { captainMachine, } from './captain.fsm.js';
 function assertNonEmptyString(value, label) {
     if (typeof value !== 'string' || value.trim().length === 0) {
@@ -421,7 +421,7 @@ function validateSettlement(value) {
         throw new TypeError('controller settlement facts must be a string array');
     }
     if (!Object.prototype.hasOwnProperty.call(value, 'unresolvedEffects')) {
-        throw new TypeError('controller settlement unresolvedEffects is required for artifact schema 3');
+        throw new TypeError('controller settlement unresolvedEffects is required');
     }
     const unresolvedEffects = validateSettlementUnresolvedEffects(value.unresolvedEffects);
     if ('reason' in value && typeof value.reason !== 'string') {
@@ -659,12 +659,6 @@ const runtimeSpec = {
 // uncaught ESM-load error that takes even `--help` down; constructing on
 // the first runtime request keeps the failure inside the caught
 // host-construction boundary that owes the Boss a setup diagnostic.
-const INTERNAL_CAPTAIN_EFFECT_LEDGER = Object.freeze({
-    schemaVersion: 1,
-    revision: 0,
-    boundaries: Object.freeze([]),
-    logicalOperations: Object.freeze([]),
-});
 const rejectInternalCaptainRepositoryWork = async () => {
     throw new Error('the roleless session Captain cannot perform repository-governed work');
 };
@@ -677,7 +671,7 @@ const INTERNAL_CAPTAIN_HOST_CAPABILITIES = Object.freeze({
         runDeferred: rejectInternalCaptainRepositoryWork,
     }),
     effectLedger: Object.freeze({
-        snapshot: () => INTERNAL_CAPTAIN_EFFECT_LEDGER,
+        snapshot: emptyPlaybookEffectLedger,
         writeAhead: async () => {
             throw new Error('the roleless session Captain cannot write an effect ledger');
         },

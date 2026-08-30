@@ -107,7 +107,7 @@ the controller port —
 `{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned settlement
 `{ status, facts, unresolvedEffects, reason?, receipt?, leafStateSummary? }` as the only
-evidence of effects, where `unresolvedEffects` is the exact detached bounded list frozen by [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]]; counted activity remains shell-owned and is supplied
+evidence of effects, where `unresolvedEffects` is the exact detached bounded list frozen by [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]; counted activity remains shell-owned and is supplied
 separately in the result-phase prompt; the public `PlaybookPorts` contract stays
 six members, the port arriving as a linker-exposed option member
 ([slc/link.md](../../slc/link.md#playbookruntime-contract)).
@@ -151,7 +151,7 @@ reach the Boss only as validated captain speech.
 ### captain-playbook-10
 
 Where a settlement returns through the controller port, the machine shall retain as decision and reply evidence only the settlement's status, its outcome-report facts, its optional rejection reason, the receipt disposition with its reason or normalized `{ name, message }` error, and the leaf-state summary.
-For artifact schema `3`, it shall additionally validate, detach, freeze, and retain the required exact `unresolvedEffects` list of [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]] without accepting an unknown member or malformed HEAD or commit identity.
+The artifact-schema-3 session Captain shall additionally validate, detach, freeze, and retain the required exact `unresolvedEffects` list of [[playbook-captain-58](playbook-captain.md#playbook-captain-58)] without accepting an unknown member or malformed HEAD or commit identity.
 It shall retain no playbook session id, call id, child state, stack
 ledger, resume token, repository path or projection, internal effect-envelope data, aggregate conversation or recovery transcript, or opaque runtime result in Captain-visible
 context, and the result-phase prompt shall carry the settlement facts
@@ -235,7 +235,7 @@ Where the shell provides two or more enabled playbooks, when tests drive scripte
 
 
 Where a working playbook engaged under the real shell parks for Boss input, when the Boss replies with ordinary text, the integration suite shall fail unless the session Captain's validated `deliver` hands the original unchanged reply to that same parked leaf and its runtime resumes with the answer in context; a status question between those turns settles as `respond` with the leaf, its parked state, and its pending question untouched; the session Captain holds no stack frame, calls no `callPlaybook` or `callPlayer`, and is parked at its hub between turns; and the following result-phase prompt carries only the settlement evidence (verifying [[captain-playbook-4](#captain-playbook-4)], [[captain-playbook-9](#captain-playbook-9)], [[captain-playbook-10](#captain-playbook-10)]).
-For schema `3`, the suite shall fail unless each settlement requires and retains an exact detached frozen `unresolvedEffects` list, rejects missing, extra, malformed, or inconsistent bounded evidence as a control-plane failure, and exposes no excluded host or runtime member in Captain-visible context (verifying [[captain-playbook-9](#captain-playbook-9)] and [[captain-playbook-10](#captain-playbook-10)]).
+For the artifact-schema-3 session Captain, the suite shall fail unless each settlement requires and retains an exact detached frozen `unresolvedEffects` list, rejects missing, extra, malformed, or inconsistent bounded evidence as a control-plane failure, and exposes no excluded host or runtime member in Captain-visible context (verifying [[captain-playbook-9](#captain-playbook-9)] and [[captain-playbook-10](#captain-playbook-10)]).
 
 ### captain-playbook-14
 

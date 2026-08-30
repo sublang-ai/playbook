@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   createEvent,
@@ -148,20 +148,19 @@ it('keeps the committed compiled-JavaScript Captain lazy in plain Node', async (
       join(artifactDir, file),
     );
   }
-  // The compiled module imports exactly these engine names. The stub
-  // rejects the Captain's construction and no-ops the helpers, which the
-  // module may only call after construction anyway.
+  // Proxy the current engine surface and skew only factory construction, so
+  // this fixture tests lazy construction without pinning the Captain's named
+  // imports or pressuring production code to duplicate engine constants.
+  const realEngineUrl = pathToFileURL(
+    join(repoRoot, 'src', 'xstate-runtime.js'),
+  ).href;
   await writeFile(
     join(sandbox, 'src', 'xstate-runtime.js'),
     [
+      `export * from ${JSON.stringify(realEngineUrl)};`,
       'export function createXStatePlaybookRuntime(machine, spec) {',
       "  throw new TypeError('CAPTAIN spec.compat.runtimeAbi 999 does not match engine RUNTIME_ABI 1');",
       '}',
-      'export const defaultComposeCaptainPrompt = () => "";',
-      'export const normalizeError = (error) => ({ name: "Error", message: String(error) });',
-      'export const normalizeErrorCompact = normalizeError;',
-      'export const parseJudgeJson = (raw) => JSON.parse(raw);',
-      'export const snapshotJsonValue = (value) => value;',
       '',
     ].join('\n'),
   );

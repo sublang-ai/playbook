@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 
+import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
+
 import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
@@ -1131,12 +1133,9 @@ describe('captain.playbook session mechanics', () => {
 
     const harness = makeHarness();
     await harness.init();
-    expect(harness.runtime.exportSnapshot?.()?.effectLedger).toEqual({
-      schemaVersion: 1,
-      revision: 0,
-      boundaries: [],
-      logicalOperations: [],
-    });
+    expect(harness.runtime.exportSnapshot?.()?.effectLedger).toEqual(
+      emptyPlaybookEffectLedger(),
+    );
     await harness.runtime.dispose();
   });
 });
