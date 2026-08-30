@@ -2322,6 +2322,10 @@ async function runDurableDeferred({
       ledger,
       seed.boundaryId,
     ).physicalReceipt;
+    const completedLogicalReceipt =
+      completion.deferred !== undefined || completion.unresolved === true
+        ? undefined
+        : logicalOperationById(ledger, operationId).logicalReceipt;
     recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     return Object.freeze({
@@ -2331,7 +2335,7 @@ async function runDurableDeferred({
       receipt: completedReceipt,
       ...(completion.deferred !== undefined || completion.unresolved === true
         ? {}
-        : { logicalReceipt }),
+        : { logicalReceipt: completedLogicalReceipt }),
       effectLedger: ledger,
       ...(completion.deferred === undefined
         ? {}
@@ -2483,7 +2487,10 @@ async function runDurableCohort({
     const receipts = Object.create(null);
     for (const [index, roleId] of roleIds.entries()) {
       operations[roleId] = settled[index];
-      receipts[roleId] = effectReceipt;
+      receipts[roleId] = boundaryById(
+        completed,
+        seeds[index].boundaryId,
+      ).physicalReceipt;
     }
     return Object.freeze({
       baseline,

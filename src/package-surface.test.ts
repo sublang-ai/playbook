@@ -1770,6 +1770,18 @@ declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
 // @ts-expect-error a start command cannot carry completion evidence
 boundaryStart.finalText;
 
+type ExclusiveOperation = Parameters<XStateRepositoryCapability['runExclusive']>[0]['operation'];
+const exclusiveOperation: ExclusiveOperation = async ({ baseline, identity }) => {
+  const head: string = baseline.head;
+  void head;
+  void identity;
+};
+declare const resumeShapedOperation: (resume?: string | false) => Promise<void>;
+// @ts-expect-error repository context cannot bind to a resume-token parameter
+const invalidExclusiveOperation: ExclusiveOperation = resumeShapedOperation;
+void exclusiveOperation;
+void invalidExclusiveOperation;
+
 const legacyFactory = createXStatePlaybookRuntime<Options>(machine, legacySpec);
 legacyFactory({ mode: 'safe' });
 

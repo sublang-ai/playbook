@@ -166,7 +166,10 @@ export interface XStateRepositoryCapability {
     runExclusive<T>(options: {
         readonly signal: AbortSignal;
         readonly effectBoundary: XStateEffectBoundarySeed;
-        readonly operation: () => Promise<T>;
+        readonly operation: (context: {
+            readonly baseline: PlaybookRepositoryReceipt['baseline'];
+            readonly identity: unknown;
+        }) => Promise<T>;
         readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
     }): Promise<XStateRepositoryExclusiveResult<T>>;
     runDeferred<T>(options: {

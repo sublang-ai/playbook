@@ -2712,7 +2712,13 @@ describe('schema-3 repository host capabilities', () => {
       }),
     });
     expect(cohort.receipts.coder.classification).toBe('unchanged');
-    expect(cohort.receipts.reviewer).toBe(cohort.receipts.coder);
+    expect(cohort.receipts.reviewer).toStrictEqual(cohort.receipts.coder);
+    expect(cohort.receipts.coder).toStrictEqual(
+      cohort.effectLedger.boundaries[0]?.physicalReceipt,
+    );
+    expect(cohort.receipts.reviewer).toStrictEqual(
+      cohort.effectLedger.boundaries[1]?.physicalReceipt,
+    );
     await expect(
       capability.repository.runCohort({
         cwd: repo,
@@ -2820,6 +2826,9 @@ describe('schema-3 repository host capabilities', () => {
       }),
     });
     expect(first.deferredStatus).toBe('bound');
+    expect(first.receipt).toStrictEqual(
+      first.effectLedger.boundaries[0]?.physicalReceipt,
+    );
     expect(first.effectLedger.logicalOperations[0]).toMatchObject({
       operationId,
       boundaryIds: ['30000000-0000-4000-8000-000000000003'],
@@ -2883,6 +2892,9 @@ describe('schema-3 repository host capabilities', () => {
       logicalOperationId: operationId,
       physicalReceipt: { classification: 'worktree-only-change' },
     });
+    expect(repeated.receipt).toStrictEqual(
+      repeated.effectLedger.boundaries[1]?.physicalReceipt,
+    );
 
     const final = await capability.repository.runDeferred({
       mode: 'continue',
@@ -2928,6 +2940,12 @@ describe('schema-3 repository host capabilities', () => {
     });
     expect(final.effectLedger.logicalOperations[0]).not.toHaveProperty(
       'pendingQuestion',
+    );
+    expect(final.receipt).toStrictEqual(
+      final.effectLedger.boundaries[2]?.physicalReceipt,
+    );
+    expect(final.logicalReceipt).toStrictEqual(
+      final.effectLedger.logicalOperations[0]?.logicalReceipt,
     );
     expect(final.effectLedger.boundaries).toHaveLength(3);
   });

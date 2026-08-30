@@ -234,7 +234,10 @@ function codeRuntimeConstruction(
 
   const runExclusive = async (options: {
     readonly effectBoundary: Record<string, unknown>;
-    readonly operation: () => Promise<unknown>;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryObservation;
+      readonly identity: unknown;
+    }) => Promise<unknown>;
     readonly completeEffectBoundary: (completion: {
       readonly boundary: PlaybookEffectBoundary;
       readonly operation:
@@ -267,7 +270,16 @@ function codeRuntimeConstruction(
       | { readonly status: 'fulfilled'; readonly value: unknown }
       | { readonly status: 'rejected'; readonly reason: unknown };
     try {
-      operation = { status: 'fulfilled', value: await options.operation() };
+      operation = {
+        status: 'fulfilled',
+        value: await options.operation({
+          baseline,
+          identity: {
+            worktree: baseline.worktree,
+            gitDir: baseline.gitDir,
+          },
+        }),
+      };
     } catch (reason) {
       operation = { status: 'rejected', reason };
     }

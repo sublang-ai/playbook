@@ -82,7 +82,10 @@ interface DecideRepositoryCapability {
     runExclusive<T>(options: {
         readonly signal: AbortSignal;
         readonly effectBoundary: DecideEffectBoundarySeed;
-        readonly operation: () => Promise<T>;
+        readonly operation: (context: {
+            readonly baseline: PlaybookRepositoryReceipt['baseline'];
+            readonly identity: unknown;
+        }) => Promise<T>;
         readonly completeEffectBoundary: (completion: DecideRepositoryCompletion<T>) => DecideRepositoryCompletionEvidence | Promise<DecideRepositoryCompletionEvidence>;
     }): Promise<DecideRepositoryExclusiveResult<T>>;
     runDeferred<T>(options: {
