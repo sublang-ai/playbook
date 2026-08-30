@@ -281,6 +281,7 @@ export interface PlaybookEffectBoundary {
   readonly physicalReceipt?: PlaybookRepositoryReceipt;
   readonly finalText?: string;
   readonly semanticCandidate?: JsonValue;
+  readonly initialSemanticCandidate?: JsonValue;
   readonly correctionBudget: { readonly limit: 1; readonly spent: boolean };
   readonly cohortId?: string;
   readonly logicalOperationId?: string;
@@ -296,6 +297,7 @@ export type PlaybookEffectBoundaryStart = Omit<
   | 'physicalReceipt'
   | 'finalText'
   | 'semanticCandidate'
+  | 'initialSemanticCandidate'
 >;
 
 /** One deferred logical operation spanning its ordered physical boundaries. */

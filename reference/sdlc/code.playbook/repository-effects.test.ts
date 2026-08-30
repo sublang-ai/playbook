@@ -1559,15 +1559,541 @@ describe('schema-3 repository host capabilities', () => {
     }
   });
 
+  it.each(['exclusive', 'deferred'] as const)(
+    'rebases %s completion on an in-callback correction-budget spend',
+    async (mode) => {
+      const repo = await initRepository('playbook-effects-correction-spend-');
+      const backing = fakeEffectLedgerService();
+      const sessionId = '10000000-0000-4000-8000-000000000001';
+      const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+      const operationId = '50000000-0000-4000-8000-000000000005';
+      const capability = (
+        await createRepositoryEffectCapabilities({
+          cwd: repo,
+          catalog: {
+            code: {
+              id: 'code',
+              artifactSchema: 3,
+              requiredRoleIds: ['coder'],
+              concurrentRoleSets: [],
+            },
+          },
+          sessionId,
+          sessionLease: {
+            sessionId,
+            ownerToken: '20000000-0000-4000-8000-000000000002',
+            assertOwner: async () => undefined,
+          },
+          createWriteAhead: () => backing.service,
+        })
+      ).code;
+      const effectBoundary = (
+        boundaryId: string,
+        turnId: number,
+        dispositions: string[],
+      ) => ({
+        boundaryId,
+        runtimeSessionId,
+        turnId,
+        callId: `coder:${turnId}`,
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { done: {}, needsBossReply: {} },
+        dispositions,
+        correctionBudget: { limit: 1, spent: false },
+      });
+
+      if (mode === 'deferred') {
+        await capability.repository.runExclusive({
+          effectBoundary: effectBoundary(
+            '30000000-0000-4000-8000-000000000003',
+            1,
+            ['deferred', 'one-descendant-commit'],
+          ),
+          operation: async () => 'Which file?',
+          completeEffectBoundary: ({ operation }: any) => ({
+            finalText: operation.value,
+            semanticCandidate: { guard: 'needsBossReply' },
+            deferred: {
+              operationId,
+              pendingQuestion: {
+                questionId: 'code.coder',
+                asker: { kind: 'role', roleId: 'coder' },
+                question: operation.value,
+              },
+              playerContinuation: 'thread-1',
+            },
+          }),
+        });
+      }
+
+      const targetBoundary = effectBoundary(
+        '60000000-0000-4000-8000-000000000006',
+        mode === 'exclusive' ? 1 : 2,
+        mode === 'exclusive'
+          ? ['unchanged']
+          : ['deferred', 'one-descendant-commit'],
+      );
+      const completeEffectBoundary = async ({
+        boundary,
+        operation,
+        outcomeReceipt,
+        receipt,
+      }: any) => {
+        expect(receipt.classification).toBe('unchanged');
+        expect(outcomeReceipt).toEqual(receipt);
+        await capability.effectLedger.writeAhead([
+          {
+            kind: 'replace-boundaries',
+            replacements: [
+              {
+                expected: boundary,
+                next: {
+                  ...boundary,
+                  correctionBudget: { limit: 1, spent: true },
+                },
+              },
+            ],
+          },
+        ]);
+        return {
+          finalText: operation.value,
+          semanticCandidate: { guard: 'done' },
+        };
+      };
+      const result: any =
+        mode === 'exclusive'
+          ? await capability.repository.runExclusive({
+              effectBoundary: targetBoundary,
+              operation: async () => 'Finished.',
+              completeEffectBoundary,
+            })
+          : await capability.repository.runDeferred({
+              mode: 'continue',
+              operationId,
+              effectBoundary: targetBoundary,
+              operation: async ({ playerContinuation }: any) => {
+                expect(playerContinuation).toBe('thread-1');
+                return 'Finished.';
+              },
+              completeEffectBoundary,
+            });
+
+      expect(result.effectLedger.boundaries.at(-1)).toMatchObject({
+        boundaryId: targetBoundary.boundaryId,
+        correctionBudget: { limit: 1, spent: true },
+        finalText: 'Finished.',
+        semanticCandidate: { guard: 'done' },
+        physicalReceipt: { classification: 'unchanged' },
+      });
+      const nextClaim = await createRepositoryEffectCoordinator().acquire(repo);
+      await nextClaim.release();
+    },
+  );
+
+  it('keeps a live claim quarantined when completion mapping fails after a durable correction spend', async () => {
+    const repo = await initRepository('playbook-effects-spent-mapper-failure-');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const catalog = {
+      code: {
+        id: 'code',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+      },
+    };
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog,
+      sessionId,
+      sessionLease: {
+        sessionId,
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => backing.service,
+    });
+    const capability = capabilities.code;
+
+    await expect(
+      capability.repository.runExclusive({
+        effectBoundary: {
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { done: {} },
+          dispositions: ['unchanged'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+        operation: async () => 'Finished.',
+        completeEffectBoundary: async ({ boundary, operation, receipt }: any) => {
+          await capability.effectLedger.writeAhead([
+            {
+              kind: 'replace-boundaries',
+              replacements: [
+                {
+                  expected: boundary,
+                  next: {
+                    ...boundary,
+                    ...(receipt.after === undefined
+                      ? {}
+                      : { after: receipt.after }),
+                    physicalReceipt: receipt,
+                    finalText: operation.value,
+                    correctionBudget: { limit: 1, spent: true },
+                  },
+                },
+              ],
+            },
+          ]);
+          throw new Error('completion mapping failed after correction spend');
+        },
+      }),
+    ).rejects.toThrow('completion mapping failed after correction spend');
+    expect(capability.effectLedger.snapshot().boundaries[0]).toMatchObject({
+      finalText: 'Finished.',
+      physicalReceipt: { classification: 'unchanged' },
+      correctionBudget: { limit: 1, spent: true },
+    });
+    const writesBeforeRecovery = backing.writeAhead.mock.calls.length;
+
+    await expect(
+      recoverIncompleteRepositoryEffects({ catalog, capabilities }),
+    ).rejects.toThrow(
+      /live post-operation repository claim has no exact completion batch/,
+    );
+    expect(backing.writeAhead).toHaveBeenCalledTimes(writesBeforeRecovery);
+    const identity = await resolveCanonicalGitWorktree(repo);
+    expect(
+      await readdir(join(identity.gitDir, _internal.claimRootName)),
+    ).toContain('active');
+  });
+
+  it('retires an acknowledged ordered completion batch without replaying it', async () => {
+    const repo = await initRepository('playbook-effects-acknowledged-batch-');
+    const identity = await resolveCanonicalGitWorktree(repo);
+    const claimRoot = join(identity.gitDir, _internal.claimRootName);
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const catalog = {
+      code: {
+        id: 'code',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+      },
+    };
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog,
+      sessionId,
+      sessionLease: {
+        sessionId,
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => backing.service,
+    });
+    const capability = capabilities.code;
+    let retirementCollision: string | undefined;
+
+    await expect(
+      capability.repository.runExclusive({
+        effectBoundary: {
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { done: {} },
+          dispositions: ['unchanged'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+        operation: async () => 'Finished.',
+        completeEffectBoundary: async ({ boundary, operation, receipt }: any) => {
+          const physicalCompletion = {
+            ...boundary,
+            ...(receipt.after === undefined ? {} : { after: receipt.after }),
+            physicalReceipt: receipt,
+            finalText: operation.value,
+          };
+          const owner = JSON.parse(
+            await readFile(join(claimRoot, 'active', 'owner.json'), 'utf8'),
+          );
+          retirementCollision = join(
+            claimRoot,
+            `retired-${owner.ownerToken}`,
+          );
+          await mkdir(retirementCollision, { mode: 0o700 });
+          await writeFile(join(retirementCollision, 'occupied'), 'occupied\n');
+          return {
+            finalText: operation.value,
+            commands: [
+              {
+                kind: 'replace-boundaries',
+                replacements: [
+                  {
+                    expected: physicalCompletion,
+                    next: {
+                      ...physicalCompletion,
+                      semanticCandidate: { guard: 'done' },
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+        },
+      }),
+    ).rejects.toThrow('repository claim retirement target is occupied');
+    expect(retirementCollision).toEqual(expect.any(String));
+    expect(backing.writeAhead.mock.calls.at(-1)?.[1]).toMatchObject([
+      { kind: 'replace-boundaries' },
+      { kind: 'replace-boundaries' },
+    ]);
+    expect(capability.effectLedger.snapshot().boundaries[0]).toMatchObject({
+      finalText: 'Finished.',
+      semanticCandidate: { guard: 'done' },
+      physicalReceipt: { classification: 'unchanged' },
+    });
+    const writesBeforeRecovery = backing.writeAhead.mock.calls.length;
+    await rm(retirementCollision!, { recursive: true });
+
+    const recovered = await recoverIncompleteRepositoryEffects({
+      catalog,
+      capabilities,
+    });
+
+    expect(recovered.boundaries[0]).toMatchObject({
+      finalText: 'Finished.',
+      semanticCandidate: { guard: 'done' },
+      physicalReceipt: { classification: 'unchanged' },
+    });
+    expect(backing.writeAhead).toHaveBeenCalledTimes(writesBeforeRecovery);
+    const nextClaim = await createRepositoryEffectCoordinator().acquire(repo);
+    await nextClaim.release();
+  });
+
+  it.each([
+    ['exclusive', 'before-storage'],
+    ['exclusive', 'after-storage'],
+    ['deferred', 'before-storage'],
+    ['deferred', 'after-storage'],
+  ] as const)(
+    'exact-retries the %s completion after a correction spend and a %s failure before acknowledgement',
+    async (mode, failurePoint) => {
+      const repo = await initRepository('playbook-effects-correction-recovery-');
+      const backing = fakeEffectLedgerService();
+      let failFinalCompletion = true;
+      let indeterminateCommands: any[] | undefined;
+      const service = {
+        snapshot: backing.service.snapshot,
+        writeAhead: vi.fn(async (authority: unknown, commands: any[]) => {
+          if (indeterminateCommands !== undefined) {
+            expect(commands).toEqual(indeterminateCommands);
+            indeterminateCommands = undefined;
+            return backing.service.snapshot();
+          }
+          const completesSemanticEvidence = commands.some(
+            (command) =>
+              command.kind === 'replace-boundaries' &&
+              command.replacements.some(
+                ({ next }: any) => next.semanticCandidate?.guard === 'done',
+              ),
+          );
+          if (failFinalCompletion && completesSemanticEvidence) {
+            failFinalCompletion = false;
+            if (failurePoint === 'after-storage') {
+              await backing.service.writeAhead(authority, commands);
+              indeterminateCommands = structuredClone(commands);
+            }
+            throw new Error(
+              `semantic completion failed ${failurePoint} before acknowledgement`,
+            );
+          }
+          return backing.service.writeAhead(authority, commands);
+        }),
+      };
+      const sessionId = '10000000-0000-4000-8000-000000000001';
+      const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+      const operationId = '50000000-0000-4000-8000-000000000005';
+      const catalog = {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      };
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => service,
+      });
+      const capability = capabilities.code;
+      const effectBoundary = (
+        boundaryId: string,
+        turnId: number,
+        dispositions: string[],
+      ) => ({
+        boundaryId,
+        runtimeSessionId,
+        turnId,
+        callId: `coder:${turnId}`,
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { done: {}, needsBossReply: {} },
+        dispositions,
+        correctionBudget: { limit: 1, spent: false },
+      });
+
+      if (mode === 'deferred') {
+        await capability.repository.runExclusive({
+          effectBoundary: effectBoundary(
+            '30000000-0000-4000-8000-000000000003',
+            1,
+            ['deferred', 'one-descendant-commit'],
+          ),
+          operation: async () => 'Which file?',
+          completeEffectBoundary: ({ operation }: any) => ({
+            finalText: operation.value,
+            semanticCandidate: { guard: 'needsBossReply' },
+            deferred: {
+              operationId,
+              pendingQuestion: {
+                questionId: 'code.coder',
+                asker: { kind: 'role', roleId: 'coder' },
+                question: operation.value,
+              },
+              playerContinuation: 'thread-1',
+            },
+          }),
+        });
+      }
+
+      const targetBoundary = effectBoundary(
+        '60000000-0000-4000-8000-000000000006',
+        mode === 'exclusive' ? 1 : 2,
+        mode === 'exclusive'
+          ? ['unchanged']
+          : ['deferred', 'one-descendant-commit'],
+      );
+      const completeEffectBoundary = async ({
+        boundary,
+        operation,
+        receipt,
+      }: any) => {
+        await capability.effectLedger.writeAhead([
+          {
+            kind: 'replace-boundaries',
+            replacements: [
+              {
+                expected: boundary,
+                next: {
+                  ...boundary,
+                  ...(receipt.after === undefined
+                    ? {}
+                    : { after: receipt.after }),
+                  physicalReceipt: receipt,
+                  finalText: operation.value,
+                  semanticCandidate: { guard: 'invalid' },
+                  correctionBudget: { limit: 1, spent: true },
+                },
+              },
+            ],
+          },
+        ]);
+        return {
+          finalText: operation.value,
+          semanticCandidate: { guard: 'done' },
+        };
+      };
+      const run =
+        mode === 'exclusive'
+          ? capability.repository.runExclusive({
+              effectBoundary: targetBoundary,
+              operation: async () => 'Finished.',
+              completeEffectBoundary,
+            })
+          : capability.repository.runDeferred({
+              mode: 'continue',
+              operationId,
+              effectBoundary: targetBoundary,
+              operation: async () => 'Finished.',
+              completeEffectBoundary,
+            });
+
+      await expect(run).rejects.toThrow(
+        `semantic completion failed ${failurePoint} before acknowledgement`,
+      );
+      const beforeRecovery = capability.effectLedger.snapshot();
+      expect(beforeRecovery.boundaries.at(-1)).toMatchObject({
+        boundaryId: targetBoundary.boundaryId,
+        finalText: 'Finished.',
+        physicalReceipt: { classification: 'unchanged' },
+        correctionBudget: { limit: 1, spent: true },
+        ...(failurePoint === 'before-storage'
+          ? { semanticCandidate: { guard: 'invalid' } }
+          : {
+              semanticCandidate: { guard: 'done' },
+              initialSemanticCandidate: { guard: 'invalid' },
+            }),
+      });
+      const writesBeforeRecovery = service.writeAhead.mock.calls.length;
+
+      const recovered = await recoverIncompleteRepositoryEffects({
+        catalog,
+        capabilities,
+      });
+
+      expect(recovered.boundaries.at(-1)).toMatchObject({
+        boundaryId: targetBoundary.boundaryId,
+        finalText: 'Finished.',
+        semanticCandidate: { guard: 'done' },
+        initialSemanticCandidate: { guard: 'invalid' },
+        physicalReceipt: { classification: 'unchanged' },
+        correctionBudget: { limit: 1, spent: true },
+      });
+      if (mode === 'deferred') {
+        expect(recovered.logicalOperations[0]).toMatchObject({
+          operationId,
+          logicalReceipt: { classification: 'unchanged' },
+        });
+      }
+      expect(service.writeAhead).toHaveBeenCalledTimes(
+        writesBeforeRecovery + 1,
+      );
+      const nextClaim = await createRepositoryEffectCoordinator().acquire(repo);
+      await nextClaim.release();
+    },
+  );
+
   it.each(['before', 'after'] as const)(
     'authoritatively recovers a live claim when completion fails %s acknowledgement',
     async (failurePoint) => {
       const repo = await initRepository('playbook-effects-live-recovery-');
       const backing = fakeEffectLedgerService();
       let failCompletion = true;
+      let indeterminateCommands: any[] | undefined;
       const service = {
         snapshot: backing.service.snapshot,
         writeAhead: vi.fn(async (authority: unknown, commands: any[]) => {
+          if (indeterminateCommands !== undefined) {
+            expect(commands).toEqual(indeterminateCommands);
+            indeterminateCommands = undefined;
+            return backing.service.snapshot();
+          }
           if (
             failCompletion &&
             commands[0]?.kind === 'replace-boundaries'
@@ -1575,6 +2101,7 @@ describe('schema-3 repository host capabilities', () => {
             failCompletion = false;
             if (failurePoint === 'after') {
               await backing.service.writeAhead(authority, commands);
+              indeterminateCommands = structuredClone(commands);
             }
             throw new Error(`completion failed ${failurePoint} acknowledgement`);
           }
@@ -1643,6 +2170,7 @@ describe('schema-3 repository host capabilities', () => {
         }),
       ).rejects.toThrow(`completion failed ${failurePoint} acknowledgement`);
       semanticCandidate.guard = 'mutated';
+      const writesBeforeRecovery = service.writeAhead.mock.calls.length;
 
       const recovered = await recoverIncompleteRepositoryEffects({
         catalog,
@@ -1667,6 +2195,7 @@ describe('schema-3 repository host capabilities', () => {
           },
         ],
       });
+      expect(service.writeAhead).toHaveBeenCalledTimes(writesBeforeRecovery + 1);
       const claim = await createRepositoryEffectCoordinator().acquire(repo);
       await claim.release();
     },
@@ -1772,6 +2301,119 @@ describe('schema-3 repository host capabilities', () => {
       expect(claimNames.some((name) => name.startsWith('retired-'))).toBe(false);
     },
   );
+
+  it('awaits every cohort completion mapper before quarantining one mapper failure', async () => {
+    const repo = await initRepository('playbook-effects-cohort-mapper-join-');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog: {
+        decide: {
+          id: 'decide',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder', 'reviewer'],
+          concurrentRoleSets: [['coder', 'reviewer']],
+        },
+      },
+      sessionId,
+      sessionLease: {
+        sessionId,
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => backing.service,
+    });
+    const capability = capabilities.decide;
+    const reviewerEntered = deferred();
+    const releaseReviewer = deferred();
+    const correctiveJudge = vi.fn();
+    const completionSettled = vi.fn();
+    const boundary = (roleId: string, boundaryId: string) => ({
+      boundaryId,
+      runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+      turnId: 1,
+      callId: `${roleId}:1`,
+      roleId,
+      sourceStateId: `decide.${roleId}`,
+      sourceOutcomeSchema: { type: 'object' },
+      dispositions: ['unchanged'],
+      correctionBudget: { limit: 1, spent: false },
+    });
+    const run = capability.repository.runCohort({
+      invocationId: 'proposal-pair',
+      roleIds: ['coder', 'reviewer'],
+      dispositionsByRole: {
+        coder: ['unchanged'],
+        reviewer: ['unchanged'],
+      },
+      effectBoundaries: {
+        coder: boundary(
+          'coder',
+          '30000000-0000-4000-8000-000000000003',
+        ),
+        reviewer: boundary(
+          'reviewer',
+          '50000000-0000-4000-8000-000000000005',
+        ),
+      },
+      operations: {
+        coder: async () => 'coder output',
+        reviewer: async () => 'reviewer output',
+      },
+      completeEffectBoundary: async ({
+        boundary: started,
+        roleId,
+      }: any) => {
+        if (roleId === 'coder') {
+          throw new Error('coder completion mapping failed');
+        }
+        reviewerEntered.resolve();
+        await releaseReviewer.promise;
+        await capability.effectLedger.writeAhead([
+          {
+            kind: 'replace-boundaries',
+            replacements: [
+              {
+                expected: started,
+                next: {
+                  ...started,
+                  correctionBudget: { limit: 1, spent: true },
+                },
+              },
+            ],
+          },
+        ]);
+        correctiveJudge();
+        return {
+          finalText: 'reviewer output',
+          semanticCandidate: { guard: 'complete' },
+        };
+      },
+    });
+    void run.then(
+      () => completionSettled('fulfilled'),
+      () => completionSettled('rejected'),
+    );
+
+    await reviewerEntered.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(completionSettled).not.toHaveBeenCalled();
+    expect(correctiveJudge).not.toHaveBeenCalled();
+    releaseReviewer.resolve();
+
+    await expect(run).rejects.toThrow('coder completion mapping failed');
+    expect(completionSettled).toHaveBeenCalledWith('rejected');
+    expect(correctiveJudge).toHaveBeenCalledOnce();
+    expect(capability.effectLedger.snapshot().boundaries[1]).toMatchObject({
+      roleId: 'reviewer',
+      correctionBudget: { limit: 1, spent: true },
+    });
+    const writesAtSettlement = backing.writeAhead.mock.calls.length;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(backing.writeAhead).toHaveBeenCalledTimes(writesAtSettlement);
+    expect(correctiveJudge).toHaveBeenCalledOnce();
+  });
 
   it.each(['before', 'after'] as const)(
     'resolves an indeterminate boundary start %s acknowledgement without player work',
@@ -2260,10 +2902,14 @@ describe('schema-3 repository host capabilities', () => {
           resumeToken: 'thread-3',
         };
       },
-      completeEffectBoundary: ({ operation }: any) => ({
-        finalText: operation.value.finalText,
-        semanticCandidate: { guard: 'committed' },
-      }),
+      completeEffectBoundary: ({ operation, outcomeReceipt, receipt }: any) => {
+        expect(receipt.classification).toBe('observation-ambiguous');
+        expect(outcomeReceipt.classification).toBe('one-descendant-commit');
+        return {
+          finalText: operation.value.finalText,
+          semanticCandidate: { guard: 'committed' },
+        };
+      },
     });
     expect(final).toMatchObject({
       status: 'continued',

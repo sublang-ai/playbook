@@ -56,11 +56,19 @@ export interface RuntimeBoundaryCalls {
      * Return the host-acknowledged adjudication performed while a governed
      * repository claim was still held. The value is consumable once.
      */
-    takeGovernedPlayerOutput?(result: PlayerResult): PlaybookActorOutput | undefined;
+    takeGovernedPlayerOutput?(result: PlayerResult): GovernedPlayerSettlement | undefined;
     recordGovernedPlayerOutput?(result: PlayerResult, output: PlaybookActorOutput): void;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
     callCaptain?(input: PlaybookCaptainInput, prompt: string, signal: AbortSignal, callOptions?: XStateCaptainCallOptions): Promise<CaptainResult>;
 }
+/** Host-acknowledged outcome of one governed player reconciliation. */
+type GovernedPlayerSettlement = {
+    readonly status: 'resolved';
+    readonly output: PlaybookActorOutput;
+} | {
+    readonly status: 'unresolved';
+    readonly error: unknown;
+};
 /**
  * Presentation selection for one traced direct-Captain call
  * (slc/link.md §Captain adjudication). `'visible'` (the default) is the
@@ -113,6 +121,8 @@ interface XStateRepositoryExclusiveCompletion<T> {
     readonly boundary: PlaybookEffectBoundary;
     readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
     readonly receipt: PlaybookRepositoryReceipt;
+    /** Physical receipt for an ordinary call; cumulative receipt for a chain. */
+    readonly outcomeReceipt: PlaybookRepositoryReceipt;
 }
 interface XStateDeferredBinding {
     readonly operationId: string;

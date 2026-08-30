@@ -199,6 +199,7 @@ export interface PlaybookEffectBoundary {
     readonly physicalReceipt?: PlaybookRepositoryReceipt;
     readonly finalText?: string;
     readonly semanticCandidate?: JsonValue;
+    readonly initialSemanticCandidate?: JsonValue;
     readonly correctionBudget: {
         readonly limit: 1;
         readonly spent: boolean;
@@ -207,7 +208,7 @@ export interface PlaybookEffectBoundary {
     readonly logicalOperationId?: string;
 }
 /** One physical boundary before the host assigns attempt and sequence data. */
-export type PlaybookEffectBoundaryStart = Omit<PlaybookEffectBoundary, 'sequence' | 'attemptId' | 'attemptNumber' | 'after' | 'physicalReceipt' | 'finalText' | 'semanticCandidate'>;
+export type PlaybookEffectBoundaryStart = Omit<PlaybookEffectBoundary, 'sequence' | 'attemptId' | 'attemptNumber' | 'after' | 'physicalReceipt' | 'finalText' | 'semanticCandidate' | 'initialSemanticCandidate'>;
 /** One deferred logical operation spanning its ordered physical boundaries. */
 export interface PlaybookEffectLogicalOperation {
     readonly sequence: number;

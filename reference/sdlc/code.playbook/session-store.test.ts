@@ -1192,6 +1192,41 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     ).rejects.toThrow(/expected does not match the durable boundary/);
     expect(await readFile(recordPath, 'utf8')).toBe(completedBytes);
 
+    const correctedBoundary = {
+      ...completed.boundaries[0],
+      semanticCandidate: { status: 'corrected' },
+      initialSemanticCandidate: { status: 'ok' },
+    };
+    const corrected = await lease.writeEffectLedger(authority, [
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          { expected: completed.boundaries[0], next: correctedBoundary },
+        ],
+      },
+    ]);
+    expect(corrected.boundaries[0]).toMatchObject({
+      semanticCandidate: { status: 'corrected' },
+      initialSemanticCandidate: { status: 'ok' },
+      correctionBudget: { limit: 1, spent: true },
+    });
+    await expect(
+      lease.writeEffectLedger(authority, [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            {
+              expected: corrected.boundaries[0],
+              next: {
+                ...corrected.boundaries[0],
+                semanticCandidate: { status: 'rewritten-again' },
+              },
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(/one-way correction provenance/);
+
     const consumedOperation = {
       ...completed.logicalOperations[0],
       checkpointRestorationEligible: false,
@@ -1208,7 +1243,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       },
     ]);
     expect(consumed).toMatchObject({
-      revision: 3,
+      revision: 4,
       logicalOperations: [
         {
           checkpointRestorationEligible: false,
@@ -1258,7 +1293,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       orderedReplacementBatch,
     );
     expect(repeated).toMatchObject({
-      revision: 4,
+      revision: 5,
       logicalOperations: [
         {
           checkpointRestorationEligible: true,

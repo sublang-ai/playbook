@@ -1869,6 +1869,7 @@ const EFFECT_BOUNDARY_OPTIONAL_KEYS = [
   'physicalReceipt',
   'finalText',
   'semanticCandidate',
+  'initialSemanticCandidate',
   'cohortId',
   'logicalOperationId',
 ];
@@ -2446,7 +2447,7 @@ function assertMonotonicBoundaryReplacement(expected, next, path) {
     'after',
     'physicalReceipt',
     'finalText',
-    'semanticCandidate',
+    'initialSemanticCandidate',
   ]) {
     if (
       expected[key] !== undefined &&
@@ -2481,6 +2482,41 @@ function assertMonotonicBoundaryReplacement(expected, next, path) {
     (expectedBudget.spent === true && nextBudget.spent !== true)
   ) {
     throw new Error(`${path}.next cannot replenish its correction budget`);
+  }
+  const candidateChanged =
+    expected.semanticCandidate !== undefined &&
+    !isDeepStrictEqual(
+      expected.semanticCandidate,
+      next.semanticCandidate,
+    );
+  if (expected.semanticCandidate === undefined) {
+    if (next.initialSemanticCandidate !== undefined) {
+      throw new Error(
+        `${path}.next cannot add initialSemanticCandidate without replacing a prior candidate`,
+      );
+    }
+  } else if (!candidateChanged) {
+    if (
+      expected.initialSemanticCandidate === undefined &&
+      next.initialSemanticCandidate !== undefined
+    ) {
+      throw new Error(
+        `${path}.next cannot add initialSemanticCandidate without replacing semanticCandidate`,
+      );
+    }
+  } else if (
+    next.semanticCandidate === undefined ||
+    expected.initialSemanticCandidate !== undefined ||
+    expectedBudget.spent !== true ||
+    nextBudget.spent !== true ||
+    !isDeepStrictEqual(
+      next.initialSemanticCandidate,
+      expected.semanticCandidate,
+    )
+  ) {
+    throw new Error(
+      `${path}.next cannot replace semanticCandidate without its spent one-way correction provenance`,
+    );
   }
 }
 

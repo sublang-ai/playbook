@@ -191,6 +191,7 @@ interface PlaybookEffectBoundary {
   readonly physicalReceipt?: PlaybookRepositoryReceipt;
   readonly finalText?: string;
   readonly semanticCandidate?: JsonValue;
+  readonly initialSemanticCandidate?: JsonValue;
   readonly correctionBudget: { readonly limit: 1; readonly spent: boolean };
   readonly cohortId?: string;
   readonly logicalOperationId?: string;
@@ -226,6 +227,7 @@ type PlaybookEffectBoundaryStart = Omit<
   | 'physicalReceipt'
   | 'finalText'
   | 'semanticCandidate'
+  | 'initialSemanticCandidate'
 >;
 
 type PlaybookEffectLogicalOperationStart = Omit<
@@ -395,12 +397,14 @@ interface XStatePlaybookRuntimeConstruction<
 ```
 
 The shared type-only contract module shall export `PlaybookRepositoryDisposition`, `PlaybookRepositoryObservation`, `PlaybookRepositoryReceipt`, `PlaybookEffectBoundary`, `PlaybookEffectBoundaryStart`, `PlaybookEffectLogicalOperation`, `PlaybookEffectLedger`, `PlaybookEffectLedgerCommand`, `PlaybookEffectLedgerCommandBatch`, and `PlaybookEffectLedgerCapability`; the executable `@sublang/playbook/xstate-runtime` module shall export `assertPlaybookEffectLedger`, `emptyPlaybookEffectLedger`, and `isPlaybookEffectLedgerMonotonicExtension` over those types.
+That executable module shall also export the centralized schema-3 semantic surface: `PlaybookSemanticFieldAuthority`, `PlaybookSemanticOutcomeSpec`, `PlaybookSemanticEvidenceInput`, `PlaybookReconciledSemanticOutput`, `PlaybookRetainedSemanticEvidence`, `PlaybookSemanticReconciliationReason`, `PlaybookSemanticReconciliation`, `PlaybookSemanticCandidateStructureError`, and `reconcilePlaybookSemanticEvidence`.
+The pure reconciler shall accept the declared state-local outcomes, an unknown semantic candidate, and optional unknown `finalText`, repository receipt, and runtime-field evidence; shall return a detached frozen `resolved` or `deferred` decision with exact output and retained evidence, or an `unresolved` decision with retained evidence and one closed reason from `missing-presentation-evidence`, `missing-repository-receipt`, `invalid-repository-receipt`, `repository-disposition-mismatch`, `missing-effect-evidence`, `missing-runtime-evidence`, and `inconsistent-runtime-evidence`; and shall reserve `PlaybookSemanticCandidateStructureError` for candidate defects eligible for the bounded correction path rather than effect-evidence disagreement.
 The empty ledger shall be exactly `{ schemaVersion: 1, revision: 0, boundaries: [], logicalOperations: [] }`, and revision shall be zero if and only if both ordered ledgers are empty.
 The validator shall capture the complete supplied ledger once as detached frozen JSON and enforce every closed member, identity, ordering, receipt, cross-reference, correction-budget, and logical-operation invariant represented above.
 One optional host-owned UUID `cohortId` shall identify every member of exactly one contiguous, distinct-role, all-`unchanged` physical cohort in declared role order; every member shall share attempt, playbook, runtime-session, turn, canonical-worktree, and baseline identity and shall be uniformly started or uniformly complete, complete members shall carry the identical after observation and receipt, and the id shall never be reused by another group.
 Within a logical operation, `checkpoint`, `pendingQuestion`, and `playerContinuation` shall be all present or all absent; the pending question shall preserve its exact nonempty authored identity and nonblank content, and `checkpointRestorationEligible: true` shall require that complete bound group.
 Each logical operation shall reciprocally name every and only boundary carrying its operation id, share those boundaries' playbook and runtime-session identity, and use its first boundary's exact baseline as `originalBaseline`; every linked boundary shall use that baseline's canonical worktree and, after the first, start from the preceding boundary's complete after checkpoint, while a logical receipt shall require every linked physical receipt.
-`isPlaybookEffectLedgerMonotonicExtension(checkpoint, current)` shall accept exact equality and only a ledger reachable through the typed append-or-replace transitions without boundary or operation deletion, identity or original-baseline reassignment, correction-budget replenishment, completed-receipt or evidence loss, or removal or reordering of an earlier boundary-id prefix. A replacement may append boundary ids and replace or clear the complete current checkpoint, pending-question, and player-continuation group together with its eligibility, while an existing logical receipt remains immutable ([DR-040](../specs/decisions/040-outcome-authority-effect-reconciliation.md)).
+`isPlaybookEffectLedgerMonotonicExtension(checkpoint, current)` shall accept exact equality and only a ledger reachable through the typed append-or-replace transitions without boundary or operation deletion, identity or original-baseline reassignment, correction-budget replenishment, completed-receipt or evidence loss, or removal or reordering of an earlier boundary-id prefix. A spent correction may replace `semanticCandidate` exactly once only while adding `initialSemanticCandidate` equal to the prior candidate; that initial candidate then remains immutable. A replacement may append boundary ids and replace or clear the complete current checkpoint, pending-question, and player-continuation group together with its eligibility, while an existing logical receipt remains immutable ([DR-040](../specs/decisions/040-outcome-authority-effect-reconciliation.md)).
 Every accepted non-idempotent command batch shall increment revision once; an exact start or append replay under the same boundary or operation identities and payload shall return the same acknowledged ledger, while conflicting identity reuse shall reject without mutation.
 The host shall assign each started boundary's sequence, current uncertain-attempt UUID, and positive attempt number, and shall assign each appended logical operation's sequence.
 Every command batch and every command's entry list shall be nonempty; the host shall apply its commands in order as one ledger transition, perform final cross-reference validation after the complete batch, and acknowledge only one atomic persistence and revision increment.
@@ -1036,7 +1040,8 @@ clause (or equivalent typed output metadata). Backticked prose before that
 clause can name statuses, guards, or concepts such as `ok`, `aborted`, and
 `error`; those names are not output properties and shall never become required
 judge fields.
-For a delegated-player field annotated exactly `` `<field>: <verbatim final text>` ``, the judge shall select the guard but the runtime shall replace any judge-supplied value with the player's canonical non-empty final text before returning the actor output.
+For an artifact-schema-2 or nongoverned delegated-player field annotated exactly `` `<field>: <verbatim final text>` ``, the judge shall select the guard but the runtime shall replace any judge-supplied value with the player's canonical non-empty final text before returning the actor output.
+For an artifact-schema-3 governed field, that annotation instead declares presentation authority and any judge-supplied value is a structural error under the authority rule below.
 The linker shall derive the complete `verbatimPayloadFields` set from those annotations across the FSM result maps.
 A field name that is annotated in one result map and unannotated in another is a link error because the shared adjudication strategy cannot give one property both ownership policies.
 For a direct Captain result, `question` and `response` are human-presentation
@@ -1049,13 +1054,90 @@ After validating that selection, the runtime shall inject the exact non-empty
 It shall reject a judge reply that supplies either presentation field as an
 undeclared extra key, so hidden adjudication cannot replace, paraphrase, or
 decorate prose Boss already saw.
-Delegated-player adjudication retains extraction of every required field from
-the judge reply, including a player-authored Boss question.
+Artifact-schema-2 delegated-player adjudication retains extraction of every
+required field from the judge reply, including a player-authored Boss
+question.
+For an artifact-schema-3 governed delegated-player call, the shared engine
+shall instead use one semantic reconciler for both the default linked runtime
+and any bespoke linked runtime that adopts schema `3`.
+That reconciler shall retain the validated player's exact non-empty
+`finalText` as opaque presentation evidence, let the hidden adjudicator read
+it only as semantic evidence, and require the adjudicator's detached
+plain-JSON candidate to contain exactly `guard` plus every and only
+semantic-owned payload field declared for that guard.
+The candidate shall therefore contain no presentation-, effect-, or
+runtime-owned payload field; `guard` shall name exactly one outcome declared
+by both the live result map and `outcomeAuthority`; and every semantic-owned
+field shall satisfy the result map's required-field type before any actor
+output is delivered.
+The reconciler shall construct the complete actor output rather than accept a
+cross-authority object from the judge: every presentation-owned payload field
+shall receive the canonical `finalText.trim()` value, effect-owned
+`latestCommit` shall receive only the qualifying receipt's exact commit OID,
+and no authority may supply, overwrite, or contradict another authority's
+field.
+It shall reject an absent required field, an undeclared or extra field, a
+field supplied by the wrong authority, an invalid value, or any mutually
+inconsistent candidate before FSM delivery.
+
+For a non-deferred candidate, reconciliation shall require a complete durable
+physical receipt, or the complete cumulative logical receipt of a deferred
+operation, whose classification is exactly the outcome's declared
+`unchanged` or `one-descendant-commit` disposition; the latter shall carry
+exactly the after-HEAD OID used for `latestCommit`.
+A `deferred` candidate shall be admissible only for its already-validated
+effect-authorized `needsBossReply` outcome and only from a complete after
+observation whose HEAD equals the logical operation's original baseline HEAD
+and whose classification is exactly `unchanged` or `worktree-only-change`.
+It shall become deliverable only after the current host durably acknowledges
+the exact checkpoint, question, continuation, and logical-operation binding
+defined above; a missing checkpoint, changed HEAD, multiple or rewritten
+history, detected concurrent or foreign change, or ambiguous observation
+shall leave it unresolved.
+
+The first structurally invalid schema-3 semantic reply shall make at most one
+corrective hidden adjudication eligible over the identical retained
+presentation evidence and declared outcome schema, with the validation error
+restated.
+Before starting that corrective judge, the runtime shall compare-and-swap the
+boundary's `correctionBudget` from `{ limit: 1, spent: false }` to
+`{ limit: 1, spent: true }` while atomically retaining its receipt, opaque
+presentation, and first recoverable invalid `semanticCandidate` through
+`effectLedger.writeAhead`, await the durable acknowledgement, replace its
+mirror with that acknowledged ledger, and check the applicable abort signal
+again.
+A failed or indeterminate spend, an acknowledgement that does not contain the
+exact one-way update, a previously spent budget, or an abort before the call
+begins shall start no corrective judge; the spent value shall remain spent
+across export, restore, adoption, and process restart.
+A second structurally invalid reply shall receive no further correction.
+A player abort, error, non-`ok` result, or missing non-empty `finalText` shall
+start no adjudication, while an initial or corrective judge transport failure
+or invalid host result shall start no corrective or third judge respectively.
+
+Only a complete, authority-consistent semantic-and-effect envelope shall be
+delivered once to the FSM, and only after its evidence and applicable
+correction-budget or deferred-operation updates are durably acknowledged.
+The completion path shall retain the opaque `finalText`, the latest recoverable
+detached plain-JSON semantic candidate even when it is structurally invalid,
+and the receipt and correction budget without parsing the presentation for a
+repository fact; where a correction replaces that candidate, immutable
+`initialSemanticCandidate` shall preserve the candidate that consumed the
+budget, while a malformed reply from which no JSON value can be recovered may
+omit both candidates.
+An effect-possible envelope whose presentation, semantic, effect, or deferred
+checkpoint evidence is absent, invalid, incomplete, or inconsistent shall
+deliver no actor output and shall remain parked for later reconciliation;
+once its matching source state is restored, reconstruction from a durable
+complete envelope may perform that same reconciliation once without another
+player or judge call.
 The adjudicator shall use the same document-order tolerant JSON recovery as
 the Boss classifier. Unlike invalid classification, a reply from which no
 object can be recovered, an undeclared guard, or a missing required field is a
-control-plane error and shall throw after the invocation reaches its FSM error
-path and ordered emissions drain.
+control-plane error for artifact schema `2` and direct-Captain adjudication and
+shall throw after the invocation reaches its FSM error path and ordered
+emissions drain; schema-3 governed adjudication follows the bounded
+reconciliation contract above instead.
 
 Two default adjudication strategies, in selection order:
 
@@ -1063,9 +1145,11 @@ Two default adjudication strategies, in selection order:
   names the source item's actor (and delegated player where applicable),
   includes the actor's verbatim output,
   lists the `result` keys with their descriptions, and demands a JSON
-  `{ guard, …structuralPayloadFields }` answer keyed to exactly one of the
-  declared guards, excluding the runtime-owned direct-Captain `question` and
-  `response` fields above. The prompt shall identify hidden control work,
+  answer keyed to exactly one of the declared guards: schema `2` uses
+  `{ guard, …structuralPayloadFields }`, while a governed schema-3 player uses
+  `{ guard, …semanticOwnedPayloadFields }` and explicitly forbids every other
+  payload field. Both forms exclude the runtime-injected direct-Captain
+  `question` and `response` fields above. The prompt shall identify hidden control work,
   prohibit tool use, file inspection, and external evidence, direct the judge
   to decide only from the supplied actor output and declared outcomes, and
   require exactly one JSON object with no prose. The judge prompt shall not
@@ -1138,7 +1222,7 @@ the `{ visibility: 'visible', resume: false }` workflow-call selection
 (§PlaybookPorts contract, §Captain prompt composition) stay the
 visible-presentation shape for non-controller playbooks.
 
-The adjudicator shall fail loudly on:
+The artifact-schema-2 player adjudicator and every direct-Captain adjudicator shall fail loudly on:
 
 - A guard the state does not declare,
 - A missing payload field the state's `result` description requires,
@@ -1150,7 +1234,7 @@ identify an undeclared guard, and an incomplete selection shall identify the
 missing required field. A generic “no declared guard selected” error for all
 three cases is nonconformant.
 
-Adjudicator failures are control-plane errors.
+Those adjudicator failures are control-plane errors.
 The runtime shall propagate them by throwing out of `handleBossInput` after attempting cleanup.
 The host adapter surfaces the throw on its control-plane channel (cligent surfaces such throws as `runtime_error` per [TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025)).
 The host's player-result channels (`player_finished` and equivalents) are reserved for failures the player itself produced; the host emits them when `callPlayer` resolves with `status !== 'ok'`.
@@ -1160,11 +1244,12 @@ failure path specified above. Captain transport, result-shape, trace-sink, and
 adjudication failures remain control-plane errors unless the transport failure
 is causally identical to the active abort signal.
 Because XState still needs the invoked promise to settle, the linked runtime
-shall latch an adjudicator, actor-output JSON-validation, or nested-boundary
+shall latch an artifact-schema-2 or direct-Captain adjudicator failure, actor-output JSON-validation, or nested-boundary
 control error outside machine context, allow the invocation's `onError` path to
 reach quiescence, drain all emissions, and then reject the public runtime
 method with that original error. It shall not return such a failure as a
 recoverable `{ outcome: 'failed' }` workflow result.
+An artifact-schema-3 governed-player adjudicator shall instead use the bounded structural correction, authority reconciliation, and unresolved parking contract above.
 The first latched non-abort control error takes precedence over a coincident
 boundary-signal abort. Read and clear the latch only in the public boundary's
 `finally` cleanup after XState and emissions have settled, so it cannot leak

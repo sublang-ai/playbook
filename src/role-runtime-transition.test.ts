@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { assign, createMachine } from 'xstate';
+import { assign, createActor, createMachine, fromPromise } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
   PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
   PlaybookPorts,
   PlaybookRepositoryObservation,
   PlaybookRepositoryReceipt,
@@ -18,7 +19,9 @@ import {
   adjudicatePlayerOutput,
   assertPlaybookEffectLedger,
   createXStatePlaybookRuntime,
+  detachPersistedMachineSnapshot,
   emptyPlaybookEffectLedger,
+  normalizePlaybookSnapshot,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
   type XStateOutcomeAuthoritySpec,
@@ -47,11 +50,17 @@ const EFFECT_CHANGED_OBSERVATION = Object.freeze({
 function emptyLedgerHostCapabilities(
   options: {
     readonly classifications?: readonly PlaybookRepositoryReceipt['classification'][];
+    readonly acknowledgedClassifications?: readonly PlaybookRepositoryReceipt['classification'][];
     readonly attemptId?: string;
     readonly initialLedger?: PlaybookEffectLedger;
     readonly startAcknowledgement?: Promise<void>;
     readonly completionAcknowledgement?: Promise<void>;
     readonly finalWriteAcknowledgement?: Promise<void>;
+    readonly correctionWriteAcknowledgement?: Promise<void>;
+    readonly afterCorrectionWrite?: () => void;
+    readonly failCorrectionWrite?: boolean;
+    readonly mismatchCorrectionAcknowledgement?: boolean;
+    readonly omitAcknowledgedSemanticCandidate?: boolean;
     readonly failCompletionAt?: readonly number[];
     readonly failAfterCompletionAt?: readonly number[];
   } = {},
@@ -114,6 +123,7 @@ function emptyLedgerHostCapabilities(
     boundary: Record<string, unknown>,
     operation: Record<string, unknown>,
     receipt: PlaybookRepositoryReceipt,
+    outcomeReceipt: PlaybookRepositoryReceipt,
   ) =>
     (input.completeEffectBoundary as (value: unknown) => Promise<{
       readonly finalText?: string;
@@ -133,7 +143,7 @@ function emptyLedgerHostCapabilities(
         readonly playerContinuation: unknown;
       };
       readonly unresolved?: true;
-    })({ boundary, operation, receipt });
+    })({ boundary, operation, receipt, outcomeReceipt });
   const completedBoundary = (
     started: Record<string, unknown>,
     receipt: PlaybookRepositoryReceipt,
@@ -142,18 +152,28 @@ function emptyLedgerHostCapabilities(
       readonly semanticCandidate?: unknown;
     },
     logicalOperationId?: string,
-  ) => ({
-    ...started,
-    ...(receipt.after === undefined ? {} : { after: receipt.after }),
-    physicalReceipt: receipt,
-    ...(completion.finalText === undefined
-      ? {}
-      : { finalText: completion.finalText }),
-    ...(completion.semanticCandidate === undefined
-      ? {}
-      : { semanticCandidate: completion.semanticCandidate }),
-    ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
-  });
+  ) => {
+    const candidateChanged =
+      Object.prototype.hasOwnProperty.call(started, 'semanticCandidate') &&
+      completion.semanticCandidate !== undefined &&
+      JSON.stringify(started.semanticCandidate) !==
+        JSON.stringify(completion.semanticCandidate);
+    return {
+      ...started,
+      ...(receipt.after === undefined ? {} : { after: receipt.after }),
+      physicalReceipt: receipt,
+      ...(completion.finalText === undefined
+        ? {}
+        : { finalText: completion.finalText }),
+      ...(completion.semanticCandidate === undefined
+        ? {}
+        : { semanticCandidate: completion.semanticCandidate }),
+      ...(candidateChanged
+        ? { initialSemanticCandidate: started.semanticCandidate }
+        : {}),
+      ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
+    };
+  };
   const updateObservation = (receipt: PlaybookRepositoryReceipt) => {
     if (receipt.after !== undefined) observation = receipt.after;
   };
@@ -192,24 +212,52 @@ function emptyLedgerHostCapabilities(
       throw new Error('effect boundary completion acknowledgement unavailable');
     }
     const classification = options.classifications?.[currentCallIndex] ?? 'unchanged';
-    const receipt = receiptFor(classification, baseline, currentCallIndex);
-    updateObservation(receipt);
-    const completion = await completionFor(input, started, operation, receipt);
+    const outcomeReceipt = receiptFor(
+      classification,
+      baseline,
+      currentCallIndex,
+    );
+    updateObservation(outcomeReceipt);
+    const completion = await completionFor(
+      input,
+      started,
+      operation,
+      outcomeReceipt,
+      outcomeReceipt,
+    );
     await options.finalWriteAcknowledgement;
     if (options.failAfterCompletionAt?.includes(currentCallIndex)) {
       throw new Error('effect boundary final write acknowledgement unavailable');
     }
+    const acknowledgedClassification =
+      options.acknowledgedClassifications?.[currentCallIndex] ??
+      classification;
+    const receipt = receiptFor(
+      acknowledgedClassification,
+      baseline,
+      currentCallIndex,
+    );
+    updateObservation(receipt);
     const operationId = completion.deferred?.operationId;
     const eligible =
       completion.deferred !== undefined &&
       receipt.after !== undefined &&
       receipt.after.head === baseline.head &&
-      (classification === 'unchanged' ||
-        classification === 'worktree-only-change');
+      (acknowledgedClassification === 'unchanged' ||
+        acknowledgedClassification === 'worktree-only-change');
+    const acknowledgedStart =
+      ledger.boundaries.find(
+        ({ boundaryId }) => boundaryId === started.boundaryId,
+      ) ?? started;
+    const acknowledgedCompletion = options.omitAcknowledgedSemanticCandidate
+      ? (({ semanticCandidate: _candidate, ...evidence }) => evidence)(
+          completion,
+        )
+      : completion;
     const completed = completedBoundary(
-      started,
+      acknowledgedStart,
       receipt,
-      completion,
+      acknowledgedCompletion,
       operationId,
     );
     ledger = assertPlaybookEffectLedger({
@@ -366,7 +414,21 @@ function emptyLedgerHostCapabilities(
     const classification = options.classifications?.[currentCallIndex] ?? 'unchanged';
     const receipt = receiptFor(classification, baseline, currentCallIndex);
     updateObservation(receipt);
-    const completion = await completionFor(input, started, operation, receipt);
+    const logicalReceipt: PlaybookRepositoryReceipt = {
+      classification,
+      baseline: logical.originalBaseline,
+      ...(receipt.after === undefined ? {} : { after: receipt.after }),
+      ...(classification === 'one-descendant-commit' && receipt.commitOid
+        ? { commitOid: receipt.commitOid }
+        : {}),
+    };
+    const completion = await completionFor(
+      input,
+      started,
+      operation,
+      receipt,
+      logicalReceipt,
+    );
     await options.finalWriteAcknowledgement;
     if (options.failAfterCompletionAt?.includes(currentCallIndex)) {
       throw new Error('deferred completion write acknowledgement unavailable');
@@ -377,15 +439,16 @@ function emptyLedgerHostCapabilities(
       receipt.after.head === logical.originalBaseline.head &&
       (classification === 'unchanged' ||
         classification === 'worktree-only-change');
-    const completed = completedBoundary(started, receipt, completion, operationId);
-    const logicalReceipt: PlaybookRepositoryReceipt = {
-      classification,
-      baseline: logical.originalBaseline,
-      ...(receipt.after === undefined ? {} : { after: receipt.after }),
-      ...(classification === 'one-descendant-commit' && receipt.commitOid
-        ? { commitOid: receipt.commitOid }
-        : {}),
-    };
+    const acknowledgedStart =
+      ledger.boundaries.find(
+        ({ boundaryId }) => boundaryId === started.boundaryId,
+      ) ?? started;
+    const completed = completedBoundary(
+      acknowledgedStart,
+      receipt,
+      completion,
+      operationId,
+    );
     const nextLogical =
       completion.deferred !== undefined && eligible
         ? {
@@ -423,7 +486,49 @@ function emptyLedgerHostCapabilities(
     repository: { runExclusive, runDeferred },
     effectLedger: {
       snapshot: () => ledger,
-      writeAhead: async () => ledger,
+      writeAhead: vi.fn(
+        async (
+          commands: PlaybookEffectLedgerCommandBatch,
+        ): Promise<PlaybookEffectLedger> => {
+          if (
+            commands.length !== 1 ||
+            commands[0].kind !== 'replace-boundaries'
+          ) {
+            throw new Error(
+              'test effect ledger accepts only one replace-boundaries command',
+            );
+          }
+          const replacements = commands[0].replacements;
+          const boundaries = [...ledger.boundaries];
+          for (const { expected, next } of replacements) {
+            const index = boundaries.findIndex(
+              ({ boundaryId }) => boundaryId === expected.boundaryId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(boundaries[index]) !== JSON.stringify(expected)
+            ) {
+              throw new Error('effect ledger replace-boundaries CAS failed');
+            }
+            boundaries[index] = next;
+          }
+          if (options.failCorrectionWrite) {
+            throw new Error('effect ledger correction spend unavailable');
+          }
+          const priorLedger = ledger;
+          const nextLedger = assertPlaybookEffectLedger({
+            ...ledger,
+            revision: ledger.revision + 1,
+            boundaries,
+          });
+          await options.correctionWriteAcknowledgement;
+          ledger = nextLedger;
+          options.afterCorrectionWrite?.();
+          return options.mismatchCorrectionAcknowledgement
+            ? priorLedger
+            : ledger;
+        },
+      ),
     },
     replaceEffectLedger(next: PlaybookEffectLedger) {
       ledger = assertPlaybookEffectLedger(next);
@@ -515,6 +620,63 @@ const repeatMachine = createMachine({
         onDone: 'ready',
         onError: 'ready',
       },
+    },
+  },
+});
+
+const semanticEvidenceMachine = createMachine({
+  id: 'role-semantic-evidence',
+  context: {
+    task: '',
+    delivered: undefined as Record<string, unknown> | undefined,
+  },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            delivered: () => undefined,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-SEMANTIC-1',
+          prompt: `Implement ${context.task}.`,
+          result: {
+            complete:
+              'The task is complete. Output includes `message`, `irNumber`, and `latestCommit`.',
+          },
+        }),
+        onDone: {
+          target: 'delivered',
+          actions: assign({
+            delivered: ({ event }) =>
+              (event as { output: Record<string, unknown> }).output,
+          }),
+        },
+        onError: 'unresolved',
+      },
+    },
+    delivered: {
+      meta: stateMeta('delivered', 'The reconciled result was delivered.'),
+      tags: ['playbook.parked'],
+    },
+    unresolved: {
+      meta: stateMeta('unresolved', 'Semantic evidence remains unresolved.'),
+      tags: ['playbook.parked'],
     },
   },
 });
@@ -830,6 +992,31 @@ const effectAuthorizedRepeatOutcomeAuthority: XStateOutcomeAuthoritySpec = {
   },
 };
 
+const semanticEffectOutcomeAuthority: XStateOutcomeAuthoritySpec = {
+  governedPlayerStates: {
+    work: {
+      complete: {
+        fields: {
+          message: 'presentation',
+          irNumber: 'semantic',
+          latestCommit: 'effect',
+        },
+        repositoryDisposition: 'one-descendant-commit',
+      },
+    },
+  },
+};
+
+function semanticEvidenceSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    ...repeatSchema3Spec(),
+    label: 'ROLE-SEMANTIC',
+    extractRequiredFields: () => ['message', 'irNumber', 'latestCommit'],
+    verbatimPayloadFields: new Set(['message']),
+    outcomeAuthority: semanticEffectOutcomeAuthority,
+  };
+}
+
 function repeatSchema3Spec(
   overrides: Partial<XStatePlaybookRuntimeSpecV3<EmptyOptions>> = {},
 ): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
@@ -841,13 +1028,16 @@ function repeatSchema3Spec(
   };
 }
 
-function retrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+function retrySchema3Spec(
+  overrides: Partial<XStatePlaybookRuntimeSpecV3<EmptyOptions>> = {},
+): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
   return repeatSchema3Spec({
     entryEvent: {
       type: 'START',
       textField: 'task',
       contextField: 'task',
     },
+    ...overrides,
   });
 }
 
@@ -1330,6 +1520,14 @@ describe('DR-032 shared role runtime transition', () => {
           },
         }),
       ),
+    ).toThrow(
+      'outcomeAuthority deferred state work must be registered in resumableStateIds',
+    );
+    expect(() =>
+      createXStatePlaybookRuntime(
+        deferredBossMachine,
+        deferredBossSchema3Spec(),
+      ),
     ).not.toThrow();
 
     const authorityGetter = vi.fn(() => repeatOutcomeAuthority);
@@ -1787,11 +1985,16 @@ describe('DR-032 shared role runtime transition', () => {
     )({ configuredOptions: {}, hostCapabilities: emptyLedgerHostCapabilities() });
     await runtime.init(session(recordingPorts(callPlayer)));
 
-    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
-      'missing required field "__proto__"',
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { outcome: 'quiescent', state: { stateId: 'ready' } },
     );
 
     expect(callPlayer).toHaveBeenCalledTimes(1);
+    expect(runtime.exportSnapshot?.()?.effectLedger.boundaries[0]).toMatchObject({
+      finalText: 'done',
+      semanticCandidate: { guard: 'complete' },
+      correctionBudget: { limit: 1, spent: false },
+    });
     await runtime.dispose();
 
     const adjudicated = await adjudicatePlayerOutput(
@@ -1814,6 +2017,793 @@ describe('DR-032 shared role runtime transition', () => {
     expect(
       Object.getOwnPropertyDescriptor(adjudicated, '__proto__')?.value,
     ).toBe('exact player prose');
+  });
+
+  it('reconciles semantic, effect, and opaque presentation evidence before FSM delivery', async () => {
+    const foreignOid = 'f'.repeat(40);
+    const finalText = `Implemented without claiming ${foreignOid}.`;
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText,
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      '{"guard":"complete","irNumber":"048"}',
+    );
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'delivered' } },
+    );
+
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.machine).toMatchObject({
+      context: {
+        delivered: {
+          guard: 'complete',
+          message: finalText,
+          irNumber: '048',
+          latestCommit: '2'.repeat(40),
+        },
+      },
+    });
+    expect(snapshot?.effectLedger.boundaries[0]).toMatchObject({
+      finalText,
+      semanticCandidate: { guard: 'complete', irNumber: '048' },
+      physicalReceipt: {
+        classification: 'one-descendant-commit',
+        commitOid: '2'.repeat(40),
+      },
+      correctionBudget: { limit: 1, spent: false },
+    });
+    expect(
+      JSON.stringify(snapshot?.effectLedger.boundaries[0]?.semanticCandidate),
+    ).not.toContain(foreignOid);
+    await runtime.dispose();
+  });
+
+  it('rejects a host acknowledgement that changes reconciled effect evidence', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      acknowledgedClassifications: ['unchanged'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      '{"guard":"complete","irNumber":"048"}',
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'did not acknowledge the exact governed semantic evidence',
+    );
+
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(
+      (runtime.exportSnapshot?.()?.machine as {
+        context?: { delivered?: unknown };
+      }).context?.delivered,
+    ).toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it('delivers one complete retained envelope once and parks when its candidate is missing', async () => {
+    const finalText = 'Implemented from durable evidence.';
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText,
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      '{"guard":"complete","irNumber":"048"}',
+    );
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const completed = createRuntime();
+    await completed.init(boundSession);
+    await completed.handleBossInput(bossTurn('the task'));
+    const completedSnapshot = completed.exportSnapshot?.();
+    expect(completedSnapshot).toBeDefined();
+    await completed.dispose();
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+
+    const suspendedActor = createActor(
+      semanticEvidenceMachine.provide({
+        actors: {
+          player: fromPromise(
+            () => new Promise<Record<string, unknown>>(() => undefined),
+          ),
+        },
+      }),
+    );
+    suspendedActor.start();
+    suspendedActor.send({ type: 'START', task: 'the task' });
+    expect(normalizePlaybookSnapshot(suspendedActor.getSnapshot()).stateId).toBe(
+      'work',
+    );
+    const retainedMachine = detachPersistedMachineSnapshot(
+      suspendedActor.getPersistedSnapshot(),
+    );
+    const retainedState = normalizePlaybookSnapshot(
+      suspendedActor.getSnapshot(),
+    );
+    suspendedActor.stop();
+    const restartSnapshot = {
+      ...completedSnapshot!,
+      machine: retainedMachine,
+      state: retainedState,
+      pendingBossQuestions: [],
+      retainedEffectSourceSessionId: boundSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: boundSession.sessionId,
+        checkpoint: emptyPlaybookEffectLedger(),
+      },
+    };
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, restartSnapshot);
+    await vi.waitFor(() => {
+      expect(restored.describe?.().state.stateId).toBe('delivered');
+    });
+    expect(restored.exportSnapshot?.()?.machine).toMatchObject({
+      context: {
+        delivered: {
+          guard: 'complete',
+          message: finalText,
+          irNumber: '048',
+          latestCommit: '2'.repeat(40),
+        },
+      },
+    });
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(restored.exportSnapshot?.()).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await restored.dispose();
+
+    const retainedBoundary = completedSnapshot!.effectLedger.boundaries[0]!;
+    const { semanticCandidate: _candidate, ...withoutCandidate } =
+      retainedBoundary;
+    const missingCandidateLedger = assertPlaybookEffectLedger({
+      ...completedSnapshot!.effectLedger,
+      revision: completedSnapshot!.effectLedger.revision + 1,
+      boundaries: [withoutCandidate],
+    });
+    hostCapabilities.replaceEffectLedger(missingCandidateLedger);
+    const missingCandidateSnapshot = {
+      ...restartSnapshot,
+      effectLedger: missingCandidateLedger,
+    };
+    const fenced = createRuntime();
+    await fenced.restore?.(boundSession, missingCandidateSnapshot);
+    await vi.waitFor(() => {
+      expect(fenced.describe?.().state.stateId).toBe('unresolved');
+    });
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(
+      fenced.exportSnapshot?.()?.effectLedger.boundaries[0]
+        ?.semanticCandidate,
+    ).toBeUndefined();
+    expect(fenced.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await fenced.dispose();
+
+    const operationId = '60000000-0000-4000-8000-000000000006';
+    const linkedBoundary = {
+      ...retainedBoundary,
+      logicalOperationId: operationId,
+    };
+    const openLogicalLedger = assertPlaybookEffectLedger({
+      ...completedSnapshot!.effectLedger,
+      revision: completedSnapshot!.effectLedger.revision + 1,
+      boundaries: [linkedBoundary],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId: linkedBoundary.playbookId,
+          runtimeSessionId: linkedBoundary.runtimeSessionId,
+          boundaryIds: [linkedBoundary.boundaryId],
+          originalBaseline: linkedBoundary.baseline,
+          checkpoint: linkedBoundary.after,
+          pendingQuestion: {
+            questionId: 'work',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: 'Which target?',
+          },
+          playerContinuation: false,
+          checkpointRestorationEligible: false,
+        },
+      ],
+    });
+    hostCapabilities.replaceEffectLedger(openLogicalLedger);
+    const openLogical = createRuntime();
+    await openLogical.restore?.(boundSession, {
+      ...restartSnapshot,
+      effectLedger: openLogicalLedger,
+    });
+    await vi.waitFor(() => {
+      expect(openLogical.describe?.().state.stateId).toBe('unresolved');
+    });
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(openLogical.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await openLogical.dispose();
+  });
+
+  it('awaits the durable correction spend before one corrective judge call', async () => {
+    let acknowledgeCorrection!: () => void;
+    const correctionWriteAcknowledgement = new Promise<void>((resolve) => {
+      acknowledgeCorrection = resolve;
+    });
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      correctionWriteAcknowledgement,
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce(
+        '{"guard":"complete","irNumber":"048","message":"forged"}',
+      )
+      .mockResolvedValueOnce('{"guard":"complete","irNumber":"048"}');
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    const pending = runtime.handleBossInput(bossTurn('the task'));
+    await vi.waitFor(() => {
+      expect(hostCapabilities.effectLedger.writeAhead).toHaveBeenCalledOnce();
+    });
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(
+      hostCapabilities.effectLedger.snapshot().boundaries[0]?.correctionBudget,
+    ).toEqual({ limit: 1, spent: false });
+    acknowledgeCorrection();
+
+    await expect(pending).resolves.toMatchObject({
+      state: { stateId: 'delivered' },
+    });
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    expect(callJudge.mock.calls[1]?.[0]).toContain(
+      'extra or wrongly owned message',
+    );
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({
+        semanticCandidate: { guard: 'complete', irNumber: '048' },
+        initialSemanticCandidate: {
+          guard: 'complete',
+          irNumber: '048',
+          message: 'forged',
+        },
+        correctionBudget: { limit: 1, spent: true },
+      });
+    await runtime.dispose();
+  });
+
+  it.each([
+    [
+      'missing semantic field',
+      '{"guard":"complete"}',
+      { guard: 'complete' },
+    ],
+    [
+      'wrongly owned presentation field',
+      '{"guard":"complete","irNumber":"048","message":"forged"}',
+      { guard: 'complete', irNumber: '048', message: 'forged' },
+    ],
+    [
+      'undeclared extra field',
+      '{"guard":"complete","irNumber":"048","rogue":"value"}',
+      { guard: 'complete', irNumber: '048', rogue: 'value' },
+    ],
+    ['malformed reply', 'not JSON', undefined],
+  ])('parks after a second structurally invalid %s candidate', async (
+    _label,
+    reply,
+    expectedCandidate,
+  ) => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () => reply);
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(
+      session({ ...recordingPorts(callPlayer), callJudge }),
+    );
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'unresolved' } },
+    );
+
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    expect(hostCapabilities.effectLedger.writeAhead).toHaveBeenCalledOnce();
+    const completedBoundary =
+      hostCapabilities.effectLedger.snapshot().boundaries[0];
+    expect(completedBoundary).toMatchObject({
+      finalText: 'Implemented.',
+      correctionBudget: { limit: 1, spent: true },
+    });
+    if (expectedCandidate === undefined) {
+      expect(completedBoundary).not.toHaveProperty('semanticCandidate');
+    } else {
+      expect(completedBoundary?.semanticCandidate).toEqual(expectedCandidate);
+    }
+    expect(
+      (runtime.exportSnapshot?.()?.machine as {
+        context?: { delivered?: unknown };
+      }).context?.delivered,
+    ).toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it('retains a valid candidate but parks an inconsistent repository receipt', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['multiple-commits'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      '{"guard":"complete","irNumber":"048"}',
+    );
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'unresolved' } },
+    );
+
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.effectLedger.boundaries[0]).toMatchObject({
+      semanticCandidate: { guard: 'complete', irNumber: '048' },
+      physicalReceipt: { classification: 'multiple-commits' },
+      correctionBudget: { limit: 1, spent: false },
+    });
+    expect(hostCapabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
+    expect(callJudge).toHaveBeenCalledOnce();
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    expect(restored.describe?.().state.stateId).toBe('unresolved');
+    await restored.handleBossInput(bossTurn('no authored transition'));
+    expect(callJudge).toHaveBeenCalledOnce();
+    await restored.dispose();
+  });
+
+  it('rejects an unresolved acknowledgement that drops retained semantic evidence', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['multiple-commits'],
+      omitAcknowledgedSemanticCandidate: true,
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      '{"guard":"complete","irNumber":"048"}',
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'did not acknowledge the exact governed semantic evidence',
+    );
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('semanticCandidate');
+    await runtime.dispose();
+  });
+
+  it('parks judge transport failures without spending correction budget', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () => {
+      throw new Error('judge transport unavailable');
+    });
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(
+      session({ ...recordingPorts(callPlayer), callJudge }),
+    );
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'unresolved' } },
+    );
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({ correctionBudget: { limit: 1, spent: false } });
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('semanticCandidate');
+    await runtime.dispose();
+  });
+
+  it('parks a non-string judge result without correction or retained candidate', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+      ({ guard: 'complete' }) as unknown as string,
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'unresolved' } },
+    );
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({ correctionBudget: { limit: 1, spent: false } });
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('semanticCandidate');
+    await runtime.dispose();
+  });
+
+  it.each([
+    [
+      'aborted result',
+      { status: 'aborted', finalText: 'non-authoritative diagnostic' },
+      1,
+    ],
+    [
+      'error result',
+      {
+        status: 'error',
+        error: 'player failed',
+        finalText: 'non-authoritative diagnostic',
+      },
+      1,
+    ],
+    ['missing finalText', { status: 'ok' }, 2],
+  ] as const)(
+    'starts no semantic adjudication for a player %s',
+    async (_label, playerResult, expectedPlayerCalls) => {
+      const hostCapabilities = emptyLedgerHostCapabilities({
+        classifications: Array(expectedPlayerCalls).fill('unchanged'),
+      });
+      const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () =>
+        playerResult,
+      );
+      const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+        '{"guard":"complete","irNumber":"048"}',
+      );
+      const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+      await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+      await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+        { state: { stateId: 'unresolved' } },
+      );
+      expect(callPlayer).toHaveBeenCalledTimes(expectedPlayerCalls);
+      expect(callJudge).not.toHaveBeenCalled();
+      for (const boundary of hostCapabilities.effectLedger.snapshot().boundaries) {
+        expect(boundary).not.toHaveProperty('semanticCandidate');
+        expect(boundary).not.toHaveProperty('finalText');
+      }
+      await runtime.dispose();
+    },
+  );
+
+  it.each(['abort', 'error'] as const)(
+    'starts no semantic adjudication for a thrown player %s',
+    async (kind) => {
+      const controller = new AbortController();
+      const failure = new Error(`player ${kind}`);
+      const hostCapabilities = emptyLedgerHostCapabilities({
+        classifications: ['unchanged'],
+      });
+      const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => {
+        if (kind === 'abort') controller.abort(failure);
+        throw failure;
+      });
+      const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () =>
+        '{"guard":"complete","irNumber":"048"}',
+      );
+      const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+      await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+      const turn = runtime.handleBossInput({
+        text: 'the task',
+        signal: controller.signal,
+      });
+      if (kind === 'abort') {
+        await expect(turn).resolves.toMatchObject({ outcome: 'aborted' });
+      } else {
+        await expect(turn).rejects.toBe(failure);
+      }
+      expect(callJudge).not.toHaveBeenCalled();
+      expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+        .not.toHaveProperty('semanticCandidate');
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    [
+      'transport failure',
+      async () => {
+        throw new Error('corrective judge unavailable');
+      },
+    ],
+    [
+      'result-shape failure',
+      async () => ({ guard: 'complete' }) as unknown as string,
+    ],
+  ])('parks a corrective judge %s after the single durable spend', async (
+    _label,
+    correctiveReply,
+  ) => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce('{"guard":"complete"}')
+      .mockImplementationOnce(correctiveReply);
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        semanticEvidenceMachine,
+        semanticEvidenceSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'unresolved' } },
+    );
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({
+        semanticCandidate: { guard: 'complete' },
+        correctionBudget: { limit: 1, spent: true },
+      });
+    const snapshot = runtime.exportSnapshot?.();
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    await restored.handleBossInput(bossTurn('no authored transition'));
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    await restored.dispose();
+  });
+
+  it('does not start a corrective judge after aborting an acknowledged spend', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('Boss cancelled during correction spend');
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      afterCorrectionWrite: () => controller.abort(abortReason),
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce('{"guard":"complete"}')
+      .mockResolvedValueOnce('{"guard":"complete","irNumber":"048"}');
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(
+      session({ ...recordingPorts(callPlayer), callJudge }),
+    );
+
+    await expect(
+      runtime.handleBossInput({ text: 'the task', signal: controller.signal }),
+    ).resolves.toMatchObject({ outcome: 'aborted' });
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({
+        semanticCandidate: { guard: 'complete' },
+        correctionBudget: { limit: 1, spent: true },
+      });
+    await runtime.dispose();
+  });
+
+  it('retains the invalid candidate when a durable correction spend acknowledgement is lost', async () => {
+    const interruption = new Error(
+      'process interrupted after correction spend storage',
+    );
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      afterCorrectionWrite: () => {
+        throw interruption;
+      },
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const firstCandidate = { guard: 'complete' };
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce(JSON.stringify(firstCandidate))
+      .mockResolvedValueOnce('{"guard":"complete","irNumber":"048"}');
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    await runtime.init(boundSession);
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toBe(
+      interruption,
+    );
+
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({
+        finalText: 'Implemented.',
+        semanticCandidate: firstCandidate,
+        correctionBudget: { limit: 1, spent: true },
+        physicalReceipt: { classification: 'one-descendant-commit' },
+      });
+    const interruptedSnapshot = runtime.exportSnapshot?.();
+    expect(interruptedSnapshot).toBeDefined();
+    await runtime.dispose();
+
+    const restoredHost = emptyLedgerHostCapabilities({
+      initialLedger: hostCapabilities.effectLedger.snapshot(),
+    });
+    const restored = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities: restoredHost });
+    await restored.restore?.(boundSession, interruptedSnapshot!);
+    await restored.handleBossInput(bossTurn('no authored transition'));
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(restored.exportSnapshot?.()?.effectLedger.boundaries[0])
+      .toMatchObject({
+        semanticCandidate: firstCandidate,
+        correctionBudget: { limit: 1, spent: true },
+      });
+    await restored.dispose();
+  });
+
+  it('fails closed when the correction spend is not acknowledged', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      failCorrectionWrite: true,
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce('{"guard":"complete"}')
+      .mockResolvedValueOnce('{"guard":"complete","irNumber":"048"}');
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(
+      session({ ...recordingPorts(callPlayer), callJudge }),
+    );
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'effect ledger correction spend unavailable',
+    );
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({ correctionBudget: { limit: 1, spent: false } });
+    await runtime.dispose();
+  });
+
+  it('starts no corrective judge from a mismatched spend acknowledgement', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+      mismatchCorrectionAcknowledgement: true,
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'Implemented.',
+    }));
+    const firstCandidate = { guard: 'complete' };
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce(JSON.stringify(firstCandidate))
+      .mockResolvedValueOnce('{"guard":"complete","irNumber":"048"}');
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      semanticEvidenceMachine,
+      semanticEvidenceSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'semantic correction budget spend was not acknowledged exactly',
+    );
+
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({
+        semanticCandidate: firstCandidate,
+        correctionBudget: { limit: 1, spent: true },
+      });
+    await runtime.dispose();
   });
 
   it('uses detached bindings for prompt identity while the port receives the role', async () => {
@@ -2181,7 +3171,11 @@ describe('DR-032 shared role runtime transition', () => {
     const hostCapabilities = emptyLedgerHostCapabilities();
     const callPlayer = vi
       .fn<PlaybookPorts['callPlayer']>()
-      .mockResolvedValueOnce({ status: 'error', error: 'try again' })
+      .mockResolvedValueOnce({
+        status: 'error',
+        error: 'try again',
+        finalText: 'non-authoritative diagnostic prose',
+      })
       .mockResolvedValue({ status: 'ok', finalText: 'done' });
     const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
       retryMachine,
@@ -2191,6 +3185,8 @@ describe('DR-032 shared role runtime transition', () => {
 
     const failed = await runtime.handleBossInput(bossTurn('the task'));
     expect(failed.state.stateId).toBe('failed');
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('finalText');
     expect(runtime.describe?.().actions.map(({ id }) => id)).toContain(
       'retry:START',
     );
@@ -2232,7 +3228,7 @@ describe('DR-032 shared role runtime transition', () => {
     await runtime.dispose();
   });
 
-  it('suppresses retry when adjudication fails after a nonzero receipt', async () => {
+  it('parks after an invalid correction on a nonzero receipt without enabling replay', async () => {
     const hostCapabilities = emptyLedgerHostCapabilities({
       classifications: ['concurrent-or-foreign-change'],
     });
@@ -2250,11 +3246,13 @@ describe('DR-032 shared role runtime transition', () => {
     )({ configuredOptions: {}, hostCapabilities });
     await runtime.init(session(ports));
 
-    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
-      'judge response is not valid JSON',
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { outcome: 'failed', state: { stateId: 'failed' } },
     );
     expect(callPlayer).toHaveBeenCalledOnce();
-    expect(ports.callJudge).toHaveBeenCalledOnce();
+    expect(ports.callJudge).toHaveBeenCalledTimes(2);
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .toMatchObject({ correctionBudget: { limit: 1, spent: true } });
     expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
       'retry:START',
     );
@@ -2263,7 +3261,7 @@ describe('DR-032 shared role runtime transition', () => {
 
   it('retains an earlier governed boundary when a suspended child resumes into failure', async () => {
     const hostCapabilities = emptyLedgerHostCapabilities({
-      classifications: ['concurrent-or-foreign-change'],
+      classifications: ['one-descendant-commit'],
     });
     const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
       status: 'ok',
@@ -2276,7 +3274,9 @@ describe('DR-032 shared role runtime transition', () => {
     const ports = { ...recordingPorts(callPlayer), callPlaybook };
     const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
       nestedAfterGovernedEffectMachine,
-      retrySchema3Spec(),
+      retrySchema3Spec({
+        outcomeAuthority: effectAuthorizedRepeatOutcomeAuthority,
+      }),
     )({ configuredOptions: {}, hostCapabilities });
     await runtime.init(session(ports));
 
@@ -2543,6 +3543,45 @@ describe('DR-032 shared role runtime transition', () => {
 });
 
 describe('DR-040 deferred Boss continuation', () => {
+  it('parks a deferred candidate whose complete receipt does not preserve HEAD', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['one-descendant-commit'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'Choose a format.',
+          resumeToken: 'thread-question',
+        },
+      ],
+      ['{"guard":"needsBossReply"}'],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).resolves.toMatchObject(
+      { state: { stateId: 'ready' } },
+    );
+
+    expect(hostCapabilities.effectLedger.snapshot()).toMatchObject({
+      logicalOperations: [],
+      boundaries: [
+        {
+          semanticCandidate: { guard: 'needsBossReply' },
+          physicalReceipt: { classification: 'one-descendant-commit' },
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+    });
+    expect(runtime.describe?.().pendingQuestions).toEqual([]);
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
   it('publishes a bound question only after acknowledgement and completes from the original baseline', async () => {
     let acknowledgeFinalWrite!: () => void;
     const finalWriteAcknowledgement = new Promise<void>((resolve) => {
@@ -2556,7 +3595,7 @@ describe('DR-040 deferred Boss continuation', () => {
       [
         {
           status: 'ok',
-          finalText: 'I need a decision.',
+          finalText: 'Choose a format.',
           resumeToken: 'thread-question',
         },
         {
@@ -2566,7 +3605,7 @@ describe('DR-040 deferred Boss continuation', () => {
         },
       ],
       [
-        '{"guard":"needsBossReply","question":"Choose a format."}',
+        '{"guard":"needsBossReply"}',
         '{"guard":"complete"}',
       ],
     );
@@ -2605,6 +3644,10 @@ describe('DR-040 deferred Boss continuation', () => {
     expect(initialLedger.boundaries[0]?.logicalOperationId).toBe(
       open.operationId,
     );
+    expect(initialLedger.boundaries[0]).toMatchObject({
+      finalText: 'Choose a format.',
+      semanticCandidate: { guard: 'needsBossReply' },
+    });
     expect(harness.statuses).toContain('coder asks: Choose a format.');
     expect(runtime.describe?.().pendingQuestions).toEqual([
       {
@@ -2641,6 +3684,10 @@ describe('DR-040 deferred Boss continuation', () => {
     expect(completed.boundaries[1]?.physicalReceipt?.baseline).toEqual(
       open.checkpoint,
     );
+    expect(completed.boundaries[1]).toMatchObject({
+      finalText: 'Implemented and committed.',
+      semanticCandidate: { guard: 'complete' },
+    });
     await runtime.dispose();
   });
 
@@ -2652,13 +3699,13 @@ describe('DR-040 deferred Boss continuation', () => {
       [
         {
           status: 'ok',
-          finalText: 'I need a decision.',
+          finalText: 'Choose a format.',
           resumeToken: 'thread-question',
         },
         { status: 'ok', finalText: 'done', resumeToken: 'thread-final' },
       ],
       [
-        '{"guard":"needsBossReply","question":"Choose a format."}',
+        '{"guard":"needsBossReply"}',
         '{"guard":"complete"}',
       ],
     );
@@ -2745,13 +3792,13 @@ describe('DR-040 deferred Boss continuation', () => {
     });
     const harness = deferredTestPorts(
       [
-        { status: 'ok', finalText: 'question one', resumeToken: 'thread-1' },
-        { status: 'ok', finalText: 'question two', resumeToken: 'thread-2' },
+        { status: 'ok', finalText: 'First question?', resumeToken: 'thread-1' },
+        { status: 'ok', finalText: 'Second question?', resumeToken: 'thread-2' },
         { status: 'ok', finalText: 'done', resumeToken: 'thread-3' },
       ],
       [
-        '{"guard":"needsBossReply","question":"First question?"}',
-        '{"guard":"needsBossReply","question":"Second question?"}',
+        '{"guard":"needsBossReply"}',
+        '{"guard":"needsBossReply"}',
         '{"guard":"complete"}',
       ],
     );
@@ -2794,9 +3841,13 @@ describe('DR-040 deferred Boss continuation', () => {
     });
     const harness = deferredTestPorts(
       [
-        { status: 'ok', finalText: 'question', resumeToken: 'thread-question' },
+        {
+          status: 'ok',
+          finalText: 'Choose a format.',
+          resumeToken: 'thread-question',
+        },
       ],
-      ['{"guard":"needsBossReply","question":"Choose a format."}'],
+      ['{"guard":"needsBossReply"}'],
     );
     const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
       deferredBossMachine,
@@ -2831,12 +3882,12 @@ describe('DR-040 deferred Boss continuation', () => {
       });
       const harness = deferredTestPorts(
         [
-          { status: 'ok', finalText: 'question one', resumeToken: 'thread-1' },
-          { status: 'ok', finalText: 'question two', resumeToken: 'thread-2' },
+          { status: 'ok', finalText: 'First question?', resumeToken: 'thread-1' },
+          { status: 'ok', finalText: 'Second question?', resumeToken: 'thread-2' },
         ],
         [
-          '{"guard":"needsBossReply","question":"First question?"}',
-          '{"guard":"needsBossReply","question":"Second question?"}',
+          '{"guard":"needsBossReply"}',
+          '{"guard":"needsBossReply"}',
         ],
       );
       const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(

@@ -26,6 +26,8 @@ import {
   NestedPlaybookCallError,
   normalizeError,
   normalizePlaybookSnapshot,
+  PlaybookSemanticCandidateStructureError,
+  reconcilePlaybookSemanticEvidence,
   registerPlaybookAbortCleanup,
   snapshotJsonValue,
   snapshotPlaybookSession,
@@ -1156,6 +1158,404 @@ describe('effect-ledger schema validation', () => {
         ],
       }),
     ).toBe(false);
+
+    const firstCandidate = { guard: 'complete' };
+    const correctedCandidate = { guard: 'complete', irNumber: '048' };
+    const spentCandidateLedger = {
+      ...baseline,
+      revision: 2,
+      boundaries: [
+        {
+          ...EFFECT_BOUNDARY,
+          semanticCandidate: firstCandidate,
+          correctionBudget: { limit: 1, spent: true },
+        },
+      ],
+    };
+    const unspentCandidateLedger = {
+      ...spentCandidateLedger,
+      boundaries: [
+        {
+          ...spentCandidateLedger.boundaries[0],
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+    };
+    const correctedCandidateLedger = {
+      ...spentCandidateLedger,
+      revision: 3,
+      boundaries: [
+        {
+          ...spentCandidateLedger.boundaries[0],
+          semanticCandidate: correctedCandidate,
+          initialSemanticCandidate: firstCandidate,
+        },
+      ],
+    };
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(
+        spentCandidateLedger,
+        correctedCandidateLedger,
+      ),
+    ).toBe(true);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(
+        correctedCandidateLedger,
+        {
+          ...correctedCandidateLedger,
+          revision: 4,
+          boundaries: [
+            {
+              ...correctedCandidateLedger.boundaries[0],
+              semanticCandidate: { guard: 'complete', irNumber: '049' },
+            },
+          ],
+        },
+      ),
+    ).toBe(false);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(spentCandidateLedger, {
+        ...correctedCandidateLedger,
+        boundaries: [
+          {
+            ...correctedCandidateLedger.boundaries[0],
+            initialSemanticCandidate: { guard: 'other' },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(baseline, {
+        ...baseline,
+        revision: 2,
+        boundaries: [
+          {
+            ...EFFECT_BOUNDARY,
+            semanticCandidate: correctedCandidate,
+            initialSemanticCandidate: firstCandidate,
+            correctionBudget: { limit: 1, spent: true },
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(
+        unspentCandidateLedger,
+        correctedCandidateLedger,
+      ),
+    ).toBe(true);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(
+        {
+          ...baseline,
+          boundaries: [
+            {
+              ...EFFECT_BOUNDARY,
+              correctionBudget: { limit: 1, spent: true },
+            },
+          ],
+        },
+        correctedCandidateLedger,
+      ),
+    ).toBe(false);
+    expect(
+      isPlaybookEffectLedgerMonotonicExtension(spentCandidateLedger, {
+        ...spentCandidateLedger,
+        revision: 3,
+        boundaries: [
+          {
+            ...spentCandidateLedger.boundaries[0],
+            initialSemanticCandidate: { guard: 'other' },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(() =>
+      assertPlaybookEffectLedger({
+        ...baseline,
+        revision: 2,
+        boundaries: [
+          {
+            ...EFFECT_BOUNDARY,
+            semanticCandidate: firstCandidate,
+            initialSemanticCandidate: { guard: 'other' },
+          },
+        ],
+      }),
+    ).toThrow('initialSemanticCandidate requires a spent budget');
+  });
+});
+
+describe('semantic outcome reconciliation', () => {
+  const outcomes = {
+    complete: {
+      fields: {
+        summary: 'presentation',
+        irNumber: 'semantic',
+        settledBy: 'runtime',
+      },
+      repositoryDisposition: 'unchanged',
+    },
+    committed: {
+      fields: { irTask: 'semantic', latestCommit: 'effect' },
+      repositoryDisposition: 'one-descendant-commit',
+    },
+    needsBossReply: {
+      fields: { question: 'presentation' },
+      repositoryDisposition: 'deferred',
+    },
+  } as const;
+
+  const unchangedReceipt = {
+    classification: 'unchanged',
+    baseline: EFFECT_BASELINE,
+    after: EFFECT_BASELINE,
+  } as const;
+
+  it('assembles exact detached output without interpreting presentation prose', () => {
+    const semanticCandidate = { guard: 'complete', irNumber: '048' };
+    const runtimeFields = { settledBy: 'runtime-transition' };
+    const result = reconcilePlaybookSemanticEvidence({
+      outcomes,
+      semanticCandidate,
+      finalText: `  Completed at ${'f'.repeat(40)}.  `,
+      receipt: unchangedReceipt,
+      runtimeFields,
+    });
+
+    expect(result).toEqual({
+      status: 'resolved',
+      output: {
+        guard: 'complete',
+        summary: `Completed at ${'f'.repeat(40)}.`,
+        irNumber: '048',
+        settledBy: 'runtime-transition',
+      },
+      evidence: {
+        finalText: `  Completed at ${'f'.repeat(40)}.  `,
+        semanticCandidate: { guard: 'complete', irNumber: '048' },
+      },
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    if (result.status === 'unresolved') throw new Error('expected resolution');
+    expect(Object.isFrozen(result.output)).toBe(true);
+    expect(Object.isFrozen(result.evidence.semanticCandidate)).toBe(true);
+
+    semanticCandidate.irNumber = 'mutated';
+    runtimeFields.settledBy = 'mutated';
+    expect(result.output.irNumber).toBe('048');
+    expect(result.output.settledBy).toBe('runtime-transition');
+  });
+
+  it('takes commit identity only from a matching one-descendant receipt', () => {
+    const commit = '2'.repeat(40);
+    const result = reconcilePlaybookSemanticEvidence({
+      outcomes,
+      semanticCandidate: { guard: 'committed', irTask: 'task 9' },
+      finalText: `I claim ${'9'.repeat(40)}.`,
+      receipt: {
+        classification: 'one-descendant-commit',
+        baseline: EFFECT_BASELINE,
+        after: { ...EFFECT_BASELINE, head: commit },
+        commitOid: commit,
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      output: {
+        guard: 'committed',
+        irTask: 'task 9',
+        latestCommit: commit,
+      },
+    });
+  });
+
+  it.each([
+    ['unchanged', unchangedReceipt],
+    [
+      'worktree-only-change',
+      {
+        classification: 'worktree-only-change',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation({
+          'question.txt': { kind: 'untracked', identity: 'sha256:question' },
+        }),
+      },
+    ],
+  ] as const)(
+    'admits deferred output from a complete same-HEAD %s receipt',
+    (_classification, receipt) => {
+      const result = reconcilePlaybookSemanticEvidence({
+        outcomes,
+        semanticCandidate: { guard: 'needsBossReply' },
+        finalText: '  Which target should I update?  ',
+        receipt,
+      });
+
+      expect(result).toMatchObject({
+        status: 'deferred',
+        output: {
+          guard: 'needsBossReply',
+          question: 'Which target should I update?',
+        },
+      });
+    },
+  );
+
+  it('parks missing, malformed, or disposition-inconsistent evidence', () => {
+    const candidate = { guard: 'complete', irNumber: '048' };
+    const base = {
+      outcomes,
+      semanticCandidate: candidate,
+      finalText: 'Complete.',
+      receipt: unchangedReceipt,
+      runtimeFields: { settledBy: 'runtime-transition' },
+    };
+    expect(
+      reconcilePlaybookSemanticEvidence({ ...base, finalText: undefined }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'missing-presentation-evidence',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({ ...base, receipt: undefined }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'missing-repository-receipt',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({
+        ...base,
+        receipt: { classification: 'unchanged' },
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'invalid-repository-receipt',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({
+        ...base,
+        semanticCandidate: { guard: 'committed', irTask: 'task 9' },
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'repository-disposition-mismatch',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({
+        ...base,
+        semanticCandidate: { guard: 'needsBossReply' },
+        receipt: {
+          classification: 'one-descendant-commit',
+          baseline: EFFECT_BASELINE,
+          after: { ...EFFECT_BASELINE, head: '2'.repeat(40) },
+          commitOid: '2'.repeat(40),
+        },
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'repository-disposition-mismatch',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({ ...base, runtimeFields: undefined }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'missing-runtime-evidence',
+    });
+    expect(
+      reconcilePlaybookSemanticEvidence({
+        ...base,
+        runtimeFields: {
+          settledBy: 'runtime-transition',
+          latestCommit: 'not effect evidence',
+        },
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'inconsistent-runtime-evidence',
+    });
+  });
+
+  it.each([
+    ['a non-object', 'complete'],
+    ['an unknown guard', { guard: 'unknown' }],
+    ['a missing semantic field', { guard: 'complete' }],
+    [
+      'a presentation-owned field',
+      { guard: 'needsBossReply', question: 'Injected by the judge.' },
+    ],
+    [
+      'an effect-owned field',
+      {
+        guard: 'committed',
+        irTask: 'task 9',
+        latestCommit: '2'.repeat(40),
+      },
+    ],
+    [
+      'a runtime-owned field',
+      {
+        guard: 'complete',
+        irNumber: '048',
+        settledBy: 'candidate',
+      },
+    ],
+    ['a non-string semantic field', { guard: 'complete', irNumber: 48 }],
+  ])('rejects %s as a structurally invalid candidate', (_label, candidate) => {
+    expect(() =>
+      reconcilePlaybookSemanticEvidence({
+        outcomes,
+        semanticCandidate: candidate,
+        finalText: 'Complete.',
+        receipt: unchangedReceipt,
+      }),
+    ).toThrow(PlaybookSemanticCandidateStructureError);
+  });
+
+  it('rejects accessor-backed semantic evidence before reading its value', () => {
+    const getter = vi.fn(() => '048');
+    const candidate = { guard: 'complete' } as Record<string, unknown>;
+    Object.defineProperty(candidate, 'irNumber', {
+      enumerable: true,
+      get: getter,
+    });
+
+    expect(() =>
+      reconcilePlaybookSemanticEvidence({
+        outcomes,
+        semanticCandidate: candidate,
+        finalText: 'Complete.',
+        receipt: unchangedReceipt,
+      }),
+    ).toThrow(PlaybookSemanticCandidateStructureError);
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('rejects accessor-backed effect evidence before reading its value', () => {
+    const getter = vi.fn(() => '2'.repeat(40));
+    const receipt: Record<string, unknown> = {
+      classification: 'one-descendant-commit',
+      baseline: EFFECT_BASELINE,
+      after: { ...EFFECT_BASELINE, head: '2'.repeat(40) },
+    };
+    Object.defineProperty(receipt, 'commitOid', {
+      enumerable: true,
+      get: getter,
+    });
+
+    expect(
+      reconcilePlaybookSemanticEvidence({
+        outcomes,
+        semanticCandidate: { guard: 'committed', irTask: 'task 9' },
+        finalText: 'Committed.',
+        receipt,
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      reason: 'invalid-repository-receipt',
+    });
+    expect(getter).not.toHaveBeenCalled();
   });
 });
 

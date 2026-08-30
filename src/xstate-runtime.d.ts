@@ -1,5 +1,5 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
-import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookEffectLedger, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookEffectLedger, PlaybookRepositoryDisposition, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
 export * from './xstate-playbook-runtime.js';
 /**
  * Immutable cancellation provenance for one runtime operation. The captured
@@ -39,6 +39,58 @@ export interface SnapshotNormalizationOptions {
 }
 export declare function normalizePlaybookSnapshot(snapshot: unknown, options?: SnapshotNormalizationOptions): PlaybookState;
 export declare function detachPersistedMachineSnapshot(persisted: unknown): JsonValue;
+/** Authority for one governed delegated-player output field (DR-040 §1). */
+export type PlaybookSemanticFieldAuthority = 'presentation' | 'semantic' | 'effect' | 'runtime';
+/** One already-validated state-local governed outcome declaration. */
+export interface PlaybookSemanticOutcomeSpec {
+    readonly fields: Readonly<Record<string, PlaybookSemanticFieldAuthority>>;
+    readonly repositoryDisposition: PlaybookRepositoryDisposition;
+}
+/** Evidence available when one governed semantic candidate is reconciled. */
+export interface PlaybookSemanticEvidenceInput {
+    readonly outcomes: Readonly<Record<string, PlaybookSemanticOutcomeSpec>>;
+    readonly semanticCandidate: unknown;
+    readonly finalText?: unknown;
+    readonly receipt?: unknown;
+    readonly runtimeFields?: unknown;
+}
+/** The exact detached actor output admitted to FSM delivery. */
+export type PlaybookReconciledSemanticOutput = Readonly<Record<string, string>> & {
+    readonly guard: string;
+};
+/** Retained presentation and semantic evidence, kept separate from output. */
+export interface PlaybookRetainedSemanticEvidence {
+    readonly finalText?: string;
+    readonly semanticCandidate: Readonly<Record<string, string>> & {
+        readonly guard: string;
+    };
+}
+export type PlaybookSemanticReconciliationReason = 'missing-presentation-evidence' | 'missing-repository-receipt' | 'invalid-repository-receipt' | 'repository-disposition-mismatch' | 'missing-effect-evidence' | 'missing-runtime-evidence' | 'inconsistent-runtime-evidence';
+/** A fail-closed semantic/effect reconciliation decision. */
+export type PlaybookSemanticReconciliation = {
+    readonly status: 'resolved' | 'deferred';
+    readonly output: PlaybookReconciledSemanticOutput;
+    readonly evidence: PlaybookRetainedSemanticEvidence;
+} | {
+    readonly status: 'unresolved';
+    readonly reason: PlaybookSemanticReconciliationReason;
+    readonly evidence: PlaybookRetainedSemanticEvidence;
+};
+/**
+ * A judge candidate is structurally invalid, rather than merely awaiting or
+ * conflicting with effect evidence. Callers use this distinction to spend at
+ * most one durable correction budget before asking another hidden judge.
+ */
+export declare class PlaybookSemanticCandidateStructureError extends TypeError {
+    constructor(message: string);
+}
+/**
+ * Reconcile one exact semantic candidate with host-owned effect evidence.
+ * Presentation prose remains opaque: it is retained verbatim and only its
+ * trimmed value is copied into linker-declared presentation fields. No
+ * repository fact is inferred from that prose or from the semantic candidate.
+ */
+export declare function reconcilePlaybookSemanticEvidence(input: PlaybookSemanticEvidenceInput): PlaybookSemanticReconciliation;
 /** Return the canonical empty host-owned effect-ledger mirror. */
 export declare function emptyPlaybookEffectLedger(): PlaybookEffectLedger;
 /** Validate, detach, and recursively freeze one effect-ledger mirror. */

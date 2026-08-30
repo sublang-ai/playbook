@@ -1542,16 +1542,18 @@ async function effectCompletion({
   boundary,
   operation,
   receipt: effectReceipt,
+  outcomeReceipt = effectReceipt,
   roleId,
 }) {
   if (callback === undefined) {
-    return { boundary: completedBoundary(boundary, effectReceipt), commands: [] };
+    return { evidence: {}, commands: [] };
   }
   const value = await callback(
     Object.freeze({
       boundary,
       operation,
       receipt: effectReceipt,
+      outcomeReceipt,
       ...(roleId === undefined ? {} : { roleId }),
     }),
   );
@@ -1663,14 +1665,137 @@ async function effectCompletion({
       : {}),
   };
   return {
-    boundary: completedBoundary(
-      { ...boundary, ...evidence },
-      effectReceipt,
-    ),
+    evidence,
     commands: value.commands ?? [],
     ...(deferred === undefined ? {} : { deferred }),
     ...(value.unresolved === true ? { unresolved: true } : {}),
   };
+}
+
+function rebaseEffectCompletion(boundary, effectReceipt, evidence) {
+  const candidateChanged =
+    Object.prototype.hasOwnProperty.call(boundary, 'semanticCandidate') &&
+    Object.prototype.hasOwnProperty.call(evidence, 'semanticCandidate') &&
+    !isDeepStrictEqual(
+      snapshotJsonValue(
+        boundary.semanticCandidate,
+        'durable boundary semanticCandidate',
+      ),
+      snapshotJsonValue(
+        evidence.semanticCandidate,
+        'completion boundary semanticCandidate',
+      ),
+    );
+  if (
+    candidateChanged &&
+    (boundary.correctionBudget.spent !== true ||
+      Object.prototype.hasOwnProperty.call(
+        boundary,
+        'initialSemanticCandidate',
+      ))
+  ) {
+    throw new Error(
+      'repository completion conflicts with durable boundary field semanticCandidate',
+    );
+  }
+  const next = completedBoundary(
+    {
+      ...boundary,
+      ...evidence,
+      ...(candidateChanged
+        ? { initialSemanticCandidate: boundary.semanticCandidate }
+        : {}),
+    },
+    effectReceipt,
+  );
+  for (const key of [
+    'after',
+    'physicalReceipt',
+    'finalText',
+    'initialSemanticCandidate',
+    'logicalOperationId',
+  ]) {
+    if (
+      Object.prototype.hasOwnProperty.call(boundary, key) &&
+      !isDeepStrictEqual(
+        snapshotJsonValue(boundary[key], `durable boundary ${key}`),
+        snapshotJsonValue(next[key], `completion boundary ${key}`),
+      )
+    ) {
+      throw new Error(
+        `repository completion conflicts with durable boundary field ${key}`,
+      );
+    }
+  }
+  return next;
+}
+
+function assertEffectCommandBatchResult(ledger, commands) {
+  const boundaryResults = new Map();
+  const logicalResults = new Map();
+  for (const command of commands) {
+    if (command.kind === 'start-boundaries') {
+      for (const expected of command.boundaries) {
+        boundaryResults.set(expected.boundaryId, {
+          generated: ['sequence', 'attemptId', 'attemptNumber'],
+          value: expected,
+        });
+      }
+      continue;
+    }
+    if (command.kind === 'replace-boundaries') {
+      for (const { next } of command.replacements) {
+        boundaryResults.set(next.boundaryId, { generated: [], value: next });
+      }
+      continue;
+    }
+    if (command.kind === 'append-logical-operations') {
+      for (const expected of command.operations) {
+        logicalResults.set(expected.operationId, {
+          generated: ['sequence'],
+          value: expected,
+        });
+      }
+      continue;
+    }
+    if (command.kind === 'replace-logical-operations') {
+      for (const { next } of command.replacements) {
+        logicalResults.set(next.operationId, { generated: [], value: next });
+      }
+      continue;
+    }
+    throw new Error('repository recovery completion batch has an unknown command');
+  }
+
+  const assertResults = (values, results, identityKey, label) => {
+    for (const [identity, expected] of results) {
+      const current = values.find((value) => value[identityKey] === identity);
+      if (current === undefined) {
+        throw new Error(
+          `repository recovery completion batch did not publish ${label} ${JSON.stringify(identity)}`,
+        );
+      }
+      const payload = { ...current };
+      for (const key of expected.generated) delete payload[key];
+      if (!isDeepStrictEqual(payload, expected.value)) {
+        throw new Error(
+          `repository recovery completion batch published unexpected ${label} ${JSON.stringify(identity)}`,
+        );
+      }
+    }
+  };
+  assertResults(
+    ledger.boundaries,
+    boundaryResults,
+    'boundaryId',
+    'boundary',
+  );
+  assertResults(
+    ledger.logicalOperations,
+    logicalResults,
+    'operationId',
+    'logical operation',
+  );
 }
 
 async function releaseRepositoryClaim(claim, primaryError) {
@@ -1745,7 +1870,7 @@ async function runDurableExclusive({
       allowedDispositions: current.dispositions,
       observation: options.afterObservation,
     });
-    const latest = boundaryById(
+    let latest = boundaryById(
       ledgerService.snapshot(),
       seed.boundaryId,
     );
@@ -1754,8 +1879,14 @@ async function runDurableExclusive({
       boundary: latest,
       operation,
       receipt: effectReceipt,
+      outcomeReceipt: effectReceipt,
     });
-    let completedBoundaryValue = completion.boundary;
+    latest = boundaryById(ledgerService.snapshot(), seed.boundaryId);
+    let completedBoundaryValue = rebaseEffectCompletion(
+      latest,
+      effectReceipt,
+      completion.evidence,
+    );
     let deferredStatus;
     let deferredCommands = [];
     if (completion.deferred !== undefined) {
@@ -1816,8 +1947,10 @@ async function runDurableExclusive({
       ...deferredCommands,
       ...completion.commands,
     ], 'exclusive repository completion commands');
-    recovery = { ...recovery, commands };
+    recovery = { ...recovery, commands, commandsAcknowledged: false };
     const completed = await ledgerService.writeAhead(authority, commands);
+    assertEffectCommandBatchResult(completed, commands);
+    recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     return Object.freeze({
       baseline,
@@ -2109,23 +2242,32 @@ async function runDurableDeferred({
       allowedDispositions: currentBoundary.dispositions,
       observation: options.afterObservation,
     });
-    const latestBoundary = boundaryById(
-      ledgerService.snapshot(),
-      seed.boundaryId,
-    );
-    const latestOperation = logicalOperationById(
-      ledgerService.snapshot(),
-      operationId,
+    const beforeCompletion = ledgerService.snapshot();
+    let latestBoundary = boundaryById(beforeCompletion, seed.boundaryId);
+    let latestOperation = logicalOperationById(beforeCompletion, operationId);
+    const logicalReceipt = await cumulativeLogicalReceipt(
+      latestOperation.originalBaseline,
+      effectReceipt,
+      latestBoundary.dispositions,
     );
     const completion = await effectCompletion({
       callback: options.completeEffectBoundary,
       boundary: latestBoundary,
       operation,
       receipt: effectReceipt,
+      outcomeReceipt: logicalReceipt,
     });
+    const afterCompletion = ledgerService.snapshot();
+    latestBoundary = boundaryById(afterCompletion, seed.boundaryId);
+    latestOperation = logicalOperationById(afterCompletion, operationId);
+    const completedBoundaryValue = rebaseEffectCompletion(
+      latestBoundary,
+      effectReceipt,
+      completion.evidence,
+    );
     if (
       completion.commands.length > 0 ||
-      completion.boundary.logicalOperationId !== operationId ||
+      completedBoundaryValue.logicalOperationId !== operationId ||
       (completion.deferred?.operationId !== undefined &&
         completion.deferred.operationId !== operationId)
     ) {
@@ -2133,11 +2275,6 @@ async function runDurableDeferred({
         'deferred repository continuation completion cannot override its host-owned logical operation',
       );
     }
-    const logicalReceipt = await cumulativeLogicalReceipt(
-      latestOperation.originalBaseline,
-      effectReceipt,
-      latestBoundary.dispositions,
-    );
     const eligibleDeferred =
       completion.deferred !== undefined &&
       deferredCheckpointEligible(
@@ -2161,15 +2298,17 @@ async function runDurableDeferred({
         {
           kind: 'replace-boundaries',
           replacements: [
-            { expected: latestBoundary, next: completion.boundary },
+            { expected: latestBoundary, next: completedBoundaryValue },
           ],
         },
         replaceLogicalOperationCommand(latestOperation, nextOperation),
       ],
       'deferred repository continuation completion commands',
     );
-    recovery = { ...recovery, commands };
+    recovery = { ...recovery, commands, commandsAcknowledged: false };
     ledger = await ledgerService.writeAhead(authority, commands);
+    assertEffectCommandBatchResult(ledger, commands);
+    recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     return Object.freeze({
       status: 'continued',
@@ -2274,18 +2413,38 @@ async function runDurableCohort({
       cohort: true,
       observation: options.afterObservation,
     });
-    const latest = seeds.map((seed) =>
-      boundaryById(ledgerService.snapshot(), seed.boundaryId),
+    const beforeCompletion = ledgerService.snapshot();
+    const callbackBoundaries = seeds.map((seed) =>
+      boundaryById(beforeCompletion, seed.boundaryId),
     );
-    const completions = await Promise.all(
-      latest.map((boundary, index) =>
+    const completionSettlements = await Promise.allSettled(
+      callbackBoundaries.map((boundary, index) =>
         effectCompletion({
           callback: completeEffectBoundary,
           boundary,
           operation: settled[index],
           receipt: effectReceipt,
+          outcomeReceipt: effectReceipt,
           roleId: roleIds[index],
         }),
+      ),
+    );
+    const failedCompletion = completionSettlements.find(
+      (completion) => completion.status === 'rejected',
+    );
+    if (failedCompletion !== undefined) throw failedCompletion.reason;
+    const completions = completionSettlements.map(
+      (completion) => completion.value,
+    );
+    const afterCompletion = ledgerService.snapshot();
+    const latest = seeds.map((seed) =>
+      boundaryById(afterCompletion, seed.boundaryId),
+    );
+    const completedBoundaries = latest.map((boundary, index) =>
+      rebaseEffectCompletion(
+        boundary,
+        effectReceipt,
+        completions[index].evidence,
       ),
     );
     const commands = snapshotJsonValue([
@@ -2293,13 +2452,15 @@ async function runDurableCohort({
         kind: 'replace-boundaries',
         replacements: latest.map((boundary, index) => ({
           expected: boundary,
-          next: completions[index].boundary,
+          next: completedBoundaries[index],
         })),
       },
       ...completions.flatMap((completion) => completion.commands),
     ], 'repository cohort completion commands');
-    recovery = { ...recovery, commands };
+    recovery = { ...recovery, commands, commandsAcknowledged: false };
     const completed = await ledgerService.writeAhead(authority, commands);
+    assertEffectCommandBatchResult(completed, commands);
+    recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     const operations = Object.create(null);
     const receipts = Object.create(null);
@@ -2340,7 +2501,7 @@ export async function recoverIncompleteRepositoryEffects({
     const entry = processClaims.get(
       processClaimKey(capability.authority.canonicalWorktree),
     );
-    const recovery = entry?.recovery;
+    let recovery = entry?.recovery;
     if (
       entry?.state !== 'quarantined' ||
       recovery?.sessionId !== capability.authority.sessionId ||
@@ -2412,6 +2573,32 @@ export async function recoverIncompleteRepositoryEffects({
         quarantineProcessClaim(claim, recovery);
         throw error;
       }
+    }
+    if (recovery.commands === undefined && recovery.operationStarted === true) {
+      throw new Error(
+        'live post-operation repository claim has no exact completion batch; process death is required before reconstruction',
+      );
+    }
+    if (recovery.commands !== undefined) {
+      const claim = await acquireRecoveryClaim(
+        coordinator,
+        capability.authority.canonicalWorktree,
+        recovery,
+      );
+      try {
+        if (recovery.commandsAcknowledged !== true) {
+          ledger = await capability.effectLedger.writeAhead(recovery.commands);
+          assertEffectCommandBatchResult(ledger, recovery.commands);
+          recovery = { ...recovery, commandsAcknowledged: true };
+        } else {
+          assertEffectCommandBatchResult(ledger, recovery.commands);
+        }
+        await releaseRepositoryClaim(claim);
+      } catch (error) {
+        quarantineProcessClaim(claim, recovery);
+        throw error;
+      }
+      continue;
     }
     const currentBoundaries = recovery.boundaryIds.map((boundaryId) =>
       ledger.boundaries.find((boundary) => boundary.boundaryId === boundaryId),

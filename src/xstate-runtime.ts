@@ -23,6 +23,7 @@ import type {
   PlaybookEffectLedger,
   PlaybookEffectLogicalOperation,
   PlaybookRepositoryObservation,
+  PlaybookRepositoryDisposition,
   PlaybookRepositoryReceipt,
   PlaybookRuntimeSnapshot,
   PlaybookSession,
@@ -1158,6 +1159,293 @@ function effectReceipt(
   return value as unknown as PlaybookRepositoryReceipt;
 }
 
+/** Authority for one governed delegated-player output field (DR-040 §1). */
+export type PlaybookSemanticFieldAuthority =
+  | 'presentation'
+  | 'semantic'
+  | 'effect'
+  | 'runtime';
+
+/** One already-validated state-local governed outcome declaration. */
+export interface PlaybookSemanticOutcomeSpec {
+  readonly fields: Readonly<Record<string, PlaybookSemanticFieldAuthority>>;
+  readonly repositoryDisposition: PlaybookRepositoryDisposition;
+}
+
+/** Evidence available when one governed semantic candidate is reconciled. */
+export interface PlaybookSemanticEvidenceInput {
+  readonly outcomes: Readonly<Record<string, PlaybookSemanticOutcomeSpec>>;
+  readonly semanticCandidate: unknown;
+  readonly finalText?: unknown;
+  readonly receipt?: unknown;
+  readonly runtimeFields?: unknown;
+}
+
+/** The exact detached actor output admitted to FSM delivery. */
+export type PlaybookReconciledSemanticOutput = Readonly<
+  Record<string, string>
+> & {
+  readonly guard: string;
+};
+
+/** Retained presentation and semantic evidence, kept separate from output. */
+export interface PlaybookRetainedSemanticEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate: Readonly<Record<string, string>> & {
+    readonly guard: string;
+  };
+}
+
+export type PlaybookSemanticReconciliationReason =
+  | 'missing-presentation-evidence'
+  | 'missing-repository-receipt'
+  | 'invalid-repository-receipt'
+  | 'repository-disposition-mismatch'
+  | 'missing-effect-evidence'
+  | 'missing-runtime-evidence'
+  | 'inconsistent-runtime-evidence';
+
+/** A fail-closed semantic/effect reconciliation decision. */
+export type PlaybookSemanticReconciliation =
+  | {
+      readonly status: 'resolved' | 'deferred';
+      readonly output: PlaybookReconciledSemanticOutput;
+      readonly evidence: PlaybookRetainedSemanticEvidence;
+    }
+  | {
+      readonly status: 'unresolved';
+      readonly reason: PlaybookSemanticReconciliationReason;
+      readonly evidence: PlaybookRetainedSemanticEvidence;
+    };
+
+/**
+ * A judge candidate is structurally invalid, rather than merely awaiting or
+ * conflicting with effect evidence. Callers use this distinction to spend at
+ * most one durable correction budget before asking another hidden judge.
+ */
+export class PlaybookSemanticCandidateStructureError extends TypeError {
+  constructor(message: string) {
+    super(`semantic candidate ${message}`);
+    this.name = 'PlaybookSemanticCandidateStructureError';
+  }
+}
+
+function semanticCandidateStructureError(message: string): never {
+  throw new PlaybookSemanticCandidateStructureError(message);
+}
+
+function snapshotSemanticCandidate(
+  value: unknown,
+  outcomes: Readonly<Record<string, PlaybookSemanticOutcomeSpec>>,
+): {
+  readonly candidate: Readonly<Record<string, string>> & {
+    readonly guard: string;
+  };
+  readonly outcome: PlaybookSemanticOutcomeSpec;
+} {
+  let detached: JsonValue;
+  try {
+    detached = snapshotJsonValue(value, 'semantic candidate');
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : '';
+    semanticCandidateStructureError(`must be detached plain JSON${detail}`);
+  }
+  if (!isRecord(detached)) {
+    semanticCandidateStructureError('must be an object');
+  }
+  const guard = detached.guard;
+  if (typeof guard !== 'string' || guard.length === 0) {
+    semanticCandidateStructureError('must contain a nonempty string guard');
+  }
+  if (!own(outcomes, guard)) {
+    semanticCandidateStructureError(
+      `guard ${JSON.stringify(guard)} is not declared`,
+    );
+  }
+  const outcome = outcomes[guard]!;
+  const semanticFields = Object.entries(outcome.fields)
+    .filter(([, authority]) => authority === 'semantic')
+    .map(([field]) => field);
+  const expected = new Set(['guard', ...semanticFields]);
+  const actual = Object.keys(detached);
+  const missing = [...expected].filter((field) => !actual.includes(field));
+  const extra = actual.filter((field) => !expected.has(field));
+  if (missing.length > 0 || extra.length > 0) {
+    semanticCandidateStructureError(
+      'must contain exactly its guard and semantic-owned fields' +
+        (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
+        (extra.length === 0 ? '' : `; extra or wrongly owned ${extra.join(', ')}`),
+    );
+  }
+  for (const field of semanticFields) {
+    if (typeof detached[field] !== 'string') {
+      semanticCandidateStructureError(
+        `field ${JSON.stringify(field)} must be a string`,
+      );
+    }
+  }
+  return {
+    candidate: detached as Readonly<Record<string, string>> & {
+      readonly guard: string;
+    },
+    outcome,
+  };
+}
+
+function retainedSemanticEvidence(
+  candidate: Readonly<Record<string, string>> & { readonly guard: string },
+  finalText: unknown,
+): PlaybookRetainedSemanticEvidence {
+  return Object.freeze({
+    semanticCandidate: candidate,
+    ...(typeof finalText === 'string' ? { finalText } : {}),
+  });
+}
+
+function unresolvedSemanticEvidence(
+  reason: PlaybookSemanticReconciliationReason,
+  evidence: PlaybookRetainedSemanticEvidence,
+): PlaybookSemanticReconciliation {
+  return Object.freeze({ status: 'unresolved', reason, evidence });
+}
+
+/**
+ * Reconcile one exact semantic candidate with host-owned effect evidence.
+ * Presentation prose remains opaque: it is retained verbatim and only its
+ * trimmed value is copied into linker-declared presentation fields. No
+ * repository fact is inferred from that prose or from the semantic candidate.
+ */
+export function reconcilePlaybookSemanticEvidence(
+  input: PlaybookSemanticEvidenceInput,
+): PlaybookSemanticReconciliation {
+  const { candidate, outcome } = snapshotSemanticCandidate(
+    input.semanticCandidate,
+    input.outcomes,
+  );
+  const evidence = retainedSemanticEvidence(candidate, input.finalText);
+  const finalText =
+    typeof input.finalText === 'string' ? input.finalText.trim() : undefined;
+  if (finalText === undefined || finalText.length === 0) {
+    return unresolvedSemanticEvidence('missing-presentation-evidence', evidence);
+  }
+
+  if (input.receipt === undefined) {
+    return unresolvedSemanticEvidence('missing-repository-receipt', evidence);
+  }
+  let receipt: PlaybookRepositoryReceipt;
+  try {
+    const detachedReceipt = snapshotJsonValue(
+      input.receipt,
+      'semantic reconciliation receipt',
+    );
+    receipt = effectReceipt(
+      detachedReceipt,
+      'semantic reconciliation receipt',
+      undefined,
+      undefined,
+      false,
+      Object.values(input.outcomes).map(
+        ({ repositoryDisposition }) => repositoryDisposition,
+      ),
+    );
+  } catch {
+    return unresolvedSemanticEvidence('invalid-repository-receipt', evidence);
+  }
+
+  const disposition = outcome.repositoryDisposition;
+  const dispositionMatches =
+    (disposition === 'unchanged' && receipt.classification === 'unchanged') ||
+    (disposition === 'one-descendant-commit' &&
+      receipt.classification === 'one-descendant-commit') ||
+    (disposition === 'deferred' &&
+      candidate.guard === 'needsBossReply' &&
+      Object.entries(input.outcomes).some(
+        ([guard, declared]) =>
+          guard !== candidate.guard &&
+          declared.repositoryDisposition === 'one-descendant-commit',
+      ) &&
+      (receipt.classification === 'unchanged' ||
+        receipt.classification === 'worktree-only-change') &&
+      receipt.after !== undefined &&
+      receipt.after.head === receipt.baseline.head);
+  if (!dispositionMatches) {
+    return unresolvedSemanticEvidence(
+      'repository-disposition-mismatch',
+      evidence,
+    );
+  }
+
+  let runtimeFields: Readonly<Record<string, JsonValue>> = Object.freeze({});
+  if (input.runtimeFields !== undefined) {
+    try {
+      const detached = snapshotJsonValue(
+        input.runtimeFields,
+        'semantic reconciliation runtime fields',
+      );
+      if (!isRecord(detached)) {
+        return unresolvedSemanticEvidence(
+          'inconsistent-runtime-evidence',
+          evidence,
+        );
+      }
+      runtimeFields = detached;
+    } catch {
+      return unresolvedSemanticEvidence(
+        'inconsistent-runtime-evidence',
+        evidence,
+      );
+    }
+  }
+  const declaredRuntimeFields = Object.entries(outcome.fields)
+    .filter(([, authority]) => authority === 'runtime')
+    .map(([field]) => field);
+  if (
+    Object.keys(runtimeFields).some(
+      (field) => !declaredRuntimeFields.includes(field),
+    )
+  ) {
+    return unresolvedSemanticEvidence('inconsistent-runtime-evidence', evidence);
+  }
+
+  const output: Record<string, string> = {};
+  defineEnumerableDataProperty(output, 'guard', candidate.guard);
+  for (const [field, authority] of Object.entries(outcome.fields)) {
+    let value: string | undefined;
+    if (authority === 'semantic') {
+      value = candidate[field];
+    } else if (authority === 'presentation') {
+      value = finalText;
+    } else if (authority === 'effect') {
+      value = field === 'latestCommit' ? receipt.commitOid : undefined;
+      if (value === undefined) {
+        return unresolvedSemanticEvidence('missing-effect-evidence', evidence);
+      }
+    } else {
+      const runtimeValue = runtimeFields[field];
+      if (runtimeValue === undefined) {
+        return unresolvedSemanticEvidence('missing-runtime-evidence', evidence);
+      }
+      if (typeof runtimeValue !== 'string') {
+        return unresolvedSemanticEvidence(
+          'inconsistent-runtime-evidence',
+          evidence,
+        );
+      }
+      value = runtimeValue;
+    }
+    defineEnumerableDataProperty(output, field, value);
+  }
+  const detachedOutput = snapshotJsonValue(
+    output,
+    'reconciled semantic output',
+  ) as PlaybookReconciledSemanticOutput;
+  return Object.freeze({
+    status: disposition === 'deferred' ? 'deferred' : 'resolved',
+    output: detachedOutput,
+    evidence,
+  });
+}
+
 function effectPendingQuestion(
   value: unknown,
   path: string,
@@ -1224,6 +1512,7 @@ function effectBoundary(value: unknown, index: number): PlaybookEffectBoundary {
       'physicalReceipt',
       'finalText',
       'semanticCandidate',
+      'initialSemanticCandidate',
       'correctionBudget',
       'cohortId',
       'logicalOperationId',
@@ -1300,6 +1589,21 @@ function effectBoundary(value: unknown, index: number): PlaybookEffectBoundary {
   }
   if (own(value, 'finalText') && typeof value.finalText !== 'string') {
     throw new TypeError(`${path}.finalText must be a string`);
+  }
+  if (own(value, 'initialSemanticCandidate')) {
+    if (
+      !own(value, 'semanticCandidate') ||
+      !isRecord(value.correctionBudget) ||
+      value.correctionBudget.spent !== true ||
+      jsonValuesEqual(
+        value.initialSemanticCandidate as JsonValue,
+        value.semanticCandidate as JsonValue,
+      )
+    ) {
+      throw new TypeError(
+        `${path}.initialSemanticCandidate requires a spent budget and a distinct current semanticCandidate`,
+      );
+    }
   }
   if (own(value, 'cohortId')) {
     effectUuid(value.cohortId, `${path}.cohortId`);
@@ -1707,7 +2011,7 @@ export function isPlaybookEffectLedgerMonotonicExtension(
     'after',
     'physicalReceipt',
     'finalText',
-    'semanticCandidate',
+    'initialSemanticCandidate',
   ] as const;
   for (const [index, prior] of baseline.boundaries.entries()) {
     const next = current.boundaries[index]!;
@@ -1723,6 +2027,7 @@ export function isPlaybookEffectLedgerMonotonicExtension(
         next as unknown as Record<string, unknown>,
         boundaryEvidenceKeys,
       ) ||
+      !semanticCandidateExtends(prior, next) ||
       (prior.logicalOperationId !== undefined &&
         prior.logicalOperationId !== next.logicalOperationId) ||
       (prior.correctionBudget.spent && !next.correctionBudget.spent)
@@ -1764,6 +2069,36 @@ export function isPlaybookEffectLedgerMonotonicExtension(
     }
   }
   return true;
+}
+
+function semanticCandidateExtends(
+  prior: PlaybookEffectBoundary,
+  next: PlaybookEffectBoundary,
+): boolean {
+  if (prior.semanticCandidate === undefined) {
+    return (
+      !prior.correctionBudget.spent ||
+      next.initialSemanticCandidate === undefined
+    );
+  }
+  if (
+    next.semanticCandidate !== undefined &&
+    jsonValuesEqual(prior.semanticCandidate, next.semanticCandidate)
+  ) {
+    return (
+      prior.initialSemanticCandidate !== undefined ||
+      next.initialSemanticCandidate === undefined
+    );
+  }
+  return (
+    prior.initialSemanticCandidate === undefined &&
+    next.correctionBudget.spent &&
+    next.initialSemanticCandidate !== undefined &&
+    jsonValuesEqual(
+      prior.semanticCandidate,
+      next.initialSemanticCandidate,
+    )
+  );
 }
 
 export interface PlaybookRuntimeSnapshotValidationOptions {
