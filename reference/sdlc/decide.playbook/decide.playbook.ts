@@ -22,6 +22,7 @@ import type { InspectionEvent, SnapshotFrom } from 'xstate';
 
 import {
   assertJsonSafe,
+  assertPlaybookEffectLedger,
   assertPlaybookRuntimeSnapshot,
   combineAbortSignals,
   createNestedPlaybookBridge,
@@ -59,6 +60,8 @@ import type {
   PlaybookControlAction,
   PlaybookControlReceipt,
   PlaybookControlView,
+  PlaybookEffectBoundary,
+  PlaybookEffectLedger,
   PlaybookPendingCall,
   PlaybookPorts,
   PlaybookRunResult,
@@ -615,6 +618,79 @@ function isEmptyFinalText(finalText: string | undefined): boolean {
   return finalText === undefined || finalText.trim().length === 0;
 }
 
+interface AutomaticReplayPolicy {
+  allowsEmptyOkCorrection(runtimeSessionId: string, callId: string): boolean;
+  allowsFailureStateRetry(): boolean;
+}
+
+interface Schema3AutomaticReplayEvidence {
+  readEffectLedger(): unknown;
+}
+
+function hasCompleteUnchangedReceipt(
+  boundary: PlaybookEffectBoundary,
+): boolean {
+  return boundary.physicalReceipt?.classification === 'unchanged';
+}
+
+// IR-048 task 5 stages the schema-3 automatic-replay fence in DECIDE without
+// moving the shipped artifact off schema 2 before its atomic task-16 cutover.
+// A corrective call is bound to the exact physical boundary it would repeat.
+// A failed-state restart replays the whole entry event. Cooperative host
+// attempts are serialized in ledger order, so the latest durable boundary
+// identifies the causal host attempt even when a nested or sibling runtime
+// wrote it; every boundary in that attempt must have a complete unchanged
+// receipt.
+// The durable ledger remains the authority in both cases; no process-local
+// player result or presentation text can make a replay safe.
+function createAutomaticReplayPolicy(
+  artifactSchema: 2 | 3,
+  evidence?: Schema3AutomaticReplayEvidence,
+): AutomaticReplayPolicy {
+  if (artifactSchema === 2) {
+    return Object.freeze({
+      allowsEmptyOkCorrection: () => true,
+      allowsFailureStateRetry: () => true,
+    });
+  }
+  if (evidence === undefined) {
+    throw new TypeError(
+      'DECIDE schema-3 automatic replay requires durable effect-ledger evidence',
+    );
+  }
+
+  const readLedger = (): PlaybookEffectLedger =>
+    assertPlaybookEffectLedger(
+      evidence.readEffectLedger(),
+      'DECIDE automatic-replay effect ledger',
+    );
+
+  return Object.freeze({
+    allowsEmptyOkCorrection(runtimeSessionId: string, callId: string) {
+      const matching = readLedger().boundaries.filter(
+        (boundary) =>
+          boundary.runtimeSessionId === runtimeSessionId &&
+          boundary.callId === callId,
+      );
+      return (
+        matching.length === 1 && hasCompleteUnchangedReceipt(matching[0]!)
+      );
+    },
+
+    allowsFailureStateRetry() {
+      const ledger = readLedger();
+      const latest = ledger.boundaries.at(-1);
+      if (latest === undefined) return false;
+      const attempt = ledger.boundaries.filter(
+        (boundary) => boundary.attemptId === latest.attemptId,
+      );
+      return (
+        attempt.length > 0 && attempt.every(hasCompleteUnchangedReceipt)
+      );
+    },
+  });
+}
+
 function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && Object.is(error, signal.reason);
 }
@@ -788,9 +864,14 @@ function telemetryPayload(
   return payload;
 }
 
-export const createPlaybookRuntime: PlaybookRuntimeFactory<
-  PlaybookRuntimeOptions
-> = (options) => {
+type DecidePlaybookRuntime = PlaybookRuntime & {
+  _getNestedBridge(): NestedPlaybookBridge<PlaybookInput>;
+};
+
+function createDecidePlaybookRuntime(
+  options: PlaybookRuntimeOptions,
+  automaticReplayPolicy: AutomaticReplayPolicy,
+): DecidePlaybookRuntime {
   const fsmInput = snapshotDecideRuntimeOptions(options);
   const effectLedger = emptyPlaybookEffectLedger();
 
@@ -1295,6 +1376,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   ): Promise<{
     roleId: RoleId;
     playerId?: string;
+    callId: string;
     result: PlayerResult;
   }> => {
     const aborts = abortReasonClassifier(signal);
@@ -1439,6 +1521,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       return {
         roleId,
         ...(playerId === undefined ? {} : { playerId }),
+        callId,
         result,
       };
     } finally {
@@ -1452,6 +1535,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   ): Promise<{
     roleId: RoleId;
     playerId?: string;
+    callId: string;
     result: PlayerResult;
   }> => {
     return trackBoundaryCall(runPlayerCall(input, signal));
@@ -1474,8 +1558,18 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         }
         combined.throwIfAborted();
 
-        let { roleId, playerId, result } = await callPlayer(input, combined);
-        if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
+        let { roleId, playerId, callId, result } = await callPlayer(
+          input,
+          combined,
+        );
+        if (
+          result.status === 'ok' &&
+          isEmptyFinalText(result.finalText) &&
+          automaticReplayPolicy.allowsEmptyOkCorrection(
+            requireSessionIdentity().sessionId,
+            callId,
+          )
+        ) {
           // DR-028: an `ok` result whose finalText is missing, empty, or
           // whitespace-only earns exactly one corrective re-ask — the same
           // composed call repeated, traced by runPlayerCall as its own
@@ -1485,7 +1579,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           // are never retried), and a rejecting finish emission rejects
           // `callPlayer` itself, so it never reaches this branch (PBRT-47).
           combined.throwIfAborted();
-          ({ roleId, playerId, result } = await callPlayer(input, combined));
+          ({ roleId, playerId, callId, result } = await callPlayer(
+            input,
+            combined,
+          ));
         }
         if (result.status !== 'ok') {
           throw new Error(
@@ -1781,11 +1878,13 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       pendingCall: nestedBridge.getPendingCall(),
     });
     const pendingQuestions = pendingQuestionsForState(state, context);
+    const failed = state.activeStateIds.includes('failed');
     if (
       pendingQuestions.length === 0 &&
       (snapshot.status === 'done' ||
         state.activeStateIds.includes('ready') ||
-        state.activeStateIds.includes('failed'))
+        (failed &&
+          automaticReplayPolicy.allowsFailureStateRetry()))
     ) {
       return { type: 'START_DECIDE', callerTopic: text };
     }
@@ -2503,9 +2602,27 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       return nestedBridge;
     },
   };
-};
+}
+
+const legacyAutomaticReplayPolicy = createAutomaticReplayPolicy(2);
+
+export const createPlaybookRuntime: PlaybookRuntimeFactory<
+  PlaybookRuntimeOptions
+> = (options) =>
+  createDecidePlaybookRuntime(options, legacyAutomaticReplayPolicy);
+
+function createStagedSchema3AutomaticReplayRuntime(
+  options: PlaybookRuntimeOptions,
+  evidence: Schema3AutomaticReplayEvidence,
+): PlaybookRuntime {
+  return createDecidePlaybookRuntime(
+    options,
+    createAutomaticReplayPolicy(3, evidence),
+  );
+}
 
 export const _internal = {
+  createStagedSchema3AutomaticReplayRuntime,
   composePlayerPrompt,
   requiredFieldsFor,
   extractJson,

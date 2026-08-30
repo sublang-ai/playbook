@@ -1267,6 +1267,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStateRoleStateStatus',
       'XStatePlaybookRuntimeCompat',
       'XStatePlaybookRuntimeSpec',
+      'XStateRepositoryCapability',
       'XStateRepositoryDisposition',
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
@@ -1677,6 +1678,7 @@ if (snapshot.mode === 'engaged.parked') {
   type XStatePlaybookRuntimeSpec,
   type XStatePlaybookRuntimeSpecV2,
   type XStatePlaybookRuntimeSpecV3,
+  type XStateRepositoryCapability,
 } from '@sublang/playbook/xstate-runtime';
 import type {
   PlaybookCaptainRegistryEntryV2,
@@ -1698,6 +1700,7 @@ interface Capabilities {
 declare const machine: any;
 declare const boundaryStart: PlaybookEffectBoundaryStart;
 declare const effectLedger: PlaybookEffectLedgerCapability;
+declare const repository: XStateRepositoryCapability;
 declare const legacySpec: XStatePlaybookRuntimeSpec<Options>;
 declare const v2Spec: XStatePlaybookRuntimeSpecV2<Options>;
 declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
@@ -1715,15 +1718,17 @@ const v2FactorySchema: 2 = v2Factory.compat.artifactSchema;
 v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
 
 const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
-v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', effectLedger } });
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', repository, effectLedger } });
 const v3FactorySchema: 3 = v3Factory.compat.artifactSchema;
 // @ts-expect-error schema 3 requires the disjoint construction object
 v3Factory({ mode: 'safe' });
+// @ts-expect-error schema 3 requires repository serialization around governed calls
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', effectLedger } });
 // @ts-expect-error live host capabilities must use an object type
 createXStatePlaybookRuntime<Options, number>(machine, v3Spec);
 
 const inferredV3Factory = createXStatePlaybookRuntime(machine, v3Spec);
-inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { effectLedger } });
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { repository, effectLedger } });
 // @ts-expect-error inferred schema 3 still rejects raw configured options
 inferredV3Factory({ mode: 'safe' });
 // @ts-expect-error inferred schema 3 still requires an object capability

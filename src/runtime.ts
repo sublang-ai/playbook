@@ -83,10 +83,13 @@ export interface PlaybookPendingCall {
 // DR-031 §5: complete durable identity for one nested call whose start
 // boundary has already been published and whose child remains suspended.
 // `turnId` is absent when the call was opened outside a Boss-turn boundary.
+// A schema-3 runtime adds the effect-ledger prefix captured before the causal
+// public boundary; null records that the prefix could not be observed.
 export interface PlaybookSuspendedCall extends PlaybookPendingCall {
   stateId: string;
   text: string;
   turnId?: number;
+  effectBoundaryPrefixSequence?: number | null;
 }
 
 export interface PlaybookCallRequest {
@@ -395,6 +398,10 @@ export interface PlaybookRuntimeSnapshot {
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
   effectLedger: PlaybookEffectLedger;
+  failedEffectAttempt?: {
+    readonly boundaryPrefix: number;
+    readonly attemptId: string | null;
+  };
   suspendedCall?: PlaybookSuspendedCall;
 }
 

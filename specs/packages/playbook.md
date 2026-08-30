@@ -90,6 +90,11 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 - The declared machine output is unchanged, still deriving its status and fields from typed context.
 - Each maintained runtime's terminal result carries the reached final state's exact description under [[playbook-runtime-41](playbook-runtime.md#playbook-runtime-41)], independently of whether that runtime implements optional control actions.
 
+#### playbook-28
+
+Where a maintained workflow runs under artifact schema `3`, its compiled runtime shall apply the automatic-replay fence of [[playbook-runtime-71](playbook-runtime.md#playbook-runtime-71)] at every governed delegated-player state regardless of whether linking emits the shared flat runtime or DECIDE's bespoke parallel runtime.
+While that workflow remains under artifact schema `2`, its delegated-player correction [[playbook-runtime-9](playbook-runtime.md#playbook-runtime-9)] and failure-state retry [[playbook-runtime-1](playbook-runtime.md#playbook-runtime-1)] and [[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)] shall retain their legacy behavior until the workflow's atomic schema-3 migration under [[playbook-1](#playbook-1)].
+
 ### Boss-reply suspension
 
 #### playbook-12
@@ -140,6 +145,11 @@ When the REVIEW prompt-contract suite runs, it shall fail if an affected-spec re
 #### playbook-23
 
 When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE sequences each retained commit through nested REVIEW, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result, DECIDE preserves blind parallel proposals before its own commit, each parent reports an authored child failure or invalid success with its exact last owned commit and without starting further work, each such authored failure or invalid success settles in a terminal state whose published description reports that REVIEW failure while the approval-backed terminal state is entered only by an exact approval, each terminal result carries the exact description of the final state reached, and each parent parks on a nested REVIEW control-plane failure without reporting an authored outcome (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], [[playbook-26](#playbook-26)], and [[playbook-27](#playbook-27)]).
+
+#### playbook-29
+
+When maintained-workflow conformance drives equivalent staged artifact-schema-3 governed boundaries through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both apply the same host-acknowledged `unchanged`-only gates to empty-`ok` correction and ordinary failure-state retry, both retain evidence and start no automatic player call for a missing, incomplete, or non-`unchanged` receipt, and DECIDE's authored and generated runtime siblings stay behaviorally identical.
+The suite shall further fail unless the shipped artifact-schema-2 CODE, REVIEW, and DECIDE profiles retain their existing correction and retry behavior (verifying [[playbook-28](#playbook-28)]).
 
 ### Boss-reply suspension coverage
 

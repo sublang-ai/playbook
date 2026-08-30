@@ -361,6 +361,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       /interface PlaybookSuspendedCall extends PlaybookPendingCall/,
     );
     expect(interfaceProperties(runtimeDts, 'PlaybookSuspendedCall')).toEqual([
+      'effectBoundaryPrefixSequence?:number|null',
       'stateId:string',
       'text:string',
       'turnId?:number',

@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PlayerResult, PlayerSessionStore } from '../../../src/runtime.js';
+import type {
+  PlayerResult,
+  PlayerSessionStore,
+  PlaybookEffectBoundary,
+  PlaybookEffectLedger,
+} from '../../../src/runtime.js';
 import createPlaybookRuntime, {
   _internal,
   type PlayerCallOptions,
@@ -89,6 +96,162 @@ function session(
     ...(roleBindings === undefined ? {} : { roleBindings }),
     ports,
   };
+}
+
+const REPLAY_SESSION_ID = '30000000-0000-4000-8000-000000000001';
+const FOREIGN_REPLAY_SESSION_ID =
+  '30000000-0000-4000-8000-000000000002';
+const FIRST_REPLAY_ATTEMPT_ID =
+  '30000000-0000-4000-8000-000000000003';
+const SECOND_REPLAY_ATTEMPT_ID =
+  '30000000-0000-4000-8000-000000000004';
+const FOREIGN_REPLAY_ATTEMPT_ID =
+  '30000000-0000-4000-8000-000000000005';
+
+type ReplayReceiptEvidence = 'unchanged' | 'nonzero' | 'incomplete';
+
+interface StartedPlayerBoundary {
+  readonly callId: string;
+  readonly turnId: number;
+  readonly stateId: string;
+}
+
+function replayObservation(projection: Record<string, unknown> = {}) {
+  return {
+    worktree: '/repo',
+    gitDir: '/repo/.git',
+    head: '1'.repeat(40),
+    projection,
+    projectionDigest: `sha256:${createHash('sha256')
+      .update(JSON.stringify(projection))
+      .digest('hex')}`,
+  };
+}
+
+const REPLAY_BASELINE = replayObservation();
+
+function replayBoundary(options: {
+  readonly sequence: number;
+  readonly attemptId: string;
+  readonly attemptNumber: number;
+  readonly playbookId?: string;
+  readonly runtimeSessionId: string;
+  readonly turnId: number;
+  readonly callId: string;
+  readonly roleId: string;
+  readonly sourceStateId: string;
+  readonly evidence: ReplayReceiptEvidence;
+}): PlaybookEffectBoundary {
+  const base = {
+    sequence: options.sequence,
+    boundaryId: `40000000-0000-4000-8000-${String(options.sequence).padStart(12, '0')}`,
+    attemptId: options.attemptId,
+    attemptNumber: options.attemptNumber,
+    playbookId: options.playbookId ?? 'decide',
+    runtimeSessionId: options.runtimeSessionId,
+    turnId: options.turnId,
+    callId: options.callId,
+    roleId: options.roleId,
+    sourceStateId: options.sourceStateId,
+    sourceOutcomeSchema: { type: 'object' },
+    dispositions: ['unchanged'] as const,
+    canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+    baseline: REPLAY_BASELINE,
+    correctionBudget: { limit: 1 as const, spent: false },
+  };
+  if (options.evidence === 'incomplete') return base;
+  if (options.evidence === 'unchanged') {
+    return {
+      ...base,
+      after: REPLAY_BASELINE,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: REPLAY_BASELINE,
+        after: REPLAY_BASELINE,
+      },
+    };
+  }
+  const after = replayObservation({ 'foreign.txt': 'changed' });
+  return {
+    ...base,
+    after,
+    physicalReceipt: {
+      classification: 'concurrent-or-foreign-change',
+      baseline: REPLAY_BASELINE,
+      after,
+    },
+  };
+}
+
+function replayLedger(
+  boundaries: readonly PlaybookEffectBoundary[],
+): PlaybookEffectLedger {
+  return {
+    schemaVersion: 1,
+    revision: boundaries.length === 0 ? 0 : boundaries.length,
+    boundaries,
+    logicalOperations: [],
+  };
+}
+
+function replaySession(ports: PlaybookPorts): PlaybookSession {
+  return {
+    ...session(ports),
+    sessionId: REPLAY_SESSION_ID,
+    rootSessionId: REPLAY_SESSION_ID,
+  };
+}
+
+function rememberStartedPlayerBoundary(
+  record: TelemetryRecord,
+  startedByRole: Map<string, StartedPlayerBoundary>,
+): void {
+  if (record.topic !== 'playbook.trace') return;
+  const trace = record.payload as PlaybookTraceEvent;
+  if (trace.type !== 'player.call.started') return;
+  const payload = trace.payload as Record<string, unknown>;
+  if (
+    typeof payload.roleId !== 'string' ||
+    typeof payload.stateId !== 'string' ||
+    trace.callId === undefined ||
+    trace.turnId === undefined
+  ) {
+    throw new Error('player start trace lacks replay-boundary identity');
+  }
+  startedByRole.set(payload.roleId, {
+    callId: trace.callId,
+    turnId: trace.turnId,
+    stateId: payload.stateId,
+  });
+}
+
+function appendStartedReplayBoundary(
+  boundaries: PlaybookEffectBoundary[],
+  startedByRole: ReadonlyMap<string, StartedPlayerBoundary>,
+  roleId: string,
+  options: {
+    readonly attemptId: string;
+    readonly attemptNumber: number;
+    readonly evidence: ReplayReceiptEvidence;
+  },
+): void {
+  const started = startedByRole.get(roleId);
+  if (started === undefined) {
+    throw new Error(`missing started trace for ${roleId}`);
+  }
+  boundaries.push(
+    replayBoundary({
+      sequence: boundaries.length + 1,
+      attemptId: options.attemptId,
+      attemptNumber: options.attemptNumber,
+      runtimeSessionId: REPLAY_SESSION_ID,
+      turnId: started.turnId,
+      callId: started.callId,
+      roleId,
+      sourceStateId: started.stateId,
+      evidence: options.evidence,
+    }),
+  );
 }
 
 function completePorts(overrides: Partial<PlaybookPorts>): PlaybookPorts {
@@ -766,6 +929,216 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
 
     await runtime.dispose();
   });
+});
+
+describe('DECIDE automatic-replay effect fence', () => {
+  it.each([
+    ['artifact schema 2', 'legacy', true],
+    ['an unchanged exact receipt', 'unchanged', true],
+    ['a nonzero exact receipt', 'nonzero', false],
+    ['an incomplete exact boundary', 'incomplete', false],
+  ] as const)(
+    'permits empty-ok correction under %s only when legacy or durably unchanged',
+    async (_label, mode, expectedCorrection) => {
+      const boundaries: PlaybookEffectBoundary[] = [];
+      const startedByRole = new Map<string, StartedPlayerBoundary>();
+      const proposalPairStarted = deferred<void>();
+      let initialProposalCalls = 0;
+      let coderCalls = 0;
+      let reviewerCalls = 0;
+      let reviewCalls = 0;
+      let exactCallDecoyAdded = false;
+      const ports = completePorts({
+        callPlayer: async (roleId) => {
+          const count =
+            roleId === 'coder' ? ++coderCalls : ++reviewerCalls;
+          const started = startedByRole.get(roleId);
+          if (started === undefined) {
+            throw new Error(`missing started trace for ${roleId}`);
+          }
+          if (roleId === 'coder' && count === 1) {
+            // An unrelated unchanged receipt with the same process-local call
+            // id cannot authorize correction of this runtime's exact call.
+            boundaries.push(
+              replayBoundary({
+                sequence: boundaries.length + 1,
+                attemptId: FOREIGN_REPLAY_ATTEMPT_ID,
+                attemptNumber: 1,
+                playbookId: 'review',
+                runtimeSessionId: FOREIGN_REPLAY_SESSION_ID,
+                turnId: started.turnId,
+                callId: started.callId,
+                roleId: 'reviewer',
+                sourceStateId: 'foreign-review',
+                evidence: 'unchanged',
+              }),
+            );
+            exactCallDecoyAdded = true;
+          }
+          appendStartedReplayBoundary(boundaries, startedByRole, roleId, {
+            attemptId: FIRST_REPLAY_ATTEMPT_ID,
+            attemptNumber: 1,
+            evidence:
+              roleId === 'coder' && count === 1
+                ? mode === 'legacy'
+                  ? 'nonzero'
+                  : mode
+                : 'unchanged',
+          });
+          if (count === 1) {
+            initialProposalCalls += 1;
+            if (initialProposalCalls === 2) proposalPairStarted.resolve();
+            await proposalPairStarted.promise;
+          }
+          if (roleId === 'reviewer') {
+            return {
+              status: 'ok',
+              finalText: 'Reviewer proposal',
+            };
+          }
+          return {
+            status: 'ok',
+            finalText:
+              count === 1
+                ? ''
+                : count === 2
+                  ? 'Coder proposal'
+                  : 'Committed proposal\nCommit: abc123',
+          };
+        },
+        callJudge: async (prompt) => judgeReply(prompt),
+        callPlaybook: async () => {
+          reviewCalls += 1;
+          return { state: 'suspended', childSessionId: 'review-child' };
+        },
+        emitTelemetry: async (record) => {
+          rememberStartedPlayerBoundary(record, startedByRole);
+        },
+      });
+      const runtime =
+        mode === 'legacy'
+          ? createPlaybookRuntime({})
+          : _internal.createStagedSchema3AutomaticReplayRuntime(
+              {},
+              { readEffectLedger: () => replayLedger(boundaries) },
+            );
+      await runtime.init(replaySession(ports));
+
+      const result = await runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      });
+
+      expect(exactCallDecoyAdded).toBe(true);
+      if (expectedCorrection) {
+        expect(result).toMatchObject({ outcome: 'suspended' });
+        expect(coderCalls).toBe(3);
+        expect(reviewCalls).toBe(1);
+      } else {
+        expect(result).toMatchObject({
+          outcome: 'failed',
+          state: { stateId: 'failed' },
+          error: { message: expect.stringContaining('no finalText') },
+        });
+        expect(coderCalls).toBe(1);
+        expect(reviewCalls).toBe(0);
+      }
+
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    ['artifact schema 2', 'legacy', true],
+    ['an all-unchanged host attempt', 'unchanged', true],
+    ['a foreign nonzero boundary in the host attempt', 'nonzero', false],
+    ['a foreign incomplete boundary in the host attempt', 'incomplete', false],
+  ] as const)(
+    'permits failed-state restart under %s only when the whole attempt is safe',
+    async (_label, mode, expectedRestart) => {
+      const boundaries: PlaybookEffectBoundary[] = [
+        replayBoundary({
+          sequence: 1,
+          attemptId: FIRST_REPLAY_ATTEMPT_ID,
+          attemptNumber: 1,
+          playbookId: 'review',
+          runtimeSessionId: FOREIGN_REPLAY_SESSION_ID,
+          turnId: 1,
+          callId: 'nested-player-1',
+          roleId: 'reviewer',
+          sourceStateId: 'nested-review',
+          evidence: mode === 'legacy' ? 'nonzero' : mode,
+        }),
+      ];
+      const startedByRole = new Map<string, StartedPlayerBoundary>();
+      const proposalPairStarted = deferred<void>();
+      let firstAttemptCalls = 0;
+      let playerCalls = 0;
+      let attemptId = FIRST_REPLAY_ATTEMPT_ID;
+      let attemptNumber = 1;
+      const ports = completePorts({
+        callPlayer: async (roleId) => {
+          playerCalls += 1;
+          appendStartedReplayBoundary(boundaries, startedByRole, roleId, {
+            attemptId,
+            attemptNumber,
+            evidence: 'unchanged',
+          });
+          if (attemptNumber === 1) {
+            firstAttemptCalls += 1;
+            if (firstAttemptCalls === 2) proposalPairStarted.resolve();
+            await proposalPairStarted.promise;
+          }
+          return {
+            status: 'error',
+            error: `attempt ${attemptNumber} failed`,
+          };
+        },
+        emitTelemetry: async (record) => {
+          rememberStartedPlayerBoundary(record, startedByRole);
+        },
+      });
+      const runtime =
+        mode === 'legacy'
+          ? createPlaybookRuntime({})
+          : _internal.createStagedSchema3AutomaticReplayRuntime(
+              {},
+              { readEffectLedger: () => replayLedger(boundaries) },
+            );
+      await runtime.init(replaySession(ports));
+      await expect(
+        runtime.handleBossInput({ text: 'First topic.', signal: signal() }),
+      ).resolves.toMatchObject({
+        outcome: 'failed',
+        state: { stateId: 'failed' },
+      });
+      expect(firstAttemptCalls).toBe(2);
+      const callsBeforeRetry = playerCalls;
+      attemptId = SECOND_REPLAY_ATTEMPT_ID;
+      attemptNumber = 2;
+
+      const retry = await runtime.handleBossInput({
+        text: 'Try a new topic.',
+        signal: signal(),
+      });
+
+      if (expectedRestart) {
+        expect(retry).toMatchObject({
+          outcome: 'failed',
+          state: { stateId: 'failed' },
+        });
+        expect(playerCalls).toBeGreaterThan(callsBeforeRetry);
+      } else {
+        expect(retry).toMatchObject({
+          outcome: 'no-action',
+          state: { stateId: 'failed' },
+        });
+        expect(playerCalls).toBe(callsBeforeRetry);
+      }
+
+      await runtime.dispose();
+    },
+  );
 });
 
 describe('DECIDE suspended REVIEW persistence', () => {

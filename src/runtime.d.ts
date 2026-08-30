@@ -55,6 +55,7 @@ export interface PlaybookSuspendedCall extends PlaybookPendingCall {
     stateId: string;
     text: string;
     turnId?: number;
+    effectBoundaryPrefixSequence?: number | null;
 }
 export interface PlaybookCallRequest {
     callId: string;
@@ -294,6 +295,10 @@ export interface PlaybookRuntimeSnapshot {
     state: PlaybookState;
     pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
     effectLedger: PlaybookEffectLedger;
+    failedEffectAttempt?: {
+        readonly boundaryPrefix: number;
+        readonly attemptId: string | null;
+    };
     suspendedCall?: PlaybookSuspendedCall;
 }
 export interface PlaybookControlAction {

@@ -344,7 +344,10 @@ describe('public XState snapshot normalization', () => {
 
 describe('runtime snapshot schema validation', () => {
   it('accepts schema 4 and rejects released legacy schemas', () => {
-    const source = runtimeSnapshot(RESTORED_CALL);
+    const source = runtimeSnapshot({
+      ...RESTORED_CALL,
+      effectBoundaryPrefixSequence: 0,
+    });
     const restored = assertPlaybookRuntimeSnapshot(source, 'parent', {
       allowSuspendedCall: true,
     });
@@ -354,6 +357,7 @@ describe('runtime snapshot schema validation', () => {
     });
     expect(Object.isFrozen(restored)).toBe(true);
     expect(Object.isFrozen(restored.suspendedCall)).toBe(true);
+    expect(restored.suspendedCall?.effectBoundaryPrefixSequence).toBe(0);
 
     (source.sequences as { turn: number }).turn = 99;
     (source.suspendedCall as { text: string }).text = 'mutated';
@@ -383,6 +387,11 @@ describe('runtime snapshot schema validation', () => {
   it.each([
     ['zero turn owner', { ...RESTORED_CALL, turnId: 0 }, 'positive integer'],
     [
+      'negative effect prefix',
+      { ...RESTORED_CALL, effectBoundaryPrefixSequence: -1 },
+      'integer greater than or equal to 0',
+    ],
+    [
       'future turn owner',
       { ...RESTORED_CALL, turnId: 4 },
       'must not exceed sequences.turn',
@@ -410,6 +419,27 @@ describe('runtime snapshot schema validation', () => {
         allowSuspendedCall: true,
       }),
     ).toThrow('sequences.playbookCall greater than zero');
+
+    const futureEffectPrefix = runtimeSnapshot({
+      ...RESTORED_CALL,
+      effectBoundaryPrefixSequence: 1,
+    });
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(futureEffectPrefix, 'parent', {
+        allowSuspendedCall: true,
+      }),
+    ).toThrow('effectBoundaryPrefixSequence exceeds the effect ledger');
+
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        runtimeSnapshot({
+          ...RESTORED_CALL,
+          effectBoundaryPrefixSequence: null,
+        }),
+        'parent',
+        { allowSuspendedCall: true },
+      ),
+    ).not.toThrow();
 
     const wrongState = runtimeSnapshot(RESTORED_CALL);
     (wrongState.state.tags as string[])[0] = 'playbook.parked';
@@ -491,6 +521,92 @@ describe('runtime snapshot schema validation', () => {
     ).toThrow(
       'runtime snapshot pendingBossQuestions[0].internal is not a declared property',
     );
+  });
+
+  it('binds a failed replay attempt to its exact effect-ledger suffix', () => {
+    const effectLedger = {
+      schemaVersion: 1 as const,
+      revision: 1,
+      boundaries: [EFFECT_BOUNDARY],
+      logicalOperations: [],
+    };
+    const failedSnapshot = {
+      ...runtimeSnapshot(),
+      machine: { status: 'active', value: 'failed' },
+      state: {
+        value: 'failed',
+        activeStateIds: ['failed'],
+        tags: ['playbook.parked'],
+        status: 'active' as const,
+        quiescent: true,
+        stateId: 'failed',
+      },
+      effectLedger,
+      failedEffectAttempt: {
+        boundaryPrefix: 0,
+        attemptId: EFFECT_BOUNDARY.attemptId,
+      },
+    };
+
+    const restored = assertPlaybookRuntimeSnapshot(failedSnapshot, 'parent');
+    expect(restored.failedEffectAttempt).toEqual({
+      boundaryPrefix: 0,
+      attemptId: EFFECT_BOUNDARY.attemptId,
+    });
+    expect(Object.isFrozen(restored.failedEffectAttempt)).toBe(true);
+
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...failedSnapshot,
+          failedEffectAttempt: { boundaryPrefix: 1, attemptId: null },
+        },
+        'parent',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...failedSnapshot,
+          failedEffectAttempt: { boundaryPrefix: 0, attemptId: null },
+        },
+        'parent',
+      ),
+    ).toThrow('null attemptId requires an empty causal suffix');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...failedSnapshot,
+          failedEffectAttempt: {
+            boundaryPrefix: 0,
+            attemptId: '20000000-0000-4000-8000-000000000001',
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('does not match its causal ledger suffix');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...failedSnapshot,
+          state: runtimeSnapshot().state,
+        },
+        'parent',
+      ),
+    ).toThrow('requires the failed state');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...failedSnapshot,
+          failedEffectAttempt: {
+            boundaryPrefix: 0,
+            attemptId: EFFECT_BOUNDARY.attemptId,
+            internal: true,
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('internal is not a declared property');
   });
 });
 

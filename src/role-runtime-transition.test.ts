@@ -5,7 +5,9 @@ import { assign, createMachine } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  PlaybookEffectLedger,
   PlaybookPorts,
+  PlaybookRepositoryReceipt,
   PlaybookRoleBinding,
   PlaybookSession,
   PlayerResult,
@@ -23,25 +25,143 @@ import {
   type XStatePlaybookRuntimeSpecV3,
 } from './xstate-runtime.js';
 
-function emptyLedgerHostCapabilities() {
-  const ledger = emptyPlaybookEffectLedger();
+const EFFECT_OBSERVATION = Object.freeze({
+  worktree: '/repo',
+  gitDir: '/repo/.git',
+  head: '1'.repeat(40),
+  projection: Object.freeze({}),
+  projectionDigest:
+    'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+});
+
+function emptyLedgerHostCapabilities(
+  options: {
+    readonly classifications?: readonly PlaybookRepositoryReceipt['classification'][];
+    readonly attemptId?: string;
+    readonly initialLedger?: PlaybookEffectLedger;
+    readonly startAcknowledgement?: Promise<void>;
+    readonly completionAcknowledgement?: Promise<void>;
+    readonly failCompletionAt?: readonly number[];
+  } = {},
+) {
+  let ledger = options.initialLedger ?? emptyPlaybookEffectLedger();
+  let callIndex = 0;
+  const attemptId =
+    options.attemptId ?? '20000000-0000-4000-8000-000000000001';
+  const runExclusive = vi.fn(async (input: Record<string, unknown>) => {
+    const currentCallIndex = callIndex++;
+    const seed = input.effectBoundary as Record<string, unknown>;
+    const started = {
+      sequence: ledger.boundaries.length + 1,
+      ...seed,
+      attemptId,
+      attemptNumber: 1,
+      playbookId: 'role-fixture',
+      canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+      baseline: EFFECT_OBSERVATION,
+    };
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries, started],
+    });
+    await options.startAcknowledgement;
+    let operation:
+      | { readonly status: 'fulfilled'; readonly value: unknown }
+      | { readonly status: 'rejected'; readonly reason: unknown };
+    try {
+      operation = {
+        status: 'fulfilled',
+        value: await (input.operation as () => Promise<unknown>)(),
+      };
+    } catch (reason) {
+      operation = { status: 'rejected', reason };
+    }
+    await options.completionAcknowledgement;
+    if (options.failCompletionAt?.includes(currentCallIndex)) {
+      throw new Error('effect boundary completion acknowledgement unavailable');
+    }
+    const classification =
+      options.classifications?.[currentCallIndex] ?? 'unchanged';
+    const changedProjection = Object.freeze({
+      'changed.txt': Object.freeze({ mode: '100644', content: 'changed' }),
+    });
+    const changedProjectionObservation = Object.freeze({
+      ...EFFECT_OBSERVATION,
+      projection: changedProjection,
+      projectionDigest:
+        'sha256:4b797d2a72bd825a64e65ec546734edc020fc9070965c5eb3678943ddcfd1b25',
+    });
+    const changedHeadObservation = Object.freeze({
+      ...EFFECT_OBSERVATION,
+      head: '2'.repeat(40),
+    });
+    const receipt: PlaybookRepositoryReceipt = (() => {
+      switch (classification) {
+        case 'unchanged':
+          return {
+            classification,
+            baseline: EFFECT_OBSERVATION,
+            after: EFFECT_OBSERVATION,
+          };
+        case 'one-descendant-commit':
+          return {
+            classification,
+            baseline: EFFECT_OBSERVATION,
+            after: changedHeadObservation,
+            commitOid: changedHeadObservation.head,
+          };
+        case 'multiple-commits':
+        case 'rewritten-or-non-descendant':
+          return {
+            classification,
+            baseline: EFFECT_OBSERVATION,
+            after: changedHeadObservation,
+          };
+        case 'worktree-only-change':
+        case 'concurrent-or-foreign-change':
+          return {
+            classification,
+            baseline: EFFECT_OBSERVATION,
+            after: changedProjectionObservation,
+          };
+        case 'observation-ambiguous':
+          return { classification, baseline: EFFECT_OBSERVATION };
+      }
+    })();
+    const completion = await (
+      input.completeEffectBoundary as (value: unknown) => Promise<{
+        readonly finalText?: string;
+      }>
+    )({ boundary: started, operation, receipt });
+    const completed = {
+      ...started,
+      ...(receipt.after === undefined ? {} : { after: receipt.after }),
+      physicalReceipt: receipt,
+      ...(completion.finalText === undefined
+        ? {}
+        : { finalText: completion.finalText }),
+    };
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries.slice(0, -1), completed],
+    });
+    return { operation, receipt, effectLedger: ledger };
+  });
   return {
+    repository: { runExclusive },
     effectLedger: {
       snapshot: () => ledger,
       writeAhead: async () => ledger,
+    },
+    replaceEffectLedger(next: PlaybookEffectLedger) {
+      ledger = assertPlaybookEffectLedger(next);
     },
   };
 }
 
 function oneBoundaryEffectLedger() {
-  const observation = {
-    worktree: '/repo',
-    gitDir: '/repo/.git',
-    head: '1'.repeat(40),
-    projection: {},
-    projectionDigest:
-      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
-  };
   return assertPlaybookEffectLedger({
     schemaVersion: 1,
     revision: 1,
@@ -60,11 +180,25 @@ function oneBoundaryEffectLedger() {
         sourceOutcomeSchema: { type: 'object' },
         dispositions: ['unchanged'],
         canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
-        baseline: observation,
+        baseline: EFFECT_OBSERVATION,
         correctionBudget: { limit: 1, spent: false },
       },
     ],
     logicalOperations: [],
+  });
+}
+
+function ambiguousBoundaryEffectLedger() {
+  const started = oneBoundaryEffectLedger();
+  const boundary = started.boundaries[0]!;
+  const physicalReceipt: PlaybookRepositoryReceipt = {
+    classification: 'observation-ambiguous',
+    baseline: EFFECT_OBSERVATION,
+  };
+  return assertPlaybookEffectLedger({
+    ...started,
+    revision: 2,
+    boundaries: [{ ...boundary, physicalReceipt }],
   });
 }
 
@@ -112,6 +246,162 @@ const repeatMachine = createMachine({
   },
 });
 
+const retryMachine = createMachine({
+  id: 'role-retry',
+  context: { task: '' },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-1',
+          prompt: `Implement ${context.task}.`,
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'ready',
+        onError: 'failed',
+      },
+    },
+    failed: {
+      meta: stateMeta('failed', 'The task failed.'),
+      tags: ['playbook.parked'],
+      on: { START: 'work' },
+    },
+  },
+});
+
+// A schema-3 parent can fail outside its own governed player state after a
+// nested or sibling runtime has already written the shared host attempt. The
+// unreachable `work` state makes the artifact governed; `control` exercises
+// the parent-only failure path without manufacturing a local player boundary.
+const foreignEffectRetryMachine = createMachine({
+  id: 'foreign-effect-retry',
+  context: { task: '' },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'control',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    control: {
+      meta: stateMeta('control', 'Checking child settlement.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'captain',
+        input: () => ({
+          stateId: 'control',
+          sourceItem: 'ROLE-2',
+          prompt: 'Check the child settlement.',
+          result: { complete: 'The child settlement is safe.' },
+        }),
+        onDone: 'ready',
+        onError: 'failed',
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: () => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-1',
+          prompt: 'Implement the task.',
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'ready',
+        onError: 'failed',
+      },
+    },
+    failed: {
+      meta: stateMeta('failed', 'The task failed.'),
+      tags: ['playbook.parked'],
+      on: { START: 'control' },
+    },
+  },
+});
+
+const nestedAfterGovernedEffectMachine = createMachine({
+  id: 'nested-after-governed-effect',
+  context: { task: '' },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-1',
+          prompt: `Implement ${context.task}.`,
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'child',
+        onError: 'failed',
+      },
+    },
+    child: {
+      meta: stateMeta('child', 'Waiting for child review.'),
+      tags: ['playbook.suspended'],
+      invoke: {
+        src: 'playbook',
+        input: ({ context }) => ({
+          stateId: 'child',
+          playbookId: 'review',
+          text: context.task,
+        }),
+        onDone: 'ready',
+        onError: 'failed',
+      },
+    },
+    failed: {
+      meta: stateMeta('failed', 'The task failed.'),
+      tags: ['playbook.parked'],
+      on: { START: 'work' },
+    },
+  },
+});
+
 interface EmptyOptions {}
 
 function repeatSpec(
@@ -135,6 +425,17 @@ const repeatOutcomeAuthority: XStateOutcomeAuthoritySpec = {
   },
 };
 
+const effectAuthorizedRepeatOutcomeAuthority: XStateOutcomeAuthoritySpec = {
+  governedPlayerStates: {
+    work: {
+      complete: {
+        fields: {},
+        repositoryDisposition: 'one-descendant-commit',
+      },
+    },
+  },
+};
+
 function repeatSchema3Spec(
   overrides: Partial<XStatePlaybookRuntimeSpecV3<EmptyOptions>> = {},
 ): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
@@ -143,6 +444,33 @@ function repeatSchema3Spec(
     compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
     outcomeAuthority: repeatOutcomeAuthority,
     ...overrides,
+  };
+}
+
+function retrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return repeatSchema3Spec({
+    entryEvent: {
+      type: 'START',
+      textField: 'task',
+      contextField: 'task',
+    },
+  });
+}
+
+function foreignEffectRetrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    roleStates: {
+      work: { role: 'coder', label: 'Implement the task.' },
+    },
+    machineInput: () => ({}),
+    entryEvent: {
+      type: 'START',
+      textField: 'task',
+      contextField: 'task',
+    },
+    outcomeAuthority: repeatOutcomeAuthority,
   };
 }
 
@@ -175,11 +503,12 @@ function session(
     playerSessions?: PlayerSessionStore;
   } = {},
 ): PlaybookSession {
-  const sessionId = `role-session-${++sessionSequence}`;
+  sessionSequence += 1;
+  const numericSessionId = sessionSequence.toString(16).padStart(12, '0');
   return {
-    sessionId,
+    sessionId: `30000000-0000-4000-8000-${numericSessionId}`,
     playbookId: 'role-fixture',
-    rootSessionId: sessionId,
+    rootSessionId: `30000000-0000-4000-8000-${numericSessionId}`,
     depth: 0,
     ...options,
     ports,
@@ -1240,6 +1569,515 @@ describe('DR-032 shared role runtime transition', () => {
       coder: 'thread-2',
     });
     await runtime.dispose();
+  });
+
+  it.each([
+    ['unchanged', 'unchanged' as const, 2, false],
+    ['one descendant commit', 'one-descendant-commit' as const, 1, true],
+    ['multiple commits', 'multiple-commits' as const, 1, true],
+    [
+      'rewritten history',
+      'rewritten-or-non-descendant' as const,
+      1,
+      true,
+    ],
+    ['worktree-only change', 'worktree-only-change' as const, 1, true],
+    [
+      'concurrent or foreign change',
+      'concurrent-or-foreign-change' as const,
+      1,
+      false,
+    ],
+    ['ambiguous observation', 'observation-ambiguous' as const, 1, false],
+  ])(
+    'allows schema-3 empty-result correction only after a complete %s receipt',
+    async (_label, classification, expectedCalls, effectAuthorized) => {
+      const hostCapabilities = emptyLedgerHostCapabilities({
+        classifications: [classification, 'unchanged'],
+      });
+      const callPlayer = vi
+        .fn<PlaybookPorts['callPlayer']>()
+        .mockResolvedValueOnce({ status: 'ok', finalText: '' })
+        .mockResolvedValue({ status: 'ok', finalText: 'done' });
+      const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+        repeatMachine,
+        repeatSchema3Spec(
+          effectAuthorized
+            ? { outcomeAuthority: effectAuthorizedRepeatOutcomeAuthority }
+            : {},
+        ),
+      )({ configuredOptions: {}, hostCapabilities });
+      await runtime.init(session(recordingPorts(callPlayer)));
+
+      await runtime.handleBossInput(bossTurn('the task'));
+
+      expect(callPlayer).toHaveBeenCalledTimes(expectedCalls);
+      expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledTimes(
+        expectedCalls,
+      );
+      const boundaries = hostCapabilities.effectLedger.snapshot().boundaries;
+      expect(boundaries).toHaveLength(expectedCalls);
+      expect(boundaries[0]?.finalText).toBe('');
+      expect(boundaries[0]?.physicalReceipt?.classification).toBe(
+        classification,
+      );
+      await runtime.dispose();
+    },
+  );
+
+  it('does not begin the traced schema-3 player call before the durable start acknowledgement', async () => {
+    let acknowledgeStart!: () => void;
+    const startAcknowledgement = new Promise<void>((resolve) => {
+      acknowledgeStart = resolve;
+    });
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      startAcknowledgement,
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'done',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    const pending = runtime.handleBossInput(bossTurn('the task'));
+    await vi.waitFor(() => {
+      expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledOnce();
+    });
+    expect(callPlayer).not.toHaveBeenCalled();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries).toHaveLength(1);
+    acknowledgeStart();
+    await pending;
+    expect(callPlayer).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
+  it('does not begin empty-result correction before the first durable completion acknowledgement', async () => {
+    let acknowledgeCompletion!: () => void;
+    const completionAcknowledgement = new Promise<void>((resolve) => {
+      acknowledgeCompletion = resolve;
+    });
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      completionAcknowledgement,
+    });
+    const callPlayer = vi
+      .fn<PlaybookPorts['callPlayer']>()
+      .mockResolvedValueOnce({ status: 'ok', finalText: '' })
+      .mockResolvedValue({ status: 'ok', finalText: 'done' });
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    const pending = runtime.handleBossInput(bossTurn('the task'));
+    await vi.waitFor(() => {
+      expect(callPlayer).toHaveBeenCalledOnce();
+    });
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('physicalReceipt');
+    expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledOnce();
+    acknowledgeCompletion();
+    await pending;
+    expect(callPlayer).toHaveBeenCalledTimes(2);
+    expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledTimes(2);
+    await runtime.dispose();
+  });
+
+  it('treats a started boundary without a completion acknowledgement as ineligible for correction or retry', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      failCompletionAt: [0],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: '',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      retryMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).rejects.toThrow('completion acknowledgement unavailable');
+    expect(
+      hostCapabilities.effectLedger.snapshot().boundaries[0]?.physicalReceipt,
+    ).toBeUndefined();
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await runtime.handleBossInput(bossTurn('later no-action turn'));
+    expect(callPlayer).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
+  it('advertises and applies a failed-state retry only for an all-unchanged host attempt', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const callPlayer = vi
+      .fn<PlaybookPorts['callPlayer']>()
+      .mockResolvedValueOnce({ status: 'error', error: 'try again' })
+      .mockResolvedValue({ status: 'ok', finalText: 'done' });
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      retryMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    const failed = await runtime.handleBossInput(bossTurn('the task'));
+    expect(failed.state.stateId).toBe('failed');
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toContain(
+      'retry:START',
+    );
+
+    const receipt = await runtime.apply?.({
+      actionId: 'retry:START',
+      key: 'retry-once',
+      signal: new AbortController().signal,
+    });
+    expect(receipt?.disposition).toBe('executed');
+    expect(callPlayer).toHaveBeenCalledTimes(2);
+    await runtime.dispose();
+  });
+
+  it('suppresses retry when a second empty result follows a nonzero receipt', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'concurrent-or-foreign-change'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: '',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      retryMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(callPlayer).toHaveBeenCalledTimes(2);
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await runtime.dispose();
+  });
+
+  it('suppresses retry when adjudication fails after a nonzero receipt', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['concurrent-or-foreign-change'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'candidate output',
+    }));
+    const ports = {
+      ...recordingPorts(callPlayer),
+      callJudge: vi.fn(async () => 'not-json'),
+    };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      retryMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(ports));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'judge response is not valid JSON',
+    );
+    expect(callPlayer).toHaveBeenCalledOnce();
+    expect(ports.callJudge).toHaveBeenCalledOnce();
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await runtime.dispose();
+  });
+
+  it('retains an earlier governed boundary when a suspended child resumes into failure', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['concurrent-or-foreign-change'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'implemented',
+    }));
+    const callPlaybook = vi.fn<PlaybookPorts['callPlaybook']>(async () => ({
+      state: 'suspended',
+      childSessionId: 'review-child',
+    }));
+    const ports = { ...recordingPorts(callPlayer), callPlaybook };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      nestedAfterGovernedEffectMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(ports));
+
+    const suspended = await runtime.handleBossInput(bossTurn('the task'));
+    expect(suspended).toMatchObject({ outcome: 'suspended' });
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    expect(pendingCall).toMatchObject({
+      playbookId: 'review',
+      childSessionId: 'review-child',
+    });
+
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: pendingCall!.callId,
+        result: {
+          status: 'error',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          error: { name: 'Error', message: 'review failed' },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    expect(runtime.exportSnapshot?.()?.failedEffectAttempt).toEqual({
+      boundaryPrefix: 0,
+      attemptId: '20000000-0000-4000-8000-000000000001',
+    });
+    await runtime.dispose();
+  });
+
+  it('restores a suspended child with its exact causal effect prefix', async () => {
+    const attemptId = '20000000-0000-4000-8000-000000000001';
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      attemptId,
+      initialLedger: ambiguousBoundaryEffectLedger(),
+      classifications: ['unchanged'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'implemented',
+    }));
+    const callPlaybook = vi.fn<PlaybookPorts['callPlaybook']>(async () => ({
+      state: 'suspended',
+      childSessionId: 'review-child',
+    }));
+    const ports = { ...recordingPorts(callPlayer), callPlaybook };
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        nestedAfterGovernedEffectMachine,
+        retrySchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(ports);
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    const suspended = await runtime.handleBossInput(bossTurn('the task'));
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.suspendedCall).toMatchObject({
+      callId: pendingCall?.callId,
+      effectBoundaryPrefixSequence: 1,
+    });
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    expect(callPlaybook).toHaveBeenCalledOnce();
+    expect(callPlayer).toHaveBeenCalledOnce();
+    await expect(
+      restored.resumePlaybookCall({
+        callId: pendingCall!.callId,
+        result: {
+          status: 'error',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          error: { name: 'Error', message: 'review failed after restore' },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(restored.describe?.().actions.map(({ id }) => id)).toContain(
+      'retry:START',
+    );
+    expect(restored.exportSnapshot?.()?.failedEffectAttempt).toEqual({
+      boundaryPrefix: 1,
+      attemptId,
+    });
+    await restored.dispose();
+  });
+
+  it('suppresses failed-state retry across no-action turns and restore when any boundary in the host attempt is nonzero', async () => {
+    const attemptId = '10000000-0000-4000-8000-000000000002';
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      attemptId,
+      initialLedger: ambiguousBoundaryEffectLedger(),
+      classifications: ['unchanged'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'error',
+      error: 'still failed',
+    }));
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        retryMachine,
+        retrySchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(recordingPorts(callPlayer));
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    const failed = await runtime.handleBossInput(bossTurn('the task'));
+    expect(failed.state.stateId).toBe('failed');
+    expect(
+      hostCapabilities.effectLedger
+        .snapshot()
+        .boundaries.filter((boundary) => boundary.attemptId === attemptId)
+        .map((boundary) => boundary.physicalReceipt?.classification),
+    ).toEqual(['observation-ambiguous', 'unchanged']);
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await expect(
+      runtime.apply?.({
+        actionId: 'retry:START',
+        key: 'blocked-retry',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ disposition: 'rejected' });
+    await runtime.handleBossInput(bossTurn('later no-action turn'));
+    expect(callPlayer).toHaveBeenCalledTimes(1);
+
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot).toBeDefined();
+    await runtime.dispose();
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    expect(restored.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await restored.handleBossInput(bossTurn('after restore'));
+    expect(callPlayer).toHaveBeenCalledTimes(1);
+    await restored.dispose();
+  });
+
+  it('binds a parent failure to a foreign-runtime boundary and preserves that fence across restore', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => {
+      throw new Error('the unreachable player state must not run');
+    });
+    const callCaptain = vi.fn<PlaybookPorts['callCaptain']>(async () => {
+      hostCapabilities.replaceEffectLedger(ambiguousBoundaryEffectLedger());
+      return { status: 'error', error: 'child settlement failed' };
+    });
+    const ports = { ...recordingPorts(callPlayer), callCaptain };
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        foreignEffectRetryMachine,
+        foreignEffectRetrySchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(ports);
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(callCaptain).toHaveBeenCalledOnce();
+    expect(runtime.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.failedEffectAttempt).toEqual({
+      boundaryPrefix: 0,
+      attemptId: '10000000-0000-4000-8000-000000000002',
+    });
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    expect(restored.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    await restored.handleBossInput(bossTurn('must remain fenced'));
+    expect(callCaptain).toHaveBeenCalledOnce();
+    const current = hostCapabilities.effectLedger.snapshot();
+    const firstBoundary = current.boundaries[0]!;
+    hostCapabilities.replaceEffectLedger({
+      ...current,
+      revision: current.revision + 1,
+      boundaries: [
+        ...current.boundaries,
+        {
+          ...firstBoundary,
+          sequence: 2,
+          boundaryId: '10000000-0000-4000-8000-000000000004',
+          attemptId: '10000000-0000-4000-8000-000000000005',
+        },
+      ],
+    });
+    expect(restored.exportSnapshot?.()).not.toHaveProperty(
+      'failedEffectAttempt',
+    );
+    await restored.dispose();
+  });
+
+  it('persists an explicit pre-effect failure so safe retry remains available after restore', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => {
+      throw new Error('the unreachable player state must not run');
+    });
+    const callCaptain = vi.fn<PlaybookPorts['callCaptain']>(async () => ({
+      status: 'error',
+      error: 'pre-effect control failure',
+    }));
+    const ports = { ...recordingPorts(callPlayer), callCaptain };
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        foreignEffectRetryMachine,
+        foreignEffectRetrySchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(ports);
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+
+    await runtime.handleBossInput(bossTurn('the task'));
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toContain(
+      'retry:START',
+    );
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.failedEffectAttempt).toEqual({
+      boundaryPrefix: 0,
+      attemptId: null,
+    });
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    expect(restored.describe?.().actions.map(({ id }) => id)).toContain(
+      'retry:START',
+    );
+    hostCapabilities.replaceEffectLedger(ambiguousBoundaryEffectLedger());
+    expect(restored.describe?.().actions.map(({ id }) => id)).not.toContain(
+      'retry:START',
+    );
+    expect(restored.exportSnapshot?.()).not.toHaveProperty(
+      'failedEffectAttempt',
+    );
+    await restored.dispose();
   });
 });
 

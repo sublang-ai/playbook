@@ -137,6 +137,7 @@ interface PlaybookSuspendedCall extends PlaybookPendingCall {
   stateId: string;
   text: string;
   turnId?: number;
+  effectBoundaryPrefixSequence?: number | null;
 }
 
 type PlaybookRepositoryReceiptClassification =
@@ -302,6 +303,10 @@ interface PlaybookRuntimeSnapshot {
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
   effectLedger: PlaybookEffectLedger;
+  failedEffectAttempt?: {
+    readonly boundaryPrefix: number;
+    readonly attemptId: string | null;
+  };
   suspendedCall?: PlaybookSuspendedCall;
 }
 

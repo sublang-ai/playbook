@@ -1785,7 +1785,15 @@ function snapshotSuspendedCall(
   }
   rejectUnknownKeys(
     captured,
-    ['callId', 'stateId', 'playbookId', 'text', 'childSessionId', 'turnId'],
+    [
+      'callId',
+      'stateId',
+      'playbookId',
+      'text',
+      'childSessionId',
+      'turnId',
+      'effectBoundaryPrefixSequence',
+    ],
     path,
   );
   const call: PlaybookSuspendedCall = {
@@ -1809,6 +1817,15 @@ function snapshotSuspendedCall(
       throw new TypeError(`${path}.turnId must be a positive integer`);
     }
     call.turnId = captured.turnId as number;
+  }
+  if (own(captured, 'effectBoundaryPrefixSequence')) {
+    call.effectBoundaryPrefixSequence =
+      captured.effectBoundaryPrefixSequence === null
+        ? null
+        : effectInteger(
+            captured.effectBoundaryPrefixSequence,
+            `${path}.effectBoundaryPrefixSequence`,
+          );
   }
   return Object.freeze(call);
 }
@@ -1863,6 +1880,7 @@ export function assertPlaybookRuntimeSnapshot(
       'state',
       'pendingBossQuestions',
       'effectLedger',
+      'failedEffectAttempt',
       'suspendedCall',
     ],
     'runtime snapshot',
@@ -2027,6 +2045,71 @@ export function assertPlaybookRuntimeSnapshot(
     snapshot.effectLedger,
     'runtime snapshot effectLedger',
   );
+  if (
+    typeof suspendedCall?.effectBoundaryPrefixSequence === 'number' &&
+    suspendedCall.effectBoundaryPrefixSequence >
+      (effectLedger.boundaries.at(-1)?.sequence ?? 0)
+  ) {
+    throw new TypeError(
+      'runtime snapshot suspendedCall.effectBoundaryPrefixSequence exceeds the effect ledger',
+    );
+  }
+  let failedEffectAttempt: PlaybookRuntimeSnapshot['failedEffectAttempt'];
+  if (own(snapshot, 'failedEffectAttempt')) {
+    if (state.stateId !== 'failed') {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt requires the failed state',
+      );
+    }
+    if (!isRecord(snapshot.failedEffectAttempt)) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt must be an object',
+      );
+    }
+    rejectUnknownKeys(
+      snapshot.failedEffectAttempt,
+      ['boundaryPrefix', 'attemptId'],
+      'runtime snapshot failedEffectAttempt',
+    );
+    const boundaryPrefix = effectInteger(
+      snapshot.failedEffectAttempt.boundaryPrefix,
+      'runtime snapshot failedEffectAttempt.boundaryPrefix',
+    );
+    const lastBoundarySequence = effectLedger.boundaries.at(-1)?.sequence ?? 0;
+    if (boundaryPrefix > lastBoundarySequence) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt.boundaryPrefix exceeds the effect ledger',
+      );
+    }
+    const attemptId =
+      snapshot.failedEffectAttempt.attemptId === null
+        ? null
+        : effectUuid(
+            snapshot.failedEffectAttempt.attemptId,
+            'runtime snapshot failedEffectAttempt.attemptId',
+          );
+    const causalBoundaries = effectLedger.boundaries.filter(
+      ({ sequence }) => sequence > boundaryPrefix,
+    );
+    if (attemptId === null && causalBoundaries.length !== 0) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt null attemptId requires an empty causal suffix',
+      );
+    }
+    if (
+      attemptId !== null &&
+      (causalBoundaries.length === 0 ||
+        causalBoundaries.some(
+          ({ attemptId: boundaryAttemptId }) =>
+            boundaryAttemptId !== attemptId,
+        ))
+    ) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt does not match its causal ledger suffix',
+      );
+    }
+    failedEffectAttempt = Object.freeze({ boundaryPrefix, attemptId });
+  }
   const fields = {
     playbookId,
     machine,
@@ -2035,6 +2118,9 @@ export function assertPlaybookRuntimeSnapshot(
     state,
     pendingBossQuestions: Object.freeze(pendingBossQuestions),
     effectLedger,
+    ...(failedEffectAttempt === undefined
+      ? {}
+      : { failedEffectAttempt }),
   };
   return Object.freeze({
     schemaVersion: 4,

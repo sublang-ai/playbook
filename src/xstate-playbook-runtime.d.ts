@@ -1,5 +1,5 @@
 import type { AnyStateMachine, EventObject, PromiseActorLogic } from 'xstate';
-import type { CaptainResult, JsonValue, PlaybookEffectLedgerCapability, PlaybookPorts, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
@@ -95,6 +95,37 @@ export declare const BOSS_REPLY_ERRORS: {
     readonly missingQuestion: "needsBossReply outcome missing 'question' field";
     readonly unregisteredState: (stateId: string) => string;
 };
+interface XStateRepositoryOperationSettlement<T> {
+    readonly status: 'fulfilled';
+    readonly value: T;
+}
+interface XStateRepositoryOperationRejection {
+    readonly status: 'rejected';
+    readonly reason: unknown;
+}
+interface XStateRepositoryExclusiveCompletion<T> {
+    readonly boundary: PlaybookEffectBoundary;
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+}
+interface XStateRepositoryExclusiveResult<T> {
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+    readonly effectLedger: PlaybookEffectLedger;
+}
+type XStateEffectBoundarySeed = Omit<PlaybookEffectBoundaryStart, 'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'>;
+export interface XStateRepositoryCapability {
+    runExclusive<T>(options: {
+        readonly signal: AbortSignal;
+        readonly effectBoundary: XStateEffectBoundarySeed;
+        readonly operation: () => Promise<T>;
+        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => {
+            readonly finalText?: string;
+        } | Promise<{
+            readonly finalText?: string;
+        }>;
+    }): Promise<XStateRepositoryExclusiveResult<T>>;
+}
 /** The runtime ABI this engine implements (DR-022). */
 export declare const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
@@ -131,6 +162,7 @@ export interface XStateOutcomeAuthoritySpec {
 export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities extends object> {
     readonly configuredOptions: ConfiguredOptions;
     readonly hostCapabilities: HostCapabilities & {
+        readonly repository: XStateRepositoryCapability;
         readonly effectLedger: PlaybookEffectLedgerCapability;
     };
 }
@@ -350,6 +382,7 @@ interface PlayerBridgeSpec {
     composePlayerPrompt: (input: PlaybookPlayerInput) => string;
     adjudication: PlayerAdjudicationSpec;
     resumableStateIds: ReadonlySet<string>;
+    allowsCorrectiveReplay?: (result: PlayerResult) => boolean;
 }
 export declare function createPlayerBridge(spec: PlayerBridgeSpec, ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls, onControlPlaneError?: (error: unknown) => void): PromiseActorLogic<PlaybookActorOutput, PlaybookPlayerInput>;
 /**

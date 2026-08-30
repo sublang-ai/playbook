@@ -26,10 +26,15 @@ declare function normalizeErrorFull(err: unknown): {
     message: string;
     stack?: string;
 } | undefined;
+interface Schema3AutomaticReplayEvidence {
+    readEffectLedger(): unknown;
+}
 declare function pendingQuestionsFromContext(context: Record<string, unknown>): PendingBossQuestion[];
 declare function pendingQuestionsForState(state: PlaybookState, context: Record<string, unknown>): PendingBossQuestion[];
 export declare const createPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
+declare function createStagedSchema3AutomaticReplayRuntime(options: PlaybookRuntimeOptions, evidence: Schema3AutomaticReplayEvidence): PlaybookRuntime;
 export declare const _internal: {
+    createStagedSchema3AutomaticReplayRuntime: typeof createStagedSchema3AutomaticReplayRuntime;
     composePlayerPrompt: typeof composePlayerPrompt;
     requiredFieldsFor: typeof requiredFieldsFor;
     extractJson: typeof extractJson;

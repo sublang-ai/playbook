@@ -17,6 +17,7 @@
 // behavior here without consulting those suites.
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
@@ -49,9 +50,12 @@ import type {
   PlaybookControlAction,
   PlaybookControlReceipt,
   PlaybookControlView,
+  PlaybookEffectBoundary,
+  PlaybookEffectBoundaryStart,
   PlaybookEffectLedger,
   PlaybookEffectLedgerCapability,
   PlaybookPorts,
+  PlaybookRepositoryReceipt,
   PlaybookRunResult,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
@@ -231,6 +235,50 @@ function isEmptyFinalText(finalText: string | undefined): boolean {
 const emptyOkRetryFailures = new WeakSet<object>();
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 
+interface XStateRepositoryOperationSettlement<T> {
+  readonly status: 'fulfilled';
+  readonly value: T;
+}
+
+interface XStateRepositoryOperationRejection {
+  readonly status: 'rejected';
+  readonly reason: unknown;
+}
+
+interface XStateRepositoryExclusiveCompletion<T> {
+  readonly boundary: PlaybookEffectBoundary;
+  readonly operation:
+    | XStateRepositoryOperationSettlement<T>
+    | XStateRepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+}
+
+interface XStateRepositoryExclusiveResult<T> {
+  readonly operation:
+    | XStateRepositoryOperationSettlement<T>
+    | XStateRepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+type XStateEffectBoundarySeed = Omit<
+  PlaybookEffectBoundaryStart,
+  'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'
+>;
+
+export interface XStateRepositoryCapability {
+  runExclusive<T>(options: {
+    readonly signal: AbortSignal;
+    readonly effectBoundary: XStateEffectBoundarySeed;
+    readonly operation: () => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: XStateRepositoryExclusiveCompletion<T>,
+    ) =>
+      | { readonly finalText?: string }
+      | Promise<{ readonly finalText?: string }>;
+  }): Promise<XStateRepositoryExclusiveResult<T>>;
+}
+
 function assertNoConfiguredHostCapabilities(value: unknown, label: string): void {
   if (
     value !== null &&
@@ -332,6 +380,33 @@ function configuredOptionsFromFactoryInput(
   };
 }
 
+function repositoryCapabilityFromHostCapabilities(
+  hostCapabilities: object | undefined,
+  label: string,
+): XStateRepositoryCapability {
+  const descriptor =
+    hostCapabilities === undefined
+      ? undefined
+      : Object.getOwnPropertyDescriptor(hostCapabilities, 'repository');
+  const repository = descriptor?.value;
+  if (
+    descriptor === undefined ||
+    !Object.prototype.hasOwnProperty.call(descriptor, 'value') ||
+    descriptor.get !== undefined ||
+    descriptor.set !== undefined ||
+    repository === null ||
+    typeof repository !== 'object' ||
+    Array.isArray(repository) ||
+    typeof (repository as { runExclusive?: unknown }).runExclusive !==
+      'function'
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input hostCapabilities.repository must be an own data property exposing runExclusive`,
+    );
+  }
+  return repository as XStateRepositoryCapability;
+}
+
 function markEmptyOkRetryFailure(error: Error): Error {
   emptyOkRetryFailures.add(error);
   return error;
@@ -413,6 +488,7 @@ export interface XStatePlaybookRuntimeConstruction<
 > {
   readonly configuredOptions: ConfiguredOptions;
   readonly hostCapabilities: HostCapabilities & {
+    readonly repository: XStateRepositoryCapability;
     readonly effectLedger: PlaybookEffectLedgerCapability;
   };
 }
@@ -1260,6 +1336,7 @@ interface PlayerBridgeSpec {
   composePlayerPrompt: (input: PlaybookPlayerInput) => string;
   adjudication: PlayerAdjudicationSpec;
   resumableStateIds: ReadonlySet<string>;
+  allowsCorrectiveReplay?: (result: PlayerResult) => boolean;
 }
 
 export function createPlayerBridge(
@@ -1294,7 +1371,11 @@ export function createPlayerBridge(
             )
           : ports.callPlayer(roleId, prompt, activeSignal, { resume });
       let result = await callPlayer(false);
-      if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
+      if (
+        result.status === 'ok' &&
+        isEmptyFinalText(result.finalText) &&
+        (spec.allowsCorrectiveReplay?.(result) ?? true)
+      ) {
         // An abort that lands between the empty first result and the
         // corrective call ends the turn as ordinary abort settlement with
         // no second host call — aborts are never retried (DR-028 via
@@ -2819,6 +2900,16 @@ export function createXStatePlaybookRuntime<
     );
     const configuredOptions = construction.configuredOptions as TOptions;
     const effectLedgerCapability = construction.effectLedger;
+    const hasGovernedPlayerStates =
+      outcomeAuthority !== undefined &&
+      Object.keys(outcomeAuthority.governedPlayerStates).length > 0;
+    const repositoryCapability =
+      hasGovernedPlayerStates
+        ? repositoryCapabilityFromHostCapabilities(
+            construction.hostCapabilities,
+            label,
+          )
+        : undefined;
     const currentEffectLedger = (): PlaybookEffectLedger =>
       effectLedgerCapability === undefined
         ? emptyPlaybookEffectLedger()
@@ -2827,6 +2918,10 @@ export function createXStatePlaybookRuntime<
             `${label} current host effect ledger`,
           );
     let effectLedgerMirror = currentEffectLedger();
+    const playerBoundaryReceipts = new WeakMap<
+      object,
+      { readonly boundaryId: string; readonly attemptId: string }
+    >();
     const boundOptions = spec.snapshotOptions(configuredOptions);
     assertNoConfiguredHostCapabilities(boundOptions, label);
     const boundScriptCwd = scriptCwd(boundOptions);
@@ -2857,6 +2952,16 @@ export function createXStatePlaybookRuntime<
     // its accepted receipt.
     let activeAbortEmission: unknown;
     let activeTurnId: number | undefined;
+    // The durable host attempt observed by governed calls in the active
+    // public boundary. The failed-state latch survives later no-action turns;
+    // clearing it at every boundary start must not make unsafe replay appear
+    // newly eligible.
+    let activeGovernedBoundarySeen = false;
+    let activeGovernedAttemptId: string | undefined;
+    let activeEffectLedgerPrefixSequence: number | undefined;
+    let failedGovernedAttemptUnknown = false;
+    let failedEffectBoundaryPrefix: number | undefined;
+    let failedGovernedAttemptId: string | undefined;
     let controlPlaneError: unknown;
     // Previous root-machine state for the inspect-driven telemetry /
     // status emitter. undefined before the first inspect firing.
@@ -2885,6 +2990,10 @@ export function createXStatePlaybookRuntime<
     const privateResumeTokens = new Map<string, string>();
     const activePlayerKeys = new Set<string>();
     const playbookCallTurnIds = new Map<string, number | undefined>();
+    const playbookCallEffectPrefixes = new Map<
+      string,
+      number | undefined
+    >();
     // Captain and judge work share one serialized lane (slc/link.md
     // §Session lifecycle).
     const judgeQueue = new PQueue({ concurrency: 1 });
@@ -3319,6 +3428,258 @@ export function createXStatePlaybookRuntime<
       }
     }
 
+    function governedBoundarySeed(
+      input: PlaybookPlayerInput,
+      roleId: string,
+      callId: string,
+      turnId: number | undefined,
+    ): XStateEffectBoundarySeed | undefined {
+      const governed = outcomeAuthority?.governedPlayerStates[input.stateId];
+      if (governed === undefined) return undefined;
+      if (!Number.isSafeInteger(turnId) || turnId === undefined || turnId <= 0) {
+        throw new Error(
+          `${label} governed player call requires an active positive turn id`,
+        );
+      }
+      const dispositions = [
+        ...new Set(
+          Object.values(governed).map(
+            ({ repositoryDisposition }) => repositoryDisposition,
+          ),
+        ),
+      ];
+      if (dispositions.length === 0) {
+        throw new Error(
+          `${label} governed player call has no repository disposition`,
+        );
+      }
+      return {
+        boundaryId: randomUUID(),
+        runtimeSessionId: requireSession().sessionId,
+        turnId,
+        callId,
+        roleId,
+        sourceStateId: input.stateId,
+        sourceOutcomeSchema: snapshotJsonValue(
+          input.result,
+          `${label} governed player source outcome schema`,
+        ),
+        dispositions,
+        correctionBudget: { limit: 1, spent: false },
+      };
+    }
+
+    function recordActiveGovernedAttempt(
+      boundary: PlaybookEffectBoundary,
+    ): void {
+      if (
+        activeGovernedAttemptId !== undefined &&
+        activeGovernedAttemptId !== boundary.attemptId
+      ) {
+        throw new Error(
+          `${label} governed calls in one runtime boundary used different host attempt ids`,
+        );
+      }
+      activeGovernedAttemptId = boundary.attemptId;
+    }
+
+    function refreshGovernedBoundaryStart(boundaryId: string): void {
+      try {
+        const current = currentEffectLedger();
+        const boundary = current.boundaries.find(
+          (candidate) => candidate.boundaryId === boundaryId,
+        );
+        if (boundary === undefined) return;
+        effectLedgerMirror = current;
+        recordActiveGovernedAttempt(boundary);
+      } catch {
+        // Preserve the repository failure. A mirror that cannot be read or
+        // validated supplies no evidence authorizing replay.
+      }
+    }
+
+    function acknowledgeGovernedPlayerResult(
+      value: unknown,
+      boundaryId: string,
+    ): PlayerResult {
+      if (!isPlainObject(value) || !isPlainObject(value.operation)) {
+        throw new TypeError(
+          `${label} repository runExclusive returned an invalid settlement`,
+        );
+      }
+      const ledger = assertPlaybookEffectLedger(
+        value.effectLedger,
+        `${label} repository runExclusive effect ledger`,
+      );
+      const completed = ledger.boundaries.find(
+        (candidate) => candidate.boundaryId === boundaryId,
+      );
+      if (
+        completed === undefined ||
+        completed.physicalReceipt === undefined ||
+        !isDeepStrictEqual(completed.physicalReceipt, value.receipt)
+      ) {
+        throw new TypeError(
+          `${label} repository runExclusive did not acknowledge its completed boundary`,
+        );
+      }
+      effectLedgerMirror = ledger;
+      recordActiveGovernedAttempt(completed);
+      if (value.operation.status === 'rejected') {
+        if (!Object.prototype.hasOwnProperty.call(value.operation, 'reason')) {
+          throw new TypeError(
+            `${label} repository runExclusive rejection omitted its reason`,
+          );
+        }
+        throw value.operation.reason;
+      }
+      if (
+        value.operation.status !== 'fulfilled' ||
+        !Object.prototype.hasOwnProperty.call(value.operation, 'value')
+      ) {
+        throw new TypeError(
+          `${label} repository runExclusive returned an invalid operation settlement`,
+        );
+      }
+      const result = validatePlayerResult(value.operation.value);
+      playerBoundaryReceipts.set(result, {
+        boundaryId: completed.boundaryId,
+        attemptId: completed.attemptId,
+      });
+      return result;
+    }
+
+    function acknowledgedBoundaryIsUnchanged(result: PlayerResult): boolean {
+      if (outcomeAuthority === undefined) return true;
+      const identity = playerBoundaryReceipts.get(result);
+      if (identity === undefined) return false;
+      const boundary = effectLedgerMirror.boundaries.find(
+        (candidate) => candidate.boundaryId === identity.boundaryId,
+      );
+      return (
+        boundary?.attemptId === identity.attemptId &&
+        boundary.physicalReceipt?.classification === 'unchanged'
+      );
+    }
+
+    function failedAttemptMatchesCurrentLedger(
+      current: PlaybookEffectLedger,
+    ): boolean {
+      const boundaryPrefix = failedEffectBoundaryPrefix;
+      if (
+        failedGovernedAttemptUnknown ||
+        boundaryPrefix === undefined
+      ) {
+        return false;
+      }
+      const causalBoundaries = current.boundaries.filter(
+        ({ sequence }) => sequence > boundaryPrefix,
+      );
+      const matches =
+        failedGovernedAttemptId === undefined
+          ? causalBoundaries.length === 0
+          : causalBoundaries.length > 0 &&
+            causalBoundaries.every(
+              ({ attemptId }) => attemptId === failedGovernedAttemptId,
+            );
+      if (!matches) failedGovernedAttemptUnknown = true;
+      return matches;
+    }
+
+    function failedAttemptAllowsReplay(): boolean {
+      if (!hasGovernedPlayerStates) return true;
+      let current: PlaybookEffectLedger;
+      try {
+        current = currentEffectLedger();
+        effectLedgerMirror = current;
+      } catch {
+        failedGovernedAttemptUnknown = true;
+        return false;
+      }
+      if (!failedAttemptMatchesCurrentLedger(current)) return false;
+      if (failedGovernedAttemptId === undefined) return true;
+      const boundaries = current.boundaries.filter(
+        ({ attemptId }) => attemptId === failedGovernedAttemptId,
+      );
+      return (
+        boundaries.length > 0 &&
+        boundaries.every(
+          ({ physicalReceipt }) =>
+            physicalReceipt?.classification === 'unchanged',
+        )
+      );
+    }
+
+    function captureEffectLedgerPrefixSequence(): number | undefined {
+      if (!hasGovernedPlayerStates) return undefined;
+      try {
+        const current = currentEffectLedger();
+        effectLedgerMirror = current;
+        return current.boundaries.at(-1)?.sequence ?? 0;
+      } catch {
+        return undefined;
+      }
+    }
+
+    function bindAutomaticReplayBoundary(
+      prefixSequence: number | undefined,
+    ): void {
+      activeGovernedBoundarySeen = false;
+      activeGovernedAttemptId = undefined;
+      activeEffectLedgerPrefixSequence = prefixSequence;
+    }
+
+    function beginAutomaticReplayBoundary(): void {
+      bindAutomaticReplayBoundary(captureEffectLedgerPrefixSequence());
+    }
+
+    function latchFailedGovernedAttempt(): void {
+      if (!hasGovernedPlayerStates) {
+        failedGovernedAttemptUnknown = false;
+        failedEffectBoundaryPrefix = undefined;
+        failedGovernedAttemptId = undefined;
+        return;
+      }
+      if (activeEffectLedgerPrefixSequence === undefined) {
+        failedGovernedAttemptUnknown = true;
+        failedEffectBoundaryPrefix = undefined;
+        failedGovernedAttemptId = undefined;
+        return;
+      }
+      let current: PlaybookEffectLedger;
+      try {
+        current = currentEffectLedger();
+        effectLedgerMirror = current;
+      } catch {
+        failedGovernedAttemptUnknown = true;
+        failedEffectBoundaryPrefix = undefined;
+        failedGovernedAttemptId = undefined;
+        return;
+      }
+      const attemptIds = new Set(
+        current.boundaries
+          .filter(
+            ({ sequence }) => sequence > activeEffectLedgerPrefixSequence!,
+          )
+          .map(({ attemptId }) => attemptId),
+      );
+      if (activeGovernedAttemptId !== undefined) {
+        attemptIds.add(activeGovernedAttemptId);
+      }
+      if (attemptIds.size > 1) {
+        failedGovernedAttemptUnknown = true;
+        failedEffectBoundaryPrefix = undefined;
+        failedGovernedAttemptId = undefined;
+        return;
+      }
+      failedGovernedAttemptUnknown =
+        attemptIds.size === 0 && activeGovernedBoundarySeen;
+      failedEffectBoundaryPrefix = failedGovernedAttemptUnknown
+        ? undefined
+        : activeEffectLedgerPrefixSequence;
+      failedGovernedAttemptId = attemptIds.values().next().value;
+    }
+
     const boundary: RuntimeBoundaryCalls = {
       async callPlayer(
         input,
@@ -3374,101 +3735,140 @@ export function createXStatePlaybookRuntime<
         activePlayerKeys.add(playerKey);
 
         try {
-          await emitCallStarted(
-            'player.call.started',
-            'player.call.finished',
-            { ...identity, prompt },
-            position,
-            signal,
-          );
-
-          let rawResult: unknown;
-          try {
-            // An abort may land while the awaited started emission drains
-            // (e.g. fired from the trace sink itself); the host call must
-            // never start after abort, so settle the already-started pair
-            // as `aborted` through the catch below.
-            signal.throwIfAborted();
-            rawResult = await requireHostPorts().callPlayer(
-              roleId,
-              prompt,
+          const runTracedPlayerCall = async (): Promise<PlayerResult> => {
+            await emitCallStarted(
+              'player.call.started',
+              'player.call.finished',
+              { ...identity, prompt },
+              position,
               signal,
-              { resume },
             );
-            // A host promise is not required to honor cancellation. Do not let
-            // a late result mutate continuity or publish a successful finish.
-            signal.throwIfAborted();
-          } catch (error) {
-            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
-            try {
-              await emitTrace(
-                'player.call.finished',
-                {
-                  ...identity,
-                  status: isAbortFailure(error, signal) ? 'aborted' : 'error',
-                  error: normalizeError(error),
-                },
-                position,
-              );
-            } catch {
-              // The original non-abort port rejection remains authoritative.
-            }
-            // A thrown port call carries no authoritative result, so the
-            // prior token remains available for a later explicit resume.
-            throw error;
-          }
 
-          let result: PlayerResult;
-          try {
-            result = validatePlayerResult(rawResult);
-          } catch (error) {
-            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+            let rawResult: unknown;
             try {
-              await emitTrace(
-                'player.call.finished',
-                { ...identity, status: 'error', error: normalizeError(error) },
-                position,
+              // An abort may land while the awaited started emission drains
+              // (e.g. fired from the trace sink itself); the host call must
+              // never start after abort, so settle the already-started pair
+              // as `aborted` through the catch below.
+              signal.throwIfAborted();
+              rawResult = await requireHostPorts().callPlayer(
+                roleId,
+                prompt,
+                signal,
+                { resume },
               );
-            } catch {
-              // The malformed host result remains authoritative.
+              // A host promise is not required to honor cancellation. Do not
+              // let a late result mutate continuity or publish a successful
+              // finish.
+              signal.throwIfAborted();
+            } catch (error) {
+              if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+              try {
+                await emitTrace(
+                  'player.call.finished',
+                  {
+                    ...identity,
+                    status: isAbortFailure(error, signal) ? 'aborted' : 'error',
+                    error: normalizeError(error),
+                  },
+                  position,
+                );
+              } catch {
+                // The original non-abort port rejection remains authoritative.
+              }
+              // A thrown port call carries no authoritative result, so the
+              // prior token remains available for a later explicit resume.
+              throw error;
             }
-            throw error;
-          }
 
-          try {
-            updatePlayerResume(roleId, playerId, result);
-          } catch (error) {
-            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+            let result: PlayerResult;
             try {
-              await emitTrace(
-                'player.call.finished',
-                { ...identity, status: 'error', error: normalizeError(error) },
-                position,
-              );
-            } catch {
-              // The continuation-store failure remains authoritative.
+              result = validatePlayerResult(rawResult);
+            } catch (error) {
+              if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+              try {
+                await emitTrace(
+                  'player.call.finished',
+                  { ...identity, status: 'error', error: normalizeError(error) },
+                  position,
+                );
+              } catch {
+                // The malformed host result remains authoritative.
+              }
+              throw error;
             }
-            throw error;
-          }
 
-          await emitTrace(
-            'player.call.finished',
-            {
-              ...identity,
-              status: result.status,
-              ...(result.finalText !== undefined
-                ? { finalText: result.finalText }
-                : {}),
-              ...(result.error !== undefined
-                ? { error: normalizeError(result.error) }
-                : {}),
-              ...(result.resumeToken !== undefined
-                ? { resumeToken: result.resumeToken }
-                : {}),
-            },
-            position,
+            try {
+              updatePlayerResume(roleId, playerId, result);
+            } catch (error) {
+              if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+              try {
+                await emitTrace(
+                  'player.call.finished',
+                  { ...identity, status: 'error', error: normalizeError(error) },
+                  position,
+                );
+              } catch {
+                // The continuation-store failure remains authoritative.
+              }
+              throw error;
+            }
+
+            await emitTrace(
+              'player.call.finished',
+              {
+                ...identity,
+                status: result.status,
+                ...(result.finalText !== undefined
+                  ? { finalText: result.finalText }
+                  : {}),
+                ...(result.error !== undefined
+                  ? { error: normalizeError(result.error) }
+                  : {}),
+                ...(result.resumeToken !== undefined
+                  ? { resumeToken: result.resumeToken }
+                  : {}),
+              },
+              position,
+            );
+            return result;
+          };
+
+          const effectBoundary = governedBoundarySeed(
+            input,
+            roleId,
+            callId,
+            turnId,
           );
-          return result;
+          // Await inside this try so its finally retains the player-key
+          // exclusion until the host operation actually settles.
+          if (effectBoundary === undefined) return await runTracedPlayerCall();
+          if (repositoryCapability === undefined) {
+            throw new Error(
+              `${label} governed player call requires repository.runExclusive`,
+            );
+          }
+          activeGovernedBoundarySeen = true;
+          try {
+            const exclusive = await repositoryCapability.runExclusive({
+              signal,
+              effectBoundary,
+              operation: runTracedPlayerCall,
+              completeEffectBoundary: async ({ operation }) =>
+                operation.status === 'fulfilled' &&
+                operation.value.finalText !== undefined
+                  ? { finalText: operation.value.finalText }
+                  : {},
+            });
+            return acknowledgeGovernedPlayerResult(
+              exclusive,
+              effectBoundary.boundaryId,
+            );
+          } catch (error) {
+            refreshGovernedBoundaryStart(effectBoundary.boundaryId);
+            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
+            throw error;
+          }
         } finally {
           activePlayerKeys.delete(playerKey);
         }
@@ -3693,6 +4093,7 @@ export function createXStatePlaybookRuntime<
           composePlayerPrompt: composeBoundPlayerPrompt,
           adjudication,
           resumableStateIds,
+          allowsCorrectiveReplay: acknowledgedBoundaryIsUnchanged,
         },
         ports,
         () => activeSignal,
@@ -4005,6 +4406,12 @@ export function createXStatePlaybookRuntime<
         requireHostPorts().callPlaybook(request, signal),
       emitStarted: async (event, aborts) => {
         playbookCallTurnIds.set(event.callId, activeTurnId);
+        if (hasGovernedPlayerStates) {
+          playbookCallEffectPrefixes.set(
+            event.callId,
+            activeEffectLedgerPrefixSequence,
+          );
+        }
         await emitTrace(
           'playbook.call.started',
           {
@@ -4038,6 +4445,7 @@ export function createXStatePlaybookRuntime<
           );
         } finally {
           playbookCallTurnIds.delete(event.callId);
+          playbookCallEffectPrefixes.delete(event.callId);
         }
       },
       drain: drainEmissions,
@@ -4229,6 +4637,18 @@ export function createXStatePlaybookRuntime<
               );
             }
             const previousState = priorState;
+            if (state.stateId === 'failed') {
+              if (
+                previousState?.stateId !== 'failed' ||
+                activeGovernedBoundarySeen
+              ) {
+                latchFailedGovernedAttempt();
+              }
+            } else if (previousState?.stateId === 'failed') {
+              failedEffectBoundaryPrefix = undefined;
+              failedGovernedAttemptId = undefined;
+              failedGovernedAttemptUnknown = false;
+            }
             const context = ((snap as { context?: unknown }).context ??
               {}) as Record<string, unknown>;
             const payload = structuredStateTelemetryPayload(
@@ -4404,6 +4824,7 @@ export function createXStatePlaybookRuntime<
       privateResumeTokens.clear();
       activePlayerKeys.clear();
       playbookCallTurnIds.clear();
+      playbookCallEffectPrefixes.clear();
       activeEmissionCalls.clear();
       emissionQueue.clear();
       judgeQueue.clear();
@@ -4418,6 +4839,12 @@ export function createXStatePlaybookRuntime<
       actorSettlementErrorAborts = undefined;
       activeAbortEmission = undefined;
       activeTurnId = undefined;
+      activeGovernedBoundarySeen = false;
+      activeGovernedAttemptId = undefined;
+      activeEffectLedgerPrefixSequence = undefined;
+      failedGovernedAttemptUnknown = false;
+      failedEffectBoundaryPrefix = undefined;
+      failedGovernedAttemptId = undefined;
       controlPlaneError = undefined;
       emissionFailure = undefined;
       priorState = undefined;
@@ -4486,6 +4913,7 @@ export function createXStatePlaybookRuntime<
       stateId: string | undefined,
     ): DerivedControlAction | undefined {
       if (stateId !== 'failed') return undefined;
+      if (!failedAttemptAllowsReplay()) return undefined;
       const retryEvent = retryEventFrom(snapshot);
       if (retryEvent === undefined) return undefined;
       if (!snapshotCan(snapshot, retryEvent)) return undefined;
@@ -4743,6 +5171,19 @@ export function createXStatePlaybookRuntime<
             suspendedCall.callId,
             suspendedCall.turnId,
           );
+          if (hasGovernedPlayerStates) {
+            const savedPrefix =
+              kind === 'restore'
+                ? suspendedCall.effectBoundaryPrefixSequence
+                : undefined;
+            // Pre-task-5 snapshots and retained-generation adoption have no
+            // target-local causal prefix. Zero is conservative; an explicit
+            // null preserves an observation failure as unknown/fail-closed.
+            playbookCallEffectPrefixes.set(
+              suspendedCall.callId,
+              savedPrefix === null ? undefined : (savedPrefix ?? 0),
+            );
+          }
         }
         suppressInspectionEmissions = true;
         actor = buildActor(runtimePorts, boundSnapshot.machine);
@@ -4819,6 +5260,24 @@ export function createXStatePlaybookRuntime<
             `createPlaybookRuntime.${kind}: restored actor state does not match snapshot state`,
           );
         }
+        const restoredFailedEffectAttempt =
+          restoredState.stateId === 'failed' && kind === 'restore'
+            ? boundSnapshot.failedEffectAttempt
+            : undefined;
+        failedEffectBoundaryPrefix =
+          restoredFailedEffectAttempt?.boundaryPrefix;
+        failedGovernedAttemptId =
+          typeof restoredFailedEffectAttempt?.attemptId === 'string'
+            ? restoredFailedEffectAttempt.attemptId
+            : undefined;
+        activeGovernedBoundarySeen = false;
+        activeGovernedAttemptId = undefined;
+        activeEffectLedgerPrefixSequence = undefined;
+        failedGovernedAttemptUnknown =
+          restoredState.stateId === 'failed' &&
+          kind === 'restore' &&
+          hasGovernedPlayerStates &&
+          restoredFailedEffectAttempt === undefined;
         priorState = restoredState;
         await drainEmissions();
         suppressInspectionEmissions = false;
@@ -4927,6 +5386,14 @@ export function createXStatePlaybookRuntime<
           suspendedCall = {
             ...bridgeSuspendedCall,
             ...(turnId === undefined ? {} : { turnId }),
+            ...(hasGovernedPlayerStates
+              ? {
+                  effectBoundaryPrefixSequence:
+                    playbookCallEffectPrefixes.get(
+                      bridgeSuspendedCall.callId,
+                    ) ?? null,
+                }
+              : {}),
           };
         }
         const state = currentState();
@@ -4938,6 +5405,15 @@ export function createXStatePlaybookRuntime<
           .context as Record<string, unknown>;
         const pending = pendingBossQuestionForState(state, context ?? {});
         effectLedgerMirror = currentEffectLedger();
+        const failedEffectAttempt =
+          hasGovernedPlayerStates &&
+          state.stateId === 'failed' &&
+          failedAttemptMatchesCurrentLedger(effectLedgerMirror)
+            ? {
+                boundaryPrefix: failedEffectBoundaryPrefix!,
+                attemptId: failedGovernedAttemptId ?? null,
+              }
+            : undefined;
         return {
           schemaVersion: 4,
           playbookId: session.playbookId,
@@ -4966,6 +5442,9 @@ export function createXStatePlaybookRuntime<
                   },
                 ],
           effectLedger: effectLedgerMirror,
+          ...(failedEffectAttempt === undefined
+            ? {}
+            : { failedEffectAttempt }),
           ...(suspendedCall === undefined ? {} : { suspendedCall }),
         };
       },
@@ -5106,6 +5585,7 @@ export function createXStatePlaybookRuntime<
         const callId = `apply-${++applyCallSequence}`;
         const position: TracePosition = { turnId, callId };
         activeTurnId = turnId;
+        beginAutomaticReplayBoundary();
         activeSignal = signal;
         activeAborts = abortReasonClassifier(signal);
         activeAbortEmission = undefined;
@@ -5329,6 +5809,9 @@ export function createXStatePlaybookRuntime<
           activeAborts = undefined;
           activeAbortEmission = undefined;
           activeTurnId = undefined;
+          activeGovernedBoundarySeen = false;
+          activeGovernedAttemptId = undefined;
+          activeEffectLedgerPrefixSequence = undefined;
           controlPlaneError = undefined;
         }
         // Past acceptance every settlement failure has been folded into the
@@ -5375,6 +5858,7 @@ export function createXStatePlaybookRuntime<
         }
         const turnId = ++turnSequence;
         activeTurnId = turnId;
+        beginAutomaticReplayBoundary();
         activeSignal = signal;
         activeAborts = abortReasonClassifier(signal);
         activeAbortEmission = undefined;
@@ -5409,7 +5893,9 @@ export function createXStatePlaybookRuntime<
               // classifier whim to settle a restart as no action. Every other
               // parked state — a reply wait or an authored mid-workflow
               // checkpoint — classifies under its own Boss-event contracts.
-              if (
+              if (stateId === 'failed' && !failedAttemptAllowsReplay()) {
+                event = undefined;
+              } else if (
                 spec.entryEvent !== undefined &&
                 (stateId === 'ready' || stateId === 'failed' || terminal)
               ) {
@@ -5539,6 +6025,9 @@ export function createXStatePlaybookRuntime<
           activeAborts = undefined;
           activeAbortEmission = undefined;
           activeTurnId = undefined;
+          activeGovernedBoundarySeen = false;
+          activeGovernedAttemptId = undefined;
+          activeEffectLedgerPrefixSequence = undefined;
           controlPlaneError = undefined;
         }
       },
@@ -5564,6 +6053,13 @@ export function createXStatePlaybookRuntime<
           );
         }
         activeTurnId = playbookCallTurnIds.get(input.callId);
+        bindAutomaticReplayBoundary(
+          playbookCallEffectPrefixes.has(input.callId)
+            ? playbookCallEffectPrefixes.get(input.callId)
+            : hasGovernedPlayerStates
+              ? 0
+              : undefined,
+        );
         activeSignal = input.signal;
         activeAborts = abortReasonClassifier(input.signal);
         activeAbortEmission = undefined;
@@ -5645,6 +6141,9 @@ export function createXStatePlaybookRuntime<
           activeAborts = undefined;
           activeAbortEmission = undefined;
           activeTurnId = undefined;
+          activeGovernedBoundarySeen = false;
+          activeGovernedAttemptId = undefined;
+          activeEffectLedgerPrefixSequence = undefined;
           controlPlaneError = undefined;
         }
       },
@@ -5710,6 +6209,7 @@ export function createXStatePlaybookRuntime<
             }
             activePlayerKeys.clear();
             playbookCallTurnIds.clear();
+            playbookCallEffectPrefixes.clear();
             activeEmissionCalls.clear();
             emissionQueue.clear();
             judgeQueue.clear();
@@ -5721,6 +6221,12 @@ export function createXStatePlaybookRuntime<
             actorSettlementErrorAborts = undefined;
             activeAbortEmission = undefined;
             activeTurnId = undefined;
+            activeGovernedBoundarySeen = false;
+            activeGovernedAttemptId = undefined;
+            activeEffectLedgerPrefixSequence = undefined;
+            failedGovernedAttemptUnknown = false;
+            failedEffectBoundaryPrefix = undefined;
+            failedGovernedAttemptId = undefined;
             controlPlaneError = undefined;
             emissionFailure = undefined;
             lastBossEvent = undefined;
