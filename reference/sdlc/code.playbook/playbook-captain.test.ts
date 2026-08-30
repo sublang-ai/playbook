@@ -47,7 +47,10 @@ import {
   type PlaybookCaptainUnresolvedEffect,
   type PlaybookHostConstructionCapabilities,
 } from './playbook-captain.js';
-import { codeSavedCountsLine } from './code.registry.js';
+import {
+  codePlaybookRegistryEntry,
+  codeSavedCountsLine,
+} from './code.registry.js';
 
 type CaptainCallOptions = Parameters<CaptainContext['callCaptain']>[1];
 
@@ -12033,36 +12036,46 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
 describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
   it('resolves the package shell export as a CODE-registered Captain factory', async () => {
     const mod = await import('@sublang/playbook/playbook-captain');
-    const shell = mod.default({
-      playbooks: {
-        code: {
-          from: '@sublang/playbook/code/registry',
-          roles: {
-            coder: {
-              playerId: 'code-coder',
-              model: { kind: 'provider-default' },
-              effort: { kind: 'provider-default' },
+    const shell = mod.default(
+      {
+        playbooks: {
+          code: {
+            from: '@sublang/playbook/code/registry',
+            roles: {
+              coder: {
+                playerId: 'code-coder',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
             },
+            options: {},
           },
-          options: {},
         },
-      },
-      sessionAgents: {
-        captain: {
-          adapter: 'claude',
-          model: { kind: 'provider-default' },
-          effort: { kind: 'provider-default' },
-        },
-        players: {
-          'code-coder': {
+        sessionAgents: {
+          captain: {
             adapter: 'claude',
             model: { kind: 'provider-default' },
             effort: { kind: 'provider-default' },
           },
+          players: {
+            'code-coder': {
+              adapter: 'claude',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+        captainAdapter: 'claude',
+      },
+      {
+        hostCapabilities: {
+          code: fakeHostCapabilities(
+            codePlaybookRegistryEntry,
+            'public-module-surface',
+          ),
         },
       },
-      captainAdapter: 'claude',
-    });
+    );
     const session = stubSession([
       { id: 'code-coder', adapter: 'claude' },
     ]);

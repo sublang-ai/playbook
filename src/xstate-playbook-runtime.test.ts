@@ -20,6 +20,8 @@ import type {
   PlaybookEffectLedger,
   PlaybookAdoptionContext,
   PlaybookPorts,
+  PlaybookRepositoryObservation,
+  PlaybookRepositoryReceipt,
   PlaybookRunResult,
   PlaybookRuntime,
   PlaybookRuntimeSnapshot,
@@ -29,11 +31,13 @@ import type {
   PlayerResult,
 } from './runtime.js';
 import {
+  assertPlaybookEffectLedger,
   createXStatePlaybookRuntime,
   createPlayerBridge,
   defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
+  emptyPlaybookEffectLedger,
   normalizePlaybookSnapshot,
   resumableStateIdsFromMachine,
   RUNTIME_ABI,
@@ -169,6 +173,187 @@ function makeSession(
     ...(playerSessions === undefined ? {} : { playerSessions }),
     ports,
   };
+}
+
+function makeCodeSession(
+  ports: PlaybookPorts,
+  depth: 0 | 1 = 0,
+): PlaybookSession {
+  const suffix = String(++sessionSequence).padStart(12, '0');
+  const sessionId = `20000000-0000-4000-8000-${suffix}`;
+  const rootSessionId =
+    depth === 0 ? sessionId : `30000000-0000-4000-8000-${suffix}`;
+  return {
+    sessionId,
+    playbookId: 'code',
+    rootSessionId,
+    ...(depth === 0
+      ? {}
+      : {
+          parentSessionId: `40000000-0000-4000-8000-${suffix}`,
+          parentCallId: `parent-call-${suffix}`,
+        }),
+    depth,
+    ports,
+  };
+}
+
+const CODE_EFFECT_OBSERVATION: PlaybookRepositoryObservation = Object.freeze({
+  worktree: '/repo',
+  gitDir: '/repo/.git',
+  head: '1'.repeat(40),
+  projection: Object.freeze({}),
+  projectionDigest:
+    'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+});
+
+type CodeEffectClassification = Extract<
+  PlaybookRepositoryReceipt['classification'],
+  'unchanged' | 'one-descendant-commit'
+>;
+
+/**
+ * A deliberately small host double for shared-runtime tests that exercise the
+ * real schema-3 CODE artifact. CODE's own integration suite covers Git and
+ * write-ahead mechanics; this double preserves their authoritative protocol
+ * while keeping these factory/control tests focused on the runtime surface.
+ */
+function codeRuntimeConstruction(
+  classifications: readonly CodeEffectClassification[] = [],
+): Parameters<typeof createCodePlaybookRuntime>[0] {
+  let ledger = emptyPlaybookEffectLedger();
+  let observation = CODE_EFFECT_OBSERVATION;
+  let callIndex = 0;
+
+  const effectLedger = {
+    snapshot: () => ledger,
+    writeAhead: async () => {
+      throw new Error('semantic correction is outside this test');
+    },
+  };
+
+  const runExclusive = async (options: {
+    readonly effectBoundary: Record<string, unknown>;
+    readonly operation: () => Promise<unknown>;
+    readonly completeEffectBoundary: (completion: {
+      readonly boundary: PlaybookEffectBoundary;
+      readonly operation:
+        | { readonly status: 'fulfilled'; readonly value: unknown }
+        | { readonly status: 'rejected'; readonly reason: unknown };
+      readonly receipt: PlaybookRepositoryReceipt;
+      readonly outcomeReceipt: PlaybookRepositoryReceipt;
+    }) => Promise<{
+      readonly finalText?: string;
+      readonly semanticCandidate?: unknown;
+      readonly deferred?: {
+        readonly operationId: string;
+        readonly pendingQuestion: unknown;
+        readonly playerContinuation: unknown;
+      };
+    }>;
+  }) => {
+    const currentCall = callIndex++;
+    const baseline = observation;
+    const started = {
+      sequence: ledger.boundaries.length + 1,
+      ...options.effectBoundary,
+      attemptId: `60000000-0000-4000-8000-${String(currentCall + 1).padStart(12, '0')}`,
+      attemptNumber: 1,
+      playbookId: 'code',
+      canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+      baseline,
+    } as unknown as PlaybookEffectBoundary;
+    let operation:
+      | { readonly status: 'fulfilled'; readonly value: unknown }
+      | { readonly status: 'rejected'; readonly reason: unknown };
+    try {
+      operation = { status: 'fulfilled', value: await options.operation() };
+    } catch (reason) {
+      operation = { status: 'rejected', reason };
+    }
+    const classification = classifications[currentCall] ?? 'unchanged';
+    const after =
+      classification === 'unchanged'
+        ? baseline
+        : {
+            ...baseline,
+            head: (currentCall + 2).toString(16).padStart(40, '0'),
+          };
+    const receipt: PlaybookRepositoryReceipt = {
+      classification,
+      baseline,
+      after,
+      ...(classification === 'one-descendant-commit'
+        ? { commitOid: after.head }
+        : {}),
+    };
+    observation = after;
+    const completion = await options.completeEffectBoundary({
+      boundary: started,
+      operation,
+      receipt,
+      outcomeReceipt: receipt,
+    });
+    const operationId = completion.deferred?.operationId;
+    const completed: PlaybookEffectBoundary = {
+      ...started,
+      after,
+      physicalReceipt: receipt,
+      ...(completion.finalText === undefined
+        ? {}
+        : { finalText: completion.finalText }),
+      ...(completion.semanticCandidate === undefined
+        ? {}
+        : {
+            semanticCandidate:
+              completion.semanticCandidate as PlaybookEffectBoundary['semanticCandidate'],
+          }),
+      ...(operationId === undefined ? {} : { logicalOperationId: operationId }),
+    };
+    const logicalOperations =
+      completion.deferred === undefined
+        ? ledger.logicalOperations
+        : [
+            ...ledger.logicalOperations,
+            {
+              sequence: ledger.logicalOperations.length + 1,
+              operationId: completion.deferred.operationId,
+              playbookId: 'code',
+              runtimeSessionId: completed.runtimeSessionId,
+              boundaryIds: [completed.boundaryId],
+              originalBaseline: baseline,
+              checkpoint: after,
+              pendingQuestion: completion.deferred.pendingQuestion,
+              playerContinuation: completion.deferred.playerContinuation,
+              checkpointRestorationEligible: false,
+            },
+          ];
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries, completed],
+      logicalOperations,
+    });
+    return {
+      operation,
+      receipt,
+      effectLedger: ledger,
+      ...(completion.deferred === undefined ? {} : { deferredStatus: 'bound' }),
+    };
+  };
+
+  return {
+    configuredOptions: {},
+    hostCapabilities: {
+      effectLedger,
+      repository: {
+        runExclusive,
+        runDeferred: async () => {
+          throw new Error('deferred continuation is outside this test');
+        },
+      },
+    },
+  } as unknown as Parameters<typeof createCodePlaybookRuntime>[0];
 }
 
 function adoptionFrom(
@@ -4599,11 +4784,10 @@ describe('nested playbook actor over the shared factory', () => {
         playerCalls += 1;
         return {
           status: 'ok',
-          finalText: 'Implemented and verified.\nCommit: abc123',
+          finalText: 'Implemented and verified.',
         };
       },
-      callJudge: async () =>
-        '{"guard":"directCommit","latestCommit":"abc123"}',
+      callJudge: async () => '{"guard":"directCommit"}',
       callPlaybook: async () => {
         childStarts += 1;
         return {
@@ -4612,8 +4796,11 @@ describe('nested playbook actor over the shared factory', () => {
         };
       },
     });
-    const session = { ...makeSession(ports), playbookId: 'code' };
-    const first = createCodePlaybookRuntime({});
+    const session = makeCodeSession(ports);
+    const construction = codeRuntimeConstruction([
+      'one-descendant-commit',
+    ]);
+    const first = createCodePlaybookRuntime(construction);
     await first.init(session);
     const suspended = await first.handleBossInput(turn('Fix it.'));
     expect(suspended.outcome).toBe('suspended');
@@ -4625,7 +4812,7 @@ describe('nested playbook actor over the shared factory', () => {
       throw new Error('expected CODE to export its suspended REVIEW call');
     }
 
-    const restored = createCodePlaybookRuntime({});
+    const restored = createCodePlaybookRuntime(construction);
     await restored.restore?.(session, snapshot);
     const immediate = restored.exportSnapshot?.();
     expect(immediate).toMatchObject({
@@ -5491,7 +5678,6 @@ describe('parked-session snapshot over the shared factory', () => {
     const playerScript: PlayerResult[] = [
       { status: 'error', error: 'source failed' },
       { status: 'error', error: 'source retry failed' },
-      { status: 'error', error: 'target retry failed' },
     ];
     const { ports, telemetry } = makeRecordingPorts({
       callPlayer: async () => {
@@ -5500,17 +5686,9 @@ describe('parked-session snapshot over the shared factory', () => {
         return next;
       },
     });
-    const sourceBase = makeSession(ports);
-    const sourceSession: PlaybookSession = {
-      ...sourceBase,
-      sessionId: `${sourceBase.sessionId}-child`,
-      playbookId: 'code',
-      rootSessionId: `${sourceBase.sessionId}-root`,
-      parentSessionId: `${sourceBase.sessionId}-parent`,
-      parentCallId: 'source-parent-call',
-      depth: 1,
-    };
-    const source = createCodePlaybookRuntime({});
+    const sourceSession = makeCodeSession(ports, 1);
+    const construction = codeRuntimeConstruction();
+    const source = createCodePlaybookRuntime(construction);
     await source.init(sourceSession);
     expect(
       (await source.handleBossInput(turn('fail inside the child'))).outcome,
@@ -5537,17 +5715,8 @@ describe('parked-session snapshot over the shared factory', () => {
     if (snapshot === undefined) throw new Error('expected failed snapshot');
     await source.dispose();
 
-    const targetBase = makeSession(ports);
-    const targetSession: PlaybookSession = {
-      ...targetBase,
-      sessionId: `${targetBase.sessionId}-child`,
-      playbookId: 'code',
-      rootSessionId: `${targetBase.sessionId}-root`,
-      parentSessionId: `${targetBase.sessionId}-parent`,
-      parentCallId: 'target-parent-call',
-      depth: 1,
-    };
-    const target = createCodePlaybookRuntime({});
+    const targetSession = makeCodeSession(ports, 1);
+    const target = createCodePlaybookRuntime(construction);
     await target.adopt?.(
       targetSession,
       snapshot,
@@ -5577,7 +5746,7 @@ describe('parked-session snapshot over the shared factory', () => {
         key: 'target-retry',
         signal: new AbortController().signal,
       }),
-    ).toMatchObject({ disposition: 'failed' });
+    ).toMatchObject({ disposition: 'rejected' });
     const targetApplyTraces = telemetry
       .map(({ payload }) => payload as PlaybookTraceEvent)
       .filter(
@@ -6223,7 +6392,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const factoryRuntimes: PlaybookRuntime[] = [
       createWorkflowRuntime({}),
       createConditionalRuntime({}),
-      createCodePlaybookRuntime({}),
+      createCodePlaybookRuntime(codeRuntimeConstruction()),
     ];
     for (const runtime of factoryRuntimes) {
       expect(typeof runtime.describe).toBe('function');
@@ -7565,7 +7734,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const playerScript: PlayerResult[] = [
       { status: 'error', error: 'coder is down' },
       { status: 'error', error: 'coder is down again' },
-      { status: 'ok', finalText: 'I need to ask the Boss something.' },
+      { status: 'ok', finalText: 'Which repo should I touch?' },
     ];
     const playerCalls: { playerId: string; prompt: string }[] = [];
     const { ports, telemetry } = makeRecordingPorts({
@@ -7575,11 +7744,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         playerCalls.push({ playerId, prompt });
         return next;
       },
-      callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which repo should I touch?"}',
+      callJudge: async () => '{"guard":"needsBossReply"}',
     });
-    const runtime = createCodePlaybookRuntime({});
-    await runtime.init(makeSession(ports));
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
 
     const failedRun = await runtime.handleBossInput(turn('add a button'));
     expect(failedRun.outcome).toBe('failed');

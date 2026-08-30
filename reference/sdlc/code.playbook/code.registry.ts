@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import createPlaybookRuntime, {
+  type CodePlaybookHostCapabilities,
   type PlaybookRuntime,
 } from './code.playbook.js';
 
@@ -20,11 +21,11 @@ export interface CodePlaybookRegistryEntry {
   id: 'code';
   command: 'code';
   intent: string;
-  artifactSchema: 2;
+  artifactSchema: 3;
   runtimeProfile: {
     readonly kind: 'shared-factory';
     readonly compat: {
-      readonly artifactSchema: 2;
+      readonly artifactSchema: 3;
       readonly runtimeAbi: number;
     };
   };
@@ -32,7 +33,10 @@ export interface CodePlaybookRegistryEntry {
   concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): CodeOptions;
-  createRuntime(options: CodeOptions): PlaybookRuntime;
+  createRuntime(
+    options: CodeOptions,
+    hostCapabilities: CodePlaybookHostCapabilities,
+  ): PlaybookRuntime;
 }
 
 // REVIEW owns and labels its real review rounds. CODE's two suspended wrapper
@@ -98,7 +102,7 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   command: 'code',
   intent:
     'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'shared-factory',
     compat: createPlaybookRuntime.compat,
@@ -107,8 +111,11 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   concurrentRoleSets: [],
   summaryPolicy: codeSummaryPolicy,
   validateOptions: validateCodeOptions,
-  createRuntime(options) {
-    return createPlaybookRuntime(options);
+  createRuntime(options, hostCapabilities) {
+    return createPlaybookRuntime({
+      configuredOptions: options,
+      hostCapabilities,
+    });
   },
 };
 

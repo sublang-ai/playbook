@@ -5439,7 +5439,7 @@ export function createXStatePlaybookRuntime<
             const exclusive = await repositoryCapability.runExclusive({
               signal,
               effectBoundary,
-              operation: runTracedPlayerCall,
+              operation: () => runTracedPlayerCall(),
               completeEffectBoundary: completionEvidenceFor(
                 input,
                 roleId,
@@ -7220,16 +7220,26 @@ export function createXStatePlaybookRuntime<
           operationId: operation.operationId,
           effectBoundary,
           operation: async ({ playerContinuation }) => {
+            const selectedContinuation =
+              retainedEffectSourceSessionId === undefined
+                ? playerContinuation
+                : selectPlayerResume(
+                    effectBoundary.roleId,
+                    resolvedPlayerId(effectBoundary.roleId),
+                  );
             if (
-              playerContinuation !== false &&
-              (typeof playerContinuation !== 'string' ||
-                playerContinuation.trim().length === 0)
+              selectedContinuation !== false &&
+              (typeof selectedContinuation !== 'string' ||
+                selectedContinuation.trim().length === 0)
             ) {
               throw new TypeError(
                 `${label} bound deferred player continuation is invalid`,
               );
             }
-            continuation.playerContinuation = playerContinuation;
+            // Retained adoption owns a fresh Captain-session player ledger;
+            // no source token becomes target ownership. Same-engagement
+            // continuation still uses the exact durable binding.
+            continuation.playerContinuation = selectedContinuation;
             continuationStarted = true;
             actor!.send(event);
             // The invoked player remains gated inside boundary.callPlayer.
@@ -7360,6 +7370,10 @@ export function createXStatePlaybookRuntime<
           if (settlement !== undefined) {
             governedPlayerSettlements.set(continuation.result, settlement);
           }
+          // The bound answer authorizes exactly this one player call. Clear
+          // its live delivery scope before XState can advance through a
+          // nested call and invoke a later governed player in the same turn.
+          activeDeferredContinuation = undefined;
           deliverySettled = true;
           continuation.delivery.resolve(continuation.result);
         }

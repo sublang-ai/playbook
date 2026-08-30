@@ -19,7 +19,19 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 
-import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../src/xstate-runtime.js';
+import type {
+  PlaybookEffectBoundary,
+  PlaybookEffectBoundaryStart,
+  PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
+  PlaybookEffectLogicalOperation,
+  PlaybookRepositoryObservation,
+  PlaybookRepositoryReceipt,
+} from '../../../src/runtime.js';
 
 import {
   assertPlaybookCaptainShellSnapshot,
@@ -1396,7 +1408,10 @@ interface RegisteredEntry {
 
 function realEntry(entry: unknown, options?: unknown) {
   const source = entry as RegisteredEntry['entry'] & {
-    createRuntime: (input: unknown) => PlaybookRuntime;
+    createRuntime: (
+      input: unknown,
+      hostCapabilities?: unknown,
+    ) => PlaybookRuntime;
   };
   const runtimes: PlaybookRuntime[] = [];
   return {
@@ -1405,8 +1420,11 @@ function realEntry(entry: unknown, options?: unknown) {
     runtimes,
     entry: {
       ...source,
-      createRuntime: (input: unknown) => {
-        const runtime = source.createRuntime(input);
+      createRuntime: (input: unknown, hostCapabilities?: unknown) => {
+        const runtime =
+          source.artifactSchema === 3
+            ? source.createRuntime(input, hostCapabilities)
+            : source.createRuntime(input);
         runtimes.push(runtime);
         return runtime;
       },
@@ -1452,6 +1470,489 @@ interface ShellHarnessOptions {
   readonly sessionNamespace?: string;
   /** Current-session adapter selection for a named Captain-session player. */
   readonly playerAdapters?: Readonly<Record<string, string>>;
+  /** Physical repository results consumed by successive real schema-3 calls. */
+  readonly repositoryClassifications?: readonly TestRepositoryClassification[];
+}
+
+type TestRepositoryClassification =
+  | 'unchanged'
+  | 'one-descendant-commit';
+
+interface TestRepositoryCompletionEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate?: unknown;
+  readonly deferred?: {
+    readonly operationId: string;
+    readonly pendingQuestion: PlaybookEffectLogicalOperation['pendingQuestion'];
+    readonly playerContinuation: unknown;
+  };
+  readonly unresolved?: true;
+}
+
+interface TestRepositoryOperationSettlement {
+  readonly status: 'fulfilled' | 'rejected';
+  readonly value?: unknown;
+  readonly reason?: unknown;
+}
+
+interface TestRepositoryRunOptions {
+  readonly mode?: 'continue' | 'park' | 'restore';
+  readonly operationId?: string;
+  readonly effectBoundary?: PlaybookEffectBoundaryStart;
+  readonly operation?: (context?: {
+    readonly baseline: PlaybookRepositoryObservation;
+    readonly identity: { readonly worktree: string; readonly gitDir: string };
+    readonly playerContinuation?: unknown;
+  }) => Promise<unknown>;
+  readonly completeEffectBoundary?: (input: {
+    readonly boundary: PlaybookEffectBoundary;
+    readonly operation: TestRepositoryOperationSettlement;
+    readonly receipt: PlaybookRepositoryReceipt;
+    readonly outcomeReceipt: PlaybookRepositoryReceipt;
+  }) => TestRepositoryCompletionEvidence | Promise<TestRepositoryCompletionEvidence>;
+}
+
+const TEST_REPOSITORY_IDENTITY = Object.freeze({
+  worktree: '/test/worktree',
+  gitDir: '/test/worktree/.git',
+});
+const EMPTY_PROJECTION_DIGEST =
+  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a';
+
+function testRepositoryObservation(head: string): PlaybookRepositoryObservation {
+  return Object.freeze({
+    ...TEST_REPOSITORY_IDENTITY,
+    head,
+    projection: Object.freeze({}),
+    projectionDigest: EMPTY_PROJECTION_DIGEST,
+  });
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function shellEffectHost(
+  entries: readonly RegisteredEntry[],
+  classifications: readonly TestRepositoryClassification[] = [],
+) {
+  let ledger = emptyPlaybookEffectLedger();
+  let observation = testRepositoryObservation('0'.repeat(39) + '1');
+  let commitSequence = 1;
+  let attemptSequence = 0;
+  const attemptIds = new Map<string, string>();
+  const scriptedClassifications = [...classifications];
+
+  const writeAhead = async (
+    commands: PlaybookEffectLedgerCommandBatch,
+  ): Promise<PlaybookEffectLedger> => {
+    const boundaries = [...ledger.boundaries];
+    const logicalOperations = [...ledger.logicalOperations];
+    for (const command of commands) {
+      if (command.kind === 'start-boundaries') {
+        for (const seed of command.boundaries) {
+          const attemptKey = `${seed.playbookId}:${seed.runtimeSessionId}:${seed.turnId}`;
+          let attemptId = attemptIds.get(attemptKey);
+          if (attemptId === undefined) {
+            attemptId = `e0000000-0000-4000-8000-${String(++attemptSequence).padStart(12, '0')}`;
+            attemptIds.set(attemptKey, attemptId);
+          }
+          boundaries.push({
+            ...seed,
+            sequence: boundaries.length + 1,
+            attemptId,
+            attemptNumber: 1,
+          });
+        }
+        continue;
+      }
+      if (command.kind === 'replace-boundaries') {
+        for (const { expected, next } of command.replacements) {
+          const index = boundaries.findIndex(
+            ({ boundaryId }) => boundaryId === expected.boundaryId,
+          );
+          if (index < 0 || !sameJson(boundaries[index], expected)) {
+            throw new Error('Captain integration effect boundary replacement is stale');
+          }
+          boundaries[index] = next;
+        }
+        continue;
+      }
+      if (command.kind === 'append-logical-operations') {
+        for (const operation of command.operations) {
+          logicalOperations.push({
+            ...operation,
+            sequence: logicalOperations.length + 1,
+          });
+        }
+        continue;
+      }
+      for (const { expected, next } of command.replacements) {
+        const index = logicalOperations.findIndex(
+          ({ operationId }) => operationId === expected.operationId,
+        );
+        if (index < 0 || !sameJson(logicalOperations[index], expected)) {
+          throw new Error('Captain integration logical-operation replacement is stale');
+        }
+        logicalOperations[index] = next;
+      }
+    }
+    ledger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: ledger.revision + 1,
+      boundaries,
+      logicalOperations,
+    });
+    return ledger;
+  };
+
+  const nextReceipt = (
+    baseline: PlaybookRepositoryObservation,
+  ): PlaybookRepositoryReceipt => {
+    const classification = scriptedClassifications.shift() ?? 'unchanged';
+    if (classification === 'unchanged') {
+      return Object.freeze({ classification, baseline, after: baseline });
+    }
+    commitSequence += 1;
+    const commitOid = commitSequence.toString(16).padStart(40, '0');
+    const after = testRepositoryObservation(commitOid);
+    return Object.freeze({
+      classification,
+      baseline,
+      after,
+      commitOid,
+    });
+  };
+
+  const settleOperation = async (
+    operation: NonNullable<TestRepositoryRunOptions['operation']>,
+    context?: Parameters<NonNullable<TestRepositoryRunOptions['operation']>>[0],
+  ): Promise<TestRepositoryOperationSettlement> => {
+    try {
+      return Object.freeze({
+        status: 'fulfilled',
+        value: await operation(context),
+      });
+    } catch (reason) {
+      return Object.freeze({ status: 'rejected', reason });
+    }
+  };
+
+  const completedBoundary = (
+    current: PlaybookEffectBoundary,
+    receipt: PlaybookRepositoryReceipt,
+    completion: TestRepositoryCompletionEvidence,
+    logicalOperationId?: string,
+  ): PlaybookEffectBoundary => ({
+    ...current,
+    ...(receipt.after === undefined ? {} : { after: receipt.after }),
+    physicalReceipt: receipt,
+    ...(completion.finalText === undefined
+      ? {}
+      : { finalText: completion.finalText }),
+    ...(completion.semanticCandidate === undefined
+      ? {}
+      : { semanticCandidate: completion.semanticCandidate as never }),
+    ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
+  });
+
+  const capabilityById = Object.fromEntries(
+    entries
+      .filter(({ entry }) => entry.artifactSchema === 3)
+      .map(({ entry }) => {
+        const playbookId = entry.id;
+        const authority = {
+          playbookId,
+          artifactSchema: 3 as const,
+          cwd: TEST_REPOSITORY_IDENTITY.worktree,
+          sessionId: 'e1000000-0000-4000-8000-000000000001',
+          leaseOwnerToken: 'e2000000-0000-4000-8000-000000000001',
+          canonicalWorktree: TEST_REPOSITORY_IDENTITY,
+          requiredRoleIds: entry.requiredRoleIds,
+          concurrentRoleSets:
+            (entry.concurrentRoleSets as readonly (readonly string[])[]) ?? [],
+        };
+
+        const runExclusive = async (raw: unknown) => {
+          const options = raw as TestRepositoryRunOptions;
+          if (
+            options.effectBoundary === undefined ||
+            options.operation === undefined ||
+            options.completeEffectBoundary === undefined
+          ) {
+            throw new Error('Captain integration exclusive effect is incomplete');
+          }
+          const baseline = observation;
+          const seed = {
+            ...options.effectBoundary,
+            playbookId,
+            canonicalWorktree: TEST_REPOSITORY_IDENTITY,
+            baseline,
+          };
+          await writeAhead([{ kind: 'start-boundaries', boundaries: [seed] }]);
+          const started = ledger.boundaries.find(
+            ({ boundaryId }) => boundaryId === seed.boundaryId,
+          )!;
+          const operation = await settleOperation(options.operation, {
+            baseline,
+            identity: TEST_REPOSITORY_IDENTITY,
+          });
+          const receipt = nextReceipt(baseline);
+          observation = receipt.after ?? baseline;
+          const completion = await options.completeEffectBoundary({
+            boundary: started,
+            operation,
+            receipt,
+            outcomeReceipt: receipt,
+          });
+          const current = ledger.boundaries.find(
+            ({ boundaryId }) => boundaryId === seed.boundaryId,
+          )!;
+          const operationId = completion.deferred?.operationId;
+          const commands: PlaybookEffectLedgerCommandBatch = [
+            {
+              kind: 'replace-boundaries',
+              replacements: [
+                {
+                  expected: current,
+                  next: completedBoundary(
+                    current,
+                    receipt,
+                    completion,
+                    operationId,
+                  ),
+                },
+              ],
+            },
+            ...(completion.deferred === undefined
+              ? []
+              : [
+                  {
+                    kind: 'append-logical-operations' as const,
+                    operations: [
+                      {
+                        operationId: completion.deferred.operationId,
+                        playbookId,
+                        runtimeSessionId: current.runtimeSessionId,
+                        boundaryIds: [current.boundaryId],
+                        originalBaseline: current.baseline,
+                        checkpoint: receipt.after!,
+                        pendingQuestion: completion.deferred.pendingQuestion!,
+                        playerContinuation:
+                          completion.deferred.playerContinuation as never,
+                        checkpointRestorationEligible: false,
+                      },
+                    ],
+                  },
+                ]),
+          ];
+          const effectLedger = await writeAhead(commands);
+          return {
+            operation,
+            receipt,
+            effectLedger,
+            ...(completion.deferred === undefined
+              ? {}
+              : { deferredStatus: 'bound' as const }),
+          };
+        };
+
+        const runDeferred = async (raw: unknown) => {
+          const options = raw as TestRepositoryRunOptions;
+          const currentOperation = ledger.logicalOperations.find(
+            ({ operationId }) => operationId === options.operationId,
+          );
+          if (currentOperation === undefined) {
+            throw new Error('Captain integration deferred operation is absent');
+          }
+          if (options.mode === 'park') {
+            const {
+              checkpoint: _checkpoint,
+              pendingQuestion: _pendingQuestion,
+              playerContinuation: _playerContinuation,
+              ...parked
+            } = currentOperation;
+            return {
+              status: 'parked' as const,
+              effectLedger: await writeAhead([
+                {
+                  kind: 'replace-logical-operations',
+                  replacements: [
+                    { expected: currentOperation, next: parked },
+                  ],
+                },
+              ]),
+            };
+          }
+          if (options.mode === 'restore') {
+            const next = {
+              ...currentOperation,
+              checkpointRestorationEligible: false,
+            };
+            return {
+              status: 'restored' as const,
+              effectLedger: await writeAhead([
+                {
+                  kind: 'replace-logical-operations',
+                  replacements: [
+                    { expected: currentOperation, next },
+                  ],
+                },
+              ]),
+            };
+          }
+          if (
+            options.effectBoundary === undefined ||
+            options.operation === undefined ||
+            options.completeEffectBoundary === undefined ||
+            currentOperation.checkpoint === undefined
+          ) {
+            throw new Error('Captain integration deferred continuation is incomplete');
+          }
+          const seed = {
+            ...options.effectBoundary,
+            logicalOperationId: currentOperation.operationId,
+            playbookId,
+            canonicalWorktree: TEST_REPOSITORY_IDENTITY,
+            baseline: currentOperation.checkpoint,
+          };
+          const {
+            checkpoint: _checkpoint,
+            pendingQuestion: _pendingQuestion,
+            playerContinuation,
+            ...unbound
+          } = currentOperation;
+          const startingOperation = {
+            ...unbound,
+            boundaryIds: [...currentOperation.boundaryIds, seed.boundaryId],
+          };
+          await writeAhead([
+            { kind: 'start-boundaries', boundaries: [seed] },
+            {
+              kind: 'replace-logical-operations',
+              replacements: [
+                { expected: currentOperation, next: startingOperation },
+              ],
+            },
+          ]);
+          const started = ledger.boundaries.find(
+            ({ boundaryId }) => boundaryId === seed.boundaryId,
+          )!;
+          const operation = await settleOperation(options.operation, {
+            baseline: currentOperation.checkpoint,
+            identity: TEST_REPOSITORY_IDENTITY,
+            playerContinuation,
+          });
+          const receipt = nextReceipt(currentOperation.checkpoint);
+          observation = receipt.after ?? currentOperation.checkpoint;
+          const outcomeReceipt: PlaybookRepositoryReceipt = {
+            ...receipt,
+            baseline: currentOperation.originalBaseline,
+          };
+          const completion = await options.completeEffectBoundary({
+            boundary: started,
+            operation,
+            receipt,
+            outcomeReceipt,
+          });
+          const currentBoundary = ledger.boundaries.find(
+            ({ boundaryId }) => boundaryId === seed.boundaryId,
+          )!;
+          const currentLogicalOperation = ledger.logicalOperations.find(
+            ({ operationId }) => operationId === currentOperation.operationId,
+          )!;
+          const rebound =
+            completion.deferred !== undefined &&
+            receipt.classification === 'unchanged';
+          const nextLogicalOperation = rebound
+            ? {
+                ...currentLogicalOperation,
+                checkpoint: receipt.after,
+                pendingQuestion: completion.deferred!.pendingQuestion,
+                playerContinuation:
+                  completion.deferred!.playerContinuation as never,
+                checkpointRestorationEligible: false,
+              }
+            : completion.deferred !== undefined || completion.unresolved === true
+              ? currentLogicalOperation
+              : { ...currentLogicalOperation, logicalReceipt: outcomeReceipt };
+          const effectLedger = await writeAhead([
+            {
+              kind: 'replace-boundaries',
+              replacements: [
+                {
+                  expected: currentBoundary,
+                  next: completedBoundary(
+                    currentBoundary,
+                    receipt,
+                    completion,
+                    currentOperation.operationId,
+                  ),
+                },
+              ],
+            },
+            {
+              kind: 'replace-logical-operations',
+              replacements: [
+                {
+                  expected: currentLogicalOperation,
+                  next: nextLogicalOperation,
+                },
+              ],
+            },
+          ]);
+          return {
+            status: 'continued' as const,
+            operation,
+            receipt,
+            effectLedger,
+            ...(completion.deferred !== undefined || completion.unresolved === true
+              ? {}
+              : { logicalReceipt: outcomeReceipt }),
+            ...(completion.deferred === undefined
+              ? {}
+              : { deferredStatus: rebound ? ('bound' as const) : ('unresolved' as const) }),
+          };
+        };
+
+        return [
+          playbookId,
+          {
+            authority,
+            repository: {
+              identity: TEST_REPOSITORY_IDENTITY,
+              observe: async () => observation,
+              acquire: async () => ({}),
+              runExclusive,
+              runCohort: async () => {
+                throw new Error('Captain integration CODE fixture has no cohort');
+              },
+              runDeferred,
+            },
+            effectLedger: {
+              snapshot: () => ledger,
+              writeAhead,
+            },
+          },
+        ];
+      }),
+  );
+
+  return {
+    capabilityById,
+    replaceEffectLedger(value: PlaybookEffectLedger) {
+      ledger = assertPlaybookEffectLedger(structuredClone(value));
+      const open = ledger.logicalOperations.findLast(
+        ({ logicalReceipt }) => logicalReceipt === undefined,
+      );
+      observation =
+        open?.checkpoint ??
+        ledger.boundaries.findLast(
+          ({ physicalReceipt }) => physicalReceipt !== undefined,
+        )?.after ??
+        testRepositoryObservation('0'.repeat(39) + '1');
+    },
+  };
 }
 
 /**
@@ -1469,6 +1970,7 @@ function advertisedActionIds(prompt: string): string[] {
 
 const CLASSIFIER_MARKER = 'Classify the following Boss message';
 const ADJUDICATION_MARKER = 'Pick exactly one outcome by `guard`';
+const GOVERNED_ADJUDICATION_MARKER = 'Pick exactly one declared `guard`';
 const DECIDE_ADJUDICATION_MARKER =
   'You are the guard adjudicator for a playbook state machine.';
 
@@ -1515,6 +2017,10 @@ function makeShellHarness(
   if (!/^[0-9a-f]{4}$/i.test(sessionNamespace)) {
     throw new Error('test session namespace must be four hexadecimal digits');
   }
+  const effectHost = shellEffectHost(
+    entries,
+    harnessOptions.repositoryClassifications,
+  );
   const shell = createPlaybookCaptainShell(
     {
       playbooks,
@@ -1532,6 +2038,7 @@ function makeShellHarness(
       loadModule: async (specifier: string) => modules[specifier],
       createSessionId: () =>
         `${sessionNamespace}0000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
+      hostCapabilities: effectHost.capabilityById,
     },
   );
   const statuses: string[] = [];
@@ -1638,6 +2145,7 @@ function makeShellHarness(
     // The host surfaces themselves, so a row can enumerate the ports the
     // shell is actually given rather than a list someone typed.
     session,
+    replaceEffectLedger: effectHost.replaceEffectLedger,
     failRepliesFrom(prefix: string, message: string) {
       replyFailure = { prefix, message };
     },
@@ -1698,6 +2206,7 @@ function classifyFromPrompt(prompt: string): unknown {
 
 interface RealArtifactScript {
   readonly players?: ShellHarnessOptions['players'];
+  readonly repositoryClassifications?: readonly TestRepositoryClassification[];
   /** Reply to the CODE adjudication judge call. */
   readonly adjudicate?: (prompt: string) => unknown;
   /** Controller selection, chosen from the digest the shell composed. */
@@ -1721,12 +2230,18 @@ function realArtifactHarness(
   return makeShellHarness([...entries], [], {
     ...options,
     ...(script.players === undefined ? {} : { players: script.players }),
+    ...(script.repositoryClassifications === undefined
+      ? {}
+      : {
+          repositoryClassifications: script.repositoryClassifications,
+        }),
     captain: (prompt) => {
       if (prompt.includes(CLASSIFIER_MARKER)) {
         return okReply(JSON.stringify(classifyFromPrompt(prompt)));
       }
       if (
         prompt.includes(ADJUDICATION_MARKER) ||
+        prompt.includes(GOVERNED_ADJUDICATION_MARKER) ||
         prompt.includes(DECIDE_ADJUDICATION_MARKER)
       ) {
         return okReply(
@@ -1858,7 +2373,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
 
   const completionAdjudication = (prompt: string): unknown => {
     if (prompt.includes('`directCommit`')) {
-      return { guard: 'directCommit', latestCommit: 'abc123' };
+      return { guard: 'directCommit' };
     }
     if (prompt.includes('`noFindings`')) return { guard: 'noFindings' };
     throw new Error(`unexpected completion adjudication prompt: ${prompt}`);
@@ -1890,6 +2405,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           throw new Error(`unexpected completion player prompt: ${prompt}`);
         },
+        repositoryClassifications: ['one-descendant-commit'],
         adjudicate: completionAdjudication,
         decide: retainedDecision,
         closing: () => 'The retained CODE run advanced.',
@@ -1904,6 +2420,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     generation: PlaybookCaptainRetainedGeneration,
     turnId = 1,
   ): Promise<void> => {
+    harness.replaceEffectLedger(structuredClone(generation.effectLedger));
     await harness.init();
     await harness.shell.installRetainedGenerations({
       code: structuredClone(generation),
@@ -1957,14 +2474,11 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           return {
             status: 'ok',
-            finalText: 'The change is drafted; one choice remains.',
+            finalText: CODE_QUESTION,
             resumeToken: 'source-coder-token',
           };
         },
-        adjudicate: () => ({
-          guard: 'needsBossReply',
-          question: CODE_QUESTION,
-        }),
+        adjudicate: () => ({ guard: 'needsBossReply' }),
         decide: (_prompt, _advertised, boss) =>
           scenario.dismiss && /dismiss/i.test(boss)
             ? { action: 'dismiss' }
@@ -2045,7 +2559,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     await target.harness.shell.dispose?.();
   });
 
-  it('adopts a real CODE failure and completes through its retained retry', async () => {
+  it('adopts a real CODE failure without replaying its governed call', async () => {
     const sourceCode = realEntry(codeRegistryEntry);
     const sourceReview = realEntry(reviewRegistryEntry);
     const source = realArtifactHarness(
@@ -2077,16 +2591,18 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
 
     await target.harness.turn('Retry the retained failure now.', 2);
 
-    expect(target.harness.playerCalls).toEqual([
-      'code-coder',
-      'review-reviewer',
-    ]);
-    expect(target.harness.playerPrompts[0]).toContain(`> ${originalIntent}`);
-    expect(target.harness.playerPrompts[0]).not.toContain(
-      'Retry the retained failure now.',
-    );
+    expect(target.harness.playerCalls).toEqual([]);
     expect(classifierPrompts(target.harness)).toEqual([]);
-    expectCleanCompletion(target.harness);
+    expect(target.code.runtimes[0]?.describe?.()).toMatchObject({
+      state: { stateId: 'failed' },
+      actions: [],
+    });
+    expect(target.harness.surfaced.at(-1)).toBe(
+      'No retained work is actionable.',
+    );
+    expect(target.harness.shell.exportSnapshot()).toMatchObject({
+      mode: 'engaged.parked',
+    });
     await target.harness.shell.dispose?.();
   });
 
@@ -2114,9 +2630,10 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           throw new Error(`unexpected nested source player prompt: ${prompt}`);
         },
+        repositoryClassifications: ['one-descendant-commit'],
         adjudicate: (prompt) =>
           prompt.includes('`directCommit`')
-            ? { guard: 'directCommit', latestCommit: 'abc123' }
+            ? { guard: 'directCommit' }
             : { guard: 'needsBossReply', question: REVIEW_QUESTION },
         decide: retainedDecision,
         closing: () => 'The nested review is waiting on Boss.',
@@ -2188,6 +2705,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           throw new Error(`unexpected nested target player prompt: ${prompt}`);
         },
+        repositoryClassifications: ['one-descendant-commit'],
         adjudicate: (prompt) => {
           if (prompt.includes('stale in the advanced world')) {
             return { guard: 'hasFindings' };
@@ -2320,9 +2838,10 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           throw new Error(`unexpected unfinished source prompt: ${prompt}`);
         },
+        repositoryClassifications: ['one-descendant-commit'],
         adjudicate: (prompt) => {
           if (prompt.includes('`directCommit`')) {
-            return { guard: 'directCommit', latestCommit: 'abc123' };
+            return { guard: 'directCommit' };
           }
           return breakReview
             ? { guard: 'undeclaredReviewOutcome' }
@@ -2577,11 +3096,8 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       players: (_playerId, _prompt, index) =>
         index === 0
           ? { status: 'error', error: 'coder exploded' }
-          : { status: 'ok', finalText: 'Task 4 drafted; one question for Boss.' },
-      adjudicate: () => ({
-        guard: 'needsBossReply',
-        question: CODE_PENDING_QUESTION,
-      }),
+          : { status: 'ok', finalText: CODE_PENDING_QUESTION },
+      adjudicate: () => ({ guard: 'needsBossReply' }),
       decide: retryOrGroundedReply,
       closing: () => 'The retry ran; CODE is waiting on your answer.',
     });
@@ -2710,12 +3226,9 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
         ? { status: 'error' as const, error: 'coder exploded' }
         : {
             status: 'ok' as const,
-            finalText: 'Task 4 drafted; one question for Boss.',
+            finalText: CODE_PENDING_QUESTION,
           };
-    const adjudicate = () => ({
-      guard: 'needsBossReply',
-      question: CODE_PENDING_QUESTION,
-    });
+    const adjudicate = () => ({ guard: 'needsBossReply' });
 
     const first = realArtifactHarness([realEntry(codeRegistryEntry)], {
       players,
@@ -2734,6 +3247,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // carries; nothing was added beside it for this.
     expect(Object.keys(snapshot!.frames![0]!.runtime).sort()).toEqual([
       'effectLedger',
+      'failedEffectAttempt',
       'machine',
       'pendingBossQuestions',
       'playbookId',
@@ -2750,12 +3264,13 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       // the Boss continues the session, which is why they ask for a retry.
       players: () => ({
         status: 'ok' as const,
-        finalText: 'Task 4 drafted; one question for Boss.',
+        finalText: CODE_PENDING_QUESTION,
       }),
       adjudicate,
       decide: retryOrGroundedReply,
       closing: () => 'The retry ran; CODE is waiting on your answer.',
     });
+    continued.replaceEffectLedger(structuredClone(snapshot!.effectLedger));
     await continued.shell.restore(
       continued.session as never,
       assertPlaybookCaptainShellSnapshot(structuredClone(snapshot)),
@@ -2786,15 +3301,16 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     const harness = realArtifactHarness([code], {
       players: (_playerId, prompt, index) =>
         index === 0
-          ? { status: 'ok', finalText: 'Drafted; one question for Boss.' }
-          : { status: 'ok', finalText: `Resumed with: ${prompt.length} chars` },
-      adjudicate: (prompt) =>
-        prompt.includes(CODE_PENDING_QUESTION)
-          ? {
-              guard: 'directCommit',
-              coderOutput: 'Committed the direct implementation phase.',
-            }
-          : { guard: 'needsBossReply', question: CODE_PENDING_QUESTION },
+          ? { status: 'ok', finalText: CODE_PENDING_QUESTION }
+          : {
+              status: 'ok',
+              finalText: `Which CODE row follows the ${prompt.length}-character reply?`,
+            },
+      repositoryClassifications: [
+        'unchanged',
+        'unchanged',
+      ],
+      adjudicate: () => ({ guard: 'needsBossReply' }),
       // A digest carrying a pending question and a Boss message that answers
       // it: hand the turn to the working playbook unchanged.
       decide: (prompt) =>
@@ -2840,11 +3356,8 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
   it('answers a mid-run status question from describe() only', async () => {
     const code = realEntry(codeRegistryEntry);
     const harness = realArtifactHarness([code], {
-      players: () => ({ status: 'ok', finalText: 'Drafted; one question.' }),
-      adjudicate: () => ({
-        guard: 'needsBossReply',
-        question: CODE_PENDING_QUESTION,
-      }),
+      players: () => ({ status: 'ok', finalText: CODE_PENDING_QUESTION }),
+      adjudicate: () => ({ guard: 'needsBossReply' }),
       decide: (prompt) => {
         const stateLine = /\nLeaf \/code: (.*)\n/.exec(prompt)?.[1] ?? '';
         const pending = /\n- \("(\w+)"\) "(.*)" asks: (".*")\n/.exec(prompt);
@@ -3117,11 +3630,8 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       players: (_playerId, _prompt, index) =>
         index === 0
           ? { status: 'ok', finalText: '' }
-          : { status: 'ok', finalText: 'Drafted; one question for Boss.' },
-      adjudicate: () => ({
-        guard: 'needsBossReply',
-        question: CODE_PENDING_QUESTION,
-      }),
+          : { status: 'ok', finalText: CODE_PENDING_QUESTION },
+      adjudicate: () => ({ guard: 'needsBossReply' }),
       decide: () => ({ action: 'respond', text: 'unused' }),
       closing: () => 'CODE is drafted and waiting on your answer.',
     });
@@ -3587,11 +4097,8 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       players: (_playerId, _prompt, index) =>
         index === 0
           ? { status: 'error', error: 'coder exploded' }
-          : { status: 'ok', finalText: 'Task 4 drafted; one question.' },
-      adjudicate: () => ({
-        guard: 'needsBossReply',
-        question: CODE_PENDING_QUESTION,
-      }),
+          : { status: 'ok', finalText: CODE_PENDING_QUESTION },
+      adjudicate: () => ({ guard: 'needsBossReply' }),
       decide: retryOrGroundedReply,
       closing: () => 'The retry ran.',
     });

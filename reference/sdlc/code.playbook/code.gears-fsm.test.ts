@@ -73,11 +73,14 @@ function route(transition: RawTransition | undefined) {
 const CONTEXT: CodingContext = {
   runResults: '',
   callerInput: 'Implement the request.',
-  coderOutput: 'Committed.\nCommit: abc123',
+  coderOutput: 'Committed the requested change.',
   latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
 };
+
+const RETIRED_COMMIT_RESPONSE_INSTRUCTION =
+  'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.';
 
 describe('CODE Source, GEARS, and FSM agreement', () => {
   it('preserves every authored instruction and quoted relay', () => {
@@ -110,6 +113,16 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
         item?.results.map(({ guard, description }) => [guard, description]),
       );
       expect(input.result.needsBossReply).toContain('question:');
+    }
+  });
+
+  it('does not ask Coder to encode repository evidence in response prose', () => {
+    expect(source).not.toContain(RETIRED_COMMIT_RESPONSE_INSTRUCTION);
+    expect(gearsText).not.toContain(RETIRED_COMMIT_RESPONSE_INSTRUCTION);
+    for (const state of enumeratePlayerStates(codingMachine)) {
+      expect(state.getInput(CONTEXT).prompt).not.toContain(
+        RETIRED_COMMIT_RESPONSE_INSTRUCTION,
+      );
     }
   });
 

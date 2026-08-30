@@ -746,7 +746,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       execution: executionProjection,
       mutate: (entry: any) => ({
         ...entry,
-        runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
       }),
     },
     {
@@ -921,28 +921,34 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
   it('quarantines the writer lease when shared host construction cannot roll back its host', async () => {
     const fixture = await lifecycleFixture();
-    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
-      sessionStore: fixture.store,
-      loadModule: async () => ({
-        default: {
-          ...registryEntry(fixture.execution),
-          validateOptions() {
-            throw new Error('shell init failed');
+    const lifecycle = createManagedInteractiveLifecycle(
+      { ...fixture.payload, cwd: process.cwd() },
+      {
+        sessionStore: fixture.store,
+        loadModule: async () => ({
+          default: {
+            ...registryEntry(fixture.execution),
+            validateOptions() {
+              throw new Error('shell init failed');
+            },
           },
-        },
-      }),
-      createHostRuntime: async () => ({
-        abortActiveTurn() {},
-        async runBossTurn() {},
-        async dispose() {
-          throw new Error('rollback dispose failed');
-        },
-      }),
-    });
-
-    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
-      /cleanup also failed/,
+        }),
+        createHostRuntime: async () => ({
+          abortActiveTurn() {},
+          async runBossTurn() {},
+          async dispose() {
+            throw new Error('rollback dispose failed');
+          },
+        }),
+      },
     );
+
+    await expect(
+      lifecycle.initializeRuntime({
+        ...fixture.context,
+        cwd: process.cwd(),
+      }),
+    ).rejects.toThrow(/cleanup also failed/);
     await lifecycle.shutdown();
     await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
       /lease is active/,
@@ -1361,7 +1367,7 @@ function executionProjection() {
         command: 'code',
         intent:
           'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
-        artifactSchema: 2,
+        artifactSchema: 3,
         requiredRoleIds: ['coder'],
         concurrentRoleSets: [],
         roles: {

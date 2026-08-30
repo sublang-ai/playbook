@@ -56,7 +56,6 @@ class ScriptedAdapter implements AgentAdapter {
     const result = prompt.includes('This is hidden control work.')
       ? JSON.stringify({
           guard: 'needsBossReply',
-          question: 'May I proceed with the risky rename?',
         })
       : prompt.includes('compose closing reply')
         ? 'Coder needs a Boss answer before continuing.'

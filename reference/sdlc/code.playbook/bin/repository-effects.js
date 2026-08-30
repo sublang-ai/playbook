@@ -1866,10 +1866,13 @@ async function runDurableExclusive({
     } catch (error) {
       operation = Object.freeze({ status: 'rejected', reason: error });
     }
-    const effectReceipt = await claim.capture(baseline, {
-      allowedDispositions: current.dispositions,
-      observation: options.afterObservation,
-    });
+    const effectReceipt = snapshotJsonValue(
+      await claim.capture(baseline, {
+        allowedDispositions: current.dispositions,
+        observation: options.afterObservation,
+      }),
+      'exclusive repository receipt',
+    );
     let latest = boundaryById(
       ledgerService.snapshot(),
       seed.boundaryId,
@@ -1950,12 +1953,16 @@ async function runDurableExclusive({
     recovery = { ...recovery, commands, commandsAcknowledged: false };
     const completed = await ledgerService.writeAhead(authority, commands);
     assertEffectCommandBatchResult(completed, commands);
+    const completedReceipt = boundaryById(
+      completed,
+      seed.boundaryId,
+    ).physicalReceipt;
     recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     return Object.freeze({
       baseline,
       operation,
-      receipt: effectReceipt,
+      receipt: completedReceipt,
       effectLedger: completed,
       ...(deferredStatus === undefined ? {} : { deferredStatus }),
     });
@@ -2238,10 +2245,13 @@ async function runDurableDeferred({
     } catch (error) {
       operation = Object.freeze({ status: 'rejected', reason: error });
     }
-    const effectReceipt = await claim.capture(checkpointObservation, {
-      allowedDispositions: currentBoundary.dispositions,
-      observation: options.afterObservation,
-    });
+    const effectReceipt = snapshotJsonValue(
+      await claim.capture(checkpointObservation, {
+        allowedDispositions: currentBoundary.dispositions,
+        observation: options.afterObservation,
+      }),
+      'deferred repository receipt',
+    );
     const beforeCompletion = ledgerService.snapshot();
     let latestBoundary = boundaryById(beforeCompletion, seed.boundaryId);
     let latestOperation = logicalOperationById(beforeCompletion, operationId);
@@ -2308,13 +2318,17 @@ async function runDurableDeferred({
     recovery = { ...recovery, commands, commandsAcknowledged: false };
     ledger = await ledgerService.writeAhead(authority, commands);
     assertEffectCommandBatchResult(ledger, commands);
+    const completedReceipt = boundaryById(
+      ledger,
+      seed.boundaryId,
+    ).physicalReceipt;
     recovery = { ...recovery, commandsAcknowledged: true };
     await releaseRepositoryClaim(claim);
     return Object.freeze({
       status: 'continued',
       baseline: checkpointObservation,
       operation,
-      receipt: effectReceipt,
+      receipt: completedReceipt,
       ...(completion.deferred !== undefined || completion.unresolved === true
         ? {}
         : { logicalReceipt }),
@@ -2408,11 +2422,14 @@ async function runDurableCohort({
         ),
       ),
     );
-    const effectReceipt = await claim.capture(baseline, {
-      allowedDispositions: ['unchanged'],
-      cohort: true,
-      observation: options.afterObservation,
-    });
+    const effectReceipt = snapshotJsonValue(
+      await claim.capture(baseline, {
+        allowedDispositions: ['unchanged'],
+        cohort: true,
+        observation: options.afterObservation,
+      }),
+      'repository cohort receipt',
+    );
     const beforeCompletion = ledgerService.snapshot();
     const callbackBoundaries = seeds.map((seed) =>
       boundaryById(beforeCompletion, seed.boundaryId),

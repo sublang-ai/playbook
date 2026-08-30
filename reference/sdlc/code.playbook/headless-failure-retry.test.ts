@@ -99,7 +99,6 @@ class ScriptedAdapter implements AgentAdapter {
       : adjudication
         ? JSON.stringify({
             guard: 'needsBossReply',
-            question: 'May I proceed with the risky rename?',
           })
         : closing
           ? 'The retry ran; CODE is waiting on your answer.'

@@ -1361,6 +1361,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './code/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
+      'CodePlaybookHostCapabilities',
       'CodePlaybookOptions',
       'JsonValue',
       'NormalizedError',
@@ -1750,6 +1751,8 @@ import type {
   PlaybookEffectLedgerCapability,
   PlaybookPorts,
 } from '@sublang/playbook/runtime';
+import { codePlaybookRegistryEntry } from '@sublang/playbook/code/registry';
+import type { CodePlaybookHostCapabilities } from '@sublang/playbook/code/playbook';
 
 interface Options { readonly mode: string }
 interface Capabilities {
@@ -1802,6 +1805,7 @@ void wrongV3;
 
 declare const configuredOptions: unknown;
 declare const hostCapabilities: PlaybookHostConstructionCapabilities;
+declare const codeHostCapabilities: CodePlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
@@ -1817,10 +1821,21 @@ v2Entry.createRuntime(configuredOptions, hostCapabilities);
 // @ts-expect-error schema 3 registry construction requires capabilities
 v3Entry.createRuntime(configuredOptions);
 v3Entry.createRuntime(configuredOptions, hostCapabilities);
+const codeSchema: 3 = codePlaybookRegistryEntry.artifactSchema;
+const codeProfile: PlaybookCaptainRuntimeProfile<3> = codePlaybookRegistryEntry.runtimeProfile;
+const codeEntry: PlaybookCaptainRegistryEntryV3 = codePlaybookRegistryEntry;
+const codeCapabilities: PlaybookHostConstructionCapabilities = codeHostCapabilities;
+codePlaybookRegistryEntry.createRuntime({}, codeHostCapabilities);
+// @ts-expect-error CODE is schema 3 and requires current-host capabilities
+codePlaybookRegistryEntry.createRuntime({});
 void v2FactorySchema;
 void v3FactorySchema;
 void v2Profile;
 void v3Profile;
+void codeSchema;
+void codeProfile;
+void codeEntry;
+void codeCapabilities;
 void wrongProfile;
 `,
       );

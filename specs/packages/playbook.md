@@ -53,7 +53,7 @@ Where a REVIEW prompt asks Reviewer to assess affected specs, the prompt shall r
 
 #### playbook-20
 
-When CODE receives a coding intent, CODE shall obtain and retain the exact Coder commit for each direct or IR phase, call REVIEW after each CODE-owned commit, start no later phase until REVIEW passes, and after REVIEW passes the direct phase or final IR task report the latest CODE-owned commit and terminate successfully.
+When CODE receives a coding intent, CODE shall obtain and retain from the qualifying repository receipt the exact Coder commit for each direct or IR phase under [[playbook-32](#playbook-32)], call REVIEW after each CODE-owned commit, start no later phase until REVIEW passes, and after REVIEW passes the direct phase or final IR task report the latest CODE-owned commit and terminate successfully.
 
 #### playbook-24
 
@@ -94,6 +94,23 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 
 Where a maintained workflow runs under artifact schema `3`, its compiled runtime shall apply the automatic-replay fence of [[playbook-runtime-71](playbook-runtime.md#playbook-runtime-71)] at every governed delegated-player state regardless of whether linking emits the shared flat runtime or DECIDE's bespoke parallel runtime.
 While that workflow remains under artifact schema `2`, its delegated-player correction [[playbook-runtime-9](playbook-runtime.md#playbook-runtime-9)] and failure-state retry [[playbook-runtime-1](playbook-runtime.md#playbook-runtime-1)] and [[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)] shall retain their legacy behavior until the workflow's atomic schema-3 migration under [[playbook-1](#playbook-1)].
+
+#### playbook-32
+
+Where CODE runs under artifact schema `3`, each delegated Coder outcome shall declare and reconcile the exact authority, repository disposition, and accepted transition in this matrix under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)]:
+
+| Source state | Accepted outcome | Payload authority | Repository disposition | Target state |
+| --- | --- | --- | --- | --- |
+| `runFirstPhase` | `directCommit` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewFirstCommit` |
+| `runFirstPhase` | `irCommit` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewFirstCommit` |
+| `runFirstPhase` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
+| `runIrTask` | `moreTasks` | presentation `coderOutput`; semantic `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTask` |
+| `runIrTask` | `finalTask` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTask` |
+| `runIrTask` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
+
+The Coder prompts shall continue to require the phase's one commit but shall prescribe no `Commit:` marker or other response formatting, while the reconciler shall treat `coderOutput` as opaque presentation, obtain `latestCommit` only from the matching receipt OID, and retain `irNumber`, `irTask`, and the `moreTasks` versus `finalTask` choice as exact semantic evidence under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)].
+Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)], and each deferred arm shall use the checkpoint-bound continuation of [[playbook-30](#playbook-30)].
+The CODE source, GEARS, FSM, linked runtime, declarations, and registry shall move atomically to artifact schema `3` under runtime ABI `1` [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] while preserving their agreement under [[playbook-1](#playbook-1)].
 
 ### Boss-reply suspension
 
@@ -154,7 +171,11 @@ When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CO
 #### playbook-29
 
 When maintained-workflow conformance drives equivalent staged artifact-schema-3 governed boundaries through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both apply the same host-acknowledged `unchanged`-only gates to empty-`ok` correction and ordinary failure-state retry, both retain evidence and start no automatic player call for a missing, incomplete, or non-`unchanged` receipt, and DECIDE's authored and generated runtime siblings stay behaviorally identical.
-The suite shall further fail unless the shipped artifact-schema-2 CODE, REVIEW, and DECIDE profiles retain their existing correction and retry behavior (verifying [[playbook-28](#playbook-28)]).
+The suite shall further fail unless the shipped artifact-schema-2 REVIEW and DECIDE profiles retain their existing correction and retry behavior (verifying [[playbook-28](#playbook-28)]).
+
+#### playbook-33
+
+When the CODE conformance suites drive its real artifact-schema-3 runtime, they shall fail unless the source, GEARS, and compiled prompts contain no `Commit:` response-format instruction; no presentation parser influences a transition; missing, glued, fenced, quoted, duplicated, or misleading `Commit:` prose leaves the accepted arm unchanged under equal semantic and effect evidence; each of the four commit outcomes accepts only a matching `one-descendant-commit` receipt and obtains `latestCommit` from its exact OID; for a commit candidate every unchanged, worktree-only, multiple-commit, rewritten or non-descendant, or observation-ambiguous receipt, including one caused by post-commit residual worktree state, remains unresolved; `irNumber`, `irTask`, and `moreTasks` versus `finalTask` come only from exact semantic candidates; a semantic `latestCommit` is rejected; both Coder states exercise deferred `needsBossReply` through an exact-checkpoint authored continuation and cumulative original-baseline receipt; every accepted arm publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-32](#playbook-32)] (verifying [[playbook-1](#playbook-1)], [[playbook-20](#playbook-20)], and [[playbook-30](#playbook-30)]).
 
 ### Boss-reply suspension coverage
 
@@ -169,4 +190,4 @@ When a workflow FSM leaves or abandons a Boss-reply path, its conformance suite 
 #### playbook-31
 
 When maintained-workflow conformance drives equivalent staged artifact-schema-3 deferred question chains through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both withhold the question until its logical operation is durable, start one authored continuation only from a valid exact-checkpoint answer, preserve one original baseline and cumulative receipt across repeated questions, keep invalid answers waiting, park another exit or checkpoint mismatch without a player, and restore an eligible exact-checkpoint wait without a player or judge; authored and generated DECIDE runtime siblings shall remain behaviorally identical (verifying [[playbook-30](#playbook-30)]).
-The suite shall further fail unless the shipped artifact-schema-2 CODE, REVIEW, and DECIDE profiles retain their existing Boss-question behavior (verifying [[playbook-30](#playbook-30)]).
+The suite shall further fail unless the shipped artifact-schema-2 REVIEW and DECIDE profiles retain their existing Boss-question behavior (verifying [[playbook-30](#playbook-30)]).

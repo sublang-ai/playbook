@@ -14,7 +14,7 @@ import {
 const CONTEXT: CodingContext = {
   runResults: 'unit tests passed',
   callerInput: 'Implement the intent.',
-  coderOutput: 'Committed.\nCommit: abc123',
+  coderOutput: 'Committed the requested change.',
   latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
@@ -46,7 +46,7 @@ describe('CODE FSM introspection', () => {
         playbookId: 'review',
         text:
           '> Initial intent: Implement the intent.\n' +
-          '> Coder output: Committed.\n> Commit: abc123',
+          '> Coder output: Committed the requested change.',
       },
       {
         stateId: 'reviewIrTask',
@@ -54,7 +54,7 @@ describe('CODE FSM introspection', () => {
         playbookId: 'review',
         text:
           '> IR task: Implement task 1.\n' +
-          '> Coder output: Committed.\n> Commit: abc123',
+          '> Coder output: Committed the requested change.',
       },
     ]);
   });

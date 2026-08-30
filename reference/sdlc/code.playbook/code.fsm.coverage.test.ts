@@ -4,6 +4,7 @@
 import { createActor, fromPromise, waitFor } from 'xstate';
 import { describe, expect, it } from 'vitest';
 
+import { ACCEPTED_OUTCOME_ACTION_TYPE } from '../../../src/accepted-outcome.js';
 import {
   codingMachine,
   type CodingContext,
@@ -27,6 +28,7 @@ interface RawState {
 interface RawTransition {
   guard?: unknown;
   target?: unknown;
+  actions?: unknown;
 }
 
 interface TransitionFixture {
@@ -44,7 +46,7 @@ const APPROVED = {
 const CONTEXT: CodingContext = {
   runResults: '',
   callerInput: 'Implement the request.',
-  coderOutput: 'Completed the phase.\nCommit: abc123',
+  coderOutput: 'Completed the phase.',
   latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
@@ -81,7 +83,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'directCommit',
-        coderOutput: 'Completed the phase.\nCommit: abc123',
+        coderOutput: 'Completed the phase.',
         latestCommit: 'abc123',
       }),
     },
@@ -91,7 +93,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'irCommit',
-        coderOutput: 'Created IR-040.\nCommit: ir040',
+        coderOutput: 'Created IR-040.',
         latestCommit: 'ir040',
         irNumber: '040',
         irTask: 'Implement task 1.',
@@ -109,8 +111,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'directCommit',
-        coderOutput: 'Commit: previous\nCommit: abc123',
-        latestCommit: 'abc123',
+        coderOutput: 'Completed without reconciled effect evidence.',
       }),
     },
   ],
@@ -158,7 +159,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'moreTasks',
-        coderOutput: 'Completed task 1.\nCommit: task1',
+        coderOutput: 'Completed task 1.',
         latestCommit: 'task1',
         irTask: 'Implement task 2.',
       }),
@@ -169,7 +170,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'finalTask',
-        coderOutput: 'Completed the final task.\nCommit: task2',
+        coderOutput: 'Completed the final task.',
         latestCommit: 'task2',
       }),
     },
@@ -185,8 +186,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       context: CONTEXT,
       event: done({
         guard: 'finalTask',
-        coderOutput: 'Completed the final task.',
-        latestCommit: 'task2',
+        coderOutput: 'Completed without reconciled effect evidence.',
       }),
     },
   ],
@@ -295,6 +295,24 @@ function guardName(guard: unknown): string | undefined {
   return typeof guard.type === 'string' ? guard.type : undefined;
 }
 
+function transitionActions(transition: RawTransition): readonly unknown[] {
+  if (transition.actions === undefined) return [];
+  return Array.isArray(transition.actions)
+    ? transition.actions
+    : [transition.actions];
+}
+
+function acceptedOutcomeMarkers(
+  transition: RawTransition,
+): readonly unknown[] {
+  return transitionActions(transition)
+    .filter(
+      (action) =>
+        isRecord(action) && action.type === ACCEPTED_OUTCOME_ACTION_TYPE,
+    )
+    .map((action) => (action as Record<string, unknown>).params);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -380,12 +398,72 @@ describe('CODE FSM transition coverage', () => {
     }
   });
 
+  it('marks exactly the six accepted governed outcomes with stable identities', () => {
+    const states = (codingMachine as unknown as {
+      config: { states: Record<string, RawState> };
+    }).config.states;
+    const governed = [
+      {
+        stateId: 'runFirstPhase',
+        expected: [
+          {
+            source: 'runFirstPhase',
+            target: 'reviewFirstCommit',
+            acceptedOutcome: 'directCommit',
+          },
+          {
+            source: 'runFirstPhase',
+            target: 'reviewFirstCommit',
+            acceptedOutcome: 'irCommit',
+          },
+          {
+            source: 'runFirstPhase',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+      {
+        stateId: 'runIrTask',
+        expected: [
+          {
+            source: 'runIrTask',
+            target: 'reviewIrTask',
+            acceptedOutcome: 'moreTasks',
+          },
+          {
+            source: 'runIrTask',
+            target: 'reviewIrTask',
+            acceptedOutcome: 'finalTask',
+          },
+          {
+            source: 'runIrTask',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+    ] as const;
+
+    for (const { stateId, expected } of governed) {
+      const onDone = states[stateId]?.invoke?.onDone;
+      expect(Array.isArray(onDone), stateId).toBe(true);
+      const arms = onDone as readonly RawTransition[];
+      expect(arms).toHaveLength(expected.length + 1);
+      expect(
+        arms.slice(0, -1).map((arm) => acceptedOutcomeMarkers(arm)),
+        stateId,
+      ).toEqual(expected.map((marker) => [marker]));
+      expect(acceptedOutcomeMarkers(arms.at(-1)!)).toEqual([]);
+    }
+  });
+
   it('completes one direct phase only after exact REVIEW approval', async () => {
     const workflow = createWorkflow(
       [
         {
           guard: 'directCommit',
-          coderOutput: 'Committed the change.\nCommit: abc123',
+          coderOutput: 'Committed the change.',
           latestCommit: 'abc123',
         },
       ],
@@ -400,12 +478,11 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'complete',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.\nCommit: abc123',
+      lastCodeOutput: 'Committed the change.',
     });
     expect(workflow.reviewInputs[0]?.text).toBe(
       '> Initial intent: Fix the bug.\n' +
-        '> Coder output: Committed the change.\n' +
-        '> Commit: abc123',
+        '> Coder output: Committed the change.',
     );
   });
 
@@ -414,20 +491,20 @@ describe('CODE FSM transition coverage', () => {
       [
         {
           guard: 'irCommit',
-          coderOutput: 'Created IR-040.\nCommit: ir040',
+          coderOutput: 'Created IR-040.',
           latestCommit: 'ir040',
           irNumber: '040',
           irTask: 'Implement task 1.',
         },
         {
           guard: 'moreTasks',
-          coderOutput: 'Completed task 1.\nCommit: task1',
+          coderOutput: 'Completed task 1.',
           latestCommit: 'task1',
           irTask: 'Implement task 2.',
         },
         {
           guard: 'finalTask',
-          coderOutput: 'Completed task 2.\nCommit: task2',
+          coderOutput: 'Completed task 2.',
           latestCommit: 'task2',
         },
       ],
@@ -441,7 +518,7 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'complete',
       lastCodeCommit: 'task2',
-      lastCodeOutput: 'Completed task 2.\nCommit: task2',
+      lastCodeOutput: 'Completed task 2.',
     });
     expect(workflow.playerInputs.map(({ stateId }) => stateId)).toEqual([
       'runFirstPhase',
@@ -464,7 +541,7 @@ describe('CODE FSM transition coverage', () => {
         { guard: 'needsBossReply', question: 'Which branch?' },
         {
           guard: 'directCommit',
-          coderOutput: 'Committed with the answer.\nCommit: def456',
+          coderOutput: 'Committed with the answer.',
           latestCommit: 'def456',
         },
       ],
@@ -491,7 +568,7 @@ describe('CODE FSM transition coverage', () => {
       [
         {
           guard: 'directCommit',
-          coderOutput: 'Committed the change.\nCommit: abc123',
+          coderOutput: 'Committed the change.',
           latestCommit: 'abc123',
         },
       ],
@@ -506,7 +583,7 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.\nCommit: abc123',
+      lastCodeOutput: 'Committed the change.',
       error: {
         name: 'ReviewContractError',
         message:
@@ -528,7 +605,7 @@ describe('CODE FSM transition coverage', () => {
       [
         {
           guard: 'directCommit',
-          coderOutput: 'Committed the change.\nCommit: abc123',
+          coderOutput: 'Committed the change.',
           latestCommit: 'abc123',
         },
       ],
@@ -543,7 +620,7 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.\nCommit: abc123',
+      lastCodeOutput: 'Committed the change.',
       error: { name: 'ReviewError', message: 'REVIEW failed.' },
     });
   });
@@ -553,7 +630,7 @@ describe('CODE FSM transition coverage', () => {
       [
         {
           guard: 'directCommit',
-          coderOutput: 'Committed the change.\nCommit: abc123',
+          coderOutput: 'Committed the change.',
           latestCommit: 'abc123',
         },
       ],

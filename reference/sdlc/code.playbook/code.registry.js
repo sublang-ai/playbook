@@ -47,7 +47,7 @@ export const codePlaybookRegistryEntry = {
     id: 'code',
     command: 'code',
     intent: 'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
-    artifactSchema: 2,
+    artifactSchema: 3,
     runtimeProfile: Object.freeze({
         kind: 'shared-factory',
         compat: createPlaybookRuntime.compat,
@@ -56,8 +56,11 @@ export const codePlaybookRegistryEntry = {
     concurrentRoleSets: [],
     summaryPolicy: codeSummaryPolicy,
     validateOptions: validateCodeOptions,
-    createRuntime(options) {
-        return createPlaybookRuntime(options);
+    createRuntime(options, hostCapabilities) {
+        return createPlaybookRuntime({
+            configuredOptions: options,
+            hostCapabilities,
+        });
     },
 };
 export default codePlaybookRegistryEntry;
