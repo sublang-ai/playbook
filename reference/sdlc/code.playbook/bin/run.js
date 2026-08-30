@@ -15,7 +15,10 @@ import {
   assertPlaybookEffectLedger,
   emptyPlaybookEffectLedger,
 } from '../../../../src/xstate-runtime.js';
-import { createPlaybookCaptainShell } from '../playbook-captain.js';
+import {
+  assertPlaybookCaptainShellSnapshot,
+  createPlaybookCaptainShell,
+} from '../playbook-captain.js';
 import {
   adapterSdkFailureLines,
   checkAdapterSdks,
@@ -478,6 +481,9 @@ export async function runPlaybookRun(options = {}) {
       ...(restoreSnapshot !== undefined
         ? { restoreSnapshot }
         : {}),
+      ...(args.retryUncertain
+        ? { reconcileUncertainTurnReplay: true }
+        : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       beforeBossTurn: async (baselineSnapshot, shell) => {
         throwIfAborted(options.signal);
@@ -667,6 +673,7 @@ export async function driveHeadlessCaptainTurn({
   createHostRuntime = createTmuxPlayRuntime,
   createEffectLedgerWriteAhead,
   restoreSnapshot,
+  reconcileUncertainTurnReplay = false,
   beforeBossTurn,
   assertBeforeBossTurn,
   signal,
@@ -706,6 +713,9 @@ export async function driveHeadlessCaptainTurn({
           ? { createEffectLedgerWriteAhead }
           : {}),
         ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
+        ...(reconcileUncertainTurnReplay
+          ? { reconcileUncertainTurnReplay: true }
+          : {}),
       });
       ({ shell, host, snapshot: baselineSnapshot } = created);
       uncertainRecord = await beforeBossTurn?.(baselineSnapshot, shell);
@@ -827,6 +837,70 @@ function isCaptainSessionHostCleanupIncomplete(error) {
   );
 }
 
+function reconcileWholeTurnReplaySnapshot(snapshot, ledger, catalog) {
+  const checkpoint = assertPlaybookEffectLedger(snapshot.effectLedger);
+  const current = assertPlaybookEffectLedger(ledger);
+  const checkpointBoundaryCount = checkpoint.boundaries.length;
+  const currentPrefix = current.boundaries.slice(0, checkpointBoundaryCount);
+  if (!isDeepStrictEqual(currentPrefix, checkpoint.boundaries)) {
+    throw new Error(
+      'Captain uncertain turn repository-effect reconciliation cannot restore a changed pre-turn boundary',
+    );
+  }
+  if (
+    !isDeepStrictEqual(
+      current.logicalOperations,
+      checkpoint.logicalOperations,
+    )
+  ) {
+    throw new Error(
+      'Captain uncertain turn repository-effect reconciliation found deferred logical-operation progress and cannot replay the Boss turn',
+    );
+  }
+  const suffix = current.boundaries.slice(checkpointBoundaryCount);
+  const blocking = suffix.find(
+    (boundary) =>
+      boundary.physicalReceipt?.classification !== 'unchanged',
+  );
+  if (blocking !== undefined) {
+    const classification =
+      blocking.physicalReceipt?.classification ?? 'incomplete';
+    throw new Error(
+      `Captain uncertain turn repository-effect boundary ${JSON.stringify(blocking.boundaryId)} is ${classification}; whole-turn replay remains parked for reconciliation`,
+    );
+  }
+  const frames =
+    snapshot.mode !== 'engaged.parked'
+      ? undefined
+      : snapshot.frames.map((frame) => {
+          const item = catalog[frame.playbookId];
+          if (item?.artifactSchema === 3) {
+            return {
+              ...frame,
+              runtime: { ...frame.runtime, effectLedger: current },
+            };
+          }
+          if (
+            item?.artifactSchema !== 2 ||
+            !isDeepStrictEqual(
+              frame.runtime.effectLedger,
+              emptyPlaybookEffectLedger(),
+            )
+          ) {
+            throw new Error(
+              `Captain uncertain turn cannot rebase frame ${JSON.stringify(frame.playbookId)} without exact artifact-schema authority`,
+            );
+          }
+          return frame;
+        });
+
+  return assertPlaybookCaptainShellSnapshot({
+    ...snapshot,
+    effectLedger: current,
+    ...(frames === undefined ? {} : { frames }),
+  });
+}
+
 export async function createCaptainSessionHost({
   config,
   sessionId,
@@ -840,6 +914,7 @@ export async function createCaptainSessionHost({
   createHostRuntime = createTmuxPlayRuntime,
   createEffectLedgerWriteAhead,
   restoreSnapshot,
+  reconcileUncertainTurnReplay = false,
   signal,
 }) {
   const hostCapabilities = await createRepositoryEffectCapabilities({
@@ -850,15 +925,33 @@ export async function createCaptainSessionHost({
     createWriteAhead:
       createEffectLedgerWriteAhead ?? createStoreEffectLedgerService,
   });
-  await recoverIncompleteRepositoryEffects({
-    catalog: config.catalog,
-    capabilities: hostCapabilities,
-  });
+  try {
+    await recoverIncompleteRepositoryEffects({
+      catalog: config.catalog,
+      capabilities: hostCapabilities,
+    });
+  } catch (error) {
+    if (!reconcileUncertainTurnReplay) throw error;
+    throw new Error(
+      `Captain uncertain turn repository-effect reconciliation failed: ${message(error)}`,
+      { cause: error },
+    );
+  }
   const currentEffectLedger = () =>
     effectLedgerSnapshotFromCapabilities(hostCapabilities);
+  let sourceSnapshot = restoreSnapshot;
   if (
-    restoreSnapshot !== undefined &&
-    !isDeepStrictEqual(restoreSnapshot.effectLedger, currentEffectLedger())
+    sourceSnapshot !== undefined &&
+    reconcileUncertainTurnReplay
+  ) {
+    sourceSnapshot = reconcileWholeTurnReplaySnapshot(
+      sourceSnapshot,
+      currentEffectLedger(),
+      config.catalog,
+    );
+  } else if (
+    sourceSnapshot !== undefined &&
+    !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
   ) {
     throw new Error(
       'Captain session effect ledger requires reconciliation before source-state restoration',
@@ -874,7 +967,7 @@ export async function createCaptainSessionHost({
   });
   let host;
   try {
-    const captain = captainHostBoundary(shell, restoreSnapshot);
+    const captain = captainHostBoundary(shell, sourceSnapshot);
     host = await createHostRuntime({
       captain,
       captainConfig: projectHostAgent(
@@ -896,10 +989,7 @@ export async function createCaptainSessionHost({
         'Captain shell initialized without an exportable session snapshot',
       );
     }
-    if (
-      restoreSnapshot !== undefined &&
-      !isDeepStrictEqual(snapshot, restoreSnapshot)
-    ) {
+    if (sourceSnapshot !== undefined && !isDeepStrictEqual(snapshot, sourceSnapshot)) {
       throw new Error('restored Captain snapshot changed before the Boss turn');
     }
     if (sessionId !== undefined) {
