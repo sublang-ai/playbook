@@ -534,8 +534,9 @@ const UUID_PATTERN =
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
-const RETAINED_EFFECT_RECONCILIATION_ACTION_ID =
-  'reconcile:restore-deferred-wait';
+const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
+  'reconcile:unresolved-effect';
+const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING =
   'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 
@@ -4589,6 +4590,11 @@ export function createPlaybookCaptainShell(
     frame: EngagementFrame,
     result: PlaybookRunResult,
   ): PlaybookCallResult => {
+    if (result.outcome === 'unresolved-effect') {
+      throw new Error(
+        `playbook ${frame.entry.id} unresolved-effect result cannot resume a parent`,
+      );
+    }
     if (result.outcome === 'terminal') {
       return {
         status: 'ok',
@@ -4756,6 +4762,16 @@ export function createPlaybookCaptainShell(
     result: PlaybookRunResult,
     context: CaptainContext,
   ): Promise<void> {
+    if (result.outcome === 'unresolved-effect') {
+      // Task 10 exposes the runtime-owned abandonment signal without
+      // translating it into a nested result or claiming workflow completion.
+      // Task 11 owns the durable host settlement and complete-stack disposal.
+      assertRetainableResult(frame, result);
+      if (leafFrame() === frame) {
+        await setMode('engaged.parked', 'turn:unresolved-effect');
+      }
+      return;
+    }
     if (result.outcome === 'terminal') {
       if (frame.parent) {
         await resumeParent(frame, callResultFor(frame, result), context);
@@ -5101,7 +5117,9 @@ export function createPlaybookCaptainShell(
           reconciliationActions = leaf.runtime
             .describe()
             .actions.filter(
-              ({ id }) => id === RETAINED_EFFECT_RECONCILIATION_ACTION_ID,
+              ({ id }) =>
+                id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+                id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
             );
         } catch {
           // An unreadable control surface cannot open a fail-closed fence.
@@ -5125,7 +5143,7 @@ export function createPlaybookCaptainShell(
             ].join('\n'),
       );
       lines.push(
-        'Ordinary delivery, switching, dismissal, and runtime actions are unavailable while retained effect evidence is unresolved. Only an advertised repository-effect reconciliation action may run. Conversation is unaffected: `respond` stays valid for any turn.',
+        'Ordinary delivery, switching, dismissal, and runtime actions are unavailable while retained effect evidence is unresolved. Only the advertised unresolved-effect controls may run. Conversation is unaffected: `respond` stays valid for any turn.',
       );
       lines.push(retainedResumptionDigest());
       return lines.join('\n');
@@ -6442,7 +6460,8 @@ export function createPlaybookCaptainShell(
     const fencedLeaf = leafFrame();
     const routesRetainedReconciliation =
       selection.action === 'runtime' &&
-      selection.actionId === RETAINED_EFFECT_RECONCILIATION_ACTION_ID &&
+      (selection.actionId === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+        selection.actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID) &&
       fencedLeaf?.enablement.artifactSchema === 3;
     if (
       retainedEffectReconciliation !== undefined &&

@@ -4743,7 +4743,10 @@ describe('parked-session snapshot over the shared factory', () => {
     });
     expect(target.describe?.()).toMatchObject({
       pendingQuestions: [],
-      actions: [],
+      actions: [
+        { id: 'reconcile:unresolved-effect' },
+        { id: 'abandon:unresolved-effect' },
+      ],
     });
     expect(target.describe?.()).not.toHaveProperty('stateDescription');
     await expect(target.handleBossInput(turn('must stay parked'))).resolves
@@ -5017,8 +5020,12 @@ describe('parked-session snapshot over the shared factory', () => {
     );
     expect(bound.describe?.().actions).toEqual([
       {
-        id: 'reconcile:restore-deferred-wait',
-        label: 'Retry repository checkpoint reconciliation',
+        id: 'reconcile:unresolved-effect',
+        label: 'Retry unresolved effect reconciliation',
+      },
+      {
+        id: 'abandon:unresolved-effect',
+        label: 'Abandon unresolved workflow attempt',
       },
     ]);
     expect(bound.exportSnapshot?.()).toMatchObject({
@@ -5029,7 +5036,7 @@ describe('parked-session snapshot over the shared factory', () => {
       },
     });
     const reconciliationReceipt = await bound.apply?.({
-      actionId: 'reconcile:restore-deferred-wait',
+      actionId: 'reconcile:unresolved-effect',
       key: 'retained-reconciliation',
       signal: sigOf(),
     });
@@ -5058,7 +5065,8 @@ describe('parked-session snapshot over the shared factory', () => {
       logicalOperations: [operation],
     };
     expect(bound.describe?.().actions.map(({ id }) => id)).toEqual([
-      'reconcile:restore-deferred-wait',
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
     ]);
     const boundExport = bound.exportSnapshot?.();
     expect(boundExport).toMatchObject({
@@ -5072,7 +5080,8 @@ describe('parked-session snapshot over the shared factory', () => {
     const boundRestore = retainedRuntime(() => currentLedger);
     await boundRestore.restore?.(boundTargetSession, boundExport);
     expect(boundRestore.describe?.().actions.map(({ id }) => id)).toEqual([
-      'reconcile:restore-deferred-wait',
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
     ]);
     const restoredBoundExport = boundRestore.exportSnapshot?.();
     if (restoredBoundExport === undefined) {
@@ -5092,7 +5101,8 @@ describe('parked-session snapshot over the shared factory', () => {
       adoptionFrom(boundTargetSession),
     );
     expect(rebound.describe?.().actions.map(({ id }) => id)).toEqual([
-      'reconcile:restore-deferred-wait',
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
     ]);
     expect(rebound.exportSnapshot?.()).toMatchObject({
       retainedEffectSourceSessionId: sourceSession.sessionId,

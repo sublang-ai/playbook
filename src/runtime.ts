@@ -127,6 +127,7 @@ export type PlaybookCallStart =
 
 export type PlaybookRunResult =
   | { outcome: 'quiescent' | 'no-action'; state: PlaybookState }
+  | { outcome: 'unresolved-effect'; state: PlaybookState }
   | {
       outcome: 'failed' | 'aborted';
       state: PlaybookState;

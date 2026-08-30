@@ -2396,7 +2396,11 @@ describe('DR-032 shared role runtime transition', () => {
         semanticEvidenceMachine,
         semanticEvidenceSchema3Spec(),
       )({ configuredOptions: {}, hostCapabilities });
-    const boundSession = session({ ...recordingPorts(callPlayer), callJudge });
+    const telemetry: unknown[] = [];
+    const boundSession = session({
+      ...recordingPorts(callPlayer, telemetry),
+      callJudge,
+    });
     const runtime = createRuntime();
     await runtime.init(boundSession);
 
@@ -2410,6 +2414,19 @@ describe('DR-032 shared role runtime transition', () => {
       physicalReceipt: { classification: 'multiple-commits' },
       correctionBudget: { limit: 1, spent: false },
     });
+    const unresolvedView = runtime.describe?.();
+    expect(unresolvedView).not.toHaveProperty('stateDescription');
+    expect(unresolvedView?.pendingQuestions).toEqual([]);
+    expect(unresolvedView?.actions).toEqual([
+      {
+        id: 'reconcile:unresolved-effect',
+        label: 'Retry unresolved effect reconciliation',
+      },
+      {
+        id: 'abandon:unresolved-effect',
+        label: 'Abandon unresolved workflow attempt',
+      },
+    ]);
     expect(hostCapabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
     expect(callJudge).toHaveBeenCalledOnce();
     await runtime.dispose();
@@ -2418,6 +2435,66 @@ describe('DR-032 shared role runtime transition', () => {
     await restored.restore?.(boundSession, snapshot!);
     expect(restored.describe?.().state.stateId).toBe('unresolved');
     await restored.handleBossInput(bossTurn('no authored transition'));
+    const reconciliation = await restored.apply?.({
+      actionId: 'reconcile:unresolved-effect',
+      key: 'retry-unresolved-effect',
+      signal: new AbortController().signal,
+    });
+    expect(reconciliation).toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'no-action', state: { stateId: 'unresolved' } },
+    });
+    const unresolvedState = restored.describe?.().state;
+    const applyTraceCount = () =>
+      telemetry.filter((event) => {
+        const record = event as {
+          topic?: unknown;
+          payload?: { type?: unknown };
+        };
+        return (
+          record.topic === 'playbook.trace' &&
+          (record.payload?.type === 'apply.started' ||
+            record.payload?.type === 'apply.finished')
+        );
+      }).length;
+    const traceCountBeforeAbandonment = applyTraceCount();
+    const abandonment = await restored.apply?.({
+      actionId: 'abandon:unresolved-effect',
+      key: 'abandon-unresolved-effect',
+      signal: new AbortController().signal,
+    });
+    expect(abandonment).toEqual({
+      disposition: 'executed',
+      run: {
+        outcome: 'unresolved-effect',
+        state: unresolvedState,
+      },
+    });
+    const traceCountAfterAbandonment = applyTraceCount();
+    expect(traceCountAfterAbandonment).toBe(
+      traceCountBeforeAbandonment + 2,
+    );
+    await expect(
+      restored.apply?.({
+        actionId: 'abandon:unresolved-effect',
+        key: 'abandon-unresolved-effect',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual(abandonment);
+    expect(applyTraceCount()).toBe(traceCountAfterAbandonment);
+    if (abandonment?.disposition === 'executed') {
+      expect(Object.keys(abandonment.run).sort()).toEqual([
+        'outcome',
+        'state',
+      ]);
+      expect(abandonment.run.state).toMatchObject({
+        stateId: 'unresolved',
+        status: 'active',
+        quiescent: true,
+      });
+      expect(abandonment.run.state.tags).toContain('playbook.parked');
+    }
+    expect(callPlayer).toHaveBeenCalledOnce();
     expect(callJudge).toHaveBeenCalledOnce();
     await restored.dispose();
   });
@@ -3737,7 +3814,10 @@ describe('DR-040 deferred Boss continuation', () => {
     expect(harness.callJudge).toHaveBeenCalledOnce();
     expect(runtime.describe?.()).toMatchObject({
       pendingQuestions: [],
-      actions: [{ id: 'reconcile:restore-deferred-wait' }],
+      actions: [
+        { id: 'reconcile:unresolved-effect' },
+        { id: 'abandon:unresolved-effect' },
+      ],
     });
     const snapshot = runtime.exportSnapshot?.();
     expect(snapshot?.pendingBossQuestions).toEqual([]);
@@ -3748,10 +3828,15 @@ describe('DR-040 deferred Boss continuation', () => {
 
     const restored = createRuntime();
     await restored.restore?.(boundSession, snapshot!);
-    await restored.apply?.({
-      actionId: 'reconcile:restore-deferred-wait',
-      key: 'unequal-retry',
-      signal: new AbortController().signal,
+    await expect(
+      restored.apply?.({
+        actionId: 'reconcile:unresolved-effect',
+        key: 'unequal-retry',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'no-action' },
     });
     expect(
       hostCapabilities.effectLedger.snapshot().logicalOperations[0]
@@ -3763,7 +3848,7 @@ describe('DR-040 deferred Boss continuation', () => {
     hostCapabilities.replaceObservation(checkpoint);
     await expect(
       restored.apply?.({
-        actionId: 'reconcile:restore-deferred-wait',
+        actionId: 'reconcile:unresolved-effect',
         key: 'exact-retry',
         signal: new AbortController().signal,
       }),
@@ -3865,7 +3950,10 @@ describe('DR-040 deferred Boss continuation', () => {
     expect(harness.callPlayer).toHaveBeenCalledOnce();
     expect(runtime.describe?.()).toMatchObject({
       pendingQuestions: [],
-      actions: [],
+      actions: [
+        { id: 'reconcile:unresolved-effect' },
+        { id: 'abandon:unresolved-effect' },
+      ],
     });
     await runtime.dispose();
   });

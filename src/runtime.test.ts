@@ -507,7 +507,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
   });
 
-  it('exposes stateDescription only on the terminal run-result variant', () => {
+  it('keeps unresolved-effect state-only and stateDescription terminal-only', () => {
     for (const source of [runtimeSource, runtimeDts, linkSpec]) {
       const result = typeAliasBody(source, 'PlaybookRunResult');
       const terminal = result.match(
@@ -517,6 +517,16 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       expect(terminal).toMatch(/stateDescription\?:\s*string;/);
       expect(result.replace(terminal!, '')).not.toMatch(
         /stateDescription\??:/,
+      );
+      const unresolvedEffect = result.match(
+        /\{[^{}]*outcome:\s*'unresolved-effect';[^{}]*\}/,
+      )?.[0];
+      expect(unresolvedEffect).toBeDefined();
+      expect(normalizeType(unresolvedEffect!)).toBe(
+        "{outcome:'unresolved-effect';state:PlaybookState}",
+      );
+      expect(unresolvedEffect).not.toMatch(
+        /stateDescription|output|pendingCall|error|effectLedger|receipt|unresolvedEffects|semanticCandidate/,
       );
     }
   });

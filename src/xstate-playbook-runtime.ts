@@ -261,6 +261,9 @@ function isEmptyFinalText(finalText: string | undefined): boolean {
 
 const emptyOkRetryFailures = new WeakSet<object>();
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
+const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
+  'reconcile:unresolved-effect';
+const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
 
 interface DeferredValue<T> {
   readonly promise: Promise<T>;
@@ -2813,6 +2816,7 @@ function makeDefaultClassifyBossText(
 type BossSettlementOutcome =
   | 'no-action'
   | 'quiescent'
+  | 'unresolved-effect'
   | 'failed'
   | 'terminal'
   | 'aborted'
@@ -6247,6 +6251,9 @@ export function createXStatePlaybookRuntime<
       if (outcome === 'quiescent' || outcome === 'no-action') {
         return { outcome, state };
       }
+      if (outcome === 'unresolved-effect') {
+        return { outcome, state };
+      }
       if (outcome === 'suspended') {
         const pendingCall = nestedBridge.getPendingCall();
         if (!pendingCall) {
@@ -6437,6 +6444,7 @@ export function createXStatePlaybookRuntime<
       action: PlaybookControlAction;
       event?: EventObject;
       deferredRestoreOperationId?: string;
+      unresolvedEffectAction?: 'reconcile' | 'abandon';
     }
 
     function snapshotCan(snapshot: unknown, event: EventObject): boolean {
@@ -6541,24 +6549,39 @@ export function createXStatePlaybookRuntime<
         return [];
       }
       const derived: DerivedControlAction[] = [];
-      if (unresolvedSemanticBoundaryIds.size > 0) return derived;
-      if (deferredReconciliationOperationId !== undefined) {
-        const operation = effectLedgerMirror.logicalOperations.find(
-          ({ operationId }) =>
-            operationId === deferredReconciliationOperationId,
-        );
-        if (operation?.checkpointRestorationEligible) {
-          derived.push({
+      if (hasUnresolvedReconciliation()) {
+        const operation =
+          deferredReconciliationOperationId === undefined
+            ? undefined
+            : effectLedgerMirror.logicalOperations.find(
+                ({ operationId }) =>
+                  operationId === deferredReconciliationOperationId,
+              );
+        const deferredRestoreOperationId =
+          operation?.checkpointRestorationEligible === true
+            ? operation.operationId
+            : undefined;
+        derived.push(
+          {
             action: {
-              id: 'reconcile:restore-deferred-wait',
-              label: 'Retry repository checkpoint reconciliation',
+              id: UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID,
+              label: 'Retry unresolved effect reconciliation',
             },
-            deferredRestoreOperationId: operation.operationId,
-          });
-        }
+            unresolvedEffectAction: 'reconcile',
+            ...(deferredRestoreOperationId === undefined
+              ? {}
+              : { deferredRestoreOperationId }),
+          },
+          {
+            action: {
+              id: UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
+              label: 'Abandon unresolved workflow attempt',
+            },
+            unresolvedEffectAction: 'abandon',
+          },
+        );
         return derived;
       }
-      if (retainedEffectReconciliationRequired) return derived;
       const retry = retryActionFor(snapshot, state.stateId);
       if (retry !== undefined) derived.push(retry);
       // Jump entries: resumable targets whose explicit-state-jump event the
@@ -7771,25 +7794,38 @@ export function createXStatePlaybookRuntime<
               // the key, so the action can never execute twice.
               accepted = true;
               try {
-                if (candidate.deferredRestoreOperationId !== undefined) {
-                  await restoreBoundDeferredOperation(
-                    candidate.deferredRestoreOperationId,
-                    signal,
+                let run: PlaybookRunResult;
+                if (candidate.unresolvedEffectAction === 'abandon') {
+                  signal.throwIfAborted();
+                  run = runResultFor('unresolved-effect');
+                } else if (
+                  candidate.unresolvedEffectAction === 'reconcile'
+                ) {
+                  if (candidate.deferredRestoreOperationId !== undefined) {
+                    await restoreBoundDeferredOperation(
+                      candidate.deferredRestoreOperationId,
+                      signal,
+                    );
+                  } else {
+                    // Receipt reconstruction itself belongs to the host. The
+                    // runtime may only re-read that authoritative mirror; it
+                    // never replays a player to manufacture missing evidence.
+                    refreshRetainedEffectFenceFromHost();
+                  }
+                  signal.throwIfAborted();
+                  run = runResultFor(
+                    hasUnresolvedReconciliation()
+                      ? 'no-action'
+                      : 'quiescent',
                   );
                 } else {
                   actor.send(candidate.event!);
                   await waitForPlaybookQuiescence(actor, {
                     pendingCalls: nestedBridge,
                   });
+                  run = runResultFor(settledOutcome(signal));
                 }
                 if (controlPlaneError !== undefined) throw controlPlaneError;
-                const run = runResultFor(
-                  candidate.deferredRestoreOperationId === undefined
-                    ? settledOutcome(signal)
-                    : deferredReconciliationOperationId === undefined
-                      ? 'quiescent'
-                      : 'no-action',
-                );
                 receipt = settledReceipt(
                   run.outcome === 'failed' || run.outcome === 'aborted'
                     ? {

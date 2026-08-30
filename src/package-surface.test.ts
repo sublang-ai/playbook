@@ -1624,6 +1624,23 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     },
   );
 
+  it('publishes unresolved-effect as an exact state-only run result', () => {
+    const runtimeDeclaration = declarationSourceOf('./runtime');
+    const runResult = runtimeDeclaration.match(
+      /export type PlaybookRunResult\s*=([\s\S]*?\n};)\n/,
+    )?.[1];
+    expect(runResult).toBeDefined();
+    const unresolvedEffect = runResult!.match(
+      /\{[^{}]*outcome:\s*'unresolved-effect';[^{}]*\}/,
+    )?.[0];
+    expect(unresolvedEffect?.replace(/\s+/g, '')).toBe(
+      "{outcome:'unresolved-effect';state:PlaybookState;}",
+    );
+    expect(unresolvedEffect).not.toMatch(
+      /stateDescription|output|pendingCall|error|effectLedger|receipt|unresolvedEffects|semanticCandidate/,
+    );
+  });
+
   it('declares validated Captain shell snapshots recursively readonly', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-snapshot-types-'));
     try {

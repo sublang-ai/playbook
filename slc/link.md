@@ -324,6 +324,7 @@ interface PlaybookRuntimeSnapshot {
 
 type PlaybookRunResult =
   | { outcome: 'quiescent' | 'no-action'; state: PlaybookState }
+  | { outcome: 'unresolved-effect'; state: PlaybookState }
   | {
       outcome: 'failed' | 'aborted';
       state: PlaybookState;
@@ -535,6 +536,8 @@ type PlaybookCallStart =
   | { state: 'settled'; result: PlaybookCallResult }
   | { state: 'suspended'; childSessionId: string };
 ```
+
+A runtime's `{ outcome: 'unresolved-effect', state }` abandonment result is not a `PlaybookCallResult`: a host shall not translate it into child output or error, resume a parent FSM with it, or treat it as authored completion.
 
 `PlayerResult` mirrors the status, resume token, final text, and error fields of cligent's `PlayerRunResult` ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)).
 The runtime treats `status !== 'ok'` as a player failure and routes it through the FSM's error path (§Abort).
@@ -771,6 +774,7 @@ result: its outcome must be one of the `PlaybookRunResult` discriminants (never
 an invented `error` outcome), and it shall include `state`, singular
 `stateId`, `pendingCall`, `output`, and normalized `error` whenever the matching
 result arm carries them.
+The `unresolved-effect` arm shall carry only `state`; bounded repository-effect evidence remains host-owned and shall enter neither that result nor its trace projection.
 One runtime-owned concurrency-one emission queue shall serialize every trace,
 human status, and state telemetry call. Sequence allocation and enqueueing
 shall occur atomically, and every public method shall drain that queue before
@@ -1929,8 +1933,9 @@ default. The rules:
 Actions derive from the live snapshot, only at the same safe point the
 parked-session snapshot uses (actor status `active`, quiescent, no pending
 nested call); anywhere else `actions` is empty while the rest of the view
-still describes the state. Two families exist, labeled from source state
-descriptions:
+still describes the state.
+While effect-possible outcome evidence remains unresolved, the view shall omit its pending Boss questions and state description and shall replace every ordinary action with exactly `reconcile:unresolved-effect` labeled `Retry unresolved effect reconciliation` and `abandon:unresolved-effect` labeled `Abandon unresolved workflow attempt`.
+Otherwise two ordinary families exist, labeled from source state descriptions:
 
 - **Failure-state retry** — while the singular state id is the recoverable
   failure state and the live snapshot accepts the retry event sourced below,
@@ -1975,8 +1980,8 @@ its key — a later call with that key revalidates afresh, traces its own
 pair, and may execute once the action is advertised — and a key whose call
 threw before reaching acceptance (lifecycle misuse, invalid input, a
 pre-acceptance abort, a rejected start-boundary sink) likewise records
-nothing, so a later call with that key may execute. Executing sends the
-validated event through the same actor drive as `handleBossInput` — state
+nothing, so a later call with that key may execute.
+Executing an ordinary retry or jump sends the validated event through the same actor drive as `handleBossInput` — state
 transitions, player/judge boundaries, statuses, and traces flow unchanged —
 and settles `executed` with the projected run result, or `failed` with the
 normalized error when the run settles in the failure state, aborts, or a
@@ -1986,6 +1991,11 @@ settles the `failed` receipt rather than rejecting. The boundary traces as
 the paired `apply.started` / `apply.finished` events of §Playbook trace, and
 `apply` shares the single active-boundary sentinel with `handleBossInput`
 and `resumePlaybookCall`.
+
+Executing `reconcile:unresolved-effect` shall use only the current host's authoritative effect ledger for any reconciliation refresh and shall start no player.
+When an open deferred logical operation is checkpoint-restoration eligible, that action shall reacquire its exclusive repository claim and compare the current observation with the saved checkpoint; exact equality shall durably consume eligibility and return to the identical bound wait with its stable question through an ordinary nonterminal run result without a player, judge, or semantic-candidate delivery, while inequality or any other still-unresolved evidence shall return `no-action` and remain unresolved.
+Executing `abandon:unresolved-effect` shall move no FSM state or start any player, judge, Captain, script, or child call and shall settle `executed` with exactly `{ outcome: 'unresolved-effect', state }`, where `state` is the current normalized nonfinal state.
+That state-only run-result arm shall carry no `stateDescription`, output, pending call, error, repository receipt, effect ledger, semantic evidence, or other bounded effect fact, and shall claim neither an authored outcome nor workflow completion.
 
 Acceptance is also the line past which `apply` does not throw, and
 publication — the `apply.finished` emission — is the line past which its

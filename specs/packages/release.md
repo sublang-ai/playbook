@@ -211,6 +211,7 @@ That module shall carry only the runtime contract types
 ([[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)]) — no runtime engine and no
 linker. A breaking change to its exported type names or shapes shall
 be released under [[release-1](#release-1)] SemVer.
+Its closed `PlaybookRunResult` declaration shall include the exact state-only `{ outcome: 'unresolved-effect', state: PlaybookState }` arm of [[playbook-runtime-79](playbook-runtime.md#playbook-runtime-79)] and shall expose no bounded effect evidence on that runtime-owned result.
 The package shall additionally expose `@sublang/playbook/xstate-runtime` with
 JavaScript and declaration artifacts for the shared XState snapshot,
 quiescence, strict JSON, error-normalization, and nested-call bridge helpers
@@ -631,6 +632,7 @@ sets, so removing or renaming one goes red at the gate and is decided as
 a [[release-1](release.md#release-1)] release event before the tag
 rather than adjudicated after it.
 The public-surface suite shall import the XState engine and fail unless its runtime ABI is `1` and its supported schema set is the frozen exact value `[2, 3]` (verifying [[release-15](#release-15)]).
+The public-surface suite shall fail unless the declaration behind `exports['./runtime']` exposes `unresolved-effect` as exactly one state-only `PlaybookRunResult` arm with no state description, output, pending call, error, effect ledger, receipt, semantic candidate, or unresolved-effects projection (verifying [[release-15](#release-15)]).
 Which subpaths those are shall be derived from `package.json`'s
 `exports` map minus a recorded exclusion carrying its reason, and the
 suite shall fail unless the recorded sets cover exactly that derivation.

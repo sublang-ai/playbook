@@ -247,6 +247,15 @@ function quiescentResult(stateId = 'ready'): PlaybookRunResult {
   return { outcome: 'quiescent', state: playbookState(stateId) };
 }
 
+function unresolvedEffectResult(
+  stateId = 'effectReconciliationRequired',
+): PlaybookRunResult {
+  return {
+    outcome: 'unresolved-effect',
+    state: playbookState(stateId),
+  };
+}
+
 function terminalResult(
   stateId = 'done',
   output?: JsonValue,
@@ -2304,6 +2313,78 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         JSON.stringify(event.payload).includes('"event":"final"'),
       ),
     ).toBe(true);
+  });
+
+  it('exposes an unresolved-effect root without claiming final completion', async () => {
+    const registry = fakeCodeEntry(async () => quiescentResult('editing'));
+    const createRuntime = registry.entry.createRuntime;
+    const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
+    const unresolved = unresolvedEffectResult();
+    registry.entry.createRuntime = (options) => {
+      const runtime = createRuntime(options) as FakeRuntime;
+      runtime.describe = () => ({
+        state: unresolved.state,
+        pendingQuestions: [],
+        actions: [
+          {
+            id: 'reconcile:unresolved-effect',
+            label: 'Retry unresolved effect reconciliation',
+          },
+          {
+            id: 'abandon:unresolved-effect',
+            label: 'Abandon unresolved workflow attempt',
+          },
+        ],
+      });
+      runtime.apply = async (input) => {
+        applied.push(input);
+        return { disposition: 'executed', run: unresolved };
+      };
+      return runtime;
+    };
+    const shell = makeShell(registry);
+    const session = stubSession();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code begin the edit'),
+      stubContext().context,
+    );
+    const abandonment = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'abandon:unresolved-effect',
+      }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'The unresolved attempt has no authored completion.',
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('abandon the unresolved attempt', 2),
+      abandonment.context,
+    );
+
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.actionId).toBe('abandon:unresolved-effect');
+    expect(unresolved).toEqual({
+      outcome: 'unresolved-effect',
+      state: playbookState('effectReconciliationRequired'),
+    });
+    expect(unresolved).not.toHaveProperty('stateDescription');
+    expect(unresolved).not.toHaveProperty('output');
+    expect(registry.runtimes[0]?.disposeCount).toBe(0);
+    const publicEvidence = JSON.stringify({
+      statuses: session.statuses,
+      summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
+      telemetry: telemetryWithTopic(session, 'playbook.captain.fsm.state'),
+    });
+    expect(publicEvidence).not.toContain('/code completed');
+    expect(publicEvidence).not.toContain('◇ /code finished');
+    expect(publicEvidence).not.toContain('"event":"final"');
+
+    await shell.dispose?.();
   });
 
   it('dismiss emits shell status and later dispatch constructs a replacement', async () => {
@@ -4670,6 +4751,113 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
         '◇ /docs returned to /code',
       ]),
     );
+  });
+
+  it('does not translate an unresolved-effect child or resume its parent', async () => {
+    let childStart:
+      | Awaited<ReturnType<PlaybookPorts['callPlaybook']>>
+      | undefined;
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        childStart = await runtime.ports.callPlaybook(
+          {
+            callId: 'code:docs:unresolved-effect',
+            playbookId: 'docs',
+            text: 'begin uncertain documentation',
+          },
+          runtimeTurn.signal,
+        );
+        if (childStart.state !== 'suspended') {
+          throw new Error('expected unresolved child to suspend');
+        }
+        return suspendedResult({
+          callId: 'code:docs:unresolved-effect',
+          playbookId: 'docs',
+          childSessionId: childStart.childSessionId,
+        });
+      },
+      undefined,
+      undefined,
+      async () => {
+        throw new Error('unresolved-effect child must not resume its parent');
+      },
+    );
+    const unresolved = unresolvedEffectResult('documentationEffectUnknown');
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async () => unresolved,
+    );
+    const createDocsRuntime = docs.entry.createRuntime;
+    const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
+    docs.entry.createRuntime = (options) => {
+      const runtime = createDocsRuntime(options) as FakeRuntime;
+      runtime.describe = () => ({
+        state: unresolved.state,
+        pendingQuestions: [],
+        actions: [
+          {
+            id: 'reconcile:unresolved-effect',
+            label: 'Retry unresolved effect reconciliation',
+          },
+          {
+            id: 'abandon:unresolved-effect',
+            label: 'Abandon unresolved workflow attempt',
+          },
+        ],
+      });
+      runtime.apply = async (input) => {
+        applied.push(input);
+        return { disposition: 'executed', run: unresolved };
+      };
+      return runtime;
+    };
+    const shell = makeShell([code, docs], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    const session = stubSession();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code coordinate uncertain docs'),
+      stubContext().context,
+    );
+    const abandonment = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'abandon:unresolved-effect',
+      }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'The unresolved child has no authored completion.',
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('abandon the unresolved child', 2),
+      abandonment.context,
+    );
+
+    expect(childStart).toEqual({
+      state: 'suspended',
+      childSessionId: CHILD_ID,
+    });
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.actionId).toBe('abandon:unresolved-effect');
+    expect(code.runtimes[0]?.resumes).toEqual([]);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+    expect(docs.runtimes[0]?.disposeCount).toBe(0);
+    const publicEvidence = JSON.stringify({
+      statuses: session.statuses,
+      summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
+      telemetry: telemetryWithTopic(session, 'playbook.captain.fsm.state'),
+    });
+    expect(publicEvidence).not.toContain('/docs completed');
+    expect(publicEvidence).not.toContain('◇ /docs returned to /code');
+    expect(publicEvidence).not.toContain('"event":"final"');
+
+    await shell.dispose?.();
   });
 
   it.each([
@@ -8976,13 +9164,17 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
               ? []
               : [
                   {
-                    id: 'reconcile:restore-deferred-wait',
-                    label: 'Retry repository checkpoint reconciliation',
+                    id: 'reconcile:unresolved-effect',
+                    label: 'Retry unresolved effect reconciliation',
+                  },
+                  {
+                    id: 'abandon:unresolved-effect',
+                    label: 'Abandon unresolved workflow attempt',
                   },
                 ],
         });
         runtime.apply = async ({ actionId }) => {
-          expect(actionId).toBe('reconcile:restore-deferred-wait');
+          expect(actionId).toBe('reconcile:unresolved-effect');
           applyCalls += 1;
           authoritativeLedger = completedRetainedLedger();
           const {
@@ -9040,7 +9232,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     const reconciled = stubContext([
       captainJson({
         action: 'runtime',
-        actionId: 'reconcile:restore-deferred-wait',
+        actionId: 'reconcile:unresolved-effect',
       }),
       {
         status: 'ok',
@@ -9054,7 +9246,23 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
         ?.prompt,
     ).toContain(
-      '- reconcile:restore-deferred-wait: Retry repository checkpoint reconciliation',
+      '- reconcile:unresolved-effect: Retry unresolved effect reconciliation',
+    );
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain(
+      '- abandon:unresolved-effect: Abandon unresolved workflow attempt',
+    );
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain('Only the advertised unresolved-effect controls may run.');
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).not.toContain(
+      'Only an advertised repository-effect reconciliation action may run.',
     );
     expect(applyCalls).toBe(1);
     expect(code.runtimes[0]?.inputs).toEqual([]);
