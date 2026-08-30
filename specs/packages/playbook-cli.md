@@ -607,6 +607,7 @@ The coordinator shall reject malformed or unauthorized cohort metadata before a 
 #### playbook-cli-59
 
 When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, host, and PID atomically; reject malformed, nonprivate, foreign-host, permission-unknown, reused-token, or otherwise unprovable ownership; reclaim only a current-host owner whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
+Every staging, active, and retired claim path shall be materialized outside the repository-relevant projection under [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)] of the canonical worktree it keys.
 One issued claim handle shall reject overlapping observation, receipt, ownership-check, or release methods, and a delayed stale-owner reclaimer shall not disturb a successor protected by the retired token.
 
 #### playbook-cli-60
@@ -808,7 +809,7 @@ When the repository-coordination integration suite runs real concurrent claims, 
 
 #### playbook-cli-61
 
-When the claim-lifecycle integration suite exercises real Git administrative directories and processes, it shall fail unless owner publication is exact and private; post-publication failure retires its owner; overlapping handle methods reject without releasing; malformed and nonprivate owners, foreign hosts, unknown process probes, and retired-token reuse fail closed; a same-host dead PID is reclaimed; normal and reclaimed tokens remain retired; and a delayed old-owner reclaimer leaves its live successor authoritative (verifying [[playbook-cli-59](#playbook-cli-59)]).
+When the claim-lifecycle integration suite exercises real Git administrative directories and processes, it shall fail unless owner publication is exact, private, and outside the observed worktree projection; post-publication failure retires its owner; overlapping handle methods reject without releasing; malformed and nonprivate owners, foreign hosts, unknown process probes, and retired-token reuse fail closed; a same-host dead PID is reclaimed; normal and reclaimed tokens remain retired; and a delayed old-owner reclaimer leaves its live successor authoritative (verifying [[playbook-cli-59](#playbook-cli-59)]).
 
 #### playbook-cli-62
 
