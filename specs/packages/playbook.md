@@ -93,7 +93,6 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 #### playbook-28
 
 Where a maintained workflow runs under artifact schema `3`, its compiled runtime shall apply the automatic-replay fence of [[playbook-runtime-71](playbook-runtime.md#playbook-runtime-71)] at every governed delegated-player state regardless of whether linking emits the shared flat runtime or DECIDE's bespoke parallel runtime.
-While that workflow remains under artifact schema `2`, its delegated-player correction [[playbook-runtime-9](playbook-runtime.md#playbook-runtime-9)] and failure-state retry [[playbook-runtime-1](playbook-runtime.md#playbook-runtime-1)] and [[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)] shall retain their legacy behavior until the workflow's atomic schema-3 migration under [[playbook-1](#playbook-1)].
 
 #### playbook-32
 
@@ -171,7 +170,6 @@ Where execution leaves a delegated-role state without suspending for its Boss qu
 #### playbook-30
 
 Where a maintained workflow runs under artifact schema `3` and one governed delegated-role arm declares `needsBossReply` with repository disposition `deferred`, its compiled runtime shall apply the checkpoint-bound logical-operation continuation of [[playbook-runtime-73](playbook-runtime.md#playbook-runtime-73)] identically whether the workflow uses the shared flat runtime or DECIDE's bespoke parallel runtime.
-While CODE, REVIEW, or DECIDE remains under artifact schema `2`, its authored Boss-question suspension and continuation shall retain the legacy behavior of [[playbook-12](#playbook-12)] and [[playbook-13](#playbook-13)] until that workflow's atomic schema-3 migration under [[playbook-1](#playbook-1)].
 
 ## Verification
 
