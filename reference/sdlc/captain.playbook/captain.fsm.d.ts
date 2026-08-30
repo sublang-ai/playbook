@@ -35,15 +35,24 @@ export type SettlementReceiptEvidence = {
     readonly reason?: string;
     readonly error?: CompactError;
 };
+/** Bounded host-owned evidence for one unresolved repository effect. */
+export type SettlementUnresolvedEffectEvidence = {
+    readonly classification: 'one-descendant-commit' | 'multiple-commits' | 'rewritten-or-non-descendant' | 'worktree-only-change' | 'concurrent-or-foreign-change' | 'observation-ambiguous' | 'incomplete';
+    readonly baselineHead: string;
+    readonly afterHead?: string;
+    readonly commitOid?: string;
+};
 /**
  * The controller-port settlement evidence the machine may retain: status,
- * outcome-report facts, optional rejection reason, receipt disposition, and
- * leaf-state summary — never a session id, call id, child state, stack
- * ledger, resume token, or opaque runtime result (CAPPLAY-10).
+ * outcome-report facts, bounded unresolved effects, optional rejection
+ * reason, receipt disposition, and leaf-state summary — never a session id,
+ * call id, child state, stack ledger, resume token, or opaque runtime result
+ * (CAPPLAY-10).
  */
 export type SettlementEvidence = {
     readonly status: 'ok' | 'rejected' | 'failed';
     readonly facts: readonly string[];
+    readonly unresolvedEffects: readonly SettlementUnresolvedEffectEvidence[];
     readonly reason?: string;
     readonly receipt?: SettlementReceiptEvidence;
     readonly leafStateSummary?: string;
@@ -117,6 +126,7 @@ type Context = {
     readonly receiptReason?: string;
     readonly receiptError?: CompactError;
     readonly leafStateSummary?: string;
+    readonly settlementUnresolvedEffects?: readonly SettlementUnresolvedEffectEvidence[];
     readonly lastError?: JsonValue;
 };
 type BossTurnEvent = {

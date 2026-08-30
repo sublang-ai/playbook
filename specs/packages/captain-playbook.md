@@ -94,6 +94,7 @@ The shell shall additionally reject `resume` unless that target's retained gener
 ### captain-playbook-8
 
 Where a compiled GEARS behavior has Captain decide a turn or compose a reply, the FSM shall invoke a first-class `captain` actor and the linked runtime shall call `PlaybookPorts.callCaptain` hidden, the shell running every such call on the durable session conversation with the pinned resume token and the DR-013 A1 tool posture ([[playbook-captain-31](playbook-captain.md#playbook-captain-31)]); where a compiled GEARS behavior delegates to a named player, the FSM shall invoke a distinct `player` actor and the runtime shall call `callPlayer` — the session Captain's source declares no player behavior; the host shall serialize all Captain and judge work through one abort-aware concurrency-one queue, fail closed when an adapter asked for the empty allowlist cannot enforce it, and trace Captain calls with paired `captain.call.started` and `captain.call.finished` events.
+The compiled session Captain shall declare artifact schema `3` under runtime ABI `1` with the explicit empty governed-player set of [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], and its roleless runtime shall carry the canonical empty effect ledger and invoke no repository-governed operation under [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)].
 
 ### captain-playbook-9
 
@@ -105,8 +106,8 @@ the controller port —
 `{ action: 'start' | 'switch', playbookId, input }`,
 `{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned settlement
-`{ status, facts, reason?, receipt?, leafStateSummary? }` as the only
-evidence of effects; counted activity remains shell-owned and is supplied
+`{ status, facts, unresolvedEffects, reason?, receipt?, leafStateSummary? }` as the only
+evidence of effects, where `unresolvedEffects` is the exact detached bounded list frozen by [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]]; counted activity remains shell-owned and is supplied
 separately in the result-phase prompt; the public `PlaybookPorts` contract stays
 six members, the port arriving as a linker-exposed option member
 ([slc/link.md](../../slc/link.md#playbookruntime-contract)).
@@ -150,8 +151,9 @@ reach the Boss only as validated captain speech.
 ### captain-playbook-10
 
 Where a settlement returns through the controller port, the machine shall retain as decision and reply evidence only the settlement's status, its outcome-report facts, its optional rejection reason, the receipt disposition with its reason or normalized `{ name, message }` error, and the leaf-state summary.
+For artifact schema `3`, it shall additionally validate, detach, freeze, and retain the required exact `unresolvedEffects` list of [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]] without accepting an unknown member or malformed HEAD or commit identity.
 It shall retain no playbook session id, call id, child state, stack
-ledger, resume token, or opaque runtime result in Captain-visible
+ledger, resume token, repository path or projection, internal effect-envelope data, aggregate conversation or recovery transcript, or opaque runtime result in Captain-visible
 context, and the result-phase prompt shall carry the settlement facts
 verbatim ([[playbook-captain-20](playbook-captain.md#playbook-captain-20)]).
 The shell-authored fact that a terminal root completed may carry the escaped and bounded Boss-facing state description published by that runtime, but that description is not the opaque run output and grants Captain no access to that output.
@@ -172,7 +174,7 @@ reseed-seeded prompt.
 The prompt shall state that explicit Boss intent governs, a live engagement's currently advertised runtime action precedes retained resumption, and an advertised retained generation precedes fresh `start` unless Boss explicitly requests a fresh start ([DR-038](../decisions/038-universal-run-resumption.md)).
 The compiled result-phase prompt shall carry the grounding
 instruction: the closing reply and turn summary compose only from the
-outcome-report facts.
+outcome-report facts; where bounded repository-effect evidence is supplied, it shall instruct Captain to distinguish observed change from a possible effect, preserve exact available HEAD and proven commit identity, and claim neither workflow completion nor ownership of the change.
 Visible captain speech shall contain no guard names, result property
 names, control JSON, workspace-investigation request, or private
 chain-of-thought; for a `respond` selection and for a closing reply,
@@ -222,6 +224,7 @@ When the next Boss turn reaches the restored default Captain, it shall continue 
 
 
 Where the Captain source is compiled through `slc playbook`, the test suite shall fail unless the canonical GEARS, FSM, linked runtime, and generated verification artifacts exist and the generated checks pass; unless the machine models the session loop — a parked hub carrying `playbook.parked` that accepts successive Boss turns, a decision arm over the closed action set, and no terminal `{ response }` output — with exactly one reachable `type: 'final'` shutdown state entered only by the shell's teardown event; and unless the compiled captain actors match the source with no dynamic playbook actor remaining (verifying [[captain-playbook-6](#captain-playbook-6)]).
+The suite shall also fail unless the linked artifact declares schema `3` under ABI `1`, carries an explicit empty governed-player authority set, and exports the canonical empty effect ledger without invoking repository-governed work (verifying [[captain-playbook-8](#captain-playbook-8)]).
 
 ### captain-playbook-12
 
@@ -232,6 +235,7 @@ Where the shell provides two or more enabled playbooks, when tests drive scripte
 
 
 Where a working playbook engaged under the real shell parks for Boss input, when the Boss replies with ordinary text, the integration suite shall fail unless the session Captain's validated `deliver` hands the original unchanged reply to that same parked leaf and its runtime resumes with the answer in context; a status question between those turns settles as `respond` with the leaf, its parked state, and its pending question untouched; the session Captain holds no stack frame, calls no `callPlaybook` or `callPlayer`, and is parked at its hub between turns; and the following result-phase prompt carries only the settlement evidence (verifying [[captain-playbook-4](#captain-playbook-4)], [[captain-playbook-9](#captain-playbook-9)], [[captain-playbook-10](#captain-playbook-10)]).
+For schema `3`, the suite shall fail unless each settlement requires and retains an exact detached frozen `unresolvedEffects` list, rejects missing, extra, malformed, or inconsistent bounded evidence as a control-plane failure, and exposes no excluded host or runtime member in Captain-visible context (verifying [[captain-playbook-9](#captain-playbook-9)] and [[captain-playbook-10](#captain-playbook-10)]).
 
 ### captain-playbook-14
 
@@ -293,7 +297,7 @@ reseed-seeded one
 The suite shall fail unless (7) that prompt states the arbitration rule that explicit Boss intent governs while a live advertised runtime action precedes retained resumption and retained resumption precedes fresh start unless Boss explicitly requests fresh start (verifying [[captain-playbook-23](#captain-playbook-23)]).
 The suite shall also fail unless (5) every result-phase prompt states
 the grounding instruction that the closing reply and turn summary
-compose only from the outcome-report facts (verifying [[captain-playbook-6](#captain-playbook-6)], [[captain-playbook-7](#captain-playbook-7)], [[captain-playbook-16](#captain-playbook-16)]).
+compose only from the outcome-report facts and, where bounded effect evidence is supplied, states the observed-versus-possible, exact-identity, no-completion, and no-ownership rules (verifying [[captain-playbook-6](#captain-playbook-6)], [[captain-playbook-7](#captain-playbook-7)], [[captain-playbook-16](#captain-playbook-16)]).
 
 ### captain-playbook-24
 

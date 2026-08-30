@@ -68,15 +68,32 @@ export type SettlementReceiptEvidence = {
   readonly error?: CompactError;
 };
 
+/** Bounded host-owned evidence for one unresolved repository effect. */
+export type SettlementUnresolvedEffectEvidence = {
+  readonly classification:
+    | 'one-descendant-commit'
+    | 'multiple-commits'
+    | 'rewritten-or-non-descendant'
+    | 'worktree-only-change'
+    | 'concurrent-or-foreign-change'
+    | 'observation-ambiguous'
+    | 'incomplete';
+  readonly baselineHead: string;
+  readonly afterHead?: string;
+  readonly commitOid?: string;
+};
+
 /**
  * The controller-port settlement evidence the machine may retain: status,
- * outcome-report facts, optional rejection reason, receipt disposition, and
- * leaf-state summary — never a session id, call id, child state, stack
- * ledger, resume token, or opaque runtime result (CAPPLAY-10).
+ * outcome-report facts, bounded unresolved effects, optional rejection
+ * reason, receipt disposition, and leaf-state summary — never a session id,
+ * call id, child state, stack ledger, resume token, or opaque runtime result
+ * (CAPPLAY-10).
  */
 export type SettlementEvidence = {
   readonly status: 'ok' | 'rejected' | 'failed';
   readonly facts: readonly string[];
+  readonly unresolvedEffects: readonly SettlementUnresolvedEffectEvidence[];
   readonly reason?: string;
   readonly receipt?: SettlementReceiptEvidence;
   readonly leafStateSummary?: string;
@@ -162,6 +179,7 @@ type Context = {
   readonly receiptReason?: string;
   readonly receiptError?: CompactError;
   readonly leafStateSummary?: string;
+  readonly settlementUnresolvedEffects?: readonly SettlementUnresolvedEffectEvidence[];
   readonly lastError?: JsonValue;
 };
 
@@ -229,9 +247,10 @@ const COMMAND_RESPOND_PROMPT = [
 ].join('\n');
 
 const CLOSING_REPLY_PROMPT = [
-  'An action just settled for the current Boss turn; its outcome report — the settlement facts verbatim, the receipt disposition, and the leaf-state summary — is supplied with this call.',
+  'An action just settled for the current Boss turn; its canonical outcome report — the settlement facts verbatim, the structured receipt disposition, any bounded terminal-result meaning, the leaf-state summary, and bounded repository-effect evidence — is supplied with this call.',
   'The closing reply is the turn summary: compose the closing reply and turn summary only from the outcome-report facts.',
   'State what actually happened — what was dismissed, started, delivered, applied, rejected, or failed — and claim no work the report does not contain.',
+  'When repository-effect evidence is supplied, distinguish an observed repository change from a possible effect that could not be excluded, preserve its exact available HEAD and proven commit identity, and claim neither workflow completion nor ownership of the change.',
   'Do not finish with a bare acknowledgement, a promise to act, or an announcement that the round is complete.',
   'When mentioning progress detail, use only the aggregate counts the report supplies.',
   'Append the supplied saved-counts line verbatim only when one is supplied; when none is supplied, append no saved-counts line.',
@@ -322,6 +341,7 @@ function isSettlementEvidence(value: unknown): value is SettlementEvidence {
   const allowed = new Set([
     'status',
     'facts',
+    'unresolvedEffects',
     'reason',
     'receipt',
     'leafStateSummary',
@@ -339,6 +359,9 @@ function isSettlementEvidence(value: unknown): value is SettlementEvidence {
   if (!isStringArray(value.facts)) {
     return false;
   }
+  if (!isSettlementUnresolvedEffects(value.unresolvedEffects)) {
+    return false;
+  }
   if ('reason' in value && typeof value.reason !== 'string') {
     return false;
   }
@@ -348,6 +371,63 @@ function isSettlementEvidence(value: unknown): value is SettlementEvidence {
   return (
     !('leafStateSummary' in value) || typeof value.leafStateSummary === 'string'
   );
+}
+
+const SETTLEMENT_GIT_OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const SETTLEMENT_UNRESOLVED_CLASSIFICATIONS = new Set([
+  'one-descendant-commit',
+  'multiple-commits',
+  'rewritten-or-non-descendant',
+  'worktree-only-change',
+  'concurrent-or-foreign-change',
+  'observation-ambiguous',
+  'incomplete',
+]);
+
+function isSettlementUnresolvedEffects(
+  value: unknown,
+): value is readonly SettlementUnresolvedEffectEvidence[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((candidate) => {
+    if (!isPlainRecord(candidate)) return false;
+    const allowed = new Set([
+      'classification',
+      'baselineHead',
+      'afterHead',
+      'commitOid',
+    ]);
+    if (Object.keys(candidate).some((key) => !allowed.has(key))) return false;
+    if (
+      typeof candidate.classification !== 'string' ||
+      !SETTLEMENT_UNRESOLVED_CLASSIFICATIONS.has(candidate.classification) ||
+      typeof candidate.baselineHead !== 'string' ||
+      !SETTLEMENT_GIT_OID_PATTERN.test(candidate.baselineHead)
+    ) {
+      return false;
+    }
+    if (
+      'afterHead' in candidate &&
+      (typeof candidate.afterHead !== 'string' ||
+        !SETTLEMENT_GIT_OID_PATTERN.test(candidate.afterHead))
+    ) {
+      return false;
+    }
+    if (
+      candidate.classification !== 'observation-ambiguous' &&
+      candidate.classification !== 'incomplete' &&
+      !('afterHead' in candidate)
+    ) {
+      return false;
+    }
+    if (candidate.classification === 'one-descendant-commit') {
+      return (
+        typeof candidate.commitOid === 'string' &&
+        SETTLEMENT_GIT_OID_PATTERN.test(candidate.commitOid) &&
+        candidate.commitOid === candidate.afterHead
+      );
+    }
+    return !('commitOid' in candidate);
+  });
 }
 
 function hasDoneOutput(event: unknown): event is DoneActorEvent {
@@ -514,6 +594,7 @@ function clearedEvidence(): {
   receiptReason: undefined;
   receiptError: undefined;
   leafStateSummary: undefined;
+  settlementUnresolvedEffects: undefined;
   lastError: undefined;
 } {
   return {
@@ -525,6 +606,7 @@ function clearedEvidence(): {
     receiptReason: undefined,
     receiptError: undefined,
     leafStateSummary: undefined,
+    settlementUnresolvedEffects: undefined,
     lastError: undefined,
   };
 }
@@ -610,6 +692,7 @@ export const captainMachine = setup({
         receiptReason: settlement.receipt?.reason,
         receiptError: settlement.receipt?.error,
         leafStateSummary: settlement.leafStateSummary,
+        settlementUnresolvedEffects: settlement.unresolvedEffects,
         lastError: undefined,
       };
     }),

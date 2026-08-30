@@ -690,6 +690,44 @@ function stateTelemetry(
   };
 }
 
+function acceptedOutcomeTelemetry(
+  runtime: FakeRuntime,
+  input: {
+    readonly acceptedOutcome: string;
+    readonly sequence: number;
+    readonly turnId?: number;
+    readonly schemaVersion?: number;
+  },
+): { topic: string; payload: Record<string, unknown> } {
+  const session = runtime.session;
+  if (session === undefined) throw new Error('runtime session missing');
+  return {
+    topic: 'playbook.trace',
+    payload: {
+      schemaVersion: input.schemaVersion ?? 4,
+      sessionId: session.sessionId,
+      playbookId: session.playbookId,
+      rootSessionId: session.rootSessionId,
+      ...(session.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: session.parentSessionId }),
+      ...(session.parentCallId === undefined
+        ? {}
+        : { parentCallId: session.parentCallId }),
+      depth: session.depth,
+      sequence: input.sequence,
+      timestamp: 0,
+      type: 'outcome.accepted',
+      turnId: input.turnId ?? 1,
+      payload: {
+        source: 'working',
+        target: 'accepted',
+        acceptedOutcome: input.acceptedOutcome,
+      },
+    },
+  };
+}
+
 function stubSession(
   players: CaptainSession['players'] = [
     { id: 'coder', adapter: 'claude' },
@@ -2858,12 +2896,24 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       unresolvedEffectSettlement: { begin, complete },
     });
     const session = stubSession();
+    const parked = stubContext();
 
     await shell.init!(session.session);
     await shell.handleBossTurn(
       turn('/code begin the edit'),
-      stubContext().context,
+      parked.context,
     );
+    const possibleEffectLine =
+      `Possible repository effect; a change could not be excluded (observation-ambiguous); ` +
+      `baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD was not available.`;
+    expect(turnSummaryCalls(parked)[0]?.prompt).toContain(possibleEffectLine);
+    expect(parked.replies[0]).toContain(possibleEffectLine);
+    expect(parked.replies[0]).toContain(
+      'This evidence does not establish workflow completion or attribute any repository change or commit to this workflow.',
+    );
+    expect(parked.replies[0]).not.toContain('/current/worktree');
+    expect(parked.replies[0]).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
+    expect(applied).toEqual([]);
     expect(shell.exportSettlement()?.unresolvedEffects).toEqual(
       unresolvedEffectTestProjection(),
     );
@@ -2918,8 +2968,12 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     const publicEvidence = JSON.stringify({
       statuses: session.statuses,
       summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
+      replies: abandonment.replies,
       telemetry: telemetryWithTopic(session, 'playbook.captain.fsm.state'),
     });
+    expect(publicEvidence).toContain(possibleEffectLine);
+    expect(publicEvidence).not.toContain('/current/worktree');
+    expect(publicEvidence).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
     expect(publicEvidence).not.toContain('/code completed');
     expect(publicEvidence).not.toContain('◇ /code finished');
     expect(publicEvidence).not.toContain('"event":"final"');
@@ -3005,6 +3059,16 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     expect(capabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
     expect(target.exportSettlement()?.unresolvedEffects).toEqual(
       unresolvedEffectTestProjection(),
+    );
+    expect(turnSummaryCalls(restoredTurn)).toHaveLength(0);
+    expect(restoredTurn.replies).toHaveLength(1);
+    expect(restoredTurn.replies[0]).toContain(
+      `Possible repository effect; a change could not be excluded (observation-ambiguous); ` +
+        `baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD was not available.`,
+    );
+    expect(restoredTurn.replies[0]).not.toContain('/current/worktree');
+    expect(restoredTurn.replies[0]).not.toContain(
+      UNRESOLVED_EFFECT_BOUNDARY_ID,
     );
 
     await target.dispose?.();
@@ -3165,9 +3229,10 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     });
 
     await shell.init!(stubSession().session);
+    const context = stubContext();
     await shell.handleBossTurn(
       turn('/code preserve ordered evidence'),
-      stubContext().context,
+      context.context,
     );
 
     expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
@@ -3183,6 +3248,16 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
       },
     ]);
+    const rendered = context.replies[0] ?? '';
+    expect(rendered).toContain(
+      `Observed repository change (multiple-commits); baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD ${'c'.repeat(40)}.`,
+    );
+    expect(rendered).toContain(
+      `Observed repository change (one-descendant-commit); baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD ${UNRESOLVED_EFFECT_AFTER_HEAD}; proven commit OID ${UNRESOLVED_EFFECT_AFTER_HEAD}.`,
+    );
+    expect(rendered).not.toContain('/current/worktree');
+    expect(rendered).not.toContain('projection');
+    expect(rendered).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
     await shell.dispose?.();
   });
 
@@ -4643,6 +4718,157 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'Do not mention counts for states the report does not name',
     );
     expect(summary?.prompt).toContain('Keep a natural chat-like tone');
+  });
+
+  it('derives schema-3 saved counts only from accepted outcomes', async () => {
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        await runtime.ports.emitTelemetry(
+          stateTelemetry('adjudicateChallenges'),
+        );
+        await callPlayerAndCommit(
+          runtime,
+          'coder',
+          'schema-3 player result',
+          runtimeTurn.signal,
+          false,
+        );
+        await runtime.ports.callJudge(
+          'schema-3 raw judge result',
+          runtimeTurn.signal,
+        );
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'accepted',
+            sequence: 1,
+            schemaVersion: 3,
+          }),
+        );
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'accepted',
+            sequence: 2,
+          }),
+        );
+        // Duplicate transport of one canonical trace cannot count twice.
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'accepted',
+            sequence: 2,
+          }),
+        );
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'not-summary-visible',
+            sequence: 3,
+          }),
+        );
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'accepted',
+            sequence: 4,
+            turnId: 0,
+          }),
+        );
+        const foreignCausality = acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 5,
+        });
+        await runtime.ports.emitTelemetry({
+          ...foreignCausality,
+          payload: {
+            ...foreignCausality.payload,
+            parentSessionId: 'ca012407-ce0f-41a2-b226-c89b4aa24163',
+            parentCallId: 'foreign-call',
+          },
+        });
+      }),
+    );
+    const shell = makeShell(registry, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          registry.entry,
+          'accepted-outcome-counts-lease',
+        ),
+      },
+    });
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ action: 'respond', text: 'No action yet.' }),
+      captainJson({ guard: 'accepted' }),
+      { status: 'ok', turnId: 1, finalText: 'Counted accepted outcomes.' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('chat before starting'), context.context);
+    await shell.handleBossTurn(
+      turn('/code count canonical outcomes', 2),
+      context.context,
+    );
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain(
+      'Saved you 2 interruptions and 1 copy-paste across 1 round of reviews/rebuttals.',
+    );
+    expect(summary?.prompt).toContain('Progress counts: 1 rebuttal');
+    await shell.dispose?.();
+  });
+
+  it('does not count schema-3 outcome evidence rejected by the host sink', async () => {
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        await runtime.ports.emitTelemetry(
+          acceptedOutcomeTelemetry(runtime, {
+            acceptedOutcome: 'accepted',
+            sequence: 1,
+          }),
+        );
+      }),
+    );
+    const shell = makeShell(registry, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          registry.entry,
+          'rejected-accepted-outcome-lease',
+        ),
+      },
+    });
+    const backingSession = stubSession();
+    const forwardTelemetry = backingSession.session.emitTelemetry;
+    const session: StubSession = {
+      ...backingSession,
+      session: {
+        ...backingSession.session,
+        emitTelemetry: async (event) => {
+          const payload = event.payload as Record<string, unknown>;
+          if (
+            event.topic === 'playbook.trace' &&
+            payload.playbookId === 'code' &&
+            payload.type === 'outcome.accepted'
+          ) {
+            throw new Error('accepted-outcome telemetry rejected');
+          }
+          await forwardTelemetry(event);
+        },
+      },
+    };
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code reject accepted outcome'),
+      context.context,
+    );
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain('accepted-outcome telemetry rejected');
+    expect(summary?.prompt).toContain(
+      'No saved-counts line is supplied for this turn; append no saved-counts line.',
+    );
+    expect(summary?.prompt).not.toContain('Saved you');
+    await shell.dispose?.();
   });
 
   it('counts explicit labeled-state reentry without counting parallel snapshots twice', async () => {
@@ -9738,6 +9964,14 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     expect(resumed.visiblePlayers).toEqual([]);
     expect(resumed.replies[0]).toContain(
       'remains parked until its repository-effect evidence is reconciled',
+    );
+    expect(resumed.replies[0]).toContain(
+      `Possible repository effect; a change could not be excluded (incomplete); ` +
+        `baseline HEAD ${retainedObservation.head}; after HEAD was not available.`,
+    );
+    expect(turnSummaryCalls(resumed)[0]?.prompt).toContain(
+      `Possible repository effect; a change could not be excluded (incomplete); ` +
+        `baseline HEAD ${retainedObservation.head}; after HEAD was not available.`,
     );
     expect(resumed.replies[0]).not.toContain('may duplicate external effects');
     expect(shell.exportSettlement()).toMatchObject({

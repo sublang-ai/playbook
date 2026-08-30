@@ -434,11 +434,45 @@ function forwardedToolOptions(requested, captainAdapter) {
     return { allowedTools: requested };
 }
 const hiddenJudgeEnvelope = hiddenControlEnvelope;
+function unresolvedEffectReportLines(unresolvedEffects) {
+    return unresolvedEffects.map((effect, index) => {
+        const merelyPossible = effect.classification === 'observation-ambiguous' ||
+            effect.classification === 'incomplete';
+        return [
+            `${index + 1}. ${merelyPossible ? 'Possible repository effect; a change could not be excluded' : 'Observed repository change'} (${effect.classification})`,
+            `baseline HEAD ${effect.baselineHead}`,
+            effect.afterHead === undefined
+                ? 'after HEAD was not available'
+                : `after HEAD ${effect.afterHead}`,
+            ...(effect.commitOid === undefined
+                ? []
+                : [`proven commit OID ${effect.commitOid}`]),
+        ].join('; ') + '.';
+    });
+}
+function unresolvedEffectBossReport(unresolvedEffects) {
+    if (unresolvedEffects.length === 0)
+        return undefined;
+    return [
+        'Repository-effect evidence:',
+        ...unresolvedEffectReportLines(unresolvedEffects).map((line) => `- ${line}`),
+        'This evidence does not establish workflow completion or attribute any repository change or commit to this workflow.',
+    ].join('\n');
+}
+function appendMandatoryPresentationSuffix(turn, suffix) {
+    const current = turn.mandatoryPresentationSuffix;
+    if (current === undefined) {
+        turn.mandatoryPresentationSuffix = suffix;
+    }
+    else if (!current.includes(suffix)) {
+        turn.mandatoryPresentationSuffix = `${current}\n\n${suffix}`;
+    }
+}
 // CAPTAIN-20: the result-phase block the shell supplies inside the closing
 // reply call's envelope — the settlement's outcome-report facts verbatim, the
 // exact counts, and the saved-counts line only when counted activity is
 // nonzero.
-function outcomeReportBlock(report) {
+function outcomeReportBlock(report, unresolvedEffects) {
     const lines = [
         `Settlement status: ${report.status}`,
         ...(report.playbookId === undefined
@@ -461,6 +495,12 @@ function outcomeReportBlock(report) {
     }
     if (report.leafStateSummary !== undefined) {
         lines.push(`Resulting leaf state: ${report.leafStateSummary}`);
+    }
+    const effectLines = unresolvedEffectReportLines(unresolvedEffects);
+    if (effectLines.length > 0) {
+        lines.push('Repository-effect evidence (canonical, in ledger order):');
+        lines.push(...effectLines.map((line) => `- ${line}`));
+        lines.push('Report this evidence without claiming workflow completion or attributing any repository change or commit to the workflow.');
     }
     lines.push(`Progress counts: ${report.progressPhrase}`);
     lines.push(`Counts: ${JSON.stringify({
@@ -2465,6 +2505,61 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         }
     };
+    const observeSummaryTrace = (frame, payload) => {
+        if (frame.enablement.artifactSchema !== 3)
+            return;
+        const trace = payloadRecord(payload);
+        const turn = activeTurn;
+        const summary = activeTurnSummary;
+        const expectedParentSessionId = frame.parent?.frame.sessionId;
+        const expectedParentCallId = frame.parent?.callId;
+        if (trace?.schemaVersion !== 4 ||
+            trace.sessionId !== frame.sessionId ||
+            trace.playbookId !== frame.entry.id ||
+            trace.rootSessionId !== frame.rootSessionId ||
+            (expectedParentSessionId === undefined
+                ? Object.hasOwn(trace, 'parentSessionId')
+                : !Object.hasOwn(trace, 'parentSessionId') ||
+                    trace.parentSessionId !== expectedParentSessionId) ||
+            (expectedParentCallId === undefined
+                ? Object.hasOwn(trace, 'parentCallId')
+                : !Object.hasOwn(trace, 'parentCallId') ||
+                    trace.parentCallId !== expectedParentCallId) ||
+            trace.depth !== frame.depth ||
+            turn === undefined ||
+            !Number.isSafeInteger(trace.turnId) ||
+            trace.turnId <= 0 ||
+            !Number.isSafeInteger(trace.sequence) ||
+            trace.sequence <= 0 ||
+            summary === undefined ||
+            !summaryIncludes(frame)) {
+            return;
+        }
+        if (trace.type !== 'outcome.accepted')
+            return;
+        const receipt = exactOwnDataRecord(trace.payload, [
+            'source',
+            'target',
+            'acceptedOutcome',
+        ]);
+        if (receipt === undefined ||
+            typeof receipt.source !== 'string' ||
+            receipt.source.trim().length === 0 ||
+            typeof receipt.target !== 'string' ||
+            receipt.target.trim().length === 0 ||
+            typeof receipt.acceptedOutcome !== 'string' ||
+            receipt.acceptedOutcome.trim().length === 0) {
+            return;
+        }
+        const traceKey = `${frame.sessionId}:${trace.sequence}`;
+        if (summary.acceptedOutcomeTraceKeys.has(traceKey))
+            return;
+        summary.acceptedOutcomeTraceKeys.add(traceKey);
+        summary.counts.interruptions++;
+        if (frame.entry.summaryPolicy?.copyPasteGuardNames.includes(receipt.acceptedOutcome)) {
+            summary.counts.copyPastes++;
+        }
+    };
     let callNestedPlaybook;
     const createPorts = (frame) => ({
         callPlayer: async (roleId, prompt, signal, options) => {
@@ -2626,13 +2721,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (result.finalText === undefined) {
                 throw new Error('callCaptain returned status=ok with no finalText');
             }
-            const guard = guardFromJudgeReply(result.finalText);
             const summary = activeTurnSummary;
-            if (guard &&
+            if (frame.enablement.artifactSchema === 2 &&
                 summary &&
-                summaryIncludes(frame) &&
-                frame.entry.summaryPolicy?.copyPasteGuardNames.includes(guard)) {
-                summary.counts.copyPastes++;
+                summaryIncludes(frame)) {
+                const guard = guardFromJudgeReply(result.finalText);
+                if (guard &&
+                    frame.entry.summaryPolicy?.copyPasteGuardNames.includes(guard)) {
+                    summary.counts.copyPastes++;
+                }
             }
             return result.finalText;
         },
@@ -2666,6 +2763,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     await mirrorSubRuntimeTelemetry(frame, event.payload);
                 }
                 await requireSession().emitTelemetry(event);
+                if (event.topic === 'playbook.trace') {
+                    observeSummaryTrace(frame, event.payload);
+                }
             })();
             return trackHostCall(frame, emission);
         },
@@ -2811,7 +2911,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 // CAPTAIN-20: a result counts only after the runtime validated it and
                 // atomically published its authorized continuation transition.
                 const summary = activeTurnSummary;
-                if (pending.status === 'ok' &&
+                if (frame.enablement.artifactSchema === 2 &&
+                    pending.status === 'ok' &&
                     summary &&
                     summaryIncludes(frame)) {
                     summary.counts.interruptions++;
@@ -3537,7 +3638,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const policy = frame.entry.summaryPolicy;
         const counts = { interruptions: 0, copyPastes: 0 };
         const stateCounts = new Map();
-        activeTurnSummary = policy ? { owner: frame, counts, stateCounts } : undefined;
+        activeTurnSummary = policy
+            ? {
+                owner: frame,
+                counts,
+                stateCounts,
+                acceptedOutcomeTraceKeys: new Set(),
+            }
+            : undefined;
         let result;
         let error;
         try {
@@ -4179,7 +4287,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 ...(kind === 'closingReply' && turn?.report
                     ? [
                         labeledBlock('ControlView digest', controlViewDigest()),
-                        outcomeReportBlock(turn.report),
+                        outcomeReportBlock(turn.report, turn.unresolvedEffects ?? []),
                     ]
                     : []),
                 ...(options.proseRejection === undefined
@@ -4505,10 +4613,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             await requireSession().emitStatus(`◇ /${enablementById.get(rootPlaybookId).command} resumed`);
             if (activeTurn) {
-                activeTurn.mandatoryPresentationSuffix =
-                    requiresEffectReconciliation
-                        ? 'The retained work remains parked until its repository-effect evidence is reconciled.'
-                        : RESUMPTION_DUPLICATE_EFFECT_WARNING;
+                appendMandatoryPresentationSuffix(activeTurn, requiresEffectReconciliation
+                    ? 'The retained work remains parked until its repository-effect evidence is reconciled.'
+                    : RESUMPTION_DUPLICATE_EFFECT_WARNING);
             }
             return [
                 generation.rootStateDescription === undefined
@@ -4596,10 +4703,27 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const settleSelection = async (selection, signal) => {
         const turn = activeTurn;
         runFailureFacts = [];
+        let frozenUnresolvedEffects;
+        const freezeControllerEvidence = () => {
+            frozenUnresolvedEffects ??= freezeTurnUnresolvedEffects();
+            const report = unresolvedEffectBossReport(frozenUnresolvedEffects);
+            if (turn !== undefined && report !== undefined) {
+                appendMandatoryPresentationSuffix(turn, report);
+            }
+            return frozenUnresolvedEffects;
+        };
+        const finalizeSettlement = (settlement) => Object.freeze({
+            ...settlement,
+            unresolvedEffects: freezeControllerEvidence(),
+        });
         try {
+            // `respond` has no result phase: freeze its no-effect projection before
+            // its decision-call prose crosses the presentation boundary. Acting
+            // selections freeze after their work and before reporting begins.
+            if (selection.action === 'respond')
+                freezeControllerEvidence();
             const settlement = await executeSelection(selection, signal);
-            freezeTurnUnresolvedEffects();
-            return settlement;
+            return finalizeSettlement(settlement);
         }
         catch (error) {
             if (turn?.presentationError === error)
@@ -4666,8 +4790,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     : { receipt: turn.report.receipt }),
                 ...(summary === undefined ? {} : { leafStateSummary: summary }),
             };
-            freezeTurnUnresolvedEffects();
-            return settlement;
+            return finalizeSettlement(settlement);
         }
         finally {
             runFailureFacts = undefined;

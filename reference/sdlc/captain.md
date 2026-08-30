@@ -24,7 +24,7 @@ A turn the host's deterministic command parse resolved enters with its decision 
 Empty or whitespace-only input never reaches the machine.
 These input-provenance rules are host and linker preconditions, not behaviors for Captain to perform and not source items to compile.
 
-Per Boss turn the linked runtime submits at most one validated selection through the host-supplied controller port and treats the returned settlement — status, outcome-report facts, optional rejection reason, optional receipt, and leaf-state summary — as the only evidence of effects; the host supplies its separately counted activity only to the result-phase prompt.
+Per Boss turn the linked runtime submits at most one validated selection through the host-supplied controller port and treats the returned settlement — status, canonical outcome-report facts including bounded terminal-result meaning, the exact validated frozen `unresolvedEffects` list, optional rejection reason, optional structured receipt, and leaf-state summary — as the only evidence of effects; the host supplies its separately counted activity only to the result-phase prompt, and an aggregate conversation or recovery transcript never establishes the action result.
 The host owns validation and execution of effects: `start` needs an idle host; `resume` needs an idle host and a retained generation currently advertised for its target; `switch` needs an active engagement and a target absent from the active path; `dismiss`, `deliver`, and `runtime` need an active working leaf; `switch` dismisses the stack then starts the target with no rollback, a failing start settling with both facts.
 A `deliver` selection carries no text payload: the host is authoritative for the delivered text, and any text carried on the selection is ignored and never delivered.
 Every settlement is final for its turn: an action is never submitted again after the controller returns `ok`, `rejected`, or `failed`, and continuing or repeating work takes a new Boss turn and a new decision.
@@ -69,7 +69,7 @@ Results:
 - `runtime`: Captain selected one advertised runtime action. Output shall include `actionId: <advertised action id>`.
 
 The compiled decision result guards are exactly `respond`, `resume`, `start`, `switch`, `dismiss`, `deliver`, and `runtime`, respectively, with those payload fields; these names are part of this default playbook's stable machine contract.
-As decision and reply evidence the machine retains only a settlement's status, its outcome-report facts, its optional rejection reason, the receipt disposition with its reason or a compact `{ name, message }` error, and the leaf-state summary; it never retains a playbook session id, call id, child state, stack ledger, resume token, or opaque runtime result.
+As decision and reply evidence the machine retains only a settlement's status, its canonical outcome-report facts, its exact bounded `unresolvedEffects` list, its optional rejection reason, the receipt disposition with its reason or a compact `{ name, message }` error, and the leaf-state summary; it never retains a playbook session id, call id, child state, stack ledger, resume token, repository path or projection, internal effect-envelope data, aggregate conversation or recovery transcript, or opaque runtime result.
 
 When the host's command parse resolved the Boss turn as `respond` — a bare enabled command, or a command naming an active non-leaf ancestor — Captain shall answer the command turn, using the following prompt:
 > Boss issued a registered command that produces no action this turn: a bare command, or a command naming an active non-leaf playbook.
@@ -80,9 +80,10 @@ When the host's command parse resolved the Boss turn as `respond` — a bare ena
 This call's validated text is the turn's captain speech; the host executes no action for the turn regardless of the reply, and the machine returns to its hub.
 
 When an acting turn's selection — parse-resolved or model-decided — settles as `ok`, `rejected`, or `failed` and its settlement returns through the controller port as the turn's outcome report, Captain shall compose the turn's closing reply, using the following prompt:
-> An action just settled for the current Boss turn; its outcome report — the settlement facts verbatim, the receipt disposition, and the leaf-state summary — is supplied with this call.
+> An action just settled for the current Boss turn; its canonical outcome report — the settlement facts verbatim, the structured receipt disposition, any bounded terminal-result meaning, the leaf-state summary, and bounded repository-effect evidence — is supplied with this call.
 > The closing reply is the turn summary: compose the closing reply and turn summary only from the outcome-report facts.
 > State what actually happened — what was dismissed, started, delivered, applied, rejected, or failed — and claim no work the report does not contain.
+> When repository-effect evidence is supplied, distinguish an observed repository change from a possible effect that could not be excluded, preserve its exact available HEAD and proven commit identity, and claim neither workflow completion nor ownership of the change.
 > Do not finish with a bare acknowledgement, a promise to act, or an announcement that the round is complete.
 > When mentioning progress detail, use only the aggregate counts the report supplies.
 > Append the supplied saved-counts line verbatim only when one is supplied; when none is supplied, append no saved-counts line.

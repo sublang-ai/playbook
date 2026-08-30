@@ -133,6 +133,7 @@ function okSettlement(
   return {
     status: 'ok',
     facts: ['Executed the selected action.'],
+    unresolvedEffects: [],
     leafStateSummary: 'leaf parked at a working state',
     ...overrides,
   };
@@ -512,11 +513,20 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
   });
 
   it('retains only settlement evidence in machine context (CAPPLAY-10)', async () => {
+    const unresolvedEffects = [
+      {
+        classification: 'one-descendant-commit' as const,
+        baselineHead: 'a'.repeat(40),
+        afterHead: 'b'.repeat(40),
+        commitOid: 'b'.repeat(40),
+      },
+    ];
     const harness = makeHarness({
       captains: [json(START_REPLY), ok('closing reply')],
       settlements: [
         okSettlement({
           facts: ['Started code.', 'Delivered the request.'],
+          unresolvedEffects,
           leafStateSummary: 'code parked awaiting review',
         }),
       ],
@@ -533,6 +543,7 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
       'selectedAction',
       'settlementFacts',
       'settlementStatus',
+      'settlementUnresolvedEffects',
     ]);
     expect(context.selectedAction).toBe('start');
     expect(context.settlementStatus).toBe('ok');
@@ -541,6 +552,15 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
       'Delivered the request.',
     ]);
     expect(context.leafStateSummary).toBe('code parked awaiting review');
+    expect(context.settlementUnresolvedEffects).toEqual(unresolvedEffects);
+    expect(context.settlementUnresolvedEffects).not.toBe(unresolvedEffects);
+    expect(Object.isFrozen(context.settlementUnresolvedEffects)).toBe(true);
+    unresolvedEffects[0]!.baselineHead = 'c'.repeat(40);
+    expect(
+      (
+        context.settlementUnresolvedEffects as typeof unresolvedEffects
+      )[0]?.baselineHead,
+    ).toBe('a'.repeat(40));
     const serialized = JSON.stringify(context);
     expect(serialized).not.toContain('resumeToken');
     expect(serialized).not.toContain('sessionId');
@@ -558,6 +578,7 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
         {
           status: 'rejected',
           facts: ['Rejected: no active engagement to dismiss.'],
+          unresolvedEffects: [],
           reason: 'no active engagement',
         },
       ],
@@ -589,6 +610,7 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
             'Dismissed code.',
             'Start discuss failed: init exploded.',
           ],
+          unresolvedEffects: [],
         },
       ],
     });
@@ -663,6 +685,64 @@ describe('captain.playbook acting turns (CAPPLAY-9, CAPPLAY-10, CAPPLAY-13)', ()
     await expect(harness.turn('start it')).rejects.toThrow(
       /settlement carries undeclared stackLedger/,
     );
+    await harness.runtime.dispose();
+  });
+
+  it.each([
+    [
+      'missing schema-3 unresolved evidence',
+      { status: 'ok', facts: ['x'] },
+      /unresolvedEffects is required/,
+    ],
+    [
+      'an internal unresolved member',
+      {
+        status: 'ok',
+        facts: ['x'],
+        unresolvedEffects: [
+          {
+            classification: 'incomplete',
+            baselineHead: 'a'.repeat(40),
+            boundaryId: 'internal-boundary',
+          },
+        ],
+      },
+      /carries undeclared boundaryId/,
+    ],
+    [
+      'an invalid baseline OID',
+      {
+        status: 'ok',
+        facts: ['x'],
+        unresolvedEffects: [
+          { classification: 'incomplete', baselineHead: 'not-an-oid' },
+        ],
+      },
+      /baselineHead must be a Git OID/,
+    ],
+    [
+      'a mismatched proven commit',
+      {
+        status: 'ok',
+        facts: ['x'],
+        unresolvedEffects: [
+          {
+            classification: 'one-descendant-commit',
+            baselineHead: 'a'.repeat(40),
+            afterHead: 'b'.repeat(40),
+            commitOid: 'c'.repeat(40),
+          },
+        ],
+      },
+      /commitOid must equal afterHead/,
+    ],
+  ])('rejects %s as control-plane', async (_label, settlement, expected) => {
+    const harness = makeHarness({
+      captains: [json(START_REPLY)],
+      settlements: [settlement as never],
+    });
+    await harness.init();
+    await expect(harness.turn('start it')).rejects.toThrow(expected);
     await harness.runtime.dispose();
   });
 });
@@ -1041,10 +1121,23 @@ describe('captain.playbook session mechanics', () => {
       fileURLToPath(new URL('./captain.playbook.ts', import.meta.url)),
       'utf8',
     );
-    expect(source).toContain('compat: { artifactSchema: 2, runtimeAbi: 1 }');
+    expect(source).toContain('compat: { artifactSchema: 3, runtimeAbi: 1 }');
     expect(source).not.toContain('  RUNTIME_ABI,');
     expect(source).toContain('roleStates: {}');
+    expect(source).toContain(
+      'outcomeAuthority: { governedPlayerStates: {} }',
+    );
     expect(source).not.toContain('playerStates:');
+
+    const harness = makeHarness();
+    await harness.init();
+    expect(harness.runtime.exportSnapshot?.()?.effectLedger).toEqual({
+      schemaVersion: 1,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    });
+    await harness.runtime.dispose();
   });
 });
 

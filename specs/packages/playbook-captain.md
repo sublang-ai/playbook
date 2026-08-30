@@ -382,7 +382,7 @@ reason and no effect at the controller port, and shall be a malformed
 required payload field for decision validation and its corrective
 re-ask ([[captain-playbook-18](captain-playbook.md#captain-playbook-18)]).
 The shell shall execute at most one validated action per Boss turn and settle
-the selection with `status`, outcome-report facts, an optional rejection
+the selection with `status`, outcome-report facts, the required exact `unresolvedEffects` list of [[playbook-captain-58](#playbook-captain-58)], an optional rejection
 reason, the receipt where a `runtime` action executed, and the resulting
 `leafStateSummary` ([[playbook-captain-20](#playbook-captain-20)]); settlements shall carry no
 reply-prose or counted-activity field.
@@ -690,9 +690,7 @@ dismissals and start — and only when the active registry entry
 declares a `summaryPolicy`.
 When the active registry entry declares no `summaryPolicy`, the
 shell shall skip turn-summary counting for that turn.
-The `summaryPolicy` maps counted state ids and adjudication guard
-names to Boss-visible labels and supplies the saved-counts line
-template or equivalent wording policy.
+The `summaryPolicy` maps counted state ids to Boss-visible labels, its `copyPasteGuardNames` names the schema-2 adjudication guards and schema-3 accepted outcomes that represent inter-player handoffs, and it supplies the saved-counts line template or equivalent wording policy.
 For that same duration, the shell shall aggregate sub-runtime
 `playbook.fsm.state` telemetry into a summary-visible progress
 phrase for the result-phase prompt, including descendant frames but counting each state only under the registry entry of the frame that emitted it.
@@ -705,18 +703,12 @@ under the provided label.
 When that frame's `summaryPolicy` does not provide a state-count label for a
 state id, the shell shall not count that state in the result-phase
 prompt and shall not derive a fallback label from the state id.
-When a wrapped sub-runtime `callPlayer` call returns a player
-reply, the shell shall count one saved interruption for that reply.
-When a wrapped hidden sub-runtime adjudication call returns a guard
-whose name appears in that frame registry entry's `summaryPolicy`
-copy-paste guard names, the shell shall count one saved copy-paste
-for that inter-player handoff.
+For a schema-3 frame, each distinct confirmed `outcome.accepted` event of [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)] carried by the schema-4 public trace of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)] that is successfully published through the host sink during the active action-counting window, matches the active frame and public trace identity, and carries a positive runtime-local turn id shall count one saved interruption; its `acceptedOutcome` shall count one saved copy-paste exactly when it appears in that frame registry entry's `summaryPolicy` copy-paste guard names, while an earlier trace schema, duplicate sequence, foreign frame or causality, missing or nonpositive runtime turn, rejected host emission, direct player return, and raw judge reply shall count nothing.
+For a schema-2 frame only, when a wrapped sub-runtime `callPlayer` call returns a player reply, the shell shall count one saved interruption for that reply, and when a wrapped hidden sub-runtime adjudication call returns a guard parsed under [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] whose name appears in that frame registry entry's `summaryPolicy` copy-paste guard names, the shell shall count one saved copy-paste for that inter-player handoff.
 The shell shall count one saved copy-paste per adjudicated
 handoff, regardless of how many individual review findings or
 rebuttal items the handoff text contains.
-Each registry entry's `summaryPolicy` shall own its exact copy-paste
-guard names, so an adjudicated guard removed from that list is not
-counted.
+Each registry entry's `summaryPolicy` shall own its exact schema-specific copy-paste names, so a schema-2 adjudicated guard or schema-3 accepted outcome removed from that list is not counted.
 The shell shall not count session-Captain decision, reply, or
 result-phase calls, sub-runtime classifier/event JSON, or malformed
 adjudication replies as saved copy-pastes.
@@ -1155,7 +1147,9 @@ The projection shall contain every currently outstanding effect-possible, outcom
 A standalone boundary without a complete physical receipt shall use `incomplete`; an open logical operation shall use its cumulative logical receipt when present and otherwise reconcile its original baseline with the latest complete after or checkpoint evidence without a new observation, using `incomplete` when its latest physical boundary lacks a complete receipt and preserving a fail-closed latest physical classification where its preceding checkpoint chain does not prove only same-HEAD `unchanged` or `worktree-only-change` steps.
 For that receipt-less chain, an exact original-to-latest observation shall be omitted, a same-HEAD delta shall use `worktree-only-change` only when the latest physical receipt is `unchanged` or `worktree-only-change` and the latest projection preserves the original projection byte-for-byte, and `one-descendant-commit` shall be retained with its commit OID only when the latest physical receipt proves it from the original HEAD and the latest projection equals the original projection; any residual, overwritten baseline projection, incompatible checkpoint ancestry, or physically ambiguous classification shall remain `observation-ambiguous` rather than be promoted by the later receipt.
 The bounded list shall omit repository paths, projection contents or digests, the raw ledger, boundary, operation, call, runtime, session, player, or generation identities, player prose, semantic candidates, and correction budgets, and shall never enter the runtime-owned `PlaybookRunResult` of [[playbook-runtime-79](playbook-runtime.md#playbook-runtime-79)].
-Before each controller result-phase presentation the shell shall freeze one canonical list and reuse an exact validated copy at that turn's later `exportSettlement()` boundary without another repository observation; a safe settlement reached without controller work shall instead project the current canonical list without fabricating controller evidence or result-phase facts.
+Before returning every schema-3 controller settlement, the shell shall freeze one canonical list and give the `SettlementEvidence` of [[captain-playbook-9](captain-playbook.md#captain-playbook-9)] one exact detached validated copy alongside its structured settlement and bounded terminal-result facts rather than an aggregate transcript; for a non-`respond` selection this shall happen before its result phase, while a direct `respond` shall freeze before its single presentation. The shell shall reuse an exact validated copy at that turn's later `exportSettlement()` boundary without another repository observation; a safe settlement reached without controller work shall instead project the current canonical list without fabricating controller evidence or result-phase facts.
+For every controller settlement whose list is nonempty, including one leaving an episode parked, a direct `respond` over that episode, and unresolved-effect abandonment, the shell shall append one deterministic Boss-visible report before any later recovery action: `one-descendant-commit`, `multiple-commits`, `rewritten-or-non-descendant`, `worktree-only-change`, and `concurrent-or-foreign-change` shall be identified as observed repository changes, while `observation-ambiguous` and `incomplete` shall be identified only as possible effects whose change could not be excluded; each entry shall carry its exact baseline HEAD, exact after HEAD or explicit unavailability, and proven commit OID when present, followed by an explicit statement that the evidence proves neither workflow completion nor ownership of a change or commit.
+That deterministic report shall pass through the one Captain-speech presentation seam, supplement rather than replace any already mandatory presentation suffix, and expose no path, projection, ledger, envelope identity, prose, semantic candidate, or correction budget.
 The list shall be nonempty exactly when the settlement leaves at least one effect-possible outcome-unresolved episode parked or records unresolved-effect abandonment and shall be empty otherwise.
 The shell's optional unresolved-effect settlement capability shall expose exactly asynchronous `begin({ rootPlaybookId, unresolvedEffects })` and `complete({ rootPlaybookId, unresolvedEffects })` operations over a nonblank active-root playbook id and the same nonempty validated frozen list, and absence of that capability shall make abandonment fail without disposal.
 After the state-only abandonment result of [[playbook-captain-56](#playbook-captain-56)], the shell shall freeze the final projection while the complete active stack still exists, await the capability's durable `begin` acknowledgement, dispose the complete root stack leaf to root without restoring source state, replaying a player, translating a nested result, or resuming a parent FSM, stage one `clear` update for that root even when the unresolved boundary belonged to a nested leaf, and await `complete` acknowledging that the host atomically persisted that same list with the root clear before controller presentation.
@@ -1360,14 +1354,10 @@ result-phase call with no action effect; the literal substring
 `Saved you` shall appear nowhere on either zero-activity turn.
 A zero-activity accepted action and an entry without a `summaryPolicy`
 shall likewise produce no saved-counts line.
-The suite shall fail unless completed
-sub-runtime player replies increment the interruption count by one
-per reply; adjudicated guards named by their emitting frame's
-`summaryPolicy` copy-paste guard list increment the copy-paste count
-by one per handoff; guards absent from that list,
+For schema-3 frames, the suite shall fail unless only distinct schema-4 `outcome.accepted` traces successfully published inside the active action window with matching frame identity and a positive runtime-local turn increment interruption counts, only their accepted-outcome names listed by the emitting frame's `summaryPolicy` increment copy-paste counts, and a direct player result, raw judge result, earlier trace schema, duplicate sequence, foreign frame or causality, invalid runtime turn, or host-rejected accepted trace increments neither even where prior shell turns make the runtime-local turn differ from the Boss-turn id; for schema-2 frames, completed sub-runtime player replies shall increment the interruption count by one per reply and adjudicated guards named by their emitting frame's policy shall retain the legacy copy-paste count.
+In either schema, guards or accepted outcomes absent from that list,
 classifier/event JSON, session-Captain decision and result-phase
-calls, and
-malformed adjudication replies do not increment the copy-paste
+calls, and malformed adjudication replies shall not increment the copy-paste
 count; sub-runtime state telemetry during the turn contributes only
 an aggregate summary-visible progress phrase and round total,
 counting each root or descendant frame under its own registry `summaryPolicy` labels exactly as
@@ -1831,5 +1821,6 @@ The matrix shall further fail unless the consumer reads no state description or 
 
 When the unresolved-settlement integration matrix drives same-process, restored, and retained-adopted schema-3 root and nested episodes, it shall fail unless `exportSettlement()` carries a detached frozen ordered projection of every and only outstanding envelope, an open deferred chain occurs once at its first physical boundary, resolved and complete `unchanged` evidence is absent, incomplete and all six nonzero-or-ambiguous classifications preserve the exact baseline, available after HEAD, and proven commit OID invariants for both 40- and 64-character OIDs, a receipt-less chain with a residual projection or ambiguous latest receipt remains `observation-ambiguous` against its original baseline, and mutation of any classification, member set, OID length or case, order, identity reference, or ledger relationship makes settlement unsafe (verifying [[playbook-captain-41](#playbook-captain-41)], [[playbook-captain-44](#playbook-captain-44)], and [[playbook-captain-58](#playbook-captain-58)]).
 The matrix shall fail unless a controller turn freezes its list before result-phase work and the later safe settlement reuses the exact copy despite a later host-ledger advance, a safe settlement without controller work projects the current list without a repository observation or fabricated controller evidence, every parked unresolved settlement is nonempty, every other settlement is empty, the public validator detaches and recursively freezes valid input, and no bounded list enters a runtime-owned run result (verifying [[playbook-captain-58](#playbook-captain-58)]).
+For each nonempty controller list, the matrix shall fail unless both the canonical result-phase prompt where one exists and the same-turn Boss presentation distinguish the observed and merely possible classification branches, preserve the exact available HEAD and proven commit OID, precede a later reconciliation or abandonment action, claim neither completion nor ownership, preserve another mandatory suffix, and contain no excluded path, projection, or internal envelope member; a direct `respond` over a restored parked episode shall make no result-phase call but shall carry the same deterministic report (verifying [[playbook-captain-58](#playbook-captain-58)]).
 The matrix shall reject unsupported, blank, unknown-field, or evidence-bearing unresolved-envelope references and references to absent boundaries or logical operations before exporting settlement (verifying [[playbook-captain-58](#playbook-captain-58)]).
 The root and nested-leaf abandonment rows shall fail unless the same final nonempty list is acknowledged at durable begin, the complete root stack disposes leaf to root without source restoration, player replay, nested-result translation, or parent resumption, the root's prior generation receives `clear`, durable completion precedes controller presentation, and only complete disposal and persistence return `ok` with `executed`, while absent capability plus each begin, disposal, clear, and completion failure returns `failed` without an executed receipt, an `Applied` success fact, or an older generation becoming selectable (verifying [[playbook-captain-56](#playbook-captain-56)] and [[playbook-captain-58](#playbook-captain-58)]).
