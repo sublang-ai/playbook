@@ -167,6 +167,25 @@ When `spec.compat` is absent, the factory shall reject the declaration-free
 artifact because its legacy player metadata has no safe session-player
 interpretation.
 
+### Repository effect observation
+
+#### playbook-runtime-67
+
+Where a current host observes a Git worktree for a governed delegated-player boundary, the repository observer shall resolve the canonical real worktree root and capture a detached immutable observation containing the exact HEAD commit OID and a path-keyed content-addressed projection relative to that HEAD ([DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §2).
+The projection shall contain index entries that differ from the HEAD tree with their modes and blob identities, tracked worktree entries that differ from the index with their modes and content identities, and every non-ignored untracked path with its mode and content identity; it shall recursively content-address a reported nested Git worktree and shall exclude ignored-only paths, Git administrative data, and timestamps.
+An observation that changes while it is sampled, encounters an index flag suppressing tracked-worktree inspection, or cannot represent a reported path and its content identity losslessly shall fail closed as ambiguous rather than publish a mixed or lossy projection.
+When a complete after observation is reconciled with a baseline, the observer shall classify exactly:
+
+- `unchanged` only when HEAD and the complete projection are byte-equal;
+- `one-descendant-commit`, carrying the after OID, only when after HEAD is exactly one commit descended from baseline HEAD and the complete projection is byte-equal;
+- `multiple-commits` for more than one descendant commit;
+- `rewritten-or-non-descendant` for ancestry loss;
+- `worktree-only-change` for a same-HEAD projection delta from an effect-authorized call only when every pre-existing projection entry remains byte-equal;
+- `concurrent-or-foreign-change` for any delta from a call declared exclusively `unchanged`; and
+- `observation-ambiguous` for an unstable or lossy observation, an effect-authorized changed pre-existing overlay, post-commit residual, cohort overlap, or other delta that cannot be attributed uniquely.
+
+Receipt classification shall compare the complete projections and ancestry without a post-hoc path filter, shall treat byte- and mode-identical pre-existing dirt as zero delta, and shall not claim that cooperative observation excludes or identifies every foreign writer.
+
 ### Session lifecycle
 
 #### playbook-runtime-6
@@ -940,6 +959,10 @@ When the integration suite drives transition and status profiles, it shall fail 
 - Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
 - A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <guard>` for every settling actor output carrying a guard with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
 - A schema-2 factory-backed fixture with missing or incomplete `roleStates` rejects during construction even when a status override exists, before machine interpretation or a host call (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
+
+#### playbook-runtime-68
+
+When the repository-observation integration suite drives real temporary Git worktrees, it shall fail unless staged, tracked-worktree, mode-only, non-ignored-untracked, and nested-worktree dirty-content changes alter the detached content-addressed projection while ignored-only and timestamp-only changes do not; unchanged pre-existing dirt proves `unchanged`; exactly one call-created descendant commit that preserves the complete baseline projection proves `one-descendant-commit` with the exact OID; and consumed or altered pre-existing overlays, residual changes, multiple commits, rewritten or non-descendant history, declared-zero deltas, inspection-suppressing index flags, unreadable reported content, non-lossless path data, and mutation during observation receive their exact fail-closed classifications without a path-attribution filter (verifying [[playbook-runtime-67](#playbook-runtime-67)]).
 
 ### Host adapter
 

@@ -1042,8 +1042,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   const DECIDE_BASE = 'reference/sdlc/decide.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
-    expect(manifest.bin).toHaveProperty('playbook');
-    expect(manifest.bin).not.toHaveProperty('playbook-code');
+    expect(manifest.bin).toEqual({
+      playbook: 'reference/sdlc/code.playbook/bin/playbook.js',
+    });
     expect(manifest.exports).toHaveProperty('./runtime');
     expect(manifest.exports).toHaveProperty('./xstate-runtime');
     expect(manifest.exports).toHaveProperty('./code/registry');
@@ -1055,7 +1056,6 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
     expect(manifest.exports).not.toHaveProperty('./interactive-session');
-    expect(manifest.bin).not.toHaveProperty('playbook-managed-session');
   });
 
   // RELEASE-20: the semver-stable unit of a public subpath is the module's
@@ -1948,6 +1948,7 @@ void wrongProfile;
       `${CODE_BASE}bin/session-store.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,
+      `${CODE_BASE}bin/repository-effects.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       `${REVIEW_BASE}review.playbook.js`,

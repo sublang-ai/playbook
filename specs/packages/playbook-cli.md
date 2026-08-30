@@ -595,6 +595,24 @@ Where any `playbooks.<id>.players` block remains, the command shall reject it be
 
 ## Internal Behavior
 
+### Repository effect coordination
+
+#### playbook-cli-57
+
+When the private repository-effect coordinator receives one Git working directory and detached call metadata carrying the governed outcomes' repository dispositions under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], it shall key one exclusive cooperative claim by the canonical worktree identity under [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], acquire it before the baseline observation, and hold it through the complete after observation and receipt.
+An exclusive call shall run alone; a cohort call shall require one nonempty invocation identity, an exact role set matching one supplied detached `concurrentRoleSets` member under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)], and exclusively `unchanged` dispositions for every exact participating role; it shall capture one common baseline before any member begins, await every member before one common after observation, and classify any repository delta as `observation-ambiguous` for every member.
+A same-worktree call outside an active cohort shall wait through every cohort receipt, separate coordinator calls shall acquire separate claims, and different canonical worktree identities shall not block one another.
+The coordinator shall reject malformed or unauthorized cohort metadata before a member starts and shall neither claim to exclude nor identify a nonparticipating writer.
+
+#### playbook-cli-59
+
+When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, host, and PID atomically; reject malformed, nonprivate, foreign-host, permission-unknown, reused-token, or otherwise unprovable ownership; reclaim only a current-host owner whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
+One issued claim handle shall reject overlapping observation, receipt, ownership-check, or release methods, and a delayed stale-owner reclaimer shall not disturb a successor protected by the retired token.
+
+#### playbook-cli-60
+
+When the package candidate is assembled, it shall carry the private repository-observation and coordination module without adding a package export or executable.
+
 ### Shared launch configuration
 
 #### playbook-cli-46
@@ -781,3 +799,17 @@ The suite shall also fail unless a post-publication durability failure for an in
 When the focused front-end suites exercise retained generations through real Captain-session records and the shared shell boundary, they shall fail unless selected and uncertain-retry headless records use their own nonempty maps before resumption, a member-less schema-version-3 record remains continuable with one empty-map installation, a fresh launch first publishes either its intentional empty boundary or complete transferred map through guarded initialization, fresh and selected managed launches install exactly once before initialization returns, both fresh front ends remain usable while the newest settled predecessor lease is live, deterministic predecessor-envelope drift continues with no offer while preserving the source generation, cleanup-safe construction failure omits only that offer while preserving its durable generation for a later process, and each of a fatal pre-marker headless failure, a managed initialization failure before readiness can be published, and a child-won managed readiness claim retracts only an unchanged owned empty target while preserving any transferred target and ownership outcome (verifying [[playbook-cli-22](#playbook-cli-22)], [[playbook-cli-23](#playbook-cli-23)], [[playbook-cli-49](#playbook-cli-49)], [[playbook-cli-53](#playbook-cli-53)], and [[playbook-cli-55](#playbook-cli-55)]).
 The managed lifecycle suite shall further fail unless child-won abandonment retracts the exact empty fresh target after runtime disposal, outer-won readiness preserves it after launcher coordination cleanup and detached EOF, and a readiness-witness collision cancels without an operational line or attachment (verifying [[playbook-cli-23](#playbook-cli-23)], [[playbook-cli-49](#playbook-cli-49)], and [[playbook-cli-55](#playbook-cli-55)]).
 The headless and managed cross-process suites shall further fail unless an installed offer leaves exact explicit `/command` input on the fresh-start path without adoption and a later bare continuation reaches the shared Captain's advertised-offer arbitration, adopts the retained runtime without calling its initial entry point, and persists the newly adopted stack (verifying [[playbook-cli-55](#playbook-cli-55)]).
+
+### Repository effect coordination coverage
+
+#### playbook-cli-58
+
+When the repository-coordination integration suite runs real concurrent claims, it shall fail unless exclusive calls through the after receipt serialize across process and canonical-path aliases; one valid supplied all-`unchanged` cohort overlaps only its own exact invocation members from one common baseline through one common after observation; a same-worktree outsider waits for all cohort receipts; a cohort delta makes every receipt ambiguous; malformed, undeclared, duplicate-role, missing-invocation, or effect-authorized cohorts reject before a member starts; and claims in different linked Git worktrees overlap independently (verifying [[playbook-cli-57](#playbook-cli-57)]).
+
+#### playbook-cli-61
+
+When the claim-lifecycle integration suite exercises real Git administrative directories and processes, it shall fail unless owner publication is exact and private; post-publication failure retires its owner; overlapping handle methods reject without releasing; malformed and nonprivate owners, foreign hosts, unknown process probes, and retired-token reuse fail closed; a same-host dead PID is reclaimed; normal and reclaimed tokens remain retired; and a delayed old-owner reclaimer leaves its live successor authoritative (verifying [[playbook-cli-59](#playbook-cli-59)]).
+
+#### playbook-cli-62
+
+When the package-surface suite dry-packs the candidate, it shall fail unless the private coordination module is present while the exact package exports and executable map remain unchanged (verifying [[playbook-cli-60](#playbook-cli-60)]).

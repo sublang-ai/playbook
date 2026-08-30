@@ -73,6 +73,7 @@
     "reference/sdlc/code.playbook/bin/session-store.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",
+    "reference/sdlc/code.playbook/bin/repository-effects.js",
     "reference/sdlc/review.playbook/review.gears.md",
     "reference/sdlc/review.playbook/review.fsm.ts",
     "reference/sdlc/review.playbook/review.fsm.js",
