@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
-import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, emptyPlaybookEffectLedger, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
+import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, emptyPlaybookEffectLedger, isPlaybookEffectLedgerMonotonicExtension, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
 export const BOSS_REPLY_ERRORS = {
     missingQuestion: "needsBossReply outcome missing 'question' field",
     unregisteredState: (stateId) => `state ${stateId} declared needsBossReply but is not registered as resumable`,
@@ -448,6 +448,27 @@ function sortJson(value) {
 function stableJson(value, path) {
     return JSON.stringify(sortJson(snapshotJsonValue(value, path)));
 }
+// DR-040 task 8: a retained checkpoint authorizes adoption without a replay
+// fence only when the authoritative ledger preserves the checkpoint exactly,
+// has made no deferred-operation progress, and every later physical boundary
+// is complete and proves `unchanged`. This is intentionally the same
+// fail-closed shape as uncertain whole-turn replay.
+function retainedAdoptionCheckpointIsSafe(checkpoint, current) {
+    if (checkpoint.boundaries.some(({ physicalReceipt }) => physicalReceipt === undefined)) {
+        return false;
+    }
+    if (!isPlaybookEffectLedgerMonotonicExtension(checkpoint, current)) {
+        return false;
+    }
+    if (!isDeepStrictEqual(current.boundaries.slice(0, checkpoint.boundaries.length), checkpoint.boundaries) ||
+        !isDeepStrictEqual(current.logicalOperations, checkpoint.logicalOperations)) {
+        return false;
+    }
+    return current.boundaries
+        .slice(checkpoint.boundaries.length)
+        .every(({ physicalReceipt }) => physicalReceipt?.classification === 'unchanged');
+}
+const RETAINED_EFFECT_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function requireAdoptionIdentity(value, path) {
     if (typeof value !== 'string' || value.trim().length === 0) {
         throw new TypeError(`${path} must be a non-empty string`);
@@ -1771,6 +1792,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
             ? emptyPlaybookEffectLedger()
             : assertPlaybookEffectLedger(effectLedgerCapability.snapshot(), `${label} current host effect ledger`);
         let effectLedgerMirror = currentEffectLedger();
+        let retainedEffectSourceSessionId;
+        let retainedEffectReconciliation;
+        let retainedEffectReconciliationRequired = false;
         const playerBoundaryReceipts = new WeakMap();
         const governedPlayerOutputs = new WeakMap();
         const governedOutputsByBoundaryId = new Map();
@@ -1860,8 +1884,47 @@ export function createXStatePlaybookRuntime(machine, spec) {
         function runtimeLogicalOperations(ledger = effectLedgerMirror) {
             if (session === undefined)
                 return [];
+            const runtimeSessionIds = new Set([
+                session.sessionId,
+                ...(retainedEffectSourceSessionId === undefined
+                    ? []
+                    : [retainedEffectSourceSessionId]),
+            ]);
             return ledger.logicalOperations.filter((operation) => operation.playbookId === session.playbookId &&
-                operation.runtimeSessionId === session.sessionId);
+                runtimeSessionIds.has(operation.runtimeSessionId));
+        }
+        function refreshRetainedEffectReconciliation(current = effectLedgerMirror) {
+            const retained = retainedEffectReconciliation;
+            if (retained === undefined) {
+                retainedEffectReconciliationRequired = false;
+                return;
+            }
+            const safe = retainedAdoptionCheckpointIsSafe(retained.checkpoint, current);
+            retainedEffectReconciliationRequired = !safe;
+            if (safe)
+                retainedEffectReconciliation = undefined;
+        }
+        function bindRetainedEffectReconciliation(retained, current) {
+            retainedEffectReconciliation = retained;
+            refreshRetainedEffectReconciliation(current);
+        }
+        function refreshRetainedEffectFenceFromHost() {
+            if (retainedEffectReconciliation === undefined)
+                return;
+            const retainedBeforeRefresh = retainedEffectReconciliation;
+            try {
+                effectLedgerMirror = currentEffectLedger();
+                refreshRetainedEffectReconciliation(effectLedgerMirror);
+                syncDeferredReconciliationOverlay();
+            }
+            catch {
+                // A fence can open only from validated authoritative evidence. If the
+                // live mirror or its source-owned deferred-operation view cannot be
+                // read exactly, keep every ordinary entry point closed.
+                retainedEffectReconciliation ??= retainedBeforeRefresh;
+                deferredReconciliationOperationId = undefined;
+                retainedEffectReconciliationRequired = true;
+            }
         }
         function syncDeferredReconciliationOverlay() {
             const unresolved = runtimeLogicalOperations().filter((operation) => operation.logicalReceipt === undefined &&
@@ -1875,6 +1938,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         function closeAfterIndeterminateDeferredSettlement(operationId, cause) {
             try {
                 effectLedgerMirror = currentEffectLedger();
+                refreshRetainedEffectReconciliation(effectLedgerMirror);
                 syncDeferredReconciliationOverlay();
             }
             catch {
@@ -2261,7 +2325,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             return {
                 boundaryId: randomUUID(),
-                runtimeSessionId: requireSession().sessionId,
+                // An adopted runtime keeps one durable effect-owner identity across
+                // every later target generation. New boundaries must join that same
+                // lineage; otherwise a boundary started by an intermediate target is
+                // no longer discoverable after the next adoption.
+                runtimeSessionId: retainedEffectSourceSessionId ?? requireSession().sessionId,
                 turnId,
                 callId,
                 roleId,
@@ -2389,6 +2457,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 if (boundary === undefined)
                     return;
                 effectLedgerMirror = current;
+                refreshRetainedEffectReconciliation(current);
                 recordActiveGovernedAttempt(boundary);
             }
             catch {
@@ -2408,6 +2477,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 throw new TypeError(`${label} repository ${source} did not acknowledge its completed boundary`);
             }
             effectLedgerMirror = ledger;
+            refreshRetainedEffectReconciliation(ledger);
             syncDeferredReconciliationOverlay();
             recordActiveGovernedAttempt(completed);
             if (value.operation.status === 'rejected') {
@@ -2490,6 +2560,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             try {
                 current = currentEffectLedger();
                 effectLedgerMirror = current;
+                refreshRetainedEffectReconciliation(current);
             }
             catch {
                 failedGovernedAttemptUnknown = true;
@@ -2509,6 +2580,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             try {
                 const current = currentEffectLedger();
                 effectLedgerMirror = current;
+                refreshRetainedEffectReconciliation(current);
                 return current.boundaries.at(-1)?.sequence ?? 0;
             }
             catch {
@@ -2540,6 +2612,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             try {
                 current = currentEffectLedger();
                 effectLedgerMirror = current;
+                refreshRetainedEffectReconciliation(current);
             }
             catch {
                 failedGovernedAttemptUnknown = true;
@@ -3584,6 +3657,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
             controlPlaneError = undefined;
             emissionFailure = undefined;
             priorState = undefined;
+            retainedEffectSourceSessionId = undefined;
+            retainedEffectReconciliation = undefined;
+            retainedEffectReconciliationRequired = false;
             deferredReconciliationOperationId = undefined;
             deferredSettlementClosure = undefined;
             expectedBoundPendingQuestion = undefined;
@@ -3711,6 +3787,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 return derived;
             }
+            if (retainedEffectReconciliationRequired)
+                return derived;
             const retry = retryActionFor(snapshot, state.stateId);
             if (retry !== undefined)
                 derived.push(retry);
@@ -3808,9 +3886,25 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             const boundSession = bindSession(nextSession);
             const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId, { allowSuspendedCall: true });
+            if (kind === 'adopt' &&
+                effectLedgerCapability !== undefined &&
+                (boundSnapshot.retainedEffectReconciliation?.checkpoint ??
+                    boundSnapshot.effectLedger).boundaries.some(({ physicalReceipt }) => physicalReceipt === undefined)) {
+                throw new TypeError('retained runtime checkpoint contains an incomplete physical boundary');
+            }
+            if (artifactSchema === 2 &&
+                (boundSnapshot.retainedEffectSourceSessionId !== undefined ||
+                    boundSnapshot.retainedEffectReconciliation !== undefined)) {
+                throw new TypeError('schema-2 runtime snapshots must not carry retained effect lineage');
+            }
             const hostEffectLedger = currentEffectLedger();
-            if (!isDeepStrictEqual(boundSnapshot.effectLedger, hostEffectLedger)) {
+            if (kind === 'restore' &&
+                !isDeepStrictEqual(boundSnapshot.effectLedger, hostEffectLedger)) {
                 throw new TypeError('runtime snapshot effectLedger does not equal the current host mirror');
+            }
+            if (kind === 'adopt' &&
+                !isPlaybookEffectLedgerMonotonicExtension(boundSnapshot.effectLedger, hostEffectLedger)) {
+                throw new TypeError('retained runtime snapshot effectLedger is not a monotonic prefix of the current host mirror');
             }
             effectLedgerMirror = hostEffectLedger;
             if (declaredActors.has('captain') &&
@@ -3820,6 +3914,28 @@ export function createXStatePlaybookRuntime(machine, spec) {
             const adoptionContext = kind === 'adopt'
                 ? snapshotAdoptionContext(context, boundSession, boundSnapshot)
                 : undefined;
+            if (adoptionContext !== undefined &&
+                effectLedgerCapability !== undefined &&
+                !RETAINED_EFFECT_SESSION_ID_PATTERN.test(adoptionContext.sourceSessionId)) {
+                throw new TypeError('schema-3 retained adoption sourceSessionId must be a canonical UUID');
+            }
+            const retainedReconciliation = boundSnapshot.retainedEffectReconciliation ??
+                (adoptionContext !== undefined &&
+                    effectLedgerCapability !== undefined &&
+                    !retainedAdoptionCheckpointIsSafe(boundSnapshot.effectLedger, hostEffectLedger)
+                    ? Object.freeze({
+                        sourceSessionId: boundSnapshot.retainedEffectSourceSessionId ??
+                            adoptionContext.sourceSessionId,
+                        checkpoint: boundSnapshot.effectLedger,
+                    })
+                    : undefined);
+            retainedEffectSourceSessionId =
+                boundSnapshot.retainedEffectSourceSessionId ??
+                    boundSnapshot.retainedEffectReconciliation?.sourceSessionId ??
+                    (adoptionContext !== undefined && effectLedgerCapability !== undefined
+                        ? adoptionContext.sourceSessionId
+                        : undefined);
+            bindRetainedEffectReconciliation(retainedReconciliation, hostEffectLedger);
             const sourceSuspendedCall = boundSnapshot.suspendedCall;
             const suspendedCall = adoptionContext !== undefined && sourceSuspendedCall !== undefined
                 ? Object.freeze({
@@ -4073,6 +4189,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     completeEffectBoundary: deferredContinuationCompletionEvidence,
                 });
                 effectLedgerMirror = assertPlaybookEffectLedger(result.effectLedger, `${label} deferred continuation effect ledger`);
+                refreshRetainedEffectReconciliation(effectLedgerMirror);
                 syncDeferredReconciliationOverlay();
                 if (result.status !== 'continued') {
                     expectedBoundPendingQuestion = undefined;
@@ -4145,6 +4262,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 throw new TypeError(`${label} repository refused to park its deferred operation`);
             }
             effectLedgerMirror = assertPlaybookEffectLedger(parked.effectLedger, `${label} parked deferred effect ledger`);
+            refreshRetainedEffectReconciliation(effectLedgerMirror);
             syncDeferredReconciliationOverlay();
             if (deferredReconciliationOperationId !== operationId) {
                 throw new TypeError(`${label} parked deferred operation is not structurally unresolved`);
@@ -4163,6 +4281,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 throw new TypeError(`${label} repository returned a park result for deferred restoration`);
             }
             effectLedgerMirror = assertPlaybookEffectLedger(restored.effectLedger, `${label} restored deferred effect ledger`);
+            refreshRetainedEffectReconciliation(effectLedgerMirror);
             syncDeferredReconciliationOverlay();
             if (restored.status === 'restored') {
                 if (deferredReconciliationOperationId !== undefined) {
@@ -4271,10 +4390,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const machineSnapshot = detachPersistedMachineSnapshot(actor.getPersistedSnapshot());
                 const context = actor.getSnapshot()
                     .context;
-                const pending = deferredReconciliationOperationId === undefined
+                effectLedgerMirror = currentEffectLedger();
+                refreshRetainedEffectReconciliation(effectLedgerMirror);
+                syncDeferredReconciliationOverlay();
+                const pending = deferredReconciliationOperationId === undefined &&
+                    !retainedEffectReconciliationRequired
                     ? pendingBossQuestionForState(state, context ?? {})
                     : undefined;
-                effectLedgerMirror = currentEffectLedger();
                 const failedEffectAttempt = hasGovernedPlayerStates &&
                     state.stateId === 'failed' &&
                     failedAttemptMatchesCurrentLedger(effectLedgerMirror)
@@ -4310,6 +4432,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             },
                         ],
                     effectLedger: effectLedgerMirror,
+                    ...(retainedEffectSourceSessionId === undefined
+                        ? {}
+                        : { retainedEffectSourceSessionId }),
+                    ...(retainedEffectReconciliation === undefined
+                        ? {}
+                        : { retainedEffectReconciliation }),
                     ...(failedEffectAttempt === undefined
                         ? {}
                         : { failedEffectAttempt }),
@@ -4347,16 +4475,19 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     throw new Error('createPlaybookRuntime.describe: another runtime turn is active');
                 }
                 assertDeferredSettlementOpen('describe');
+                refreshRetainedEffectFenceFromHost();
                 const snapshot = actor.getSnapshot();
                 const state = currentState();
                 const context = (snapshot.context ??
                     {});
-                const pending = deferredReconciliationOperationId === undefined
+                const pending = deferredReconciliationOperationId === undefined &&
+                    !retainedEffectReconciliationRequired
                     ? pendingBossQuestionForState(state, context)
                     : undefined;
                 const lastError = normalizeErrorFull(context.lastError);
                 const projectedContext = projectControlContext(context);
-                const stateDescription = deferredReconciliationOperationId === undefined
+                const stateDescription = deferredReconciliationOperationId === undefined &&
+                    !retainedEffectReconciliationRequired
                     ? stateDescriptionFor(state)
                     : undefined;
                 return deepFreeze({
@@ -4419,6 +4550,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // An abort before acceptance ends the call with no receipt
                 // recorded, like every other pre-acceptance failure.
                 signal.throwIfAborted();
+                refreshRetainedEffectFenceFromHost();
                 const turnId = ++turnSequence;
                 const callId = `apply-${++applyCallSequence}`;
                 const position = { turnId, callId };
@@ -4670,6 +4802,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     throw new Error('createPlaybookRuntime.handleBossInput: another runtime turn is active');
                 }
                 assertDeferredSettlementOpen('handleBossInput');
+                refreshRetainedEffectFenceFromHost();
                 const turnId = ++turnSequence;
                 activeTurnId = turnId;
                 beginAutomaticReplayBoundary();
@@ -4718,7 +4851,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // classifier whim to settle a restart as no action. Every other
                             // parked state — a reply wait or an authored mid-workflow
                             // checkpoint — classifies under its own Boss-event contracts.
-                            if (deferredReconciliationOperationId !== undefined) {
+                            if (deferredReconciliationOperationId !== undefined ||
+                                retainedEffectReconciliationRequired) {
                                 event = undefined;
                             }
                             else if (stateId === 'failed' &&
@@ -4915,6 +5049,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 if (activeSignal !== undefined) {
                     throw new Error('createPlaybookRuntime.resumePlaybookCall: another runtime turn is active');
                 }
+                refreshRetainedEffectFenceFromHost();
+                if (retainedEffectReconciliationRequired) {
+                    return runResultFor('no-action');
+                }
                 activeTurnId = playbookCallTurnIds.get(input.callId);
                 bindAutomaticReplayBoundary(playbookCallEffectPrefixes.has(input.callId)
                     ? playbookCallEffectPrefixes.get(input.callId)
@@ -5087,6 +5225,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         controlPlaneError = undefined;
                         emissionFailure = undefined;
                         lastBossEvent = undefined;
+                        retainedEffectSourceSessionId = undefined;
+                        retainedEffectReconciliation = undefined;
+                        retainedEffectReconciliationRequired = false;
                         deferredReconciliationOperationId = undefined;
                         deferredSettlementClosure = undefined;
                         expectedBoundPendingQuestion = undefined;

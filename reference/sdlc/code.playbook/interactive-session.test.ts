@@ -342,14 +342,23 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     let installCalls = 0;
     let installed: unknown;
     let targetDuringInstall: unknown;
+    const reconciliationOrder: string[] = [];
     const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
       sessionStore: fixture.store,
       createSessionHost: async () => {
         const snapshot = shellSnapshot(fixture.execution, 0);
         return {
           host: fakeHost([]),
+          async reconcileRepositoryEffects() {
+            reconciliationOrder.push('reconcile');
+            expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+              state: 'settled',
+              retainedGenerations: { code: retainedGeneration() },
+            });
+          },
           shell: {
             async installRetainedGenerations(value: unknown) {
+              reconciliationOrder.push('install');
               installCalls += 1;
               installed = value;
               targetDuringInstall = await fixture.store.read(logicalSessionId);
@@ -363,6 +372,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
     const runtime = await lifecycle.initializeRuntime(fixture.context);
     expect(installCalls).toBe(1);
+    expect(reconciliationOrder).toEqual(['reconcile', 'install']);
     expect(installed).toEqual({ code: retainedGeneration() });
     expect(targetDuringInstall).toMatchObject({
       state: 'settled',
@@ -1502,6 +1512,7 @@ function retainedGeneration() {
     stateId: 'editing',
   } as const;
   return {
+    effectLedger: emptyPlaybookEffectLedger(),
     frames: [
       {
         playbookId: 'code',

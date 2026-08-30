@@ -1228,6 +1228,8 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         'state',
         'pendingBossQuestions',
         'effectLedger',
+        'retainedEffectSourceSessionId',
+        'retainedEffectReconciliation',
         'failedEffectAttempt',
         'suspendedCall',
     ], 'runtime snapshot');
@@ -1334,6 +1336,32 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         return Object.freeze(question);
     });
     const effectLedger = assertPlaybookEffectLedger(snapshot.effectLedger, 'runtime snapshot effectLedger');
+    const retainedEffectSourceSessionId = own(snapshot, 'retainedEffectSourceSessionId')
+        ? effectUuid(snapshot.retainedEffectSourceSessionId, 'runtime snapshot retainedEffectSourceSessionId')
+        : undefined;
+    let retainedEffectReconciliation;
+    if (own(snapshot, 'retainedEffectReconciliation')) {
+        if (!isRecord(snapshot.retainedEffectReconciliation)) {
+            throw new TypeError('runtime snapshot retainedEffectReconciliation must be an object');
+        }
+        rejectUnknownKeys(snapshot.retainedEffectReconciliation, ['sourceSessionId', 'checkpoint'], 'runtime snapshot retainedEffectReconciliation');
+        const sourceSessionId = effectUuid(snapshot.retainedEffectReconciliation.sourceSessionId, 'runtime snapshot retainedEffectReconciliation.sourceSessionId');
+        const checkpoint = assertPlaybookEffectLedger(snapshot.retainedEffectReconciliation.checkpoint, 'runtime snapshot retainedEffectReconciliation.checkpoint');
+        if (checkpoint.boundaries.some(({ physicalReceipt }) => physicalReceipt === undefined)) {
+            throw new TypeError('runtime snapshot retainedEffectReconciliation.checkpoint contains an incomplete physical boundary');
+        }
+        if (!isPlaybookEffectLedgerMonotonicExtension(checkpoint, effectLedger)) {
+            throw new TypeError('runtime snapshot retainedEffectReconciliation.checkpoint is not a monotonic prefix of effectLedger');
+        }
+        if (retainedEffectSourceSessionId === undefined ||
+            retainedEffectSourceSessionId !== sourceSessionId) {
+            throw new TypeError('runtime snapshot retainedEffectReconciliation.sourceSessionId must equal retainedEffectSourceSessionId');
+        }
+        retainedEffectReconciliation = Object.freeze({
+            sourceSessionId,
+            checkpoint,
+        });
+    }
     if (typeof suspendedCall?.effectBoundaryPrefixSequence === 'number' &&
         suspendedCall.effectBoundaryPrefixSequence >
             (effectLedger.boundaries.at(-1)?.sequence ?? 0)) {
@@ -1375,6 +1403,12 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         state,
         pendingBossQuestions: Object.freeze(pendingBossQuestions),
         effectLedger,
+        ...(retainedEffectSourceSessionId === undefined
+            ? {}
+            : { retainedEffectSourceSessionId }),
+        ...(retainedEffectReconciliation === undefined
+            ? {}
+            : { retainedEffectReconciliation }),
         ...(failedEffectAttempt === undefined
             ? {}
             : { failedEffectAttempt }),

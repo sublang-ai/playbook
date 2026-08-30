@@ -374,6 +374,132 @@ describe('runtime snapshot schema validation', () => {
     }
   });
 
+  it('validates detached retained-effect lineage and reconciliation evidence', () => {
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    };
+    const effectLedger = {
+      schemaVersion: 1 as const,
+      revision: 1,
+      boundaries: [EFFECT_BOUNDARY],
+      logicalOperations: [],
+    };
+    const source = {
+      ...runtimeSnapshot(),
+      effectLedger,
+      retainedEffectSourceSessionId: EFFECT_BOUNDARY.runtimeSessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: EFFECT_BOUNDARY.runtimeSessionId,
+        checkpoint,
+      },
+    };
+
+    const restored = assertPlaybookRuntimeSnapshot(source, 'parent');
+    expect(restored.retainedEffectSourceSessionId).toBe(
+      EFFECT_BOUNDARY.runtimeSessionId,
+    );
+    expect(restored.retainedEffectReconciliation).toEqual({
+      sourceSessionId: EFFECT_BOUNDARY.runtimeSessionId,
+      checkpoint,
+    });
+    expect(Object.isFrozen(restored.retainedEffectReconciliation)).toBe(true);
+    expect(
+      Object.isFrozen(restored.retainedEffectReconciliation?.checkpoint),
+    ).toBe(true);
+
+    (source.retainedEffectReconciliation.checkpoint as { revision: number })
+      .revision = 99;
+    expect(restored.retainedEffectReconciliation?.checkpoint.revision).toBe(0);
+    (source.retainedEffectReconciliation.checkpoint as { revision: number })
+      .revision = 0;
+
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...runtimeSnapshot(),
+          retainedEffectSourceSessionId: EFFECT_BOUNDARY.runtimeSessionId,
+        },
+        'parent',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...runtimeSnapshot(),
+          effectLedger,
+          retainedEffectReconciliation: {
+            sourceSessionId: EFFECT_BOUNDARY.runtimeSessionId,
+            checkpoint,
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('must equal retainedEffectSourceSessionId');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...source,
+          retainedEffectSourceSessionId:
+            '20000000-0000-4000-8000-000000000001',
+        },
+        'parent',
+      ),
+    ).toThrow('must equal retainedEffectSourceSessionId');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...source,
+          retainedEffectReconciliation: {
+            ...source.retainedEffectReconciliation,
+            checkpoint: {
+              ...effectLedger,
+              boundaries: [
+                {
+                  ...EFFECT_BOUNDARY,
+                  boundaryId: '20000000-0000-4000-8000-000000000001',
+                  after: EFFECT_BASELINE,
+                  physicalReceipt: {
+                    classification: 'unchanged',
+                    baseline: EFFECT_BASELINE,
+                    after: EFFECT_BASELINE,
+                  },
+                },
+              ],
+            },
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('is not a monotonic prefix');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...source,
+          retainedEffectReconciliation: {
+            ...source.retainedEffectReconciliation,
+            checkpoint: effectLedger,
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('contains an incomplete physical boundary');
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...source,
+          retainedEffectReconciliation: {
+            ...source.retainedEffectReconciliation,
+            internal: true,
+          },
+        },
+        'parent',
+      ),
+    ).toThrow('internal is not a declared property');
+  });
+
   it('fails closed unless suspended-call restoration is explicit', () => {
     expect(() =>
       assertPlaybookRuntimeSnapshot(

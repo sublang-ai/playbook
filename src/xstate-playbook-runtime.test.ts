@@ -16,6 +16,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 import type {
+  PlaybookEffectBoundary,
+  PlaybookEffectLedger,
   PlaybookAdoptionContext,
   PlaybookPorts,
   PlaybookRunResult,
@@ -424,6 +426,175 @@ const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
     ],
   },
 );
+
+const retainedFenceMachine = createMachine({
+  id: 'retained-fence',
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: meta('ready'),
+      tags: ['playbook.parked'],
+      on: {
+        START: [
+          {
+            guard: ({ event }) =>
+              (event as { task?: string }).task ===
+              'exercise retained lineage',
+            target: 'governed',
+          },
+          { target: 'done' },
+        ],
+      },
+    },
+    governed: {
+      meta: roleMeta('governed', 'coder'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: () => ({
+          stateId: 'governed',
+          role: 'coder',
+          sourceItem: 'TEST-1',
+          prompt: 'Exercise governed repository reconciliation.',
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'done',
+        onError: 'done',
+      },
+    },
+    done: { meta: meta('done'), type: 'final' },
+  },
+});
+
+const createRetainedFenceRuntime = createXStatePlaybookRuntime(
+  retainedFenceMachine,
+  {
+    label: 'retained-fence',
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    entryEvent: { type: 'START', textField: 'task' },
+    roleStates: {
+      governed: { role: 'coder', label: 'governed state' },
+    },
+    outcomeAuthority: {
+      governedPlayerStates: {
+        governed: {
+          complete: {
+            fields: {},
+            repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
+  },
+);
+
+const RETAINED_OBSERVATION = {
+  worktree: '/repo',
+  gitDir: '/repo/.git',
+  head: '1'.repeat(40),
+  projection: {},
+  projectionDigest:
+    'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+};
+
+function retainedBoundary(
+  classification?: 'unchanged' | 'observation-ambiguous',
+): PlaybookEffectBoundary {
+  const receipt =
+    classification === undefined
+      ? {}
+      : classification === 'unchanged'
+        ? {
+          after: RETAINED_OBSERVATION,
+          physicalReceipt: {
+            classification,
+            baseline: RETAINED_OBSERVATION,
+            after: RETAINED_OBSERVATION,
+          },
+        }
+        : {
+            physicalReceipt: {
+              classification,
+              baseline: RETAINED_OBSERVATION,
+            },
+          };
+  return {
+    sequence: 1,
+    boundaryId: '10000000-0000-4000-8000-000000000001',
+    attemptId: '10000000-0000-4000-8000-000000000002',
+    attemptNumber: 1,
+    playbookId: 'factory-test',
+    runtimeSessionId: '20000000-0000-4000-8000-000000000003',
+    turnId: 1,
+    callId: 'player-1',
+    roleId: 'coder',
+    sourceStateId: 'work',
+    sourceOutcomeSchema: { type: 'object' },
+    dispositions: ['unchanged'],
+    canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+    baseline: RETAINED_OBSERVATION,
+    correctionBudget: { limit: 1, spent: false },
+    ...receipt,
+  };
+}
+
+function retainedLedger(
+  boundary?: PlaybookEffectBoundary,
+): PlaybookEffectLedger {
+  return boundary === undefined
+    ? {
+        schemaVersion: 1,
+        revision: 0,
+        boundaries: [],
+        logicalOperations: [],
+      }
+    : {
+        schemaVersion: 1,
+        revision: 1,
+        boundaries: [boundary],
+        logicalOperations: [],
+      };
+}
+
+function retainedRuntime(
+  readLedger: () => PlaybookEffectLedger,
+  repository?: object,
+) {
+  return createRetainedFenceRuntime({
+    configuredOptions: {},
+    hostCapabilities: {
+      effectLedger: {
+        snapshot: readLedger,
+        writeAhead: async () => readLedger(),
+      },
+      repository:
+        repository ??
+        {
+          runExclusive: async () => {
+            throw new Error('repository work is fenced in this test');
+          },
+          runDeferred: async () => {
+            throw new Error('repository work is fenced in this test');
+          },
+        },
+    },
+  } as unknown as Parameters<typeof createRetainedFenceRuntime>[0]);
+}
+
+function retainedSession(
+  suffix: string,
+  ports: PlaybookPorts,
+): PlaybookSession {
+  const sessionId = `20000000-0000-4000-8000-${suffix.padStart(12, '0')}`;
+  return {
+    sessionId,
+    playbookId: 'factory-test',
+    rootSessionId: sessionId,
+    depth: 0,
+    ports,
+  };
+}
 
 describe('generic strategy defaults', () => {
   it('defaultComposePlayerPrompt substitutes <field> placeholders and keeps unmatched ones', () => {
@@ -4537,6 +4708,398 @@ describe('nested playbook actor over the shared factory', () => {
 });
 
 describe('parked-session snapshot over the shared factory', () => {
+  it('fences an unsafe retained ledger across export, restore, and readoption until reconstruction proves unchanged', async () => {
+    const callJudge = vi.fn(async () => '{}');
+    const callPlaybook = vi.fn<PlaybookPorts['callPlaybook']>(async () => ({
+      state: 'suspended',
+      childSessionId: 'unexpected-child',
+    }));
+    const recording = makeRecordingPorts({ callJudge, callPlaybook });
+    const sourceSession = retainedSession('3', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const retained = source.exportSnapshot?.();
+    if (retained === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary());
+    const targetSession = retainedSession('4', recording.ports);
+    const target = retainedRuntime(() => currentLedger);
+    await target.adopt?.(
+      targetSession,
+      retained,
+      adoptionFrom(sourceSession),
+    );
+
+    const fenced = target.exportSnapshot?.();
+    expect(fenced).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: retained.effectLedger,
+      },
+    });
+    expect(target.describe?.()).toMatchObject({
+      pendingQuestions: [],
+      actions: [],
+    });
+    expect(target.describe?.()).not.toHaveProperty('stateDescription');
+    await expect(target.handleBossInput(turn('must stay parked'))).resolves
+      .toMatchObject({ outcome: 'no-action', state: { stateId: 'ready' } });
+    await expect(
+      target.apply?.({
+        actionId: 'jump:done',
+        key: 'fenced-action',
+        signal: sigOf(),
+      }),
+    ).resolves.toMatchObject({ disposition: 'rejected' });
+    await expect(
+      target.resumePlaybookCall({
+        callId: 'foreign-call',
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'child-session',
+        },
+        signal: sigOf(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+    expect(callJudge).not.toHaveBeenCalled();
+    expect(callPlaybook).not.toHaveBeenCalled();
+
+    const fencedAgain = target.exportSnapshot?.();
+    if (fencedAgain === undefined) throw new Error('expected fenced snapshot');
+    await target.dispose();
+    const restored = retainedRuntime(() => currentLedger);
+    await restored.restore?.(targetSession, fencedAgain);
+    expect(restored.describe?.()).not.toHaveProperty('stateDescription');
+    const restoredSnapshot = restored.exportSnapshot?.();
+    if (restoredSnapshot === undefined) {
+      throw new Error('expected restored fenced snapshot');
+    }
+    await restored.dispose();
+
+    const readopted = retainedRuntime(() => currentLedger);
+    const readoptedSession = retainedSession('5', recording.ports);
+    await readopted.adopt?.(
+      readoptedSession,
+      restoredSnapshot,
+      adoptionFrom(targetSession),
+    );
+    expect(readopted.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: retained.effectLedger,
+      },
+    });
+
+    const earlierBoundary = retainedBoundary();
+    const laterBoundary = {
+      ...retainedBoundary('unchanged'),
+      sequence: 2,
+      boundaryId: '10000000-0000-4000-8000-000000000006',
+      callId: 'player-2',
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [earlierBoundary, laterBoundary],
+      logicalOperations: [],
+    };
+    expect(readopted.describe?.()).not.toHaveProperty('stateDescription');
+    expect(readopted.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    currentLedger = {
+      ...currentLedger,
+      revision: 3,
+      boundaries: [
+        {
+          ...earlierBoundary,
+          after: RETAINED_OBSERVATION,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline: RETAINED_OBSERVATION,
+            after: RETAINED_OBSERVATION,
+          },
+        },
+        laterBoundary,
+      ],
+    };
+    expect(readopted.describe?.()).toMatchObject({
+      stateDescription: 'ready state',
+      pendingQuestions: [],
+    });
+    const reconciled = readopted.exportSnapshot?.();
+    expect(reconciled).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    expect(reconciled).not.toHaveProperty('retainedEffectReconciliation');
+    await expect(readopted.handleBossInput(turn('continue'))).resolves
+      .toMatchObject({ outcome: 'terminal', state: { stateId: 'done' } });
+    await readopted.dispose();
+  });
+
+  it('keeps a completed non-unchanged retained suffix fenced', async () => {
+    const recording = makeRecordingPorts();
+    const sourceSession = retainedSession('30', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(
+      retainedBoundary('observation-ambiguous'),
+    );
+    const adopted = retainedRuntime(() => currentLedger);
+    await adopted.adopt?.(
+      retainedSession('31', recording.ports),
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
+
+    expect(adopted.describe?.()).not.toHaveProperty('stateDescription');
+    expect(adopted.exportSnapshot?.()).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: snapshot.effectLedger,
+      },
+    });
+    await adopted.dispose();
+  });
+
+  it('rejects an incomplete retained checkpoint before runtime work', async () => {
+    const callJudge = vi.fn(async () => '{}');
+    const recording = makeRecordingPorts({ callJudge });
+    const sourceSession = retainedSession('32', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary());
+    const incompleteSnapshot = {
+      ...snapshot,
+      effectLedger: currentLedger,
+    };
+    const adopted = retainedRuntime(() => currentLedger);
+    await expect(
+      adopted.adopt?.(
+        retainedSession('33', recording.ports),
+        incompleteSnapshot,
+        adoptionFrom(sourceSession),
+      ),
+    ).rejects.toThrow('checkpoint contains an incomplete physical boundary');
+    expect(callJudge).not.toHaveBeenCalled();
+    expect(adopted.exportSnapshot?.()).toBeUndefined();
+    await adopted.dispose();
+  });
+
+  it('admits an all-unchanged suffix and preserves source-owned deferred reconciliation', async () => {
+    const recording = makeRecordingPorts();
+    const sourceSession = retainedSession('3', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const emptySnapshot = source.exportSnapshot?.();
+    if (emptySnapshot === undefined) throw new Error('expected source snapshot');
+    const emptySnapshotBytes = JSON.stringify(emptySnapshot);
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary('unchanged'));
+    const postAdoptionBoundaryOwners: string[] = [];
+    const safe = retainedRuntime(() => currentLedger, {
+      runExclusive: async (options: {
+        readonly effectBoundary: { readonly runtimeSessionId: string };
+      }) => {
+        postAdoptionBoundaryOwners.push(
+          options.effectBoundary.runtimeSessionId,
+        );
+        throw new Error('captured post-adoption boundary lineage');
+      },
+      runDeferred: async () => {
+        throw new Error('runDeferred is not used while capturing lineage');
+      },
+    });
+    await safe.adopt?.(
+      retainedSession('6', recording.ports),
+      emptySnapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(JSON.stringify(emptySnapshot)).toBe(emptySnapshotBytes);
+    expect(safe.describe?.()).toMatchObject({
+      stateDescription: 'ready state',
+    });
+    expect(safe.exportSnapshot?.()).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    expect(safe.exportSnapshot?.()).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await expect(
+      safe.handleBossInput(turn('exercise retained lineage')),
+    ).rejects.toThrow('captured post-adoption boundary lineage');
+    expect(postAdoptionBoundaryOwners).toEqual([sourceSession.sessionId]);
+    const postAdoptionBoundaryOwner = postAdoptionBoundaryOwners[0]!;
+    await safe.dispose();
+
+    const operationId = '10000000-0000-4000-8000-000000000004';
+    const operationBoundary = {
+      ...retainedBoundary('unchanged'),
+      runtimeSessionId: postAdoptionBoundaryOwner,
+      logicalOperationId: operationId,
+    };
+    const operation = {
+      sequence: 1,
+      operationId,
+      playbookId: 'factory-test',
+      runtimeSessionId: postAdoptionBoundaryOwner,
+      boundaryIds: [operationBoundary.boundaryId],
+      originalBaseline: RETAINED_OBSERVATION,
+      checkpoint: RETAINED_OBSERVATION,
+      pendingQuestion: {
+        questionId: 'question-1',
+        asker: { kind: 'role' as const, roleId: 'coder' },
+        question: 'Which path?',
+        sourceItem: 'TEST-1',
+      },
+      playerContinuation: false,
+      checkpointRestorationEligible: true,
+    };
+    const operationCheckpoint: PlaybookEffectLedger = {
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [operationBoundary],
+      logicalOperations: [operation],
+    };
+    const incompleteSuffix = {
+      ...retainedBoundary(),
+      sequence: 2,
+      boundaryId: '10000000-0000-4000-8000-000000000005',
+      callId: 'player-2',
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 3,
+      boundaries: [operationBoundary, incompleteSuffix],
+      logicalOperations: [operation],
+    };
+    const boundSnapshot = {
+      ...emptySnapshot,
+      effectLedger: operationCheckpoint,
+    };
+    const boundTargetSession = retainedSession('7', recording.ports);
+    const runDeferred = vi.fn(async () => ({
+      status: 'checkpoint-mismatch' as const,
+      effectLedger: currentLedger,
+    }));
+    const bound = retainedRuntime(() => currentLedger, {
+      runExclusive: async () => {
+        throw new Error('runExclusive must remain fenced');
+      },
+      runDeferred,
+    });
+    await bound.adopt?.(
+      boundTargetSession,
+      boundSnapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(bound.describe?.().actions).toEqual([
+      {
+        id: 'reconcile:restore-deferred-wait',
+        label: 'Retry repository checkpoint reconciliation',
+      },
+    ]);
+    expect(bound.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: operationCheckpoint,
+      },
+    });
+    const reconciliationReceipt = await bound.apply?.({
+      actionId: 'reconcile:restore-deferred-wait',
+      key: 'retained-reconciliation',
+      signal: sigOf(),
+    });
+    expect(reconciliationReceipt).toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'no-action' },
+    });
+    expect(runDeferred).toHaveBeenCalledOnce();
+    expect(bound.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    const completedSuffix = {
+      ...incompleteSuffix,
+      after: RETAINED_OBSERVATION,
+      physicalReceipt: {
+        classification: 'unchanged' as const,
+        baseline: RETAINED_OBSERVATION,
+        after: RETAINED_OBSERVATION,
+      },
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [operationBoundary, completedSuffix],
+      logicalOperations: [operation],
+    };
+    expect(bound.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:restore-deferred-wait',
+    ]);
+    const boundExport = bound.exportSnapshot?.();
+    expect(boundExport).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      effectLedger: currentLedger,
+    });
+    expect(boundExport).not.toHaveProperty('retainedEffectReconciliation');
+    if (boundExport === undefined) throw new Error('expected bound snapshot');
+    await bound.dispose();
+
+    const boundRestore = retainedRuntime(() => currentLedger);
+    await boundRestore.restore?.(boundTargetSession, boundExport);
+    expect(boundRestore.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:restore-deferred-wait',
+    ]);
+    const restoredBoundExport = boundRestore.exportSnapshot?.();
+    if (restoredBoundExport === undefined) {
+      throw new Error('expected restored source-bound snapshot');
+    }
+    await boundRestore.dispose();
+
+    const rebound = retainedRuntime(() => currentLedger, {
+      runExclusive: async () => {
+        throw new Error('runExclusive must remain unavailable');
+      },
+      runDeferred,
+    });
+    await rebound.adopt?.(
+      retainedSession('8', recording.ports),
+      restoredBoundExport,
+      adoptionFrom(boundTargetSession),
+    );
+    expect(rebound.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:restore-deferred-wait',
+    ]);
+    expect(rebound.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    await rebound.dispose();
+  });
+
   it('exports a parked snapshot and restores it in a fresh runtime', async () => {
     let playerCalls = 0;
     const { ports } = makeRecordingPorts({

@@ -33,6 +33,7 @@ const UUID_PATTERN =
 const OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const CLAIM_COLLISION_CODES = new Set(['EEXIST', 'ENOTEMPTY']);
 const processClaims = new Map();
+const capabilityLedgerServices = new WeakMap();
 const processClaimEntries = new WeakMap();
 
 export const REPOSITORY_RECEIPT_CLASSIFICATIONS = Object.freeze([
@@ -1394,6 +1395,16 @@ function assertEffectLedgerService(value) {
       mirror = next;
       return next;
     },
+    async refresh(authoritative) {
+      const next = assertPlaybookEffectLedger(
+        authoritative ??
+          (typeof value.refresh === 'function'
+            ? await value.refresh()
+            : mirror),
+      );
+      mirror = next;
+      return next;
+    },
   });
 }
 
@@ -2683,7 +2694,22 @@ export async function createRepositoryEffectCapabilities({
       ];
     },
   );
-  return Object.freeze(Object.fromEntries(capabilities));
+  const result = Object.freeze(Object.fromEntries(capabilities));
+  capabilityLedgerServices.set(result, ledgerService);
+  return result;
+}
+
+export async function refreshRepositoryEffectCapabilities(capabilities) {
+  const ledgerService = capabilityLedgerServices.get(capabilities);
+  if (ledgerService === undefined) {
+    if (Object.keys(capabilities).length === 0) {
+      return emptyPlaybookEffectLedger();
+    }
+    throw new Error(
+      'repository capabilities do not belong to the current host',
+    );
+  }
+  return ledgerService.refresh();
 }
 
 export const _internal = Object.freeze({

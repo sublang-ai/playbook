@@ -287,6 +287,8 @@ function runtimeSnapshot(
     roleResumeTokens?: Readonly<Record<string, string>>;
     pendingBossQuestions?: PlaybookRuntimeSnapshot['pendingBossQuestions'];
     effectLedger?: PlaybookRuntimeSnapshot['effectLedger'];
+    retainedEffectReconciliation?: PlaybookRuntimeSnapshot['retainedEffectReconciliation'];
+    retainedEffectSourceSessionId?: PlaybookRuntimeSnapshot['retainedEffectSourceSessionId'];
     suspendedCall?: NonNullable<PlaybookRuntimeSnapshot['suspendedCall']>;
   } = {},
 ): PlaybookRuntimeSnapshot {
@@ -306,6 +308,18 @@ function runtimeSnapshot(
     state,
     pendingBossQuestions: options.pendingBossQuestions ?? [],
     effectLedger: options.effectLedger ?? emptyPlaybookEffectLedger(),
+    ...(options.retainedEffectReconciliation === undefined
+      ? {}
+      : {
+          retainedEffectReconciliation:
+            options.retainedEffectReconciliation,
+        }),
+    ...(options.retainedEffectSourceSessionId === undefined
+      ? {}
+      : {
+          retainedEffectSourceSessionId:
+            options.retainedEffectSourceSessionId,
+        }),
     ...(options.suspendedCall === undefined
       ? {}
       : { suspendedCall: options.suspendedCall }),
@@ -8264,6 +8278,8 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
   const TARGET_CHILD_ID = '50000000-0000-4000-8000-000000000002';
   const RETRY_ROOT_ID = '60000000-0000-4000-8000-000000000001';
   const RETRY_CHILD_ID = '60000000-0000-4000-8000-000000000002';
+  const ABSENT_DESCENDANT_ID = '70000000-0000-4000-8000-000000000003';
+  const ORIGINAL_SOURCE_ID = '30000000-0000-4000-8000-000000000004';
   const roster: CaptainSession['players'] = [
     { id: 'code-coder', adapter: 'claude' },
     { id: 'code-reviewer', adapter: 'codex' },
@@ -8272,6 +8288,61 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     coder: 'source-coder',
     reviewer: 'source-reviewer',
   } as const;
+  const retainedObservation = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: 'a'.repeat(40),
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const incompleteRetainedLedger = () =>
+    assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '81000000-0000-4000-8000-000000000001',
+          attemptId: '82000000-0000-4000-8000-000000000002',
+          attemptNumber: 1,
+          playbookId: 'code',
+          runtimeSessionId: ABSENT_DESCENDANT_ID,
+          turnId: 1,
+          callId: 'code:coder:1',
+          roleId: 'coder',
+          sourceStateId: 'editing',
+          sourceOutcomeSchema: { committed: {} },
+          dispositions: ['one-descendant-commit'],
+          canonicalWorktree: {
+            worktree: retainedObservation.worktree,
+            gitDir: retainedObservation.gitDir,
+          },
+          baseline: retainedObservation,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+  const completedRetainedLedger = () => {
+    const incomplete = incompleteRetainedLedger();
+    const boundary = incomplete.boundaries[0]!;
+    return assertPlaybookEffectLedger({
+      ...incomplete,
+      revision: 2,
+      boundaries: [
+        {
+          ...boundary,
+          after: retainedObservation,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline: retainedObservation,
+            after: retainedObservation,
+          },
+        },
+      ],
+    });
+  };
 
   const retainedRootGeneration = (
     playbookId: string,
@@ -8279,6 +8350,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     stateId: string,
     rootStateDescription?: string,
   ): PlaybookCaptainRetainedGeneration => ({
+    effectLedger: emptyPlaybookEffectLedger(),
     frames: [
       {
         playbookId,
@@ -8350,10 +8422,676 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       },
     ];
     return {
+      effectLedger: emptyPlaybookEffectLedger(),
       frames,
       rootStateDescription: 'Review of the retained edit is still pending.',
     };
   };
+
+  it('parks a pre-effect retained generation behind its authoritative ledger suffix', async () => {
+    let authoritativeLedger = incompleteRetainedLedger();
+    const code = promoteToSchema3(fakeCodeEntry());
+    const review = fakePlaybookEntry('review', 'review');
+    enableGenerationRetention(code, [], async (runtime, _session, snapshot, context) => {
+      runtime.snapshot = {
+        ...runtime.snapshot!,
+        effectLedger: authoritativeLedger,
+        retainedEffectSourceSessionId: context.sourceSessionId,
+        retainedEffectReconciliation: {
+          sourceSessionId: context.sourceSessionId,
+          checkpoint: snapshot.effectLedger,
+        },
+      };
+    });
+    enableGenerationRetention(review);
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell([code, review], {
+      sessionIds: [TARGET_ROOT_ID, TARGET_CHILD_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    const host = stubSession(roster);
+    await shell.init!(host.session);
+    const generation = retainedNestedGeneration();
+    const generationBytes = JSON.stringify(generation);
+    await shell.installRetainedGenerations({ code: generation });
+
+    const resumed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText: 'The retained edit remains parked for reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('continue safely'), resumed.context);
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(code.runtimes[0]?.adoptions[0]?.snapshot.effectLedger).toEqual(
+      emptyPlaybookEffectLedger(),
+    );
+    expect(resumed.visiblePlayers).toEqual([]);
+    expect(resumed.replies[0]).toContain(
+      'remains parked until its repository-effect evidence is reconciled',
+    );
+    expect(resumed.replies[0]).not.toContain('may duplicate external effects');
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: {
+        mode: 'engaged.parked',
+        effectLedger: authoritativeLedger,
+        retainedEffectReconciliation: {
+          sourceGenerationId: SOURCE_ROOT_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        },
+        frames: [
+          {
+            runtime: {
+              effectLedger: authoritativeLedger,
+              retainedEffectSourceSessionId: SOURCE_ROOT_ID,
+              retainedEffectReconciliation: {
+                sourceSessionId: SOURCE_ROOT_ID,
+                checkpoint: emptyPlaybookEffectLedger(),
+              },
+            },
+          },
+          {
+            runtime: {
+              effectLedger: emptyPlaybookEffectLedger(),
+            },
+          },
+        ],
+      },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            effectLedger: emptyPlaybookEffectLedger(),
+            retainedEffectReconciliation: {
+              sourceGenerationId: SOURCE_ROOT_ID,
+            },
+          },
+        },
+      ],
+    });
+    expect(shell.exportSettlement()?.snapshot).not.toHaveProperty(
+      'pendingBossQuestions',
+    );
+
+    const refused = stubContext([
+      captainJson({ action: 'deliver' }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'No ordinary action was resumed.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('continue the edit', 2), refused.context);
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    expect(review.runtimes[0]?.inputs).toEqual([]);
+    expect(
+      refused.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain('Advertised actions: none.');
+
+    authoritativeLedger = completedRetainedLedger();
+    code.runtimes[0]!.snapshot = {
+      ...code.runtimes[0]!.snapshot!,
+      effectLedger: authoritativeLedger,
+    };
+    const stillFenced = stubContext([
+      captainJson({ action: 'deliver' }),
+      {
+        status: 'ok',
+        turnId: 3,
+        finalText: 'The retained frame still needs reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('try the retained child', 3),
+      stillFenced.context,
+    );
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    expect(review.runtimes[0]?.inputs).toEqual([]);
+    expect(
+      stillFenced.captainCalls.find((call) =>
+        isDecisionPrompt(call.prompt),
+      )?.prompt,
+    ).toContain('Advertised actions: none.');
+
+    await shell.dispose?.();
+  });
+
+  it('preserves original lineage when a safely adopted generation later fences', async () => {
+    const authoritativeLedger = incompleteRetainedLedger();
+    const code = promoteToSchema3(fakeCodeEntry());
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        const sourceSessionId =
+          snapshot.retainedEffectSourceSessionId ?? context.sourceSessionId;
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId,
+            checkpoint: snapshot.effectLedger,
+          },
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'multi-hop-retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+      'A safely readopted edit is retained.',
+    );
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      ORIGINAL_SOURCE_ID;
+    const generationBytes = JSON.stringify(generation);
+
+    await shell.installRetainedGenerations({ code: generation });
+    await shell.handleBossTurn(
+      turn('resume the retained edit'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The retained edit remains fenced.',
+        },
+      ]).context,
+    );
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: {
+        retainedEffectReconciliation: {
+          sourceGenerationId: ORIGINAL_SOURCE_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        },
+        frames: [
+          {
+            runtime: {
+              retainedEffectSourceSessionId: ORIGINAL_SOURCE_ID,
+              retainedEffectReconciliation: {
+                sourceSessionId: ORIGINAL_SOURCE_ID,
+                checkpoint: emptyPlaybookEffectLedger(),
+              },
+            },
+          },
+        ],
+      },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          generation: {
+            retainedEffectReconciliation: {
+              sourceGenerationId: ORIGINAL_SOURCE_ID,
+            },
+          },
+        },
+      ],
+    });
+    await shell.dispose?.();
+  });
+
+  it('rejects an incomplete generation checkpoint before runtime construction', async () => {
+    const authoritativeLedger = incompleteRetainedLedger();
+    const code = promoteToSchema3(fakeCodeEntry());
+    enableGenerationRetention(code);
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'incomplete-retained-checkpoint-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+    );
+    generation.effectLedger = authoritativeLedger;
+    generation.frames[0].runtime.effectLedger = authoritativeLedger;
+
+    await expect(
+      shell.installRetainedGenerations({ code: generation }),
+    ).rejects.toThrow('contains an incomplete physical boundary');
+    expect(code.runtimes).toHaveLength(0);
+    await shell.dispose?.();
+  });
+
+  it('recaptures and reinstalls a fence with only schema-2 retained frames', async () => {
+    const baseLedger = incompleteRetainedLedger();
+    const authoritativeLedger = assertPlaybookEffectLedger({
+      ...baseLedger,
+      boundaries: [
+        {
+          ...baseLedger.boundaries[0]!,
+          playbookId: 'effects',
+        },
+      ],
+    });
+    const makeRegistries = (leaseToken: string) => {
+      const code = fakeCodeEntry();
+      const effects = promoteToSchema3(
+        fakePlaybookEntry('effects', 'effects'),
+      );
+      enableGenerationRetention(code);
+      const capabilityBase = fakeHostCapabilities(effects.entry, leaseToken);
+      const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+        ...capabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => authoritativeLedger),
+          writeAhead: vi.fn(async () => authoritativeLedger),
+        }),
+      });
+      return { code, effects, capabilities };
+    };
+
+    const first = makeRegistries('schema-2-root-effect-lease');
+    const firstShell = makeShell([first.code, first.effects], {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { effects: first.capabilities },
+    });
+    await firstShell.init!(stubSession(roster).session);
+    await firstShell.installRetainedGenerations({
+      code: retainedRootGeneration(
+        'code',
+        SOURCE_ROOT_ID,
+        'retainedCode',
+        'A schema-2 edit is retained.',
+      ),
+    });
+    await firstShell.handleBossTurn(
+      turn('resume the schema-2 edit'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The retained edit remains fenced.',
+        },
+      ]).context,
+    );
+    const retained = firstShell
+      .exportSettlement()
+      ?.retentionUpdates.find((update) => update.kind === 'retain');
+    if (retained?.kind !== 'retain') {
+      throw new Error('expected a recaptured schema-2 generation');
+    }
+    expect(retained.generation).toMatchObject({
+      effectLedger: emptyPlaybookEffectLedger(),
+      retainedEffectReconciliation: {
+        sourceGenerationId: SOURCE_ROOT_ID,
+      },
+    });
+    expect(retained.generation.frames[0]?.runtime).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await firstShell.dispose?.();
+
+    const second = makeRegistries('schema-2-root-effect-lease-next');
+    const secondShell = makeShell([second.code, second.effects], {
+      sessionIds: [RETRY_ROOT_ID],
+      hostCapabilities: { effects: second.capabilities },
+    });
+    await secondShell.init!(stubSession(roster).session);
+    await secondShell.installRetainedGenerations({
+      code: retained.generation,
+    });
+    await secondShell.handleBossTurn(
+      turn('resume the recaptured edit'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The recaptured edit remains fenced.',
+        },
+      ]).context,
+    );
+    expect(second.code.runtimes[0]?.adoptCount).toBe(1);
+    expect(secondShell.exportSettlement()?.snapshot).toMatchObject({
+      retainedEffectReconciliation: {
+        sourceGenerationId: SOURCE_ROOT_ID,
+        checkpoint: emptyPlaybookEffectLedger(),
+      },
+    });
+    await secondShell.dispose?.();
+  });
+
+  it('accepts a marked capture mirror that later host authority extends', async () => {
+    const captureLedger = incompleteRetainedLedger();
+    const authoritativeLedger = completedRetainedLedger();
+    const code = promoteToSchema3(fakeCodeEntry());
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        expect(snapshot.effectLedger).toEqual(captureLedger);
+        expect(snapshot.retainedEffectReconciliation).toEqual({
+          sourceSessionId: SOURCE_ROOT_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        });
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: context.sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId: context.sourceSessionId,
+            checkpoint: snapshot.retainedEffectReconciliation!.checkpoint,
+          },
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'later-retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+      'A fenced edit is retained.',
+    );
+    generation.retainedEffectReconciliation = {
+      sourceGenerationId: SOURCE_ROOT_ID,
+    };
+    generation.frames[0].runtime.effectLedger = captureLedger;
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      SOURCE_ROOT_ID;
+    generation.frames[0].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_ROOT_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+    const generationBytes = JSON.stringify(generation);
+
+    await shell.installRetainedGenerations({ code: generation });
+    const resumed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText: 'The retained edit remains parked for reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('resume the fenced edit'), resumed.context);
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(code.runtimes[0]?.adoptions[0]?.snapshot.effectLedger).toEqual(
+      captureLedger,
+    );
+    expect(resumed.visiblePlayers).toEqual([]);
+    expect(shell.exportSettlement()?.snapshot).toMatchObject({
+      effectLedger: authoritativeLedger,
+      retainedEffectReconciliation: {
+        sourceGenerationId: SOURCE_ROOT_ID,
+        checkpoint: emptyPlaybookEffectLedger(),
+      },
+      frames: [
+        {
+          runtime: {
+            effectLedger: authoritativeLedger,
+            retainedEffectReconciliation: {
+              sourceSessionId: SOURCE_ROOT_ID,
+              checkpoint: emptyPlaybookEffectLedger(),
+            },
+          },
+        },
+      ],
+    });
+    await shell.dispose?.();
+  });
+
+  it('rejects divergent marked schema-3 capture mirrors before construction', async () => {
+    const captureLedger = incompleteRetainedLedger();
+    const authoritativeLedger = completedRetainedLedger();
+    const code = promoteToSchema3(fakeCodeEntry());
+    const review = promoteToSchema3(fakePlaybookEntry('review', 'review'));
+    enableGenerationRetention(code);
+    enableGenerationRetention(review);
+    const codeCapabilities = fakeHostCapabilities(
+      code.entry,
+      'divergent-code-effect-lease',
+    );
+    const reviewCapabilities = fakeHostCapabilities(
+      review.entry,
+      'divergent-review-effect-lease',
+    );
+    const withAuthoritativeLedger = (
+      capabilities: PlaybookHostConstructionCapabilities,
+    ): PlaybookHostConstructionCapabilities =>
+      Object.freeze({
+        ...capabilities,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => authoritativeLedger),
+          writeAhead: vi.fn(async () => authoritativeLedger),
+        }),
+      });
+    const shell = makeShell([code, review], {
+      hostCapabilities: {
+        code: withAuthoritativeLedger(codeCapabilities),
+        review: withAuthoritativeLedger(reviewCapabilities),
+      },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedNestedGeneration();
+    generation.retainedEffectReconciliation = {
+      sourceGenerationId: SOURCE_ROOT_ID,
+    };
+    generation.frames[0].runtime.effectLedger = captureLedger;
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      SOURCE_ROOT_ID;
+    generation.frames[0].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_ROOT_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+    generation.frames[1].runtime.effectLedger = authoritativeLedger;
+    generation.frames[1].runtime.retainedEffectSourceSessionId =
+      SOURCE_CHILD_ID;
+    generation.frames[1].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_CHILD_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+
+    await expect(
+      shell.installRetainedGenerations({ code: generation }),
+    ).rejects.toThrow(/marked generation capture mirror/);
+    expect(code.runtimes).toHaveLength(0);
+    expect(review.runtimes).toHaveLength(0);
+    await shell.dispose?.();
+  });
+
+  it('routes retained reconciliation and opens the root fence only after safe proof', async () => {
+    let authoritativeLedger = incompleteRetainedLedger();
+    let applyCalls = 0;
+    const code = promoteToSchema3(fakeCodeEntry());
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: context.sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId: context.sourceSessionId,
+            checkpoint: snapshot.effectLedger,
+          },
+        };
+        runtime.describe = () => ({
+          state: runtime.snapshot!.state,
+          pendingQuestions: [],
+          actions:
+            runtime.snapshot!.retainedEffectReconciliation === undefined
+              ? []
+              : [
+                  {
+                    id: 'reconcile:restore-deferred-wait',
+                    label: 'Retry repository checkpoint reconciliation',
+                  },
+                ],
+        });
+        runtime.apply = async ({ actionId }) => {
+          expect(actionId).toBe('reconcile:restore-deferred-wait');
+          applyCalls += 1;
+          authoritativeLedger = completedRetainedLedger();
+          const {
+            retainedEffectReconciliation: _reconciled,
+            ...reconciledSnapshot
+          } = runtime.snapshot!;
+          runtime.snapshot = {
+            ...reconciledSnapshot,
+            effectLedger: authoritativeLedger,
+          };
+          return {
+            disposition: 'executed',
+            run: quiescentResult('retainedCode'),
+          };
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'retained-effect-reconciliation-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      code: retainedRootGeneration(
+        'code',
+        SOURCE_ROOT_ID,
+        'retainedCode',
+        'A pre-effect edit is retained.',
+      ),
+    });
+
+    await shell.handleBossTurn(
+      turn('continue safely'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The retained edit remains parked for reconciliation.',
+        },
+      ]).context,
+    );
+
+    const reconciled = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'reconcile:restore-deferred-wait',
+      }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'The retained evidence is reconciled.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('reconcile it', 2), reconciled.context);
+
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain(
+      '- reconcile:restore-deferred-wait: Retry repository checkpoint reconciliation',
+    );
+    expect(applyCalls).toBe(1);
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    const settlement = shell.exportSettlement();
+    expect(settlement?.snapshot).toMatchObject({
+      effectLedger: authoritativeLedger,
+      frames: [
+        {
+          runtime: {
+            effectLedger: authoritativeLedger,
+            retainedEffectSourceSessionId: SOURCE_ROOT_ID,
+          },
+        },
+      ],
+    });
+    expect(settlement?.snapshot).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    expect(settlement?.snapshot.frames[0]?.runtime).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    await shell.handleBossTurn(
+      turn('continue the edit', 3),
+      stubContext([
+        captainJson({ action: 'deliver' }),
+        {
+          status: 'ok',
+          turnId: 3,
+          finalText: 'The retained edit continued.',
+        },
+      ]).context,
+    );
+    expect(code.runtimes[0]?.inputs).toHaveLength(1);
+
+    await shell.dispose?.();
+  });
 
   it('advertises only adoptable retained generations with safe deterministic labels', async () => {
     const hostileDescription =

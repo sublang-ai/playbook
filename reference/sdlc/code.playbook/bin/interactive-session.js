@@ -471,6 +471,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
               }
             : {}),
           retainedGenerations,
+          reconcileRepositoryEffects: created.reconcileRepositoryEffects,
         });
         initialized = true;
         return {

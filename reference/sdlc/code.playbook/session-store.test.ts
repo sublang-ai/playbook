@@ -340,10 +340,53 @@ function retentionExecutionProjection(
   };
 }
 
+function retentionSchema3ExecutionProjection() {
+  const execution: any = structuredClone(retentionExecutionProjection());
+  execution.catalog.code.artifactSchema = 3;
+  return execution;
+}
+
+function startedEffectLedger() {
+  return {
+    schemaVersion: 1,
+    revision: 1,
+    boundaries: [
+      {
+        sequence: 1,
+        ...effectBoundaryStart({ logicalOperationId: undefined }),
+        attemptId: attempt1,
+        attemptNumber: 1,
+      },
+    ],
+    logicalOperations: [],
+  };
+}
+
+function completedUnchangedEffectLedger() {
+  const started = startedEffectLedger();
+  const boundary = started.boundaries[0]!;
+  return {
+    ...started,
+    revision: 2,
+    boundaries: [
+      {
+        ...boundary,
+        after: boundary.baseline,
+        physicalReceipt: {
+          classification: 'unchanged',
+          baseline: boundary.baseline,
+          after: boundary.baseline,
+        },
+      },
+    ],
+  };
+}
+
 function retainedCodeGeneration(childStateId = 'reviewing') {
   const rootState = suspendedState();
   const childState = parkedState(childStateId);
   return {
+    effectLedger: effectLedger(),
     frames: [
       {
         playbookId: 'code',
@@ -390,9 +433,24 @@ function retainedCodeGeneration(childStateId = 'reviewing') {
   };
 }
 
+function fencedRetainedCodeGeneration(authoritativeLedger: any) {
+  const generation: any = structuredClone(retainedCodeGeneration());
+  generation.retainedEffectReconciliation = {
+    sourceGenerationId: frameRuntimeId,
+  };
+  generation.frames[0].runtime.effectLedger = authoritativeLedger;
+  generation.frames[0].runtime.retainedEffectSourceSessionId = frameRuntimeId;
+  generation.frames[0].runtime.retainedEffectReconciliation = {
+    sourceSessionId: frameRuntimeId,
+    checkpoint: generation.effectLedger,
+  };
+  return generation;
+}
+
 function retainedReviewGeneration(stateId = 'reviewing') {
   const state = parkedState(stateId);
   return {
+    effectLedger: effectLedger(),
     frames: [
       {
         playbookId: 'review',
@@ -470,12 +528,14 @@ function retainedSettledRecord({
     code: retainedCodeGeneration(),
     review: retainedReviewGeneration(),
   },
+  ledger = effectLedger(),
   cwd = process.cwd(),
   updatedAt = '2026-08-11T21:00:00.020Z',
 }: {
   id: string;
   execution?: ReturnType<typeof retentionExecutionProjection>;
   retainedGenerations?: Record<string, unknown>;
+  ledger?: Record<string, unknown>;
   cwd?: string;
   updatedAt?: string;
 }) {
@@ -486,7 +546,11 @@ function retainedSettledRecord({
     cwd,
     structuralProjection: projectCaptainSessionStructure(execution),
     lastAppliedExecutionProjection: execution,
-    snapshot: shellSnapshot(execution, 1, `source-${id}`),
+    snapshot: {
+      ...shellSnapshot(execution, 1, `source-${id}`),
+      effectLedger: ledger,
+    },
+    effectLedger: ledger,
     retainedGenerations,
   });
 }
@@ -642,16 +706,19 @@ function legacyShellSnapshot(value: Record<string, any>) {
 
 function legacyRetainedGenerations(value: Record<string, any>) {
   return Object.fromEntries(
-    Object.entries(value).map(([rootId, generation]: [string, any]) => [
-      rootId,
-      {
-        ...generation,
-        frames: generation.frames.map((frame: Record<string, any>) => ({
-          ...frame,
-          runtime: legacyRuntimeSnapshot(frame.runtime),
-        })),
-      },
-    ]),
+    Object.entries(value).map(([rootId, generation]: [string, any]) => {
+      const { effectLedger: _effectLedger, ...legacyGeneration } = generation;
+      return [
+        rootId,
+        {
+          ...legacyGeneration,
+          frames: generation.frames.map((frame: Record<string, any>) => ({
+            ...frame,
+            runtime: legacyRuntimeSnapshot(frame.runtime),
+          })),
+        },
+      ];
+    }),
   );
 }
 
@@ -926,7 +993,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lease.writeEffectLedger(authority, [
         { kind: 'start-boundaries', boundaries: [effectBoundaryStart()] },
       ]),
-    ).rejects.toThrow(/requires an uncertain turn/);
+    ).rejects.toThrow(/requires an uncertain turn or a settled chat recovery/);
     const uncertain = await lease.beginTurn({
       input: 'perform one repository effect',
       attemptId: attempt1,
@@ -1243,6 +1310,119 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         }),
       ),
     ).toThrow(/effect ledger differs from its structural schema authority/);
+    await lease.release();
+  });
+
+  it('completes retained-launch recovery in a settled chat record', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = retentionSchema3ExecutionProjection();
+    const started = startedEffectLedger();
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: { ...shellSnapshot(execution), effectLedger: started },
+        effectLedger: started,
+        retainedGenerations: { code: retainedCodeGeneration() },
+      }),
+    );
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const expected = started.boundaries[0];
+    const after = effectObservation();
+    const next = {
+      ...expected,
+      after,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: expected.baseline,
+        after,
+      },
+    };
+
+    const before = await lease.read();
+    await expect(
+      lease.writeEffectLedger(effectAuthority(execution), [
+        { kind: 'replace-logical-operations', replacements: [{}] },
+      ]),
+    ).rejects.toThrow(/only complete existing physical boundaries/);
+    await expect(
+      lease.writeEffectLedger(effectAuthority(execution), [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            { expected, next: { ...next, finalText: 'not recovery evidence' } },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(/cannot change boundary semantics or identity/);
+    expect(await lease.read()).toEqual(before);
+
+    const completed = await lease.writeEffectLedger(
+      effectAuthority(execution),
+      [
+        {
+          kind: 'replace-boundaries',
+          replacements: [{ expected, next }],
+        },
+      ],
+    );
+
+    expect(completed.boundaries[0]).toEqual(next);
+    expect(await lease.read()).toMatchObject({
+      state: 'settled',
+      effectLedger: completed,
+      snapshot: { mode: 'chat', effectLedger: completed },
+    });
+    await expect(
+      lease.writeEffectLedger(effectAuthority(execution), [
+        {
+          kind: 'replace-boundaries',
+          replacements: [{ expected: next, next }],
+        },
+      ]),
+    ).rejects.toThrow(/requires one new physical receipt/);
+    await lease.release();
+  });
+
+  it('rejects settled effect recovery without a retained generation', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = schema3ExecutionProjection();
+    const started = startedEffectLedger();
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: { ...shellSnapshot(execution), effectLedger: started },
+        effectLedger: started,
+      }),
+    );
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const expected = started.boundaries[0];
+    const after = effectObservation();
+
+    await expect(
+      lease.writeEffectLedger(effectAuthority(execution), [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            {
+              expected,
+              next: {
+                ...expected,
+                after,
+                physicalReceipt: {
+                  classification: 'unchanged',
+                  baseline: expected.baseline,
+                  after,
+                },
+              },
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(/requires an uncertain turn or a settled chat recovery/);
     await lease.release();
   });
 
@@ -2536,6 +2716,119 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect((await reopened.latest()).sessionId).toBe(targetId);
   });
 
+  it('moves the authoritative ledger with retained checkpoints without rewriting the generation', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(70);
+    const targetId = adoptionSessionId(71);
+    const execution = retentionSchema3ExecutionProjection();
+    const authoritativeLedger = startedEffectLedger();
+    const generation = retainedCodeGeneration();
+    const generationBytes = JSON.stringify(generation);
+    const sourceSnapshot = {
+      ...shellSnapshot(execution, 1, 'source-with-ledger'),
+      effectLedger: authoritativeLedger,
+    };
+    const source = settledRecord({
+      sessionId: sourceId,
+      createdAt: '2026-08-11T21:00:00.000Z',
+      updatedAt: '2026-08-11T21:00:00.040Z',
+      structuralProjection: projectCaptainSessionStructure(execution),
+      lastAppliedExecutionProjection: execution,
+      snapshot: sourceSnapshot,
+      effectLedger: authoritativeLedger,
+      retainedGenerations: { code: generation },
+    });
+    const target = freshAdoptionTargetRecord({
+      id: targetId,
+      execution,
+    });
+    await writeRecordFixture(sessionsDir, source);
+
+    const store = sequencedStore(sessionsDir, 70);
+    const lease = await store.acquire(targetId);
+    const targetAfter = await lease.initializeSettledWithPredecessor({
+      cwd: target.cwd,
+      structuralProjection: target.structuralProjection,
+      executionProjection: target.lastAppliedExecutionProjection,
+      snapshot: target.snapshot,
+    });
+    const sourceAfter = await store.read(sourceId);
+
+    expect(sourceAfter).toMatchObject({
+      sessionId: sourceId,
+      effectLedger: authoritativeLedger,
+      snapshot: { effectLedger: authoritativeLedger },
+      retainedGenerations: {},
+    });
+    expect(targetAfter).toMatchObject({
+      sessionId: targetId,
+      effectLedger: authoritativeLedger,
+      snapshot: { effectLedger: authoritativeLedger },
+      retainedGenerations: { code: generation },
+    });
+    expect(JSON.stringify(targetAfter.retainedGenerations.code)).toBe(
+      generationBytes,
+    );
+    expect(targetAfter.retainedGenerations.code.effectLedger).toEqual(
+      effectLedger(),
+    );
+    expect(
+      targetAfter.retainedGenerations.code.frames[0].runtime.effectLedger,
+    ).toEqual(effectLedger());
+    expect(validateCaptainSessionRecord(targetAfter)).toEqual(targetAfter);
+    await lease.release();
+  });
+
+  it('preserves a marked generation capture mirror while record authority advances', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = retentionSchema3ExecutionProjection();
+    const captureLedger = startedEffectLedger();
+    const generation = fencedRetainedCodeGeneration(captureLedger);
+    const generationBytes = JSON.stringify(generation);
+    const record = retainedSettledRecord({
+      id: sessionId,
+      execution,
+      retainedGenerations: { code: generation },
+      ledger: captureLedger,
+    });
+    await writeRecordFixture(sessionsDir, record);
+
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+    await lease.beginTurn({
+      input: 'advance authority without selecting the retained generation',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const boundary = captureLedger.boundaries[0]!;
+    const completedBoundary = {
+      ...boundary,
+      after: boundary.baseline,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: boundary.baseline,
+        after: boundary.baseline,
+      },
+    };
+    const advanced = await lease.writeEffectLedger(effectAuthority(execution), [
+      {
+        kind: 'replace-boundaries',
+        replacements: [{ expected: boundary, next: completedBoundary }],
+      },
+    ]);
+
+    expect(advanced).toEqual(completedUnchangedEffectLedger());
+    const persisted = await lease.read();
+    expect(persisted.effectLedger).toEqual(advanced);
+    expect(JSON.stringify(persisted.retainedGenerations.code)).toBe(
+      generationBytes,
+    );
+    expect(
+      persisted.retainedGenerations.code.frames[0].runtime.effectLedger,
+    ).toEqual(captureLedger);
+    await lease.release();
+  });
+
   it('transfers descendant option drift without changing the generation', async () => {
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(13);
@@ -2586,6 +2879,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     'required roles',
     'concurrent roles',
     'descendant catalog',
+    'ledger authority',
   ] as const)(
     'declines an incompatible adoption %s envelope into an empty target',
     async (mismatch) => {
@@ -2595,6 +2889,8 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       let sourceExecution: any = retentionExecutionProjection();
       let targetExecution: any = structuredClone(sourceExecution);
       let generation: any = retainedCodeGeneration();
+      let rootPlaybookId = 'code';
+      let ledger: any = effectLedger();
       if (mismatch === 'registry module') {
         targetExecution.catalog.code.from = '@example/code/registry';
       } else if (mismatch === 'manifest command') {
@@ -2611,12 +2907,21 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         );
         generation = retainedCodeGenerationWithReviewer();
       } else {
-        delete targetExecution.catalog.review;
+        if (mismatch === 'descendant catalog') {
+          delete targetExecution.catalog.review;
+        } else {
+          sourceExecution = retentionSchema3ExecutionProjection();
+          targetExecution = retentionExecutionProjection();
+          generation = retainedReviewGeneration();
+          rootPlaybookId = 'review';
+          ledger = startedEffectLedger();
+        }
       }
       const source = retainedSettledRecord({
         id: sourceId,
         execution: sourceExecution,
-        retainedGenerations: { code: generation },
+        retainedGenerations: { [rootPlaybookId]: generation },
+        ledger,
       });
       const target = freshAdoptionTargetRecord({
         id: targetId,
@@ -2846,6 +3151,16 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       retainedGenerations: { code: retainedCodeGeneration() },
     });
     const mutations: Array<[string, (value: any) => void]> = [
+      ['missing generation ledger checkpoint', (value) => {
+        delete value.retainedGenerations.code.effectLedger;
+      }],
+      ['generation ledger ahead of record authority', (value) => {
+        value.retainedGenerations.code.effectLedger.revision = 1;
+      }],
+      ['schema-2 frame with a nonempty generation ledger mirror', (value) => {
+        value.retainedGenerations.code.frames[0].runtime.effectLedger.revision =
+          1;
+      }],
       ['unknown root', (value) => {
         value.retainedGenerations.unknown = value.retainedGenerations.code;
         delete value.retainedGenerations.code;
@@ -2891,6 +3206,186 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     ];
     for (const [label, mutate] of mutations) {
       const candidate = structuredClone(base);
+      mutate(candidate);
+      expect(
+        () => validateCaptainSessionRecord(candidate),
+        label,
+      ).toThrow();
+    }
+
+    const schema3Execution = retentionSchema3ExecutionProjection();
+    const authoritativeLedger = startedEffectLedger();
+    const schema3Base = settledRecord({
+      structuralProjection: projectCaptainSessionStructure(schema3Execution),
+      lastAppliedExecutionProjection: schema3Execution,
+      snapshot: {
+        ...shellSnapshot(schema3Execution, 1),
+        effectLedger: authoritativeLedger,
+      },
+      effectLedger: authoritativeLedger,
+      retainedGenerations: { code: retainedCodeGeneration() },
+    });
+    expect(validateCaptainSessionRecord(schema3Base)).toMatchObject({
+      retainedGenerations: {
+        code: { effectLedger: effectLedger() },
+      },
+    });
+    const divergentSchema3Mirror = structuredClone(schema3Base);
+    divergentSchema3Mirror.retainedGenerations.code.frames[0].runtime.effectLedger =
+      authoritativeLedger;
+    expect(() =>
+      validateCaptainSessionRecord(divergentSchema3Mirror),
+    ).toThrow(/retained-generation checkpoint/);
+    const incompleteCheckpoint = structuredClone(schema3Base);
+    incompleteCheckpoint.retainedGenerations.code.effectLedger =
+      authoritativeLedger;
+    incompleteCheckpoint.retainedGenerations.code.frames[0].runtime.effectLedger =
+      authoritativeLedger;
+    expect(() =>
+      validateCaptainSessionRecord(incompleteCheckpoint),
+    ).toThrow(/contains an incomplete physical boundary/);
+
+    const fencedBase = settledRecord({
+      structuralProjection: projectCaptainSessionStructure(schema3Execution),
+      lastAppliedExecutionProjection: schema3Execution,
+      snapshot: {
+        ...shellSnapshot(schema3Execution, 1),
+        effectLedger: authoritativeLedger,
+      },
+      effectLedger: authoritativeLedger,
+      retainedGenerations: {
+        code: fencedRetainedCodeGeneration(authoritativeLedger),
+      },
+    });
+    const validatedFenced = validateCaptainSessionRecord(fencedBase);
+    expect(validatedFenced.retainedGenerations.code).toMatchObject({
+      effectLedger: effectLedger(),
+      retainedEffectReconciliation: {
+        sourceGenerationId: frameRuntimeId,
+      },
+    });
+    expect(
+      validatedFenced.retainedGenerations.code.frames[0].runtime,
+    ).toMatchObject({
+      effectLedger: authoritativeLedger,
+      retainedEffectSourceSessionId: frameRuntimeId,
+      retainedEffectReconciliation: {
+        sourceSessionId: frameRuntimeId,
+        checkpoint: effectLedger(),
+      },
+    });
+    const laterAuthoritativeLedger = completedUnchangedEffectLedger();
+    const advancedFencedBase = structuredClone(fencedBase);
+    advancedFencedBase.effectLedger = laterAuthoritativeLedger;
+    advancedFencedBase.snapshot.effectLedger = laterAuthoritativeLedger;
+    const advancedFencedBytes = JSON.stringify(advancedFencedBase);
+    const validatedAdvancedFence = validateCaptainSessionRecord(
+      advancedFencedBase,
+    );
+    expect(JSON.stringify(advancedFencedBase)).toBe(advancedFencedBytes);
+    expect(validatedAdvancedFence.effectLedger).toEqual(
+      laterAuthoritativeLedger,
+    );
+    expect(
+      validatedAdvancedFence.retainedGenerations.code.frames[0].runtime
+        .effectLedger,
+    ).toEqual(authoritativeLedger);
+
+    const allSchema3Execution: any = structuredClone(schema3Execution);
+    allSchema3Execution.catalog.review.artifactSchema = 3;
+    const commonMirrorGeneration: any =
+      fencedRetainedCodeGeneration(authoritativeLedger);
+    commonMirrorGeneration.frames[1].runtime.effectLedger =
+      authoritativeLedger;
+    commonMirrorGeneration.frames[1].runtime.retainedEffectSourceSessionId =
+      childFrameRuntimeId;
+    commonMirrorGeneration.frames[1].runtime.retainedEffectReconciliation = {
+      sourceSessionId: childFrameRuntimeId,
+      checkpoint: effectLedger(),
+    };
+    const commonMirrorBase = settledRecord({
+      structuralProjection: projectCaptainSessionStructure(
+        allSchema3Execution,
+      ),
+      lastAppliedExecutionProjection: allSchema3Execution,
+      snapshot: {
+        ...shellSnapshot(allSchema3Execution, 1),
+        effectLedger: laterAuthoritativeLedger,
+      },
+      effectLedger: laterAuthoritativeLedger,
+      retainedGenerations: { code: commonMirrorGeneration },
+    });
+    expect(validateCaptainSessionRecord(commonMirrorBase)).toMatchObject({
+      retainedGenerations: {
+        code: {
+          frames: [
+            { runtime: { effectLedger: authoritativeLedger } },
+            { runtime: { effectLedger: authoritativeLedger } },
+          ],
+        },
+      },
+    });
+    const divergentMarkedMirrors = structuredClone(commonMirrorBase);
+    divergentMarkedMirrors.retainedGenerations.code.frames[1].runtime.effectLedger =
+      laterAuthoritativeLedger;
+    expect(() =>
+      validateCaptainSessionRecord(divergentMarkedMirrors),
+    ).toThrow(/marked generation capture mirror/);
+
+    const schema2OnlyGeneration: any = retainedReviewGeneration();
+    schema2OnlyGeneration.retainedEffectReconciliation = {
+      sourceGenerationId: reviewRootRuntimeId,
+    };
+    const schema2OnlyFence = settledRecord({
+      structuralProjection: projectCaptainSessionStructure(schema3Execution),
+      lastAppliedExecutionProjection: schema3Execution,
+      snapshot: {
+        ...shellSnapshot(schema3Execution, 1),
+        effectLedger: authoritativeLedger,
+      },
+      effectLedger: authoritativeLedger,
+      retainedGenerations: { review: schema2OnlyGeneration },
+    });
+    expect(validateCaptainSessionRecord(schema2OnlyFence)).toMatchObject({
+      retainedGenerations: {
+        review: {
+          retainedEffectReconciliation: {
+            sourceGenerationId: reviewRootRuntimeId,
+          },
+          frames: [{ runtime: { effectLedger: effectLedger() } }],
+        },
+      },
+    });
+
+    const fencedMutations: Array<[string, (value: any) => void]> = [
+      ['mismatched source generation', (value) => {
+        value.retainedGenerations.code.retainedEffectReconciliation
+          .sourceGenerationId = childFrameRuntimeId;
+      }],
+      ['mismatched runtime checkpoint', (value) => {
+        value.retainedGenerations.code.frames[0].runtime
+          .retainedEffectReconciliation.checkpoint = authoritativeLedger;
+      }],
+      ['missing schema-3 frame marker', (value) => {
+        delete value.retainedGenerations.code.frames[0].runtime
+          .retainedEffectReconciliation;
+      }],
+      ['stale marked schema-3 mirror', (value) => {
+        value.retainedGenerations.code.frames[0].runtime.effectLedger =
+          effectLedger();
+      }],
+      ['schema-2 frame marker', (value) => {
+        value.retainedGenerations.code.frames[1].runtime
+          .retainedEffectSourceSessionId = childFrameRuntimeId;
+        value.retainedGenerations.code.frames[1].runtime
+          .retainedEffectReconciliation = {
+          sourceSessionId: childFrameRuntimeId,
+          checkpoint: effectLedger(),
+        };
+      }],
+    ];
+    for (const [label, mutate] of fencedMutations) {
+      const candidate = structuredClone(fencedBase);
       mutate(candidate);
       expect(
         () => validateCaptainSessionRecord(candidate),

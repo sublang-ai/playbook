@@ -398,6 +398,16 @@ export interface PlaybookRuntimeSnapshot {
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
   effectLedger: PlaybookEffectLedger;
+  /** Original runtime identity retained across schema-3 adoption lineage. */
+  retainedEffectSourceSessionId?: string;
+  /**
+   * Unsafe retained-adoption checkpoint. The marker remains durable until
+   * authoritative reconciliation proves its complete suffix replay-safe.
+   */
+  retainedEffectReconciliation?: {
+    readonly sourceSessionId: string;
+    readonly checkpoint: PlaybookEffectLedger;
+  };
   failedEffectAttempt?: {
     readonly boundaryPrefix: number;
     readonly attemptId: string | null;

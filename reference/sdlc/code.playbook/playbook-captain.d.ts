@@ -156,6 +156,7 @@ type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
     readonly mode: 'engaged.parked';
     /** Root-to-leaf engagement order. */
     readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+    readonly retainedEffectReconciliation?: PlaybookCaptainRetainedEffectReconciliation;
     readonly pendingBossQuestions?: JsonValue;
     readonly lastError?: {
         readonly name: string;
@@ -164,9 +165,18 @@ type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
 });
 export type PlaybookCaptainShellSnapshot = DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 export interface PlaybookCaptainRetainedGeneration {
+    /** Repository-effect checkpoint reflected by the retained machine state. */
+    readonly effectLedger: DeepReadonly<PlaybookEffectLedger>;
     readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+    readonly retainedEffectReconciliation?: {
+        readonly sourceGenerationId: string;
+    };
     /** Boss-facing description published for the retained root state, if any. */
     readonly rootStateDescription?: string;
+}
+interface PlaybookCaptainRetainedEffectReconciliation {
+    readonly sourceGenerationId: string;
+    readonly checkpoint: DeepReadonly<PlaybookEffectLedger>;
 }
 export type PlaybookCaptainRetentionUpdate = {
     readonly kind: 'retain';

@@ -36,6 +36,7 @@ import {
 import { prepareConfiguredRegistries } from './provision.js';
 import {
   createRepositoryEffectCapabilities,
+  refreshRepositoryEffectCapabilities,
   recoverIncompleteRepositoryEffects,
 } from './repository-effects.js';
 import {
@@ -485,7 +486,11 @@ export async function runPlaybookRun(options = {}) {
         ? { reconcileUncertainTurnReplay: true }
         : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-      beforeBossTurn: async (baselineSnapshot, shell) => {
+      beforeBossTurn: async (
+        baselineSnapshot,
+        shell,
+        reconcileRepositoryEffects,
+      ) => {
         throwIfAborted(options.signal);
         const installForLaunch =
           options.installRetainedGenerationsForLaunch ??
@@ -508,6 +513,7 @@ export async function runPlaybookRun(options = {}) {
               }
             : {}),
           retainedGenerations: priorRecord?.retainedGenerations ?? {},
+          reconcileRepositoryEffects,
         });
         throwIfAborted(options.signal);
         return args.retryUncertain
@@ -718,7 +724,11 @@ export async function driveHeadlessCaptainTurn({
           : {}),
       });
       ({ shell, host, snapshot: baselineSnapshot } = created);
-      uncertainRecord = await beforeBossTurn?.(baselineSnapshot, shell);
+      uncertainRecord = await beforeBossTurn?.(
+        baselineSnapshot,
+        shell,
+        created.reconcileRepositoryEffects,
+      );
     } catch (error) {
       throw new HeadlessHostSetupError(error);
     }
@@ -799,6 +809,12 @@ async function createStoreEffectLedgerService(lease) {
   mirror = assertPlaybookEffectLedger(mirror);
   return Object.freeze({
     snapshot: () => mirror,
+    async refresh() {
+      mirror = assertPlaybookEffectLedger(
+        (await lease.read())?.effectLedger ?? emptyPlaybookEffectLedger(),
+      );
+      return mirror;
+    },
     async writeAhead(authority, commands) {
       mirror = assertPlaybookEffectLedger(
         await lease.writeEffectLedger(authority, commands),
@@ -925,11 +941,16 @@ export async function createCaptainSessionHost({
     createWriteAhead:
       createEffectLedgerWriteAhead ?? createStoreEffectLedgerService,
   });
-  try {
+  const reconcileRepositoryEffects = async () => {
+    await refreshRepositoryEffectCapabilities(hostCapabilities);
     await recoverIncompleteRepositoryEffects({
       catalog: config.catalog,
       capabilities: hostCapabilities,
     });
+    return effectLedgerSnapshotFromCapabilities(hostCapabilities);
+  };
+  try {
+    await reconcileRepositoryEffects();
   } catch (error) {
     if (!reconcileUncertainTurnReplay) throw error;
     throw new Error(
@@ -940,6 +961,21 @@ export async function createCaptainSessionHost({
   const currentEffectLedger = () =>
     effectLedgerSnapshotFromCapabilities(hostCapabilities);
   let sourceSnapshot = restoreSnapshot;
+  if (
+    sourceSnapshot !== undefined &&
+    !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
+  ) {
+    const recovered =
+      typeof sessionLease.read === 'function'
+        ? await sessionLease.read()
+        : undefined;
+    if (
+      recovered?.state === 'settled' &&
+      isDeepStrictEqual(recovered.snapshot.effectLedger, currentEffectLedger())
+    ) {
+      sourceSnapshot = recovered.snapshot;
+    }
+  }
   if (
     sourceSnapshot !== undefined &&
     reconcileUncertainTurnReplay
@@ -995,7 +1031,7 @@ export async function createCaptainSessionHost({
     if (sessionId !== undefined) {
       assertLogicalSessionIdDistinct({ sessionId, snapshot });
     }
-    return { shell, host, snapshot };
+    return { shell, host, snapshot, reconcileRepositoryEffects };
   } catch (error) {
     let cleanupError;
     try {
@@ -1023,14 +1059,18 @@ export async function installRetainedGenerationsForLaunch({
   freshBoundary,
   onFreshRecord,
   retainedGenerations,
+  reconcileRepositoryEffects,
 }) {
   let authoritative = retainedGenerations;
   if (freshBoundary !== undefined) {
     const record = await lease.initializeSettledWithPredecessor(
       freshBoundary,
     );
-    onFreshRecord?.(record);
     authoritative = record.retainedGenerations ?? {};
+  }
+  await reconcileRepositoryEffects?.();
+  if (freshBoundary !== undefined) {
+    onFreshRecord?.(await lease.read());
   }
   await shell.installRetainedGenerations(authoritative);
   await lease.assertOwner();

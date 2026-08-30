@@ -33,6 +33,7 @@ import {
   createRepositoryEffectCoordinator,
   observeGitRepository,
   recoverIncompleteRepositoryEffects,
+  refreshRepositoryEffectCapabilities,
   resolveCanonicalGitWorktree,
 } from './bin/repository-effects.js';
 import { createCaptainSessionHost } from './bin/run.js';
@@ -1155,6 +1156,76 @@ describe('schema-3 repository host capabilities', () => {
 
     expect(capabilities).toEqual({});
     expect(Object.isFrozen(capabilities)).toBe(true);
+  });
+
+  it('refreshes the shared capability mirror from its durable service', async () => {
+    const repo = await initRepository('playbook-effects-refresh-');
+    const baseline = await observeGitRepository(repo);
+    const transferred = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          attemptId: '60000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          playbookId: 'code',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          canonicalWorktree: {
+            worktree: baseline.worktree,
+            gitDir: baseline.gitDir,
+          },
+          baseline,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+    let rawMirror = emptyPlaybookEffectLedger();
+    let durableMirror = rawMirror;
+    const refresh = vi.fn(async () => {
+      rawMirror = durableMirror;
+      return rawMirror;
+    });
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog: {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      },
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      sessionLease: {
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => ({
+        snapshot: () => rawMirror,
+        writeAhead: async () => rawMirror,
+        refresh,
+      }),
+    });
+
+    expect(capabilities.code.effectLedger.snapshot()).toEqual(
+      emptyPlaybookEffectLedger(),
+    );
+    durableMirror = transferred;
+    await expect(
+      refreshRepositoryEffectCapabilities(capabilities),
+    ).resolves.toEqual(transferred);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(capabilities.code.effectLedger.snapshot()).toEqual(transferred);
   });
 
   it.runIf(process.platform !== 'win32')(

@@ -945,6 +945,7 @@ function createLease({
               source.structuralProjection,
               target.structuralProjection,
               retainedGenerations,
+              source.effectLedger,
             );
           } catch {
             return {
@@ -972,6 +973,7 @@ function createLease({
             target,
             retainedGenerations,
             nextTimestamp(now(), targetTimestampFloor),
+            source.effectLedger,
           );
 
           await sourceLease.assertOwner();
@@ -1220,9 +1222,13 @@ function createLease({
       if (prior === undefined) {
         throw new Error('Captain session does not exist for effect-ledger write-ahead');
       }
-      if (prior.state !== 'uncertain') {
+      const settledRecovery =
+        prior.state === 'settled' &&
+        prior.snapshot.mode === 'chat' &&
+        Object.keys(prior.retainedGenerations ?? {}).length > 0;
+      if (prior.state !== 'uncertain' && !settledRecovery) {
         throw new Error(
-          'Captain session effect-ledger write-ahead requires an uncertain turn',
+          'Captain session effect-ledger write-ahead requires an uncertain turn or a settled chat recovery boundary',
         );
       }
       const authority = validateEffectLedgerAuthority(
@@ -1234,6 +1240,7 @@ function createLease({
         commandsValue,
         'effect-ledger write commands',
       );
+      if (settledRecovery) assertSettledEffectRecoveryCommands(commands);
       if (
         indeterminateEffectLedgerWrite !== undefined &&
         isDeepStrictEqual(commands, indeterminateEffectLedgerWrite.commands) &&
@@ -1262,6 +1269,9 @@ function createLease({
       const record = validateCaptainSessionRecord({
         ...prior,
         effectLedger: nextLedger,
+        ...(settledRecovery
+          ? { snapshot: { ...prior.snapshot, effectLedger: nextLedger } }
+          : {}),
       });
       indeterminateEffectLedgerWrite = {
         commands,
@@ -1532,7 +1542,11 @@ function validateCanonicalCaptainSessionRecord(record) {
     );
   }
   if (Object.hasOwn(record, 'retainedGenerations')) {
-    validateRetainedGenerations(record.retainedGenerations, structural);
+    validateRetainedGenerations(
+      record.retainedGenerations,
+      structural,
+      effectLedger,
+    );
   }
   if (
     snapshot.captain.sessionId === record.sessionId ||
@@ -1775,11 +1789,25 @@ function migratePreEffectRetainedGenerations(value) {
         'legacy Captain session retainedGenerations' +
         `[${JSON.stringify(rootPlaybookId)}]`;
       const generation = requireRecord(rawGeneration, path);
-      if (!Array.isArray(generation.frames)) return [rootPlaybookId, generation];
+      if (
+        Object.hasOwn(generation, 'effectLedger') ||
+        Object.hasOwn(generation, 'retainedEffectReconciliation')
+      ) {
+        throw new Error(
+          `${path} must not contain pre-migration effect evidence`,
+        );
+      }
+      if (!Array.isArray(generation.frames)) {
+        return [
+          rootPlaybookId,
+          { ...generation, effectLedger: emptyPlaybookEffectLedger() },
+        ];
+      }
       return [
         rootPlaybookId,
         {
           ...generation,
+          effectLedger: emptyPlaybookEffectLedger(),
           frames: generation.frames.map((rawFrame, index) => {
             const frame = requireRecord(rawFrame, `${path}.frames[${index}]`);
             return {
@@ -1976,6 +2004,54 @@ function applyEffectLedgerCommands(
     ...candidate,
     revision: previous.revision + 1,
   });
+}
+
+function assertSettledEffectRecoveryCommands(commands) {
+  if (!Array.isArray(commands) || commands.length === 0) {
+    throw new Error(
+      'settled Captain session effect-ledger recovery requires boundary completion evidence',
+    );
+  }
+  for (const command of commands) {
+    if (
+      command === null ||
+      typeof command !== 'object' ||
+      Array.isArray(command) ||
+      command.kind !== 'replace-boundaries' ||
+      !Array.isArray(command.replacements) ||
+      command.replacements.length === 0
+    ) {
+      throw new Error(
+        'settled Captain session effect-ledger recovery may only complete existing physical boundaries',
+      );
+    }
+    for (const replacement of command.replacements) {
+      const expected = replacement?.expected;
+      const next = replacement?.next;
+      if (
+        expected === null ||
+        typeof expected !== 'object' ||
+        Array.isArray(expected) ||
+        next === null ||
+        typeof next !== 'object' ||
+        Array.isArray(next) ||
+        expected.physicalReceipt !== undefined ||
+        next.physicalReceipt === undefined
+      ) {
+        throw new Error(
+          'settled Captain session effect-ledger recovery requires one new physical receipt for each incomplete boundary',
+        );
+      }
+      const preserved = { ...next };
+      delete preserved.after;
+      delete preserved.physicalReceipt;
+      if (!isDeepStrictEqual(preserved, expected)) {
+        throw new Error(
+          'settled Captain session effect-ledger recovery cannot change boundary semantics or identity',
+        );
+      }
+    }
+  }
 }
 
 function applyEffectLedgerCommand(
@@ -3061,7 +3137,9 @@ function assertAdoptionTransferEnvelope(
   sourceStructural,
   targetStructural,
   retainedGenerations,
+  effectLedger,
 ) {
+  assertEffectLedgerMatchesCatalog(effectLedger, targetStructural.catalog);
   for (const [rootPlaybookId, generation] of Object.entries(
     retainedGenerations,
   )) {
@@ -3110,6 +3188,7 @@ function settledRecordWithRetainedGenerations(
   record,
   retainedGenerations,
   updatedAt,
+  effectLedger = record.effectLedger,
 ) {
   if (record.state !== 'settled') {
     throw new Error('Captain session adoption exchange requires settled records');
@@ -3124,13 +3203,15 @@ function settledRecordWithRetainedGenerations(
     cwd: record.cwd,
     structuralProjection: record.structuralProjection,
     lastAppliedExecutionProjection: record.lastAppliedExecutionProjection,
-    snapshot: record.snapshot,
-    effectLedger: record.effectLedger,
+    snapshot: isDeepStrictEqual(record.snapshot.effectLedger, effectLedger)
+      ? record.snapshot
+      : { ...record.snapshot, effectLedger },
+    effectLedger,
     retainedGenerations,
   });
 }
 
-function validateRetainedGenerations(value, structural) {
+function validateRetainedGenerations(value, structural, authoritativeLedger) {
   const retained = requireRecord(
     value,
     'Captain session record retainedGenerations',
@@ -3148,10 +3229,52 @@ function validateRetainedGenerations(value, structural) {
     const generation = requireRecord(value, path);
     exactOptionalKeys(
       generation,
-      ['frames'],
-      ['rootStateDescription'],
+      ['effectLedger', 'frames'],
+      ['retainedEffectReconciliation', 'rootStateDescription'],
       path,
     );
+    const generationLedger = assertPlaybookEffectLedger(
+      generation.effectLedger,
+      `${path}.effectLedger`,
+    );
+    if (
+      generationLedger.boundaries.some(
+        ({ physicalReceipt }) => physicalReceipt === undefined,
+      )
+    ) {
+      throw new Error(
+        `${path}.effectLedger contains an incomplete physical boundary`,
+      );
+    }
+    assertEffectLedgerMatchesCatalog(generationLedger, structural.catalog);
+    if (
+      !isPlaybookEffectLedgerMonotonicExtension(
+        generationLedger,
+        authoritativeLedger,
+      )
+    ) {
+      throw new Error(
+        `${path}.effectLedger is not a monotonic checkpoint of the authoritative Captain session effect ledger`,
+      );
+    }
+    const generationReconciliation =
+      generation.retainedEffectReconciliation === undefined
+        ? undefined
+        : requireRecord(
+            generation.retainedEffectReconciliation,
+            `${path}.retainedEffectReconciliation`,
+          );
+    if (generationReconciliation !== undefined) {
+      rejectUnknownOrMissingKeys(
+        generationReconciliation,
+        ['sourceGenerationId'],
+        `${path}.retainedEffectReconciliation`,
+      );
+      assertUuid(
+        generationReconciliation.sourceGenerationId,
+        `${path}.retainedEffectReconciliation.sourceGenerationId`,
+      );
+    }
     if (generation.rootStateDescription !== undefined) {
       requireNonblank(
         generation.rootStateDescription,
@@ -3167,10 +3290,47 @@ function validateRetainedGenerations(value, structural) {
         index,
         rootPlaybookId,
         structural,
+        generationLedger,
+        authoritativeLedger,
         sessionIds,
         `${path}.frames[${index}]`,
       ),
     );
+    const schema3Frames = frames.filter(
+      ({ playbookId }) =>
+        structural.catalog[playbookId].artifactSchema === 3,
+    );
+    const markedFrames = frames.filter(
+      ({ runtime }) =>
+        runtime.retainedEffectReconciliation !== undefined,
+    );
+    const markedCaptureLedger = markedFrames[0]?.runtime.effectLedger;
+    const sourceGenerationId =
+      generationReconciliation?.sourceGenerationId;
+    if (
+      markedCaptureLedger !== undefined &&
+      markedFrames.some(
+        ({ runtime }) =>
+          !isDeepStrictEqual(runtime.effectLedger, markedCaptureLedger),
+      )
+    ) {
+      throw new Error(
+        `${path} schema-3 frames differ from the marked generation capture mirror`,
+      );
+    }
+    if (
+      (sourceGenerationId === undefined && markedFrames.length !== 0) ||
+      (sourceGenerationId !== undefined &&
+        markedFrames.length !== schema3Frames.length) ||
+      (sourceGenerationId !== undefined &&
+        structural.catalog[frames[0].playbookId].artifactSchema === 3 &&
+        frames[0].runtime.retainedEffectReconciliation?.sourceSessionId !==
+          sourceGenerationId)
+    ) {
+      throw new Error(
+        `${path}.retainedEffectReconciliation is inconsistent with its schema-3 frame markers`,
+      );
+    }
     validateRetainedGenerationPath(frames, rootPlaybookId, path);
   }
   return retained;
@@ -3181,6 +3341,8 @@ function validateRetainedGenerationFrame(
   index,
   rootPlaybookId,
   structural,
+  generationLedger,
+  authoritativeLedger,
   sessionIds,
   path,
 ) {
@@ -3247,6 +3409,38 @@ function validateRetainedGenerationFrame(
     throw new Error(`${path}.runtime is invalid: ${errorMessage(cause)}`, {
       cause,
     });
+  }
+  const runtimeReconciliation = runtime.retainedEffectReconciliation;
+  if (
+    catalogItem.artifactSchema === 2 &&
+    (!isDeepStrictEqual(runtime.effectLedger, emptyPlaybookEffectLedger()) ||
+      runtimeReconciliation !== undefined ||
+      runtime.retainedEffectSourceSessionId !== undefined)
+  ) {
+    throw new Error(
+      `${path}.runtime schema-2 effect state must be empty`,
+    );
+  } else if (
+    catalogItem.artifactSchema === 3 &&
+    runtimeReconciliation === undefined &&
+    !isDeepStrictEqual(runtime.effectLedger, generationLedger)
+  ) {
+    throw new Error(
+      `${path}.runtime effect ledger differs from its retained-generation checkpoint`,
+    );
+  } else if (
+    catalogItem.artifactSchema === 3 &&
+    runtimeReconciliation !== undefined &&
+    (!isDeepStrictEqual(runtimeReconciliation.checkpoint, generationLedger) ||
+      isDeepStrictEqual(runtime.effectLedger, generationLedger) ||
+      !isPlaybookEffectLedgerMonotonicExtension(
+        runtime.effectLedger,
+        authoritativeLedger,
+      ))
+  ) {
+    throw new Error(
+      `${path}.runtime retained-effect evidence differs from its generation checkpoint or capture-time authority`,
+    );
   }
   if (
     runtime.state.status !== 'active' ||
