@@ -1514,6 +1514,9 @@ function legacyCaptainSessionReason(schemaVersion) {
   if (schemaVersion === 2) {
     return 'schema 2 has incompatible player identity';
   }
+  if (schemaVersion === 3 || schemaVersion === 4) {
+    return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
+  }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
 }
 

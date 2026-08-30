@@ -2399,7 +2399,9 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${fourthId}" at "${memberlessSchema3Path}"`,
     );
-    expect(continued.stderr).toContain('schema 3 is unsupported');
+    expect(continued.stderr).toContain(
+      'schema 3 predates the artifact-schema-3 effect-authority cutover and is not resumable',
+    );
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
     );
