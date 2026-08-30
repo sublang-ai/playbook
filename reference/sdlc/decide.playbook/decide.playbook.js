@@ -17,7 +17,7 @@
 //                       bridge (slc/link.md §Output)
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
-import { assertJsonSafe, assertPlaybookRuntimeSnapshot, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, validatePlayerResult, waitForPlaybookQuiescence, } from '../../../src/xstate-runtime.js';
+import { assertJsonSafe, assertPlaybookRuntimeSnapshot, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, emptyPlaybookEffectLedger, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, validatePlayerResult, waitForPlaybookQuiescence, } from '../../../src/xstate-runtime.js';
 import decideMachine from './decide.fsm.js';
 function snapshotDecideRuntimeOptions(value) {
     const captured = snapshotJsonValue(value, 'DECIDE runtime options');
@@ -532,6 +532,7 @@ function telemetryPayload(previousState, state, event, context) {
 }
 export const createPlaybookRuntime = (options) => {
     const fsmInput = snapshotDecideRuntimeOptions(options);
+    const effectLedger = emptyPlaybookEffectLedger();
     let ports;
     let sessionIdentity;
     let actor;
@@ -1508,7 +1509,7 @@ export const createPlaybookRuntime = (options) => {
             const machine = detachPersistedMachineSnapshot(actor.getPersistedSnapshot());
             const context = actor.getSnapshot().context;
             return {
-                schemaVersion: 3,
+                schemaVersion: 4,
                 playbookId: sessionIdentity.playbookId,
                 machine,
                 roleResumeTokens: snapshotRoleResumeTokens(),
@@ -1526,6 +1527,7 @@ export const createPlaybookRuntime = (options) => {
                     question: pending.question,
                     sourceItem: pending.sourceItem,
                 })),
+                effectLedger,
                 ...(suspendedCall === undefined ? {} : { suspendedCall }),
             };
         },
@@ -1543,6 +1545,11 @@ export const createPlaybookRuntime = (options) => {
             }
             const identity = bindSession(session);
             const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, identity.playbookId, { allowSuspendedCall: true });
+            if (boundSnapshot.effectLedger.revision !== 0 ||
+                boundSnapshot.effectLedger.boundaries.length !== 0 ||
+                boundSnapshot.effectLedger.logicalOperations.length !== 0) {
+                throw new TypeError('decide runtime snapshot effectLedger must be the canonical empty ledger');
+            }
             const suspendedCall = boundSnapshot.suspendedCall;
             let finishInitialization;
             const initialization = new Promise((resolve) => {

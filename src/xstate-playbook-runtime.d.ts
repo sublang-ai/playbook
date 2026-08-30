@@ -1,5 +1,5 @@
 import type { AnyStateMachine, EventObject, PromiseActorLogic } from 'xstate';
-import type { CaptainResult, JsonValue, PlaybookPorts, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, PlaybookEffectLedgerCapability, PlaybookPorts, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
@@ -130,7 +130,9 @@ export interface XStateOutcomeAuthoritySpec {
  */
 export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities extends object> {
     readonly configuredOptions: ConfiguredOptions;
-    readonly hostCapabilities: HostCapabilities;
+    readonly hostCapabilities: HostCapabilities & {
+        readonly effectLedger: PlaybookEffectLedgerCapability;
+    };
 }
 export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = [HostCapabilities] extends [never] ? ConfiguredOptions : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
 /** Shared XState factory with its captured, validated artifact compatibility. */

@@ -17,6 +17,7 @@
 // behavior here without consulting those suites.
 
 import { spawn } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
 import type {
@@ -27,6 +28,7 @@ import type {
 } from 'xstate';
 import {
   assertPlaybookRuntimeSnapshot,
+  assertPlaybookEffectLedger,
   combineAbortSignals,
   createNestedPlaybookBridge,
   detachPersistedMachineSnapshot,
@@ -34,6 +36,7 @@ import {
   normalizePlaybookSnapshot,
   snapshotJsonValue,
   snapshotPlaybookSession,
+  emptyPlaybookEffectLedger,
   validateCaptainResult,
   validatePlayerResult,
   waitForPlaybookQuiescence,
@@ -46,6 +49,8 @@ import type {
   PlaybookControlAction,
   PlaybookControlReceipt,
   PlaybookControlView,
+  PlaybookEffectLedger,
+  PlaybookEffectLedgerCapability,
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
@@ -242,10 +247,14 @@ function configuredOptionsFromFactoryInput(
   value: unknown,
   artifactSchema: number,
   label: string,
-): unknown {
+): {
+  readonly configuredOptions: unknown;
+  readonly hostCapabilities?: object;
+  readonly effectLedger?: PlaybookEffectLedgerCapability;
+} {
   if (artifactSchema === 2) {
     assertNoConfiguredHostCapabilities(value, label);
-    return value;
+    return { configuredOptions: value };
   }
   if (
     value === null ||
@@ -290,7 +299,37 @@ function configuredOptionsFromFactoryInput(
   }
   const configuredOptions = descriptors.configuredOptions!.value;
   assertNoConfiguredHostCapabilities(configuredOptions, label);
-  return configuredOptions;
+  const ledgerDescriptor = Object.getOwnPropertyDescriptor(
+    hostCapabilities,
+    'effectLedger',
+  );
+  if (
+    ledgerDescriptor === undefined ||
+    !Object.prototype.hasOwnProperty.call(ledgerDescriptor, 'value') ||
+    ledgerDescriptor.get !== undefined ||
+    ledgerDescriptor.set !== undefined
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input hostCapabilities.effectLedger must be an own data property`,
+    );
+  }
+  const effectLedger = ledgerDescriptor.value;
+  if (
+    effectLedger === null ||
+    typeof effectLedger !== 'object' ||
+    Array.isArray(effectLedger) ||
+    typeof (effectLedger as { snapshot?: unknown }).snapshot !== 'function' ||
+    typeof (effectLedger as { writeAhead?: unknown }).writeAhead !== 'function'
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input hostCapabilities.effectLedger must expose snapshot and writeAhead functions`,
+    );
+  }
+  return {
+    configuredOptions,
+    hostCapabilities,
+    effectLedger: effectLedger as PlaybookEffectLedgerCapability,
+  };
 }
 
 function markEmptyOkRetryFailure(error: Error): Error {
@@ -373,7 +412,9 @@ export interface XStatePlaybookRuntimeConstruction<
   HostCapabilities extends object,
 > {
   readonly configuredOptions: ConfiguredOptions;
-  readonly hostCapabilities: HostCapabilities;
+  readonly hostCapabilities: HostCapabilities & {
+    readonly effectLedger: PlaybookEffectLedgerCapability;
+  };
 }
 
 export type XStatePlaybookRuntimeFactoryOptions<
@@ -2771,11 +2812,21 @@ export function createXStatePlaybookRuntime<
   const createPlaybookRuntime = function createPlaybookRuntime(
     factoryOptions: unknown,
   ): PlaybookRuntime {
-    const configuredOptions = configuredOptionsFromFactoryInput(
+    const construction = configuredOptionsFromFactoryInput(
       factoryOptions,
       artifactSchema,
       label,
-    ) as TOptions;
+    );
+    const configuredOptions = construction.configuredOptions as TOptions;
+    const effectLedgerCapability = construction.effectLedger;
+    const currentEffectLedger = (): PlaybookEffectLedger =>
+      effectLedgerCapability === undefined
+        ? emptyPlaybookEffectLedger()
+        : assertPlaybookEffectLedger(
+            effectLedgerCapability.snapshot(),
+            `${label} current host effect ledger`,
+          );
+    let effectLedgerMirror = currentEffectLedger();
     const boundOptions = spec.snapshotOptions(configuredOptions);
     assertNoConfiguredHostCapabilities(boundOptions, label);
     const boundScriptCwd = scriptCwd(boundOptions);
@@ -4606,6 +4657,13 @@ export function createXStatePlaybookRuntime<
         boundSession.playbookId,
         { allowSuspendedCall: true },
       );
+      const hostEffectLedger = currentEffectLedger();
+      if (!isDeepStrictEqual(boundSnapshot.effectLedger, hostEffectLedger)) {
+        throw new TypeError(
+          'runtime snapshot effectLedger does not equal the current host mirror',
+        );
+      }
+      effectLedgerMirror = hostEffectLedger;
       if (
         declaredActors.has('captain') &&
         boundSnapshot.sequences.captainCall === undefined
@@ -4879,8 +4937,9 @@ export function createXStatePlaybookRuntime<
         const context = (actor.getSnapshot() as { context?: unknown })
           .context as Record<string, unknown>;
         const pending = pendingBossQuestionForState(state, context ?? {});
+        effectLedgerMirror = currentEffectLedger();
         return {
-          schemaVersion: 3,
+          schemaVersion: 4,
           playbookId: session.playbookId,
           machine: machineSnapshot,
           roleResumeTokens: snapshotRoleResumeTokens(),
@@ -4906,6 +4965,7 @@ export function createXStatePlaybookRuntime<
                     sourceItem: pending.sourceItem,
                   },
                 ],
+          effectLedger: effectLedgerMirror,
           ...(suspendedCall === undefined ? {} : { suspendedCall }),
         };
       },

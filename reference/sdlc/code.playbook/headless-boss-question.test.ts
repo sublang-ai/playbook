@@ -105,7 +105,7 @@ function runtimeSnapshot(
   turns: number,
 ): PlaybookRuntimeSnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: 'hub', status: 'active' },
     roleResumeTokens: {},
@@ -119,6 +119,12 @@ function runtimeSnapshot(
     },
     state: activeState('hub'),
     pendingBossQuestions: [],
+    effectLedger: {
+      schemaVersion: 1,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    },
   } as PlaybookRuntimeSnapshot;
 }
 

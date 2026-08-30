@@ -34,6 +34,7 @@ import type {
   PlaybookSession,
   PlaybookState,
 } from '../../../src/runtime.js';
+import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
 
 const { runPlaybookCli, runPlaybookCliEntry } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
@@ -147,7 +148,7 @@ function runtimeSnapshot(
 ): PlaybookRuntimeSnapshot {
   const state = activeState('playbook.parked');
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -161,7 +162,40 @@ function runtimeSnapshot(
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: emptyPlaybookEffectLedger(),
   };
+}
+
+function preEffectSessionRecord(
+  value: any,
+  schemaVersion: 3 | 4,
+  retainGenerations: boolean,
+) {
+  const record = JSON.parse(JSON.stringify(value));
+  const downgradeRuntime = (runtime: any) => {
+    runtime.schemaVersion = 3;
+    delete runtime.effectLedger;
+  };
+  record.schemaVersion = schemaVersion;
+  delete record.effectLedger;
+  record.snapshot.schemaVersion = 3;
+  delete record.snapshot.effectLedger;
+  downgradeRuntime(record.snapshot.captain.runtime);
+  for (const frame of record.snapshot.frames ?? []) {
+    downgradeRuntime(frame.runtime);
+  }
+  if (!retainGenerations) {
+    delete record.retainedGenerations;
+  } else {
+    for (const generation of Object.values(
+      record.retainedGenerations ?? {},
+    ) as any[]) {
+      for (const frame of generation.frames ?? []) {
+        downgradeRuntime(frame.runtime);
+      }
+    }
+  }
+  return record;
 }
 
 function scriptedCaptainRuntime(
@@ -374,7 +408,7 @@ function retainedRootEntry(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -388,6 +422,7 @@ function retainedRootEntry(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
           } as PlaybookRuntimeSnapshot;
         },
         async handleBossInput({ text }) {
@@ -457,7 +492,7 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -471,6 +506,7 @@ function nestedParkedEntries(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
             ...(suspendedCall === undefined ? {} : { suspendedCall }),
           } as PlaybookRuntimeSnapshot;
         },
@@ -554,7 +590,7 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'review',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -568,6 +604,7 @@ function nestedParkedEntries(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
           } as PlaybookRuntimeSnapshot;
         },
         async handleBossInput({ text }) {
@@ -773,7 +810,11 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       }),
       createEffectLedgerWriteAhead: (lease: unknown) => {
         writerLease = lease;
-        return async () => undefined;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
       },
     });
 
@@ -1408,7 +1449,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const thirdId = '90000000-0000-4000-8000-000000000013';
   const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v3 record before stdout without semantic disposal', async () => {
+  it('persists a closed v5 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1467,7 +1508,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
@@ -1486,7 +1527,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           code: { manifestCommand: 'code', command: 'code' },
         },
       },
-      snapshot: { schemaVersion: 3, mode: 'chat' },
+      snapshot: {
+        schemaVersion: 4,
+        mode: 'chat',
+        effectLedger: emptyPlaybookEffectLedger(),
+      },
+      effectLedger: emptyPlaybookEffectLedger(),
       retainedGenerations: {},
     });
     expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
@@ -1771,7 +1817,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     const writerLeases: any[] = [];
     const createEffectLedgerWriteAhead = (lease: unknown) => {
       writerLeases.push(lease);
-      return async () => undefined;
+      const effectLedger = emptyPlaybookEffectLedger();
+      return {
+        snapshot: () => effectLedger,
+        writeAhead: async () => effectLedger,
+      };
     };
     const captainRuntime = scriptedCaptainRuntime([], { action: 'deliver' });
     const loadModule = async (specifier: string) => ({
@@ -1821,11 +1871,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     for (const key of [
       'hostCapabilities',
       'leaseOwnerToken',
-      'canonicalWorktree',
-      'effectLedger',
     ]) {
       expect(parkedProjection).not.toContain(`"${key}"`);
     }
+    expect(parked.effectLedger).toEqual(emptyPlaybookEffectLedger());
 
     const exactReply = '  exact review reply\nwith context\n';
     const second = await headlessHarness(
@@ -1883,8 +1932,6 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     for (const key of [
       'hostCapabilities',
       'leaseOwnerToken',
-      'canonicalWorktree',
-      'effectLedger',
     ]) {
       expect(settledProjection).not.toContain(`"${key}"`);
     }
@@ -1892,6 +1939,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       expect(settledProjection).not.toContain(lease.ownerToken);
     }
     expect(settled.snapshot.mode).toBe('chat');
+    expect(settled.effectLedger).toEqual(emptyPlaybookEffectLedger());
     expect(settled.retainedGenerations).toEqual({});
   });
 
@@ -2263,17 +2311,17 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       })}\n`,
       { mode: 0o600 },
     );
-    const {
-      retainedGenerations: _retainedGenerations,
-      ...memberlessSchema3
-    } = settledRecord;
+    const memberlessSchema3 = preEffectSessionRecord(
+      {
+        ...settledRecord,
+        sessionId: fourthId,
+      },
+      3,
+      false,
+    );
     await writeFile(
       memberlessSchema3Path,
-      `${JSON.stringify({
-        ...memberlessSchema3,
-        schemaVersion: 3,
-        sessionId: fourthId,
-      })}\n`,
+      `${JSON.stringify(memberlessSchema3)}\n`,
       { mode: 0o600 },
     );
     const memberlessInstalls: unknown[] = [];
@@ -2329,7 +2377,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       await readFile(memberlessSchema3Path, 'utf8'),
     );
     expect(canonicalized).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
+      snapshot: {
+        schemaVersion: 4,
+        effectLedger: emptyPlaybookEffectLedger(),
+      },
+      effectLedger: emptyPlaybookEffectLedger(),
       retainedGenerations: {},
     });
     const {
@@ -2358,12 +2411,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'no retained-generation state',
     );
 
-    const transientSchema4 = JSON.parse(
-      await readFile(memberlessSchema3Path, 'utf8'),
+    const transientSchema4 = preEffectSessionRecord(
+      JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
+      4,
+      true,
     );
     await writeFile(
       memberlessSchema3Path,
-      `${JSON.stringify({ ...transientSchema4, schemaVersion: 4 })}\n`,
+      `${JSON.stringify(transientSchema4)}\n`,
       'utf8',
     );
     const continuedSchema4 = await headlessHarness(
@@ -2379,7 +2434,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continuedSchema4.stderr).not.toContain('schema 4 is unsupported');
     expect(
       JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
-    ).toMatchObject({ schemaVersion: 3, retainedGenerations: {} });
+    ).toMatchObject({
+      schemaVersion: 5,
+      snapshot: { schemaVersion: 4 },
+      effectLedger: emptyPlaybookEffectLedger(),
+      retainedGenerations: {},
+    });
   });
 
   it.each([
@@ -2406,7 +2466,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         delete runtime.roleResumeTokens;
       },
       diagnostic:
-        'runtime snapshot schemaVersion 1 has incompatible player identity',
+        'runtime snapshot schemaVersion 1 is not supported (expected 4)',
     },
     {
       name: 'runtime schema 2',
@@ -2417,7 +2477,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         delete runtime.roleResumeTokens;
       },
       diagnostic:
-        'runtime snapshot schemaVersion 2 has incompatible player identity',
+        'runtime snapshot schemaVersion 2 is not supported (expected 4)',
     },
   ])('rejects explicit released $name before host work', async ({
     mutate,

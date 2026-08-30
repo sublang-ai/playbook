@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -18,6 +19,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../src/xstate-runtime.js';
 
 import {
   RepositoryObservationAmbiguousError,
@@ -27,8 +32,10 @@ import {
   createRepositoryEffectCapabilities,
   createRepositoryEffectCoordinator,
   observeGitRepository,
+  recoverIncompleteRepositoryEffects,
   resolveCanonicalGitWorktree,
 } from './bin/repository-effects.js';
+import { createCaptainSessionHost } from './bin/run.js';
 
 const tempDirs: string[] = [];
 const childProcesses = new Set<ChildProcess>();
@@ -108,6 +115,139 @@ function deferred<T = void>() {
     rejectPromise = reject;
   });
   return { promise, resolve: resolvePromise, reject: rejectPromise };
+}
+
+function fakeEffectLedgerService(
+  initial = emptyPlaybookEffectLedger(),
+) {
+  let ledger = assertPlaybookEffectLedger(initial);
+  const writeAhead = vi.fn(async (_authority: unknown, commands: any[]) => {
+    let boundaries = [...ledger.boundaries] as any[];
+    let logicalOperations = [...ledger.logicalOperations] as any[];
+    for (const command of commands) {
+      if (command.kind === 'start-boundaries') {
+        const attemptSequence = boundaries.length + 1;
+        const attemptId = `00000000-0000-4000-8000-${String(attemptSequence).padStart(12, '0')}`;
+        for (const seed of command.boundaries) {
+          const sequence = boundaries.length + 1;
+          boundaries.push({
+            sequence,
+            ...seed,
+            attemptId,
+            attemptNumber: 1,
+          });
+        }
+        continue;
+      }
+      if (command.kind === 'replace-boundaries') {
+        for (const replacement of command.replacements) {
+          const index = boundaries.findIndex(
+            (boundary) => boundary.boundaryId === replacement.expected.boundaryId,
+          );
+          expect(index).toBeGreaterThanOrEqual(0);
+          expect(boundaries[index]).toEqual(replacement.expected);
+          boundaries[index] = replacement.next;
+        }
+        continue;
+      }
+      if (command.kind === 'append-logical-operations') {
+        for (const operation of command.operations) {
+          logicalOperations.push({
+            sequence: logicalOperations.length + 1,
+            ...operation,
+          });
+        }
+        continue;
+      }
+      if (command.kind === 'replace-logical-operations') {
+        for (const replacement of command.replacements) {
+          const index = logicalOperations.findIndex(
+            (operation) =>
+              operation.operationId === replacement.expected.operationId,
+          );
+          expect(index).toBeGreaterThanOrEqual(0);
+          expect(logicalOperations[index]).toEqual(replacement.expected);
+          logicalOperations[index] = replacement.next;
+        }
+        continue;
+      }
+      throw new Error(`unsupported fake ledger command ${command.kind}`);
+    }
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries,
+      logicalOperations,
+    });
+    return ledger;
+  });
+  return {
+    service: {
+      snapshot: () => ledger,
+      writeAhead,
+    },
+    writeAhead,
+  };
+}
+
+function fileBackedEffectLedgerService(
+  ledgerPath: string,
+  beforeWrite: () => void = () => undefined,
+) {
+  let ledger = assertPlaybookEffectLedger(
+    JSON.parse(readFileSync(ledgerPath, 'utf8')),
+  );
+  return {
+    snapshot: () => ledger,
+    writeAhead: async (_authority: unknown, commands: any[]) => {
+      beforeWrite();
+      let boundaries = [...ledger.boundaries] as any[];
+      for (const command of commands) {
+        if (command.kind === 'start-boundaries') {
+          for (const seed of command.boundaries) {
+            const sequence = boundaries.length + 1;
+            boundaries.push({
+              sequence,
+              ...seed,
+              attemptId: `60000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
+              attemptNumber: 1,
+            });
+          }
+          continue;
+        }
+        if (command.kind === 'replace-boundaries') {
+          for (const replacement of command.replacements) {
+            const index = boundaries.findIndex(
+              (boundary) =>
+                boundary.boundaryId === replacement.expected.boundaryId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(boundaries[index]) !==
+                JSON.stringify(replacement.expected)
+            ) {
+              throw new Error('file-backed ledger replacement is stale');
+            }
+            boundaries[index] = replacement.next;
+          }
+          continue;
+        }
+        throw new Error(`unsupported file-backed ledger command ${command.kind}`);
+      }
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries,
+      });
+      const stagePath = `${ledgerPath}.${process.pid}.stage`;
+      writeFileSync(stagePath, `${JSON.stringify(ledger)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      renameSync(stagePath, ledgerPath);
+      return ledger;
+    },
+  };
 }
 
 async function waitForExit(child: ChildProcess): Promise<void> {
@@ -1017,6 +1157,751 @@ describe('schema-3 repository host capabilities', () => {
     expect(Object.isFrozen(capabilities)).toBe(true);
   });
 
+  it.runIf(process.platform !== 'win32')(
+    'recovers a child process boundary before source-state restoration',
+    async () => {
+      const repo = await initRepository('playbook-effects-recovery-');
+      const ledgerDir = await mkdtemp(join(tmpdir(), 'playbook-effect-ledger-'));
+      tempDirs.push(ledgerDir);
+      const ledgerPath = join(ledgerDir, 'ledger.json');
+      await writeFile(
+        ledgerPath,
+        `${JSON.stringify(emptyPlaybookEffectLedger())}\n`,
+        'utf8',
+      );
+      const moduleUrl = new URL(
+        './bin/repository-effects.js',
+        import.meta.url,
+      ).href;
+      const source = `
+        import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+        import { join } from 'node:path';
+        import { createRepositoryEffectCapabilities } from ${JSON.stringify(moduleUrl)};
+
+        const ledgerPath = ${JSON.stringify(ledgerPath)};
+        const readLedger = () => JSON.parse(readFileSync(ledgerPath, 'utf8'));
+        const ledgerService = {
+          snapshot: readLedger,
+          writeAhead: async (_authority, commands) => {
+            const ledger = readLedger();
+            let boundaries = [...ledger.boundaries];
+            for (const command of commands) {
+              if (command.kind === 'start-boundaries') {
+                for (const seed of command.boundaries) {
+                  boundaries.push({
+                    sequence: boundaries.length + 1,
+                    ...seed,
+                    attemptId: '60000000-0000-4000-8000-000000000001',
+                    attemptNumber: 1,
+                  });
+                }
+                continue;
+              }
+              if (command.kind === 'replace-boundaries') {
+                for (const replacement of command.replacements) {
+                  const index = boundaries.findIndex(
+                    (boundary) => boundary.boundaryId === replacement.expected.boundaryId,
+                  );
+                  if (
+                    index < 0 ||
+                    JSON.stringify(boundaries[index]) !== JSON.stringify(replacement.expected)
+                  ) throw new Error('child ledger replacement is stale');
+                  boundaries[index] = replacement.next;
+                }
+                continue;
+              }
+              throw new Error('unsupported child ledger command');
+            }
+            const next = {
+              ...ledger,
+              revision: ledger.revision + 1,
+              boundaries,
+            };
+            const stagePath = ledgerPath + '.' + process.pid + '.stage';
+            writeFileSync(stagePath, JSON.stringify(next) + '\\n', {
+              encoding: 'utf8',
+              mode: 0o600,
+            });
+            renameSync(stagePath, ledgerPath);
+            return next;
+          },
+        };
+        const catalog = {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        };
+        const capabilities = await createRepositoryEffectCapabilities({
+          cwd: ${JSON.stringify(repo)},
+          catalog,
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          sessionLease: {
+            sessionId: '10000000-0000-4000-8000-000000000001',
+            ownerToken: '20000000-0000-4000-8000-000000000002',
+            assertOwner: async () => undefined,
+          },
+          createWriteAhead: () => ledgerService,
+        });
+        const keepAlive = setInterval(() => undefined, 1_000);
+        await capabilities.code.repository.runExclusive({
+          effectBoundary: {
+            boundaryId: '30000000-0000-4000-8000-000000000003',
+            runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+            turnId: 1,
+            callId: 'coder:1',
+            roleId: 'coder',
+            sourceStateId: 'code.coder',
+            sourceOutcomeSchema: { type: 'object' },
+            dispositions: ['unchanged'],
+            correctionBudget: { limit: 1, spent: false },
+          },
+          operation: async () => {
+            writeFileSync(join(${JSON.stringify(repo)}, 'child-effect.txt'), 'effect\\n', 'utf8');
+            process.stdout.write('effect-written\\n');
+            await new Promise(() => undefined);
+          },
+        });
+        clearInterval(keepAlive);
+      `;
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '--eval', source],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      childProcesses.add(child);
+      let childStderr = '';
+      child.stderr?.on('data', (chunk) => {
+        childStderr += chunk.toString();
+      });
+      try {
+        await expect(waitForLine(child)).resolves.toBe('effect-written');
+      } catch (error) {
+        throw new Error(`boundary child failed: ${childStderr}`, {
+          cause: error,
+        });
+      }
+
+      const started = assertPlaybookEffectLedger(
+        JSON.parse(await readFile(ledgerPath, 'utf8')),
+      );
+      expect(started).toMatchObject({
+        revision: 1,
+        boundaries: [
+          {
+            boundaryId: '30000000-0000-4000-8000-000000000003',
+            baseline: { projection: {} },
+          },
+        ],
+      });
+      expect(started.boundaries[0]).not.toHaveProperty('physicalReceipt');
+      const identity = await resolveCanonicalGitWorktree(repo);
+      const claimRoot = join(identity.gitDir, _internal.claimRootName);
+      const childOwner = JSON.parse(
+        await readFile(join(claimRoot, 'active', 'owner.json'), 'utf8'),
+      );
+      expect(childOwner.pid).toBe(child.pid);
+
+      child.kill('SIGKILL');
+      await waitForExit(child);
+      childProcesses.delete(child);
+
+      let sourceRestorationStarted = false;
+      const ledgerService = fileBackedEffectLedgerService(ledgerPath, () => {
+        if (sourceRestorationStarted) {
+          throw new Error('receipt persistence followed source restoration');
+        }
+      });
+      const catalog = {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      };
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '70000000-0000-4000-8000-000000000007',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => ledgerService,
+      });
+      const recovered = await recoverIncompleteRepositoryEffects({
+        catalog,
+        capabilities,
+      });
+      expect(sourceRestorationStarted).toBe(false);
+      expect(recovered).toMatchObject({
+        revision: 2,
+        boundaries: [
+          {
+            boundaryId: '30000000-0000-4000-8000-000000000003',
+            after: {
+              projection: {
+                'child-effect.txt': { kind: 'untracked' },
+              },
+            },
+            physicalReceipt: {
+              classification: 'concurrent-or-foreign-change',
+            },
+          },
+        ],
+      });
+      expect(
+        assertPlaybookEffectLedger(
+          JSON.parse(await readFile(ledgerPath, 'utf8')),
+        ),
+      ).toEqual(recovered);
+      const claimsAfterRecovery = await readdir(claimRoot);
+      expect(claimsAfterRecovery).not.toContain('active');
+      expect(claimsAfterRecovery).toContain(
+        `retired-${childOwner.ownerToken}`,
+      );
+      expect(
+        claimsAfterRecovery.filter((entry) => entry.startsWith('retired-')),
+      ).toHaveLength(2);
+
+      sourceRestorationStarted = true;
+    },
+  );
+
+  it('recovers an incomplete cohort from one observation and one write', async () => {
+    const repo = await initRepository('playbook-effects-cohort-recovery-');
+    const baseline = await observeGitRepository(repo);
+    const common = {
+      attemptId: '60000000-0000-4000-8000-000000000006',
+      attemptNumber: 1,
+      playbookId: 'decide',
+      runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+      turnId: 1,
+      sourceOutcomeSchema: { type: 'object' },
+      dispositions: ['unchanged'] as const,
+      canonicalWorktree: {
+        worktree: baseline.worktree,
+        gitDir: baseline.gitDir,
+      },
+      baseline,
+      correctionBudget: { limit: 1 as const, spent: false },
+    };
+    const initial = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          ...common,
+          sequence: 1,
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'decide.coder',
+          cohortId: '70000000-0000-4000-8000-000000000007',
+        },
+        {
+          ...common,
+          sequence: 2,
+          boundaryId: '50000000-0000-4000-8000-000000000005',
+          callId: 'reviewer:1',
+          roleId: 'reviewer',
+          sourceStateId: 'decide.reviewer',
+          cohortId: '70000000-0000-4000-8000-000000000007',
+        },
+        {
+          ...common,
+          sequence: 3,
+          boundaryId: '80000000-0000-4000-8000-000000000008',
+          callId: 'coder:2',
+          roleId: 'coder',
+          sourceStateId: 'decide.coder',
+          cohortId: '90000000-0000-4000-8000-000000000009',
+        },
+        {
+          ...common,
+          sequence: 4,
+          boundaryId: 'a0000000-0000-4000-8000-00000000000a',
+          callId: 'reviewer:2',
+          roleId: 'reviewer',
+          sourceStateId: 'decide.reviewer',
+          cohortId: '90000000-0000-4000-8000-000000000009',
+        },
+      ],
+      logicalOperations: [],
+    });
+    const { service, writeAhead } = fakeEffectLedgerService(initial);
+    const catalog = {
+      decide: {
+        id: 'decide',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder', 'reviewer'],
+        concurrentRoleSets: [['coder', 'reviewer']],
+      },
+    };
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: repo,
+      catalog,
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      sessionLease: {
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => service,
+    });
+    await writeFile(join(repo, 'foreign-effect.txt'), 'effect\n', 'utf8');
+
+    const recovered = await recoverIncompleteRepositoryEffects({
+      catalog,
+      capabilities,
+    });
+
+    expect(recovered.revision).toBe(3);
+    expect(
+      recovered.boundaries.map(
+        (boundary) => boundary.physicalReceipt?.classification,
+      ),
+    ).toEqual([
+      'observation-ambiguous',
+      'observation-ambiguous',
+      'observation-ambiguous',
+      'observation-ambiguous',
+    ]);
+    expect(recovered.boundaries[0]!.after).toEqual(
+      recovered.boundaries[1]!.after,
+    );
+    expect(recovered.boundaries[2]!.after).toEqual(
+      recovered.boundaries[3]!.after,
+    );
+    expect(writeAhead).toHaveBeenCalledTimes(2);
+    for (const call of writeAhead.mock.calls) {
+      expect(call[1]).toMatchObject([
+        {
+          kind: 'replace-boundaries',
+          replacements: [{}, {}],
+        },
+      ]);
+    }
+  });
+
+  it.each(['before', 'after'] as const)(
+    'authoritatively recovers a live claim when completion fails %s acknowledgement',
+    async (failurePoint) => {
+      const repo = await initRepository('playbook-effects-live-recovery-');
+      const backing = fakeEffectLedgerService();
+      let failCompletion = true;
+      const service = {
+        snapshot: backing.service.snapshot,
+        writeAhead: vi.fn(async (authority: unknown, commands: any[]) => {
+          if (
+            failCompletion &&
+            commands[0]?.kind === 'replace-boundaries'
+          ) {
+            failCompletion = false;
+            if (failurePoint === 'after') {
+              await backing.service.writeAhead(authority, commands);
+            }
+            throw new Error(`completion failed ${failurePoint} acknowledgement`);
+          }
+          return backing.service.writeAhead(authority, commands);
+        }),
+      };
+      const catalog = {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      };
+      const semanticCandidate = { guard: 'ok' };
+      const operationId = '50000000-0000-4000-8000-000000000005';
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => service,
+      });
+
+      await expect(
+        capabilities.code.repository.runExclusive({
+          effectBoundary: {
+            boundaryId: '30000000-0000-4000-8000-000000000003',
+            runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+            turnId: 1,
+            callId: 'coder:1',
+            roleId: 'coder',
+            sourceStateId: 'code.coder',
+            sourceOutcomeSchema: { type: 'object' },
+            dispositions: ['unchanged'],
+            correctionBudget: { limit: 1, spent: false },
+          },
+          operation: async () => {
+            await writeFile(join(repo, 'effect.txt'), 'effect\n', 'utf8');
+            return 'player output';
+          },
+          completeEffectBoundary: ({ boundary, operation }: any) => ({
+            finalText: operation.value,
+            semanticCandidate,
+            logicalOperationId: operationId,
+            commands: [
+              {
+                kind: 'append-logical-operations',
+                operations: [
+                  {
+                    operationId,
+                    playbookId: 'code',
+                    runtimeSessionId: boundary.runtimeSessionId,
+                    boundaryIds: [boundary.boundaryId],
+                    originalBaseline: boundary.baseline,
+                    checkpointRestorationEligible: false,
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      ).rejects.toThrow(`completion failed ${failurePoint} acknowledgement`);
+      semanticCandidate.guard = 'mutated';
+
+      const recovered = await recoverIncompleteRepositoryEffects({
+        catalog,
+        capabilities,
+      });
+      expect(recovered).toMatchObject({
+        revision: 2,
+        boundaries: [
+          {
+            finalText: 'player output',
+            semanticCandidate: { guard: 'ok' },
+            logicalOperationId: operationId,
+            physicalReceipt: {
+              classification: 'concurrent-or-foreign-change',
+            },
+          },
+        ],
+        logicalOperations: [
+          {
+            operationId,
+            boundaryIds: ['30000000-0000-4000-8000-000000000003'],
+          },
+        ],
+      });
+      const claim = await createRepositoryEffectCoordinator().acquire(repo);
+      await claim.release();
+    },
+  );
+
+  it.each(['exclusive', 'cohort'] as const)(
+    'keeps a live %s claim quarantined when completion mapping cannot produce an exact batch',
+    async (mode) => {
+      const repo = await initRepository('playbook-effects-mapper-failure-');
+      const backing = fakeEffectLedgerService();
+      const operation = vi.fn(async ({ roleId }: { roleId?: string }) =>
+        roleId ?? 'coder',
+      );
+      const completeEffectBoundary = vi.fn(() => {
+        throw new Error('synthetic completion mapping failure');
+      });
+      const playbookId = mode === 'exclusive' ? 'code' : 'decide';
+      const catalog = {
+        [playbookId]: {
+          id: playbookId,
+          artifactSchema: 3,
+          requiredRoleIds:
+            mode === 'exclusive' ? ['coder'] : ['coder', 'reviewer'],
+          concurrentRoleSets:
+            mode === 'exclusive' ? [] : [['coder', 'reviewer']],
+        },
+      };
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      });
+      const boundary = (roleId: string, boundaryId: string) => ({
+        boundaryId,
+        runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+        turnId: 1,
+        callId: `${roleId}:1`,
+        roleId,
+        sourceStateId: `${playbookId}.${roleId}`,
+        sourceOutcomeSchema: { type: 'object' },
+        dispositions: ['unchanged'],
+        correctionBudget: { limit: 1, spent: false },
+      });
+
+      const run =
+        mode === 'exclusive'
+          ? capabilities[playbookId].repository.runExclusive({
+              effectBoundary: boundary(
+                'coder',
+                '30000000-0000-4000-8000-000000000003',
+              ),
+              operation,
+              completeEffectBoundary,
+            })
+          : capabilities[playbookId].repository.runCohort({
+              invocationId: 'proposal-pair',
+              roleIds: ['coder', 'reviewer'],
+              dispositionsByRole: {
+                coder: ['unchanged'],
+                reviewer: ['unchanged'],
+              },
+              effectBoundaries: {
+                coder: boundary(
+                  'coder',
+                  '30000000-0000-4000-8000-000000000003',
+                ),
+                reviewer: boundary(
+                  'reviewer',
+                  '50000000-0000-4000-8000-000000000005',
+                ),
+              },
+              operations: { coder: operation, reviewer: operation },
+              completeEffectBoundary,
+            });
+
+      await expect(run).rejects.toThrow(/synthetic completion mapping failure/);
+      expect(operation).toHaveBeenCalledTimes(mode === 'exclusive' ? 1 : 2);
+      expect(backing.writeAhead).toHaveBeenCalledTimes(1);
+      expect(
+        backing.service.snapshot().boundaries.every(
+          (saved) => saved.physicalReceipt === undefined,
+        ),
+      ).toBe(true);
+      await expect(
+        recoverIncompleteRepositoryEffects({ catalog, capabilities }),
+      ).rejects.toThrow(
+        /live post-operation repository claim has no exact completion batch/,
+      );
+      expect(operation).toHaveBeenCalledTimes(mode === 'exclusive' ? 1 : 2);
+      expect(backing.writeAhead).toHaveBeenCalledTimes(1);
+
+      const identity = await resolveCanonicalGitWorktree(repo);
+      const claimNames = await readdir(
+        join(identity.gitDir, _internal.claimRootName),
+      );
+      expect(claimNames).toContain('active');
+      expect(claimNames.some((name) => name.startsWith('retired-'))).toBe(false);
+    },
+  );
+
+  it.each(['before', 'after'] as const)(
+    'resolves an indeterminate boundary start %s acknowledgement without player work',
+    async (failurePoint) => {
+      const repo = await initRepository('playbook-effects-start-recovery-');
+      const backing = fakeEffectLedgerService();
+      let failStart = true;
+      const service = {
+        snapshot: backing.service.snapshot,
+        writeAhead: vi.fn(async (authority: unknown, commands: any[]) => {
+          if (failStart && commands[0]?.kind === 'start-boundaries') {
+            failStart = false;
+            if (failurePoint === 'after') {
+              await backing.service.writeAhead(authority, commands);
+            }
+            throw new Error(`start failed ${failurePoint} acknowledgement`);
+          }
+          return backing.service.writeAhead(authority, commands);
+        }),
+      };
+      const catalog = {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      };
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => service,
+      });
+      const operation = vi.fn(async () => 'must not run');
+
+      await expect(
+        capabilities.code.repository.runExclusive({
+          effectBoundary: {
+            boundaryId: '30000000-0000-4000-8000-000000000003',
+            runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+            turnId: 1,
+            callId: 'coder:1',
+            roleId: 'coder',
+            sourceStateId: 'code.coder',
+            sourceOutcomeSchema: { type: 'object' },
+            dispositions: ['unchanged'],
+            correctionBudget: { limit: 1, spent: false },
+          },
+          operation,
+        }),
+      ).rejects.toThrow(`start failed ${failurePoint} acknowledgement`);
+      expect(operation).not.toHaveBeenCalled();
+
+      const recovered = await recoverIncompleteRepositoryEffects({
+        catalog,
+        capabilities,
+      });
+      expect(recovered).toMatchObject({
+        revision: 2,
+        boundaries: [
+          { physicalReceipt: { classification: 'unchanged' } },
+        ],
+      });
+      expect(operation).not.toHaveBeenCalled();
+    },
+  );
+
+  it('persists recovery before the shared host refuses stale source restoration', async () => {
+    const repo = await initRepository('playbook-effects-host-recovery-');
+    const baseline = await observeGitRepository(repo);
+    const initial = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          attemptId: '60000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          playbookId: 'code',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          canonicalWorktree: {
+            worktree: baseline.worktree,
+            gitDir: baseline.gitDir,
+          },
+          baseline,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+    const { service } = fakeEffectLedgerService(initial);
+    const catalog = {
+      code: {
+        id: 'code',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+      },
+    };
+    const createHostRuntime = vi.fn();
+
+    await expect(
+      createCaptainSessionHost({
+        config: { catalog },
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        cwd: repo,
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        loadModule: vi.fn(),
+        observers: [],
+        createHostRuntime,
+        createEffectLedgerWriteAhead: () => service,
+        restoreSnapshot: { effectLedger: initial },
+      } as any),
+    ).rejects.toThrow(
+      /effect ledger requires reconciliation before source-state restoration/,
+    );
+    expect(service.snapshot().boundaries[0]).toHaveProperty(
+      'physicalReceipt.classification',
+      'unchanged',
+    );
+    expect(createHostRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stored worktree outside current host authority before claiming it', async () => {
+    const authorityRepo = await initRepository('playbook-effects-authority-');
+    const foreignRepo = await initRepository('playbook-effects-foreign-');
+    const baseline = await observeGitRepository(foreignRepo);
+    const initial = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          attemptId: '60000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          playbookId: 'code',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          canonicalWorktree: {
+            worktree: baseline.worktree,
+            gitDir: baseline.gitDir,
+          },
+          baseline,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+    const { service, writeAhead } = fakeEffectLedgerService(initial);
+    const catalog = {
+      code: {
+        id: 'code',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+      },
+    };
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: authorityRepo,
+      catalog,
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      sessionLease: {
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        ownerToken: '20000000-0000-4000-8000-000000000002',
+        assertOwner: async () => undefined,
+      },
+      createWriteAhead: () => service,
+    });
+
+    await expect(
+      recoverIncompleteRepositoryEffects({ catalog, capabilities }),
+    ).rejects.toThrow(/does not match current host authority/);
+    expect(writeAhead).not.toHaveBeenCalled();
+    await expect(
+      lstat(join(baseline.gitDir, _internal.claimRootName)),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('assembles immutable artifact-bound facilities from the active lease', async () => {
     const repo = await initRepository();
     const authorityOrder: string[] = [];
@@ -1028,7 +1913,8 @@ describe('schema-3 repository host capabilities', () => {
       ownerToken: '20000000-0000-4000-8000-000000000002',
       assertOwner,
     });
-    const writeAhead = vi.fn(async () => 'persisted');
+    const { service: ledgerService, writeAhead } =
+      fakeEffectLedgerService();
     const capabilities = await createRepositoryEffectCapabilities({
       cwd: repo,
       catalog: {
@@ -1043,7 +1929,7 @@ describe('schema-3 repository host capabilities', () => {
       sessionLease,
       createWriteAhead: () => {
         authorityOrder.push('writer');
-        return writeAhead;
+        return ledgerService;
       },
     });
     const capability = capabilities.decide;
@@ -1083,6 +1969,34 @@ describe('schema-3 repository host capabilities', () => {
         coder: async () => 'coder',
         reviewer: async () => 'reviewer',
       },
+      effectBoundaries: {
+        coder: {
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'coder:1',
+          roleId: 'coder',
+          sourceStateId: 'decide.coder',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+        reviewer: {
+          boundaryId: '50000000-0000-4000-8000-000000000005',
+          runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+          turnId: 1,
+          callId: 'reviewer:1',
+          roleId: 'reviewer',
+          sourceStateId: 'decide.reviewer',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+      },
+      completeEffectBoundary: ({ operation, roleId }: any) => ({
+        finalText: operation.value,
+        semanticCandidate: { roleId },
+      }),
     });
     expect(cohort.receipts.coder.classification).toBe('unchanged');
     expect(cohort.receipts.reviewer).toBe(cohort.receipts.coder);
@@ -1093,11 +2007,32 @@ describe('schema-3 repository host capabilities', () => {
       }),
     ).rejects.toThrow(/cannot override host-owned cwd/);
 
-    const command = { type: 'boundary-started' };
-    await expect(capability.effectLedger.writeAhead(command)).resolves.toBe(
-      'persisted',
+    expect(capability.effectLedger.snapshot()).toEqual(cohort.effectLedger);
+    expect(cohort.effectLedger).toMatchObject({
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [
+        {
+          roleId: 'coder',
+          finalText: 'coder',
+          semanticCandidate: { roleId: 'coder' },
+          physicalReceipt: { classification: 'unchanged' },
+        },
+        {
+          roleId: 'reviewer',
+          finalText: 'reviewer',
+          semanticCandidate: { roleId: 'reviewer' },
+          physicalReceipt: { classification: 'unchanged' },
+        },
+      ],
+    });
+    expect(writeAhead).toHaveBeenCalledTimes(2);
+    expect(writeAhead.mock.calls.map(([, commands]) => commands[0].kind)).toEqual(
+      ['start-boundaries', 'replace-boundaries'],
     );
-    expect(writeAhead).toHaveBeenCalledWith(capability.authority, command);
+    for (const [authority] of writeAhead.mock.calls) {
+      expect(authority).toBe(capability.authority);
+    }
   });
 
   it('rejects a lease for a different logical session before host work', async () => {

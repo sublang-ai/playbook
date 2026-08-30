@@ -381,7 +381,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     }
     const snapshot = runtime.exportSnapshot?.();
     expect(snapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       roleResumeTokens: {
         coder: 'coder-token-2',
         reviewer: 'reviewer-token-1',
@@ -608,7 +608,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
     ).resolves.toMatchObject({ outcome: 'quiescent' });
     expect(runtime.exportSnapshot?.()).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       roleResumeTokens: {
         coder: 'coder-thread',
         reviewer: 'reviewer-thread',
@@ -777,7 +777,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     } = await runToReview();
     const snapshot = source.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
       throw new Error('DECIDE did not export its suspended REVIEW call');
@@ -821,7 +821,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     expect(restoredStatuses).toEqual([]);
     expect(restoredTelemetry).toEqual([]);
     const restoredSnapshot = restored.exportSnapshot?.();
-    expect(restoredSnapshot?.schemaVersion).toBe(3);
+    expect(restoredSnapshot?.schemaVersion).toBe(4);
     expect(restoredSnapshot?.suspendedCall).toEqual(snapshot.suspendedCall);
     expect(restoredSnapshot?.state).toEqual(snapshot.state);
 
@@ -901,10 +901,10 @@ describe('DECIDE suspended REVIEW persistence', () => {
       'descriptor disagrees with the restored invoke input',
       (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => {
         if (
-          snapshot.schemaVersion !== 3 ||
+          snapshot.schemaVersion !== 4 ||
           snapshot.suspendedCall === undefined
         ) {
-          throw new Error('expected a suspended schema-3 snapshot');
+          throw new Error('expected a suspended schema-4 snapshot');
         }
         return {
           ...snapshot,
@@ -923,6 +923,14 @@ describe('DECIDE suspended REVIEW persistence', () => {
         state: { ...snapshot.state, value: 'forgedReviewCommit' },
       }),
       /restored actor state does not match snapshot state/,
+    ],
+    [
+      'effect ledger is not canonical empty',
+      (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => ({
+        ...snapshot,
+        effectLedger: { ...snapshot.effectLedger, revision: 1 },
+      }),
+      /revision must be zero/,
     ],
   ] as const)(
     'rolls back a failed restore when the %s',
@@ -971,7 +979,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     },
   );
 
-  it.each([1, 2])(
+  it.each([1, 2, 3])(
     'rejects legacy schema-%i snapshots without invoking a child',
     async (schemaVersion) => {
       const source = createPlaybookRuntime({});
@@ -1002,7 +1010,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
       await expect(
         restored.restore(session(restoredPorts), legacySnapshot),
       ).rejects.toThrow(
-        `schemaVersion ${schemaVersion} has incompatible player identity`,
+        `schemaVersion ${schemaVersion} is not supported (expected 4)`,
       );
 
       expect(nestedRequests).toEqual([]);

@@ -139,8 +139,155 @@ interface PlaybookSuspendedCall extends PlaybookPendingCall {
   turnId?: number;
 }
 
+type PlaybookRepositoryReceiptClassification =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'multiple-commits'
+  | 'rewritten-or-non-descendant'
+  | 'worktree-only-change'
+  | 'concurrent-or-foreign-change'
+  | 'observation-ambiguous';
+
+interface PlaybookRepositoryObservation {
+  readonly worktree: string;
+  readonly gitDir: string;
+  readonly head: string;
+  readonly projection: Readonly<Record<string, JsonValue>>;
+  readonly projectionDigest: string;
+}
+
+interface PlaybookRepositoryReceipt {
+  readonly classification: PlaybookRepositoryReceiptClassification;
+  readonly baseline: PlaybookRepositoryObservation;
+  readonly after?: PlaybookRepositoryObservation;
+  readonly commitOid?: string;
+}
+
+type PlaybookRepositoryDisposition =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'deferred';
+
+interface PlaybookEffectBoundary {
+  readonly sequence: number;
+  readonly boundaryId: string;
+  readonly attemptId: string;
+  readonly attemptNumber: number;
+  readonly playbookId: string;
+  readonly runtimeSessionId: string;
+  readonly turnId: number;
+  readonly callId: string;
+  readonly roleId: string;
+  readonly sourceStateId: string;
+  readonly sourceOutcomeSchema: JsonValue;
+  readonly dispositions: readonly PlaybookRepositoryDisposition[];
+  readonly canonicalWorktree: {
+    readonly worktree: string;
+    readonly gitDir: string;
+  };
+  readonly baseline: PlaybookRepositoryObservation;
+  readonly after?: PlaybookRepositoryObservation;
+  readonly physicalReceipt?: PlaybookRepositoryReceipt;
+  readonly finalText?: string;
+  readonly semanticCandidate?: JsonValue;
+  readonly correctionBudget: { readonly limit: 1; readonly spent: boolean };
+  readonly cohortId?: string;
+  readonly logicalOperationId?: string;
+}
+
+interface PlaybookEffectLogicalOperation {
+  readonly sequence: number;
+  readonly operationId: string;
+  readonly playbookId: string;
+  readonly runtimeSessionId: string;
+  readonly boundaryIds: readonly string[];
+  readonly originalBaseline: PlaybookRepositoryObservation;
+  readonly checkpoint?: PlaybookRepositoryObservation;
+  readonly pendingQuestion?: PlaybookPendingBossQuestion;
+  readonly playerContinuation?: JsonValue;
+  readonly checkpointRestorationEligible: boolean;
+  readonly logicalReceipt?: PlaybookRepositoryReceipt;
+}
+
+interface PlaybookEffectLedger {
+  readonly schemaVersion: 1;
+  readonly revision: number;
+  readonly boundaries: readonly PlaybookEffectBoundary[];
+  readonly logicalOperations: readonly PlaybookEffectLogicalOperation[];
+}
+
+type PlaybookEffectBoundaryStart = Omit<
+  PlaybookEffectBoundary,
+  | 'sequence'
+  | 'attemptId'
+  | 'attemptNumber'
+  | 'after'
+  | 'physicalReceipt'
+  | 'finalText'
+  | 'semanticCandidate'
+>;
+
+type PlaybookEffectLogicalOperationStart = Omit<
+  PlaybookEffectLogicalOperation,
+  'sequence'
+>;
+
+type PlaybookEffectLedgerCommand =
+  | {
+      readonly kind: 'start-boundaries';
+      readonly boundaries: readonly [
+        PlaybookEffectBoundaryStart,
+        ...PlaybookEffectBoundaryStart[],
+      ];
+    }
+  | {
+      readonly kind: 'replace-boundaries';
+      readonly replacements: readonly [
+        {
+          readonly expected: PlaybookEffectBoundary;
+          readonly next: PlaybookEffectBoundary;
+        },
+        ...{
+          readonly expected: PlaybookEffectBoundary;
+          readonly next: PlaybookEffectBoundary;
+        }[],
+      ];
+    }
+  | {
+      readonly kind: 'append-logical-operations';
+      readonly operations: readonly [
+        PlaybookEffectLogicalOperationStart,
+        ...PlaybookEffectLogicalOperationStart[],
+      ];
+    }
+  | {
+      readonly kind: 'replace-logical-operations';
+      readonly replacements: readonly [
+        {
+          readonly expected: PlaybookEffectLogicalOperation;
+          readonly next: PlaybookEffectLogicalOperation;
+        },
+        ...{
+          readonly expected: PlaybookEffectLogicalOperation;
+          readonly next: PlaybookEffectLogicalOperation;
+        }[],
+      ];
+    };
+
+type PlaybookEffectLedgerCommandBatch = readonly [
+  PlaybookEffectLedgerCommand,
+  ...PlaybookEffectLedgerCommand[],
+];
+
+interface PlaybookEffectLedgerCapability {
+  snapshot(): PlaybookEffectLedger;
+  writeAhead(
+    commands: PlaybookEffectLedgerCommandBatch,
+  ): Promise<PlaybookEffectLedger>;
+}
+
 interface PlaybookRuntimeSnapshot {
-  schemaVersion: 3;
+  schemaVersion: 4;
   playbookId: string;
   machine: JsonValue;
   roleResumeTokens: { readonly [roleId: string]: string };
@@ -154,6 +301,7 @@ interface PlaybookRuntimeSnapshot {
   };
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
+  effectLedger: PlaybookEffectLedger;
   suspendedCall?: PlaybookSuspendedCall;
 }
 
@@ -190,8 +338,9 @@ The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`,
 Artifact schema `2` shall omit `outcomeAuthority` and shall retain the existing one-argument `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` contract.
 Artifact schema `3` shall require `outcomeAuthority` as an own plain-JSON data property and shall instantiate the shared factory with exactly `{ configuredOptions, hostCapabilities }`, where `configuredOptions` is the registry-validated plain-JSON workflow slice and `hostCapabilities` is a non-null live current-host object.
 For schema `3`, the `Options` argument of the one-argument shared `PlaybookRuntimeFactory<Options>` shall be `XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>`; the registry's public entry receives the two members separately and composes that one internal argument only at the artifact boundary.
-For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations; and the ledger exposes the current host's atomic write-ahead operation.
-Only `configuredOptions` may reach option snapshotting and FSM input, while `hostCapabilities` and every nested callback, lease token, or repository identity shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, retained generations, nor continuation identity.
+For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations, whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion; and the ledger exposes its synchronous detached `snapshot(): PlaybookEffectLedger` mirror plus `writeAhead(commands: PlaybookEffectLedgerCommandBatch): Promise<PlaybookEffectLedger>` against the current host's atomic writer.
+Only `configuredOptions` may reach option snapshotting and FSM input.
+The capability object, its callbacks, lease token, and live claim or store handles shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, retained generations, nor continuation identity; the detached ledger data and canonical identities returned by its ledger channel shall instead persist only through the versioned effect-ledger members defined below.
 
 ```typescript
 type XStateOutcomeFieldAuthority =
@@ -224,9 +373,24 @@ interface XStatePlaybookRuntimeConstruction<
   HostCapabilities extends object,
 > {
   readonly configuredOptions: ConfiguredOptions;
-  readonly hostCapabilities: HostCapabilities;
+  readonly hostCapabilities: HostCapabilities & {
+    readonly effectLedger: PlaybookEffectLedgerCapability;
+  };
 }
 ```
+
+The shared type-only contract module shall export `PlaybookRepositoryDisposition`, `PlaybookRepositoryObservation`, `PlaybookRepositoryReceipt`, `PlaybookEffectBoundary`, `PlaybookEffectBoundaryStart`, `PlaybookEffectLogicalOperation`, `PlaybookEffectLedger`, `PlaybookEffectLedgerCommand`, `PlaybookEffectLedgerCommandBatch`, and `PlaybookEffectLedgerCapability`; the executable `@sublang/playbook/xstate-runtime` module shall export `assertPlaybookEffectLedger`, `emptyPlaybookEffectLedger`, and `isPlaybookEffectLedgerMonotonicExtension` over those types.
+The empty ledger shall be exactly `{ schemaVersion: 1, revision: 0, boundaries: [], logicalOperations: [] }`, and revision shall be zero if and only if both ordered ledgers are empty.
+The validator shall capture the complete supplied ledger once as detached frozen JSON and enforce every closed member, identity, ordering, receipt, cross-reference, correction-budget, and logical-operation invariant represented above.
+One optional host-owned UUID `cohortId` shall identify every member of exactly one contiguous, distinct-role, all-`unchanged` physical cohort in declared role order; every member shall share attempt, playbook, runtime-session, turn, canonical-worktree, and baseline identity and shall be uniformly started or uniformly complete, complete members shall carry the identical after observation and receipt, and the id shall never be reused by another group.
+Within a logical operation, `checkpoint`, `pendingQuestion`, and `playerContinuation` shall be all present or all absent; the pending question shall preserve its exact nonempty authored identity and nonblank content, and `checkpointRestorationEligible: true` shall require that complete bound group.
+Each logical operation shall reciprocally name every and only boundary carrying its operation id, share those boundaries' playbook and runtime-session identity, and use its first boundary's exact baseline as `originalBaseline`; every linked boundary shall use that baseline's canonical worktree and, after the first, start from the preceding boundary's complete after checkpoint, while a logical receipt shall require every linked physical receipt.
+`isPlaybookEffectLedgerMonotonicExtension(checkpoint, current)` shall accept exact equality and only a ledger reachable through the typed append-or-replace transitions without boundary or operation deletion, identity or original-baseline reassignment, correction-budget replenishment, completed-receipt or evidence loss, or removal or reordering of an earlier boundary-id prefix. A replacement may append boundary ids and replace or clear the complete current checkpoint, pending-question, and player-continuation group together with its eligibility, while an existing logical receipt remains immutable ([DR-040](../specs/decisions/040-outcome-authority-effect-reconciliation.md)).
+Every accepted non-idempotent command batch shall increment revision once; an exact start or append replay under the same boundary or operation identities and payload shall return the same acknowledged ledger, while conflicting identity reuse shall reject without mutation.
+The host shall assign each started boundary's sequence, current uncertain-attempt UUID, and positive attempt number, and shall assign each appended logical operation's sequence.
+Every command batch and every command's entry list shall be nonempty; the host shall apply its commands in order as one ledger transition, perform final cross-reference validation after the complete batch, and acknowledge only one atomic persistence and revision increment.
+Every replace command's exact `{ expected, next }` pair shall compare-and-swap one present boundary or operation, preserve its identity and immutable fields, reject a stale expected value, and move optional evidence, the one-way correction budget, or the current logical binding and eligibility only as permitted by DR-040.
+After a governed operation settles, the host shall retain any exact proposed completion batch only in live memory until it is acknowledged and the cooperative claim retires; an indeterminate same-process write shall retry or recognize that batch under the still-owned claim, while recovery after process death shall reconstruct only evidence provable from the durable baseline and current repository observation before source restoration.
 
 `governedPlayerStates` shall name every delegated-player state declared by `roleStates`, or shall be exactly empty for an artifact with no delegated-player state; it shall name no other state.
 Each state shall name exactly the outcomes in that state's `invoke.input.result`, and each outcome shall contain exactly `fields` and `repositoryDisposition`.
@@ -1403,18 +1567,22 @@ quiescent state with actor status `active`.
 At a safe capture point it shall return a JSON-safe
 `PlaybookRuntimeSnapshot` carrying:
 
-- `schemaVersion`: literal `3`.
+- `schemaVersion`: literal `4`.
 - `playbookId`: the bound session's playbook id.
 - `machine`: the root actor's `getPersistedSnapshot()` result, passed
   through the shared JSON detachment with any raw `Error` context value
   (for example FSM `lastError`) normalized to `{ name, message, stack? }`
   first. The value is opaque to hosts.
+- `effectLedger`: the detached immutable schema-version-1 mirror most recently
+  acknowledged by the current host's atomic ledger channel; a schema-3 runtime
+  carries the complete current-host mirror, while a schema-2 runtime and the
+  internal compiled Captain runtime carry the exact empty ledger.
 - `roleResumeTokens`: the local-role resume-token projection as a plain object
   (§PlaybookPorts contract).
 - `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
   `playbookCall` counters, plus `captainCall` when the runtime supports direct
   Captain calls.
-  A direct-Captain-capable runtime shall persist it in every schema-version-3 export.
+  A direct-Captain-capable runtime shall persist it in every schema-version-4 export.
 - `state`: the current normalized state descriptor.
 - `pendingBossQuestions`: the pending Boss question(s) from FSM context as
   a list of `{ questionId, asker, question, sourceItem? }`, where `asker` is
@@ -1436,14 +1604,18 @@ unsafe and returns `undefined`.
 `restore(session, snapshot)` is an alternative to `init` under the same
 lifecycle guards (§Session lifecycle): it shall reject when already
 initialized, disposing, or disposed, and shall validate
-schema version `3` and that `snapshot.playbookId` equals `session.playbookId` before touching state.
-Runtime snapshot schemas `1` and `2` shall reject before state binding because their token and pending-question fields conflate local roles, concrete players, and Captain identity.
+schema version `4`, the complete effect-ledger mirror, and that `snapshot.playbookId` equals `session.playbookId` before touching state.
+Runtime snapshot schemas `1` and `2` shall reject before state binding because their token and pending-question fields conflate local roles, concrete players, and Captain identity; schema `3` shall reject because it cannot prove an effect ledger.
 The host supplies the same immutable `PlaybookSession` identity the
 snapshot was exported under and recreates the runtime through the same
 factory with equivalent options; the runtime does not diff options, and
 module identity — that the factory constructing this runtime still
 belongs to the snapshot's playbook — is likewise the host's check to
 make before calling `restore`.
+Before actor or source-state restoration, a schema-3 runtime shall require the
+snapshot ledger to equal the detached synchronous mirror exposed by its
+current-host capability; schema-2 and internal Captain runtimes shall require
+both mirrors to be empty.
 `restore` shall bind the session and its current detached role bindings, restore the local-role token projection, the
 sequence counters, and the
 prior-state descriptor from the snapshot,
@@ -1491,13 +1663,17 @@ that frame. Accessors, unknown or missing members, empty identities, and an
 inconsistent child mapping shall reject during preflight.
 
 That preflight shall also validate the part of the exact structural envelope
-visible to the runtime: snapshot schema version `3`, target playbook id, the
+visible to the runtime: snapshot schema version `4`, target playbook id, the
 factory's already-validated artifact contract, and any supplied local-role
 binding set against the artifact's declared roles. The adopting host
 owns the working-directory and complete catalog-entry comparison — registry
 module identity, manifest command, options, and role set — plus every retained
 frame's artifact-schema comparison, and shall perform them before calling the
 runtime capability (DR-038 §3).
+The preflight shall apply the same exact full-mirror rule as restore: a
+schema-3 target receives a current-host mirror equal to the retained ledger,
+while schema-2 and internal Captain targets require the retained ledger to be
+empty.
 
 Adoption shall not restore any source counter. The fresh target trace, turn,
 judge-call, player-call, supported direct-Captain-call, playbook-call, and

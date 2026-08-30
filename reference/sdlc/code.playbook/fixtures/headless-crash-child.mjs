@@ -54,7 +54,7 @@ function createFixtureCaptainRuntime({ controller }) {
     exportSnapshot() {
       const state = activeState();
       return {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: 'captain',
         machine: { value: state.value, status: state.status },
         roleResumeTokens: {},
@@ -68,6 +68,12 @@ function createFixtureCaptainRuntime({ controller }) {
         },
         state,
         pendingBossQuestions: [],
+        effectLedger: {
+          schemaVersion: 1,
+          revision: 0,
+          boundaries: [],
+          logicalOperations: [],
+        },
       };
     },
     async handleBossInput({ text, signal }) {

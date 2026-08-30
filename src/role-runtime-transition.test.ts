@@ -13,13 +13,60 @@ import type {
 } from './runtime.js';
 import {
   adjudicatePlayerOutput,
+  assertPlaybookEffectLedger,
   createXStatePlaybookRuntime,
+  emptyPlaybookEffectLedger,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
   type XStateOutcomeAuthoritySpec,
   type XStatePlaybookRuntimeSpec,
   type XStatePlaybookRuntimeSpecV3,
 } from './xstate-runtime.js';
+
+function emptyLedgerHostCapabilities() {
+  const ledger = emptyPlaybookEffectLedger();
+  return {
+    effectLedger: {
+      snapshot: () => ledger,
+      writeAhead: async () => ledger,
+    },
+  };
+}
+
+function oneBoundaryEffectLedger() {
+  const observation = {
+    worktree: '/repo',
+    gitDir: '/repo/.git',
+    head: '1'.repeat(40),
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  return assertPlaybookEffectLedger({
+    schemaVersion: 1,
+    revision: 1,
+    boundaries: [
+      {
+        sequence: 1,
+        boundaryId: '10000000-0000-4000-8000-000000000001',
+        attemptId: '10000000-0000-4000-8000-000000000002',
+        attemptNumber: 1,
+        playbookId: 'role-fixture',
+        runtimeSessionId: '10000000-0000-4000-8000-000000000003',
+        turnId: 1,
+        callId: 'player-1',
+        roleId: 'coder',
+        sourceStateId: 'work',
+        sourceOutcomeSchema: { type: 'object' },
+        dispositions: ['unchanged'],
+        canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+        baseline: observation,
+        correctionBudget: { limit: 1, spent: false },
+      },
+    ],
+    logicalOperations: [],
+  });
+}
 
 const stateMeta = (stateId: string, description: string) => ({
   playbook: { stateId, description },
@@ -621,6 +668,7 @@ describe('DR-032 shared role runtime transition', () => {
     const hostCapabilities = {
       marker: 'capability-marker',
       observe: () => 'observed',
+      ...emptyLedgerHostCapabilities(),
     };
     const snapshotOptions = vi.fn((value: unknown): ConfiguredOptions => {
       const options = value as ConfiguredOptions;
@@ -763,6 +811,19 @@ describe('DR-032 shared role runtime transition', () => {
       }),
     ).toThrow('configured options must not contain hostCapabilities');
     expect(snapshotOptions).not.toHaveBeenCalled();
+    expect(() =>
+      createRuntime({
+        configuredOptions,
+        hostCapabilities: {
+          marker: 'capability-marker',
+          observe: () => 'observed',
+        },
+      } as unknown as {
+        configuredOptions: ConfiguredOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('hostCapabilities.effectLedger must be an own data property');
+    expect(snapshotOptions).not.toHaveBeenCalled();
 
     const runtime = createRuntime({ configuredOptions, hostCapabilities });
     expect(snapshotOptions).toHaveBeenCalledOnce();
@@ -780,10 +841,32 @@ describe('DR-032 shared role runtime transition', () => {
     expect(exported?.machine).toMatchObject({
       context: { configuredOptions: { marker: 'configured-marker' } },
     });
+    expect(exported?.effectLedger).toEqual(emptyPlaybookEffectLedger());
     expect(JSON.stringify(exported)).toContain('configured-marker');
     expect(JSON.stringify(exported)).not.toContain('capability-marker');
     expect(callPlayer).not.toHaveBeenCalled();
     await runtime.dispose();
+
+    if (exported === undefined) throw new Error('expected a safe snapshot');
+    const divergentLedger = oneBoundaryEffectLedger();
+    const divergentRuntime = createRuntime({
+      configuredOptions,
+      hostCapabilities: {
+        marker: 'capability-marker',
+        observe: () => 'observed',
+        effectLedger: {
+          snapshot: () => divergentLedger,
+          writeAhead: async () => divergentLedger,
+        },
+      },
+    });
+    await expect(
+      divergentRuntime.restore?.(
+        session(recordingPorts(callPlayer)),
+        exported,
+      ),
+    ).rejects.toThrow('does not equal the current host mirror');
+    expect(callPlayer).not.toHaveBeenCalled();
 
     const injectedFactory = createXStatePlaybookRuntime<
       EmptyOptions,
@@ -822,7 +905,7 @@ describe('DR-032 shared role runtime transition', () => {
           },
         },
       }),
-    )({ configuredOptions: {}, hostCapabilities: {} });
+    )({ configuredOptions: {}, hostCapabilities: emptyLedgerHostCapabilities() });
     mutableVerbatimFields.clear();
     await runtime.init(session(recordingPorts(callPlayer)));
 
@@ -853,7 +936,7 @@ describe('DR-032 shared role runtime transition', () => {
           },
         },
       }),
-    )({ configuredOptions: {}, hostCapabilities: {} });
+    )({ configuredOptions: {}, hostCapabilities: emptyLedgerHostCapabilities() });
     await runtime.init(session(recordingPorts(callPlayer)));
 
     await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
@@ -884,7 +967,7 @@ describe('DR-032 shared role runtime transition', () => {
           },
         },
       }),
-    )({ configuredOptions: {}, hostCapabilities: {} });
+    )({ configuredOptions: {}, hostCapabilities: emptyLedgerHostCapabilities() });
     await mismatchedOutcomeRuntime.init(
       session(recordingPorts(mismatchedOutcomeCall)),
     );
@@ -911,7 +994,7 @@ describe('DR-032 shared role runtime transition', () => {
         extractRequiredFields: () => ['__proto__'],
         outcomeAuthority,
       }),
-    )({ configuredOptions: {}, hostCapabilities: {} });
+    )({ configuredOptions: {}, hostCapabilities: emptyLedgerHostCapabilities() });
     await runtime.init(session(recordingPorts(callPlayer)));
 
     await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
@@ -997,7 +1080,7 @@ describe('DR-032 shared role runtime transition', () => {
     }
     const snapshot = runtime.exportSnapshot?.();
     expect(snapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       roleResumeTokens: { coder: 'thread-1' },
     });
     expect(JSON.stringify(snapshot)).not.toContain('dev.shared');

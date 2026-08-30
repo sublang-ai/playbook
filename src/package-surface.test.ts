@@ -1107,6 +1107,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
       'assertJsonSafe',
+      'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
       'combineAbortSignals',
       'createNestedPlaybookBridge',
@@ -1118,8 +1119,10 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'defaultComposePlayerPrompt',
       'defaultExtractRequiredFields',
       'detachPersistedMachineSnapshot',
+      'emptyPlaybookEffectLedger',
       'extractJsonValue',
       'hiddenControlEnvelope',
+      'isPlaybookEffectLedgerMonotonicExtension',
       'normalizeError',
       'normalizeErrorCompact',
       'normalizeErrorFull',
@@ -1191,6 +1194,13 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookControlAction',
       'PlaybookControlReceipt',
       'PlaybookControlView',
+      'PlaybookEffectBoundary',
+      'PlaybookEffectBoundaryStart',
+      'PlaybookEffectLedger',
+      'PlaybookEffectLedgerCapability',
+      'PlaybookEffectLedgerCommand',
+      'PlaybookEffectLedgerCommandBatch',
+      'PlaybookEffectLogicalOperation',
       'PlaybookPendingBossQuestion',
       'PlaybookPendingCall',
       'PlaybookPorts',
@@ -1200,6 +1210,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookRuntimeFactory',
       'PlaybookRuntimeSnapshot',
       'PlaybookRoleBinding',
+      'PlaybookRepositoryDisposition',
+      'PlaybookRepositoryObservation',
+      'PlaybookRepositoryReceipt',
       'PlaybookSession',
       'PlaybookState',
       'PlaybookStateValue',
@@ -1258,6 +1271,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
       'assertJsonSafe',
+      'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
       'combineAbortSignals',
       'createNestedPlaybookBridge',
@@ -1269,8 +1283,10 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'defaultComposePlayerPrompt',
       'defaultExtractRequiredFields',
       'detachPersistedMachineSnapshot',
+      'emptyPlaybookEffectLedger',
       'extractJsonValue',
       'hiddenControlEnvelope',
+      'isPlaybookEffectLedgerMonotonicExtension',
       'normalizeError',
       'normalizeErrorCompact',
       'normalizeErrorFull',
@@ -1668,14 +1684,26 @@ import type {
   PlaybookCaptainRuntimeProfile,
   PlaybookHostConstructionCapabilities,
 } from '@sublang/playbook/playbook-captain';
-import type { PlaybookPorts } from '@sublang/playbook/runtime';
+import type {
+  PlaybookEffectBoundaryStart,
+  PlaybookEffectLedgerCapability,
+  PlaybookPorts,
+} from '@sublang/playbook/runtime';
 
 interface Options { readonly mode: string }
-interface Capabilities { readonly observe: () => string }
+interface Capabilities {
+  readonly observe: () => string;
+  readonly effectLedger: PlaybookEffectLedgerCapability;
+}
 declare const machine: any;
+declare const boundaryStart: PlaybookEffectBoundaryStart;
+declare const effectLedger: PlaybookEffectLedgerCapability;
 declare const legacySpec: XStatePlaybookRuntimeSpec<Options>;
 declare const v2Spec: XStatePlaybookRuntimeSpecV2<Options>;
 declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
+
+// @ts-expect-error a start command cannot carry completion evidence
+boundaryStart.finalText;
 
 const legacyFactory = createXStatePlaybookRuntime<Options>(machine, legacySpec);
 legacyFactory({ mode: 'safe' });
@@ -1687,7 +1715,7 @@ const v2FactorySchema: 2 = v2Factory.compat.artifactSchema;
 v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
 
 const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
-v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', effectLedger } });
 const v3FactorySchema: 3 = v3Factory.compat.artifactSchema;
 // @ts-expect-error schema 3 requires the disjoint construction object
 v3Factory({ mode: 'safe' });
@@ -1695,7 +1723,7 @@ v3Factory({ mode: 'safe' });
 createXStatePlaybookRuntime<Options, number>(machine, v3Spec);
 
 const inferredV3Factory = createXStatePlaybookRuntime(machine, v3Spec);
-inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: {} });
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { effectLedger } });
 // @ts-expect-error inferred schema 3 still rejects raw configured options
 inferredV3Factory({ mode: 'safe' });
 // @ts-expect-error inferred schema 3 still requires an object capability

@@ -38,6 +38,7 @@ import {
   PLAYBOOK_CAPTAIN_MODULE,
   projectHostAgent,
 } from './bin/launch-config.js';
+import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
 
 const logicalSessionId = '90000000-0000-4000-8000-000000000041';
 const internalSessionId = '80000000-0000-4000-8000-000000000041';
@@ -87,7 +88,11 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       loadModule: registryLoader(execution),
       createEffectLedgerWriteAhead: (lease: unknown) => {
         writerLease = lease;
-        return async () => undefined;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
       },
       createHostRuntime: async (options: any) => {
         await options.captain.init({
@@ -119,11 +124,10 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     for (const key of [
       'hostCapabilities',
       'leaseOwnerToken',
-      'canonicalWorktree',
-      'effectLedger',
     ]) {
       expect(durable).not.toContain(`"${key}"`);
     }
+    expect(record.effectLedger).toEqual(emptyPlaybookEffectLedger());
 
     await runtime.dispose();
     await lifecycle.shutdown();
@@ -147,7 +151,11 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       loadModule: registryLoader(execution),
       createEffectLedgerWriteAhead: () => {
         writerCreations += 1;
-        return async () => undefined;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
       },
       createHostRuntime: async () => {
         hostCreations += 1;
@@ -1442,12 +1450,13 @@ function shellSnapshot(
     kind: 'boss',
     payload: `turn-${index + 1}`,
   }));
+  const effectLedger = emptyPlaybookEffectLedger();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     captain: {
       sessionId: internalSessionId,
       runtime: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: 'captain',
         machine: { value: state.value, status: state.status },
         roleResumeTokens: {},
@@ -1461,6 +1470,7 @@ function shellSnapshot(
         },
         state,
         pendingBossQuestions: [],
+        effectLedger,
       },
       agent: structural.captain,
       conversation:
@@ -1474,6 +1484,7 @@ function shellSnapshot(
     issuedSessionIds: [internalSessionId],
     sequences: { turn, journal: journal.length },
     journal,
+    effectLedger,
     ...(turn === 0
       ? {}
       : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
@@ -1500,7 +1511,7 @@ function retainedGeneration() {
         options: {},
         roleBindings: { coder: 'dev.coder' },
         runtime: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           playbookId: 'code',
           machine: { value: state.value, status: state.status },
           roleResumeTokens: {},
@@ -1514,6 +1525,7 @@ function retainedGeneration() {
           },
           state,
           pendingBossQuestions: [],
+          effectLedger: emptyPlaybookEffectLedger(),
         },
       },
     ],

@@ -11,6 +11,10 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../../src/xstate-runtime.js';
 import { createPlaybookCaptainShell } from '../playbook-captain.js';
 import {
   adapterSdkFailureLines,
@@ -27,7 +31,10 @@ import {
   snapshotRegistryEntry,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
-import { createRepositoryEffectCapabilities } from './repository-effects.js';
+import {
+  createRepositoryEffectCapabilities,
+  recoverIncompleteRepositoryEffects,
+} from './repository-effects.js';
 import {
   assertCaptainSessionExecutionCompatible,
   captainSessionSelectedMembers,
@@ -776,6 +783,42 @@ export class CaptainSessionHostCleanupError extends AggregateError {
   }
 }
 
+async function createStoreEffectLedgerService(lease) {
+  let mirror =
+    (await lease.read())?.effectLedger ?? emptyPlaybookEffectLedger();
+  mirror = assertPlaybookEffectLedger(mirror);
+  return Object.freeze({
+    snapshot: () => mirror,
+    async writeAhead(authority, commands) {
+      mirror = assertPlaybookEffectLedger(
+        await lease.writeEffectLedger(authority, commands),
+      );
+      return mirror;
+    },
+  });
+}
+
+function effectLedgerSnapshotFromCapabilities(hostCapabilities) {
+  const capabilities = Object.values(hostCapabilities);
+  if (capabilities.length === 0) return emptyPlaybookEffectLedger();
+  const mirror = assertPlaybookEffectLedger(
+    capabilities[0].effectLedger.snapshot(),
+  );
+  for (const capability of capabilities.slice(1)) {
+    if (
+      !isDeepStrictEqual(
+        assertPlaybookEffectLedger(capability.effectLedger.snapshot()),
+        mirror,
+      )
+    ) {
+      throw new Error(
+        'schema-3 current-host capabilities disagree on their effect ledger',
+      );
+    }
+  }
+  return mirror;
+}
+
 function isCaptainSessionHostCleanupIncomplete(error) {
   if (error instanceof CaptainSessionHostCleanupError) return true;
   return (
@@ -804,8 +847,23 @@ export async function createCaptainSessionHost({
     catalog: config.catalog,
     sessionId,
     sessionLease,
-    createWriteAhead: createEffectLedgerWriteAhead,
+    createWriteAhead:
+      createEffectLedgerWriteAhead ?? createStoreEffectLedgerService,
   });
+  await recoverIncompleteRepositoryEffects({
+    catalog: config.catalog,
+    capabilities: hostCapabilities,
+  });
+  const currentEffectLedger = () =>
+    effectLedgerSnapshotFromCapabilities(hostCapabilities);
+  if (
+    restoreSnapshot !== undefined &&
+    !isDeepStrictEqual(restoreSnapshot.effectLedger, currentEffectLedger())
+  ) {
+    throw new Error(
+      'Captain session effect ledger requires reconciliation before source-state restoration',
+    );
+  }
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
     hostCapabilities,

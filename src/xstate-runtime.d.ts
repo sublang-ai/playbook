@@ -1,5 +1,5 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
-import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookEffectLedger, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
 export * from './xstate-playbook-runtime.js';
 /**
  * Immutable cancellation provenance for one runtime operation. The captured
@@ -39,6 +39,12 @@ export interface SnapshotNormalizationOptions {
 }
 export declare function normalizePlaybookSnapshot(snapshot: unknown, options?: SnapshotNormalizationOptions): PlaybookState;
 export declare function detachPersistedMachineSnapshot(persisted: unknown): JsonValue;
+/** Return the canonical empty host-owned effect-ledger mirror. */
+export declare function emptyPlaybookEffectLedger(): PlaybookEffectLedger;
+/** Validate, detach, and recursively freeze one effect-ledger mirror. */
+export declare function assertPlaybookEffectLedger(value: unknown, path?: string): PlaybookEffectLedger;
+/** Whether current preserves every durable fact in baseline and only extends it. */
+export declare function isPlaybookEffectLedgerMonotonicExtension(baselineValue: unknown, currentValue: unknown): boolean;
 export interface PlaybookRuntimeSnapshotValidationOptions {
     /**
      * Opt in only when the restore path will prepare and confirm the suspended

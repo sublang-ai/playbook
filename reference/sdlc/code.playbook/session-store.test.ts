@@ -46,6 +46,10 @@ const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const frameRuntimeId = '80000000-0000-4000-8000-000000000002';
 const childFrameRuntimeId = '80000000-0000-4000-8000-000000000003';
 const reviewRootRuntimeId = '80000000-0000-4000-8000-000000000004';
+const effectBoundaryId = '70000000-0000-4000-8000-000000000001';
+const effectOperationId = '70000000-0000-4000-8000-000000000002';
+const effectQuestionId = '70000000-0000-4000-8000-000000000003';
+const secondEffectBoundaryId = '70000000-0000-4000-8000-000000000004';
 
 afterEach(async () => {
   await Promise.all(
@@ -116,6 +120,12 @@ function executionProjection(
   };
 }
 
+function schema3ExecutionProjection() {
+  const execution: any = structuredClone(executionProjection());
+  execution.catalog.code.artifactSchema = 3;
+  return execution;
+}
+
 function parkedState(stateId = 'routing') {
   return {
     value: stateId,
@@ -138,10 +148,89 @@ function suspendedState(stateId = 'waitingForReview') {
   };
 }
 
+function effectLedger() {
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    boundaries: [],
+    logicalOperations: [],
+  };
+}
+
+function effectWorktree() {
+  return {
+    worktree: process.cwd(),
+    gitDir: join(process.cwd(), '.git'),
+  };
+}
+
+function effectObservation(head = 'a'.repeat(40)) {
+  return {
+    ...effectWorktree(),
+    head,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+}
+
+function effectAuthority(
+  execution = schema3ExecutionProjection(),
+  ownerToken = tokenO,
+) {
+  const item = execution.catalog.code;
+  return {
+    playbookId: 'code',
+    artifactSchema: 3,
+    cwd: process.cwd(),
+    sessionId,
+    leaseOwnerToken: ownerToken,
+    canonicalWorktree: effectWorktree(),
+    requiredRoleIds: item.requiredRoleIds,
+    concurrentRoleSets: item.concurrentRoleSets,
+  };
+}
+
+function effectBoundaryStart(options: {
+  boundaryId?: string;
+  logicalOperationId?: string;
+} = {}) {
+  const boundaryId = options.boundaryId ?? effectBoundaryId;
+  const logicalOperationId = Object.hasOwn(options, 'logicalOperationId')
+    ? options.logicalOperationId
+    : effectOperationId;
+  return {
+    boundaryId,
+    playbookId: 'code',
+    runtimeSessionId: frameRuntimeId,
+    turnId: 1,
+    callId: `code:coder:${boundaryId}`,
+    roleId: 'coder',
+    sourceStateId: 'implementing',
+    sourceOutcomeSchema: { type: 'object' },
+    dispositions: ['one-descendant-commit'],
+    canonicalWorktree: effectWorktree(),
+    baseline: effectObservation(),
+    correctionBudget: { limit: 1, spent: false },
+    ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
+  };
+}
+
+function effectLogicalOperationStart() {
+  return {
+    operationId: effectOperationId,
+    playbookId: 'code',
+    runtimeSessionId: frameRuntimeId,
+    boundaryIds: [effectBoundaryId],
+    originalBaseline: effectObservation(),
+    checkpointRestorationEligible: false,
+  };
+}
+
 function runtimeSnapshot(playbookId = 'captain', turn = 0) {
   const state = parkedState();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -155,6 +244,7 @@ function runtimeSnapshot(playbookId = 'captain', turn = 0) {
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: effectLedger(),
   };
 }
 
@@ -171,7 +261,7 @@ function shellSnapshot(
     payload: `turn-${index + 1}`,
   }));
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     captain: {
       sessionId: captainRuntimeId,
       runtime: runtimeSnapshot('captain', turn),
@@ -187,6 +277,7 @@ function shellSnapshot(
     issuedSessionIds: [captainRuntimeId],
     sequences: { turn, journal: journal.length },
     journal,
+    effectLedger: effectLedger(),
     ...(turn === 0
       ? {}
       : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
@@ -379,19 +470,16 @@ function retainedSettledRecord({
     code: retainedCodeGeneration(),
     review: retainedReviewGeneration(),
   },
-  schemaVersion = 3,
   cwd = process.cwd(),
   updatedAt = '2026-08-11T21:00:00.020Z',
 }: {
   id: string;
   execution?: ReturnType<typeof retentionExecutionProjection>;
   retainedGenerations?: Record<string, unknown>;
-  schemaVersion?: number;
   cwd?: string;
   updatedAt?: string;
 }) {
   return settledRecord({
-    schemaVersion,
     sessionId: id,
     createdAt: '2026-08-11T21:00:00.000Z',
     updatedAt,
@@ -496,7 +584,7 @@ function processError(code: string) {
 function settledRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 3,
+    schemaVersion: 5,
     kind: 'captain-session',
     state: 'settled',
     sessionId,
@@ -506,6 +594,7 @@ function settledRecord(overrides: Record<string, unknown> = {}) {
     structuralProjection: projectCaptainSessionStructure(execution),
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
+    effectLedger: effectLedger(),
     retainedGenerations: {},
     ...overrides,
   };
@@ -526,16 +615,76 @@ function releasedSchema2Record(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function legacyRuntimeSnapshot(value: Record<string, any>) {
+  const { effectLedger: _effectLedger, ...snapshot } = value;
+  return { ...snapshot, schemaVersion: 3 };
+}
+
+function legacyShellSnapshot(value: Record<string, any>) {
+  const { effectLedger: _effectLedger, ...snapshot } = value;
+  return {
+    ...snapshot,
+    schemaVersion: 3,
+    captain: {
+      ...snapshot.captain,
+      runtime: legacyRuntimeSnapshot(snapshot.captain.runtime),
+    },
+    ...(snapshot.frames === undefined
+      ? {}
+      : {
+          frames: snapshot.frames.map((frame: Record<string, any>) => ({
+            ...frame,
+            runtime: legacyRuntimeSnapshot(frame.runtime),
+          })),
+        }),
+  };
+}
+
+function legacyRetainedGenerations(value: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(value).map(([rootId, generation]: [string, any]) => [
+      rootId,
+      {
+        ...generation,
+        frames: generation.frames.map((frame: Record<string, any>) => ({
+          ...frame,
+          runtime: legacyRuntimeSnapshot(frame.runtime),
+        })),
+      },
+    ]),
+  );
+}
+
+function legacyRecord(
+  value: Record<string, any>,
+  schemaVersion: 3 | 4 = 3,
+) {
+  const { effectLedger: _effectLedger, ...record } = value;
+  return {
+    ...record,
+    schemaVersion,
+    snapshot: legacyShellSnapshot(record.snapshot),
+    ...(record.retainedGenerations === undefined
+      ? {}
+      : {
+          retainedGenerations: legacyRetainedGenerations(
+            record.retainedGenerations,
+          ),
+        }),
+  };
+}
+
 function memberlessSchema3Record(overrides: Record<string, unknown> = {}) {
+  const canonical = { ...settledRecord(), ...overrides };
   const { retainedGenerations: _retainedGenerations, ...record } =
-    settledRecord();
-  return { ...record, schemaVersion: 3, ...overrides };
+    legacyRecord(canonical);
+  return record;
 }
 
 function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 3,
+    schemaVersion: 5,
     kind: 'captain-session',
     state: 'uncertain',
     sessionId,
@@ -545,6 +694,7 @@ function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
     structuralProjection: projectCaptainSessionStructure(execution),
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
+    effectLedger: effectLedger(),
     retainedGenerations: {},
     uncertain: {
       baseUpdatedAt: null,
@@ -574,7 +724,7 @@ function leaseOwner(
   };
 }
 
-describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
+describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () => {
   it('atomically initializes one validated turn-zero settled record without replacement', async () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
@@ -601,12 +751,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       snapshot: shellSnapshot(execution),
     });
     expect(settled).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
       state: 'settled',
       createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.001Z',
       structuralProjection: { schemaVersion: 1 },
       lastAppliedExecutionProjection: { schemaVersion: 2 },
+      snapshot: { schemaVersion: 4 },
+      effectLedger: effectLedger(),
       retainedGenerations: {},
     });
     const recordPath = join(sessionsDir, `${sessionId}.json`);
@@ -625,7 +777,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     await lease.release();
   });
 
-  it('continues member-less schema 3 and discards to its exact bytes', async () => {
+  it('migrates member-less pre-effect schema 3 before continuation', async () => {
     const { sessionsDir } = await fixtureDir();
     const execution = executionProjection();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
@@ -638,13 +790,19 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     await firstLease.release();
 
     const recordPath = join(sessionsDir, `${sessionId}.json`);
-    const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
+    const persisted = legacyRecord(
+      JSON.parse(await readFile(recordPath, 'utf8')),
+    );
     const { retainedGenerations: _retainedGenerations, ...memberless } =
       persisted;
-    const memberlessBytes = `${JSON.stringify(memberless)}\n`;
-    await writeFile(recordPath, memberlessBytes, 'utf8');
+    await writeFile(recordPath, `${JSON.stringify(memberless)}\n`, 'utf8');
 
     const nextLease = await fixedStore(sessionsDir, tokenN).acquire(sessionId);
+    expect(await nextLease.read()).toMatchObject({
+      schemaVersion: 5,
+      snapshot: { schemaVersion: 4 },
+      effectLedger: effectLedger(),
+    });
     expect(await nextLease.read()).not.toHaveProperty('retainedGenerations');
     const uncertain = await nextLease.beginTurn({
       input: 'compatible continuation',
@@ -659,11 +817,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     expect(retried).not.toHaveProperty('retainedGenerations');
     const discarded = await nextLease.discard({ attemptId: attempt2 });
     expect(discarded).not.toHaveProperty('retainedGenerations');
-    expect(await readFile(recordPath, 'utf8')).toBe(memberlessBytes);
+    expect(discarded).toMatchObject({ schemaVersion: 5 });
     await nextLease.release();
   });
 
-  it('continues transient schema 4 and canonicalizes a successful settlement', async () => {
+  it('migrates historical schema 4 and settles canonically as schema 5', async () => {
     const { sessionsDir } = await fixtureDir();
     const execution = executionProjection();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
@@ -681,19 +839,20 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       persisted;
     await writeFile(
       recordPath,
-      `${JSON.stringify({ ...memberless, schemaVersion: 4 })}\n`,
+      `${JSON.stringify(legacyRecord(memberless, 4))}\n`,
       'utf8',
     );
     const store = fixedStore(sessionsDir, tokenN);
     await expect(store.latest()).rejects.toThrow(
       /missing field "retainedGenerations"/,
     );
-    const schema4Bytes = `${JSON.stringify({
-      ...persisted,
-      schemaVersion: 4,
-    })}\n`;
+    const schema4Bytes = `${JSON.stringify(legacyRecord(persisted, 4))}\n`;
     await writeFile(recordPath, schema4Bytes, 'utf8');
-    expect((await store.latest()).schemaVersion).toBe(4);
+    expect(await store.latest()).toMatchObject({
+      schemaVersion: 5,
+      snapshot: { schemaVersion: 4 },
+      effectLedger: effectLedger(),
+    });
 
     const nextLease = await store.acquire(sessionId);
     const uncertain = await nextLease.beginTurn({
@@ -701,29 +860,504 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
     });
-    expect(uncertain.schemaVersion).toBe(4);
+    expect(uncertain.schemaVersion).toBe(5);
     const retried = await nextLease.beginRetry({
       expectedAttemptId: attempt1,
       nextAttemptId: attempt2,
     });
-    expect(retried.schemaVersion).toBe(4);
+    expect(retried.schemaVersion).toBe(5);
     const discarded = await nextLease.discard({ attemptId: attempt2 });
-    expect(discarded.schemaVersion).toBe(4);
-    expect(await readFile(recordPath, 'utf8')).toBe(schema4Bytes);
+    expect(discarded.schemaVersion).toBe(5);
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toMatchObject({
+      schemaVersion: 5,
+      effectLedger: effectLedger(),
+    });
 
     const nextTurn = await nextLease.beginTurn({
       input: 'canonicalize compatible schema 4',
       attemptId: attempt3,
       attemptedExecutionProjection: execution,
     });
-    expect(nextTurn.schemaVersion).toBe(4);
+    expect(nextTurn.schemaVersion).toBe(5);
     const settled = await nextLease.settle({
       attemptId: attempt3,
       snapshot: shellSnapshot(execution, 1),
     });
-    expect(settled.schemaVersion).toBe(3);
+    expect(settled.schemaVersion).toBe(5);
     expect(settled.retainedGenerations).toEqual({});
     await nextLease.release();
+  });
+
+  it('rejects pre-effect records once any stored playbook uses artifact schema 3', () => {
+    const execution = schema3ExecutionProjection();
+    const legacy = legacyRecord(
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: shellSnapshot(execution),
+      }),
+    );
+    expect(() => validateCaptainSessionRecord(legacy)).toThrow(
+      /predates effect-ledger persistence.*schema-3 playbook "code"/,
+    );
+
+    const pollutedShell = legacyRecord(settledRecord());
+    pollutedShell.snapshot.effectLedger = effectLedger();
+    expect(() => validateCaptainSessionRecord(pollutedShell)).toThrow(
+      /legacy Captain shell snapshot must not contain an effect ledger/,
+    );
+
+    const pollutedRuntime = legacyRecord(settledRecord());
+    pollutedRuntime.snapshot.captain.runtime.effectLedger = effectLedger();
+    expect(() => validateCaptainSessionRecord(pollutedRuntime)).toThrow(
+      /runtime must not contain an effect ledger/,
+    );
+  });
+
+  it('writes exact effect-ledger batches atomically and preserves their authoritative mirror', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    const execution = schema3ExecutionProjection();
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    const authority = effectAuthority(execution);
+    await expect(
+      lease.writeEffectLedger(authority, [
+        { kind: 'start-boundaries', boundaries: [effectBoundaryStart()] },
+      ]),
+    ).rejects.toThrow(/requires an uncertain turn/);
+    const uncertain = await lease.beginTurn({
+      input: 'perform one repository effect',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    await expect(
+      lease.writeEffectLedger(
+        { ...authority, leaseOwnerToken: tokenN },
+        [{ kind: 'start-boundaries', boundaries: [effectBoundaryStart()] }],
+      ),
+    ).rejects.toThrow(/does not match the current Captain session lease/);
+    await expect(lease.writeEffectLedger(authority, [])).rejects.toThrow(
+      /must be a nonempty array/,
+    );
+    const initialCommands = [
+      {
+        kind: 'start-boundaries',
+        boundaries: [
+          effectBoundaryStart(),
+          effectBoundaryStart({
+            boundaryId: secondEffectBoundaryId,
+            logicalOperationId: undefined,
+          }),
+        ],
+      },
+      {
+        kind: 'append-logical-operations',
+        operations: [effectLogicalOperationStart()],
+      },
+    ];
+    const started = await lease.writeEffectLedger(
+      authority,
+      initialCommands,
+    );
+    expect(Object.isFrozen(started)).toBe(true);
+    expect(Object.isFrozen(started.boundaries[0])).toBe(true);
+    expect(started).toMatchObject({
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          attemptId: uncertain.uncertain.attemptId,
+          attemptNumber: uncertain.uncertain.attemptNumber,
+          boundaryId: effectBoundaryId,
+          logicalOperationId: effectOperationId,
+        },
+        {
+          sequence: 2,
+          attemptId: uncertain.uncertain.attemptId,
+          attemptNumber: uncertain.uncertain.attemptNumber,
+          boundaryId: secondEffectBoundaryId,
+        },
+      ],
+      logicalOperations: [
+        { sequence: 1, operationId: effectOperationId },
+      ],
+    });
+    const startedBytes = await readFile(recordPath, 'utf8');
+    expect(
+      await lease.writeEffectLedger(authority, initialCommands),
+    ).toEqual(started);
+    expect(await readFile(recordPath, 'utf8')).toBe(startedBytes);
+    const reorderedStart: any = structuredClone(initialCommands);
+    reorderedStart[0].boundaries.reverse();
+    await expect(
+      lease.writeEffectLedger(authority, reorderedStart),
+    ).rejects.toThrow(/reuses an existing boundary id with different data/);
+    const conflictingStart: any = structuredClone(initialCommands);
+    conflictingStart[0].boundaries[0].callId = 'code:coder:conflict';
+    await expect(
+      lease.writeEffectLedger(authority, conflictingStart),
+    ).rejects.toThrow(/reuses an existing boundary id with different data/);
+    const conflictingOperation: any = structuredClone(initialCommands[1]);
+    conflictingOperation.operations[0].checkpointRestorationEligible = true;
+    await expect(
+      lease.writeEffectLedger(authority, [conflictingOperation]),
+    ).rejects.toThrow(
+      /reuses an existing operation id with different data/,
+    );
+    expect(await readFile(recordPath, 'utf8')).toBe(startedBytes);
+    const retried = await lease.beginRetry({
+      expectedAttemptId: attempt1,
+      nextAttemptId: attempt2,
+    });
+    expect(retried.effectLedger).toEqual(started);
+    const retriedBytes = await readFile(recordPath, 'utf8');
+    expect(
+      await lease.writeEffectLedger(authority, initialCommands),
+    ).toEqual(started);
+    expect(await readFile(recordPath, 'utf8')).toBe(retriedBytes);
+
+    const futureAttempt = structuredClone(await lease.read());
+    futureAttempt.effectLedger.boundaries[0].attemptNumber = 3;
+    expect(() => validateCaptainSessionRecord(futureAttempt)).toThrow(
+      /names a future uncertain attempt/,
+    );
+    const mismatchedCurrent = structuredClone(await lease.read());
+    mismatchedCurrent.effectLedger.boundaries[0].attemptNumber = 2;
+    expect(() => validateCaptainSessionRecord(mismatchedCurrent)).toThrow(
+      /attempt identity conflicts with the current uncertain marker/,
+    );
+    const inconsistentPrior = structuredClone(await lease.read());
+    inconsistentPrior.effectLedger.boundaries[1].attemptId = attempt3;
+    expect(() => validateCaptainSessionRecord(inconsistentPrior)).toThrow(
+      /use inconsistent ids for one attempt number/,
+    );
+    const reusedPriorId = structuredClone(await lease.read());
+    reusedPriorId.uncertain.attemptId = attempt3;
+    reusedPriorId.uncertain.attemptNumber = 3;
+    reusedPriorId.effectLedger.boundaries[1].attemptNumber = 2;
+    expect(() => validateCaptainSessionRecord(reusedPriorId)).toThrow(
+      /reuse one id across attempt numbers/,
+    );
+
+    const after = effectObservation('b'.repeat(40));
+    const receipt = {
+      classification: 'one-descendant-commit',
+      baseline: effectObservation(),
+      after,
+      commitOid: 'b'.repeat(40),
+    };
+    const completedBoundary = {
+      ...started.boundaries[0],
+      after,
+      physicalReceipt: receipt,
+      finalText: 'Implemented and verified.',
+      semanticCandidate: { status: 'ok' },
+      correctionBudget: { limit: 1, spent: true },
+    };
+    const suspendedOperation = {
+      ...started.logicalOperations[0],
+      checkpoint: after,
+      pendingQuestion: {
+        questionId: effectQuestionId,
+        asker: { kind: 'role', roleId: 'coder' },
+        question: 'May I continue?',
+      },
+      playerContinuation: { token: 'player-continuation' },
+      checkpointRestorationEligible: true,
+      logicalReceipt: receipt,
+    };
+    const completionCommands = [
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          { expected: started.boundaries[0], next: completedBoundary },
+        ],
+      },
+      {
+        kind: 'replace-logical-operations',
+        replacements: [
+          {
+            expected: started.logicalOperations[0],
+            next: suspendedOperation,
+          },
+        ],
+      },
+    ];
+    const completed = await lease.writeEffectLedger(
+      authority,
+      completionCommands,
+    );
+    expect(completed).toMatchObject({
+      revision: 2,
+      logicalOperations: [
+        {
+          checkpointRestorationEligible: true,
+          pendingQuestion: { questionId: effectQuestionId },
+          logicalReceipt: { classification: 'one-descendant-commit' },
+        },
+      ],
+    });
+    expect(completed.boundaries[0]).toMatchObject({
+      correctionBudget: { limit: 1, spent: true },
+    });
+    const completedBytes = await readFile(recordPath, 'utf8');
+    await expect(
+      lease.writeEffectLedger(authority, completionCommands),
+    ).rejects.toThrow(/expected does not match the durable boundary/);
+    expect(await readFile(recordPath, 'utf8')).toBe(completedBytes);
+    await expect(
+      lease.writeEffectLedger(authority, [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            {
+              expected: started.boundaries[0],
+              next: {
+                ...completedBoundary,
+                finalText: 'Conflicting stale replacement.',
+              },
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow(/expected does not match the durable boundary/);
+    expect(await readFile(recordPath, 'utf8')).toBe(completedBytes);
+
+    const consumedOperation = {
+      ...completed.logicalOperations[0],
+      checkpointRestorationEligible: false,
+    };
+    const consumed = await lease.writeEffectLedger(authority, [
+      {
+        kind: 'replace-logical-operations',
+        replacements: [
+          {
+            expected: completed.logicalOperations[0],
+            next: consumedOperation,
+          },
+        ],
+      },
+    ]);
+    expect(consumed).toMatchObject({
+      revision: 3,
+      logicalOperations: [
+        {
+          checkpointRestorationEligible: false,
+          logicalReceipt: { classification: 'one-descendant-commit' },
+        },
+      ],
+    });
+    expect(consumed.logicalOperations[0]).toMatchObject({
+      checkpoint: after,
+      pendingQuestion: { questionId: effectQuestionId },
+      playerContinuation: { token: 'player-continuation' },
+    });
+
+    const rebound = {
+      ...consumed.logicalOperations[0],
+      checkpointRestorationEligible: true,
+    };
+    const repeatedQuestion = {
+      ...rebound,
+      pendingQuestion: {
+        ...rebound.pendingQuestion,
+        question: 'May I continue now?',
+      },
+    };
+    const orderedReplacementBatch = [
+      {
+        kind: 'replace-logical-operations',
+        replacements: [
+          {
+            expected: consumed.logicalOperations[0],
+            next: rebound,
+          },
+        ],
+      },
+      {
+        kind: 'replace-logical-operations',
+        replacements: [
+          {
+            expected: rebound,
+            next: repeatedQuestion,
+          },
+        ],
+      },
+    ];
+    const repeated = await lease.writeEffectLedger(
+      authority,
+      orderedReplacementBatch,
+    );
+    expect(repeated).toMatchObject({
+      revision: 4,
+      logicalOperations: [
+        {
+          checkpointRestorationEligible: true,
+          pendingQuestion: { question: 'May I continue now?' },
+        },
+      ],
+    });
+    const repeatedBytes = await readFile(recordPath, 'utf8');
+    await expect(
+      lease.writeEffectLedger(authority, orderedReplacementBatch),
+    ).rejects.toThrow(/expected does not match the durable logical operation/);
+    expect(await readFile(recordPath, 'utf8')).toBe(repeatedBytes);
+
+    const recordText = await readFile(recordPath, 'utf8');
+    expect(recordText).not.toContain(tokenO);
+    await expect(lease.discard({ attemptId: attempt2 })).rejects.toThrow(
+      /differs from its pre-turn checkpoint/,
+    );
+    await expect(
+      lease.settle({
+        attemptId: attempt2,
+        snapshot: engagedSnapshot(execution),
+      }),
+    ).rejects.toThrow(/snapshot effect ledger differs from its durable ledger/);
+
+    const mirrored: any = engagedSnapshot(execution);
+    mirrored.effectLedger = repeated;
+    mirrored.frames[0].runtime.effectLedger = repeated;
+    const settled = await lease.settle({
+      attemptId: attempt2,
+      snapshot: mirrored,
+    });
+    expect(settled.effectLedger).toEqual(repeated);
+    expect(settled.snapshot.effectLedger).toEqual(repeated);
+    expect(settled.snapshot.frames[0].runtime.effectLedger).toEqual(repeated);
+
+    const schema2Execution = executionProjection();
+    const schema2Snapshot: any = engagedSnapshot(schema2Execution);
+    schema2Snapshot.effectLedger = repeated;
+    schema2Snapshot.frames[0].runtime.effectLedger = repeated;
+    expect(() =>
+      validateCaptainSessionRecord(
+        settledRecord({
+          structuralProjection:
+            projectCaptainSessionStructure(schema2Execution),
+          lastAppliedExecutionProjection: schema2Execution,
+          snapshot: schema2Snapshot,
+          effectLedger: consumed,
+        }),
+      ),
+    ).toThrow(/effect ledger differs from its structural schema authority/);
+    await lease.release();
+  });
+
+  it('keeps the prior effect ledger authoritative when batch publication fails', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    let failRecordRename = false;
+    const store = fixedStore(sessionsDir, tokenO, {
+      fsOps: {
+        async rename(source: string, destination: string) {
+          if (failRecordRename && destination === recordPath) {
+            throw new Error('synthetic ledger publication failure');
+          }
+          return rename(source, destination);
+        },
+      },
+    });
+    const execution = schema3ExecutionProjection();
+    const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    await lease.beginTurn({
+      input: 'attempt an atomic repository effect',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const {
+      logicalOperationId: _logicalOperationId,
+      ...standaloneBoundary
+    } = effectBoundaryStart();
+    failRecordRename = true;
+    await expect(
+      lease.writeEffectLedger(effectAuthority(execution), [
+        { kind: 'start-boundaries', boundaries: [standaloneBoundary] },
+      ]),
+    ).rejects.toThrow(/synthetic ledger publication failure/);
+    failRecordRename = false;
+    expect((await lease.read()).effectLedger).toEqual(effectLedger());
+    expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
+      .toBe(false);
+    await lease.release();
+  });
+
+  it('retries directory durability before acknowledging an indeterminate ledger write', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    let directorySyncFailures = 0;
+    const store = fixedStore(sessionsDir, tokenO, {
+      fsOps: {
+        async open(path: string, flags: string, mode?: number) {
+          const handle = await open(path, flags, mode);
+          if (path !== sessionsDir) return handle;
+          return {
+            async sync() {
+              if (directorySyncFailures > 0) {
+                directorySyncFailures -= 1;
+                throw new Error('synthetic record directory sync failure');
+              }
+              await handle.sync();
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    });
+    const execution = schema3ExecutionProjection();
+    const authority = effectAuthority(execution);
+    const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    await lease.beginTurn({
+      input: 'attempt a durable repository effect',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const {
+      logicalOperationId: _logicalOperationId,
+      ...standaloneBoundary
+    } = effectBoundaryStart();
+    const started = await lease.writeEffectLedger(authority, [
+      { kind: 'start-boundaries', boundaries: [standaloneBoundary] },
+    ]);
+    const boundary = started.boundaries[0]!;
+    const completedBoundary = {
+      ...boundary,
+      after: boundary.baseline,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: boundary.baseline,
+        after: boundary.baseline,
+      },
+    };
+    const completionCommands = [
+      {
+        kind: 'replace-boundaries',
+        replacements: [{ expected: boundary, next: completedBoundary }],
+      },
+    ];
+
+    directorySyncFailures = 2;
+    await expect(
+      lease.writeEffectLedger(authority, completionCommands),
+    ).rejects.toThrow(/synthetic record directory sync failure/);
+    const publishedBytes = await readFile(recordPath, 'utf8');
+    expect((await lease.read()).effectLedger).toMatchObject({ revision: 2 });
+    await expect(
+      lease.writeEffectLedger(authority, completionCommands),
+    ).rejects.toThrow(/synthetic record directory sync failure/);
+    expect(await readFile(recordPath, 'utf8')).toBe(publishedBytes);
+
+    const acknowledged = await lease.writeEffectLedger(
+      authority,
+      completionCommands,
+    );
+    expect(acknowledged).toMatchObject({ revision: 2 });
+    expect(await readFile(recordPath, 'utf8')).toBe(publishedBytes);
+    await lease.release();
   });
 
   it('validates closed execution and structural projections before effects', () => {
@@ -1014,7 +1648,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       attemptedExecutionProjection: initialExecution,
     });
     expect(uncertain).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
       kind: 'captain-session',
       state: 'uncertain',
       sessionId,
@@ -1143,7 +1777,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       retentionUpdates: [],
     });
     expect(settled).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
       state: 'settled',
       sessionId,
       createdAt: '2026-08-11T21:00:00.000Z',
@@ -1228,7 +1862,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     await lease.release();
   });
 
-  it.each(['member-less schema 3', 'explicitly empty'] as const)(
+  it.each(['member-less schema 5', 'explicitly empty'] as const)(
     'selects the newest settled same-cwd %s predecessor without older fallback',
     async (shape) => {
       const { sessionsDir } = await fixtureDir();
@@ -1247,7 +1881,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         retainedGenerations: {},
         updatedAt: '2026-08-11T21:00:00.040Z',
       });
-      if (shape === 'member-less schema 3') {
+      if (shape === 'member-less schema 5') {
         delete empty.retainedGenerations;
       }
       const uncertain = freshAdoptionTargetRecord({
@@ -1815,18 +2449,25 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       code: retainedCodeGeneration(),
       review: retainedReviewGeneration(),
     };
-    const source = retainedSettledRecord({
-      id: sourceId,
-      execution: sourceExecution,
-      retainedGenerations,
-      schemaVersion: 4,
-      updatedAt: '2026-08-11T21:00:00.040Z',
-    });
+    const source = legacyRecord(
+      retainedSettledRecord({
+        id: sourceId,
+        execution: sourceExecution,
+        retainedGenerations,
+        updatedAt: '2026-08-11T21:00:00.040Z',
+      }),
+      4,
+    );
+    const migratedSource = validateCaptainSessionRecord(source);
     const target = freshAdoptionTargetRecord({
       id: targetId,
       execution: targetExecution,
     });
-    await writeRecordFixture(sessionsDir, source);
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await chmod(sessionsDir, 0o700);
+    const sourcePath = join(sessionsDir, `${sourceId}.json`);
+    await writeFile(sourcePath, `${JSON.stringify(source)}\n`, { mode: 0o600 });
+    await chmod(sourcePath, 0o600);
 
     const store = sequencedStore(sessionsDir, 10);
     const lease = await store.acquire(targetId);
@@ -1841,8 +2482,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
 
     const sourceAfter = await store.read(sourceId);
     expect(sourceAfter).toEqual({
-      ...source,
-      schemaVersion: 3,
+      ...migratedSource,
       updatedAt: '2026-08-11T21:00:00.041Z',
       retainedGenerations: {},
     });
@@ -2640,7 +3280,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     await lease.release();
   });
 
-  it('selects member-less schema 3, skips released schemas, and fails closed on corruption', async () => {
+  it('selects migratable schema 3, skips released schemas, and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -2721,7 +3361,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       ).sessionId,
     ).toBe(secondSessionId);
     expect(legacyRecords).toEqual([]);
-    expect(await store.read(secondSessionId)).toEqual(memberlessSchema3);
+    expect(await store.read(secondSessionId)).toEqual(
+      validateCaptainSessionRecord(memberlessSchema3),
+    );
 
     await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(

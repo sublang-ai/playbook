@@ -26,6 +26,7 @@ import {
   combineAbortSignals,
   createNestedPlaybookBridge,
   detachPersistedMachineSnapshot,
+  emptyPlaybookEffectLedger,
   normalizeError,
   normalizePlaybookSnapshot,
   snapshotJsonValue,
@@ -791,6 +792,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   PlaybookRuntimeOptions
 > = (options) => {
   const fsmInput = snapshotDecideRuntimeOptions(options);
+  const effectLedger = emptyPlaybookEffectLedger();
 
   type SessionIdentity = Readonly<PlaybookSession>;
 
@@ -2049,7 +2051,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         actor.getSnapshot() as SnapshotFrom<typeof decideMachine>
       ).context as unknown as Record<string, unknown>;
       return {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: sessionIdentity.playbookId,
         machine,
         roleResumeTokens: snapshotRoleResumeTokens(),
@@ -2069,6 +2071,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             sourceItem: pending.sourceItem,
           }),
         ),
+        effectLedger,
         ...(suspendedCall === undefined ? {} : { suspendedCall }),
       };
     },
@@ -2098,6 +2101,15 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         identity.playbookId,
         { allowSuspendedCall: true },
       );
+      if (
+        boundSnapshot.effectLedger.revision !== 0 ||
+        boundSnapshot.effectLedger.boundaries.length !== 0 ||
+        boundSnapshot.effectLedger.logicalOperations.length !== 0
+      ) {
+        throw new TypeError(
+          'decide runtime snapshot effectLedger must be the canonical empty ledger',
+        );
+      }
       const suspendedCall = boundSnapshot.suspendedCall;
       let finishInitialization!: () => void;
       const initialization = new Promise<void>((resolve) => {

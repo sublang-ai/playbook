@@ -3975,10 +3975,10 @@ describe('nested playbook actor over the shared factory', () => {
 
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     expect(snapshot.suspendedCall).toEqual({
       callId: 'playbook-1',
@@ -4085,10 +4085,10 @@ describe('nested playbook actor over the shared factory', () => {
 
     const sourceSnapshot = source.exportSnapshot?.();
     if (
-      sourceSnapshot?.schemaVersion !== 3 ||
+      sourceSnapshot?.schemaVersion !== 4 ||
       sourceSnapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     expect(sourceSnapshot.suspendedCall).toMatchObject({
       callId: 'playbook-4',
@@ -4255,10 +4255,10 @@ describe('nested playbook actor over the shared factory', () => {
       await first.handleBossInput(turn('do it'));
       const snapshot = first.exportSnapshot?.();
       if (
-        snapshot?.schemaVersion !== 3 ||
+        snapshot?.schemaVersion !== 4 ||
         snapshot.suspendedCall === undefined
       ) {
-        throw new Error('expected a schema-3 suspended-call snapshot');
+        throw new Error('expected a schema-4 suspended-call snapshot');
       }
       const mismatched = structuredClone(snapshot);
       if (mismatch === 'state') {
@@ -4386,10 +4386,10 @@ describe('nested playbook actor over the shared factory', () => {
     await first.handleBossInput(turn('do it'));
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     const { suspendedCall: _suspendedCall, ...withoutCall } = snapshot;
     const forgedLegacy = {
@@ -4448,7 +4448,7 @@ describe('nested playbook actor over the shared factory', () => {
     expect(suspended.outcome).toBe('suspended');
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
       throw new Error('expected CODE to export its suspended REVIEW call');
@@ -4458,7 +4458,7 @@ describe('nested playbook actor over the shared factory', () => {
     await restored.restore?.(session, snapshot);
     const immediate = restored.exportSnapshot?.();
     expect(immediate).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       state: snapshot.state,
       sequences: snapshot.sequences,
       suspendedCall: snapshot.suspendedCall,
@@ -4648,7 +4648,7 @@ describe('parked-session snapshot over the shared factory', () => {
         ),
       ).rejects.toThrow(
         mismatch === 'schema'
-          ? /incompatible player identity/
+          ? /expected 4/
           : mismatch === 'playbook'
             ? /does not match runtime playbook/
             : /roleBindings must cover exactly/,
@@ -4825,7 +4825,7 @@ describe('parked-session snapshot over the shared factory', () => {
       adoptionFrom(sourceSession),
     );
     expect(target.exportSnapshot?.()).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       playbookId: sourceSession.playbookId,
       state: snapshot.state,
       sequences: {
@@ -6053,6 +6053,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // persists, so nothing is added to the snapshot for it.
     const snapshot = source.exportSnapshot!()!;
     expect(Object.keys(snapshot).sort()).toEqual([
+      'effectLedger',
       'machine',
       'pendingBossQuestions',
       'playbookId',

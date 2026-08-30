@@ -31,6 +31,10 @@ import type {
   PlaybookState,
 } from '../../../src/runtime.js';
 import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../src/xstate-runtime.js';
+import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
@@ -286,7 +290,7 @@ function runtimeSnapshot(
   } = {},
 ): PlaybookRuntimeSnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: state.value, status: state.status },
     roleResumeTokens: options.roleResumeTokens ?? {},
@@ -300,6 +304,7 @@ function runtimeSnapshot(
     },
     state,
     pendingBossQuestions: options.pendingBossQuestions ?? [],
+    effectLedger: emptyPlaybookEffectLedger(),
     ...(options.suspendedCall === undefined
       ? {}
       : { suspendedCall: options.suspendedCall }),
@@ -594,6 +599,7 @@ function fakeHostCapabilities(
   entry: PlaybookCaptainRegistryEntryV2 | PlaybookCaptainRegistryEntryV3,
   leaseOwnerToken: string,
 ): PlaybookHostConstructionCapabilities {
+  const effectLedger = emptyPlaybookEffectLedger();
   const identity = Object.freeze({
     worktree: '/current/worktree',
     gitDir: '/current/worktree/.git',
@@ -619,7 +625,8 @@ function fakeHostCapabilities(
       runCohort: vi.fn(async () => ({ marker: leaseOwnerToken })),
     }),
     effectLedger: Object.freeze({
-      writeAhead: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      snapshot: vi.fn(() => effectLedger),
+      writeAhead: vi.fn(async () => effectLedger),
     }),
   });
 }
@@ -843,7 +850,9 @@ function makeShell(
         );
       },
       ...(opts.hostCapabilities
-        ? { hostCapabilities: opts.hostCapabilities }
+        ? {
+            hostCapabilities: opts.hostCapabilities,
+          }
         : {}),
       ...(opts.createCaptainRuntime
         ? { createCaptainRuntime: opts.createCaptainRuntime }
@@ -1152,6 +1161,73 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(JSON.stringify(shell.exportSnapshot())).not.toContain(
       'current-host-capability',
     );
+  });
+
+  it('rejects disagreeing current-host ledger mirrors before construction', async () => {
+    const code = promoteToSchema3(fakeCodeEntry());
+    const review = promoteToSchema3(fakePlaybookEntry('review', 'review'));
+    const codeCapability = fakeHostCapabilities(
+      code.entry,
+      'current-code-capability',
+    );
+    const reviewBase = fakeHostCapabilities(
+      review.entry,
+      'current-review-capability',
+    );
+    const observation = {
+      worktree: '/current/worktree',
+      gitDir: '/current/worktree/.git',
+      head: 'a'.repeat(40),
+      projection: {},
+      projectionDigest:
+        'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    };
+    const reviewLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '10000000-0000-4000-8000-000000000010',
+          attemptId: '10000000-0000-4000-8000-000000000011',
+          attemptNumber: 1,
+          playbookId: 'review',
+          runtimeSessionId: '10000000-0000-4000-8000-000000000012',
+          turnId: 1,
+          callId: 'review:coder:1',
+          roleId: review.entry.requiredRoleIds[0],
+          sourceStateId: 'reviewing',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          canonicalWorktree: {
+            worktree: observation.worktree,
+            gitDir: observation.gitDir,
+          },
+          baseline: observation,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+    const reviewCapability: PlaybookHostConstructionCapabilities = {
+      ...reviewBase,
+      effectLedger: {
+        snapshot: () => reviewLedger,
+        writeAhead: async () => reviewLedger,
+      },
+    };
+    const shell = makeShell([code, review], {
+      hostCapabilities: {
+        code: codeCapability,
+        review: reviewCapability,
+      },
+    });
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /capabilities disagree on their effect ledger/,
+    );
+    expect(code.createRuntime).not.toHaveBeenCalled();
+    expect(review.createRuntime).not.toHaveBeenCalled();
   });
 
   it('rejects mismatched schema-3 capability authority before construction', async () => {
@@ -6107,12 +6183,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await source.init!(sourceSession.session);
     const unopenedSnapshot = source.exportSnapshot()!;
     expect(unopenedSnapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       mode: 'chat',
       captain: {
         sessionId: SESSION_CAPTAIN_ID,
         conversation: { kind: 'unopened' },
-        runtime: { schemaVersion: 3, sequences: { turn: 0 } },
+        runtime: { schemaVersion: 4, sequences: { turn: 0 } },
       },
       issuedSessionIds: [SESSION_CAPTAIN_ID],
       sequences: { turn: 0, journal: 0 },
@@ -6149,12 +6225,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
 
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       mode: 'chat',
       captain: {
         conversation: { kind: 'pinned', token: 'conversation-1' },
         runtime: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           sequences: { turn: 1 },
           state: { tags: expect.arrayContaining(['playbook.parked']) },
         },
@@ -6212,7 +6288,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       mode: 'chat',
       captain: {
         conversation: { kind: 'needsSeeding' },
-        runtime: { schemaVersion: 3, sequences: { turn: 1 } },
+        runtime: { schemaVersion: 4, sequences: { turn: 1 } },
       },
       sequences: { turn: 1 },
     });
@@ -8396,7 +8472,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         (generation.frames[0]!.runtime as { schemaVersion: number })
           .schemaVersion = 2;
       },
-      /schemaVersion 2 has incompatible player identity/,
+      /schemaVersion 2 is not supported \(expected 4\)/,
     ],
     [
       'broken suspended edge',

@@ -1,6 +1,6 @@
 import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
-import type { JsonValue, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
+import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
 interface SessionAgent {
@@ -60,7 +60,8 @@ export interface PlaybookHostConstructionCapabilities {
         readonly runCohort: (options: unknown) => Promise<unknown>;
     };
     readonly effectLedger: {
-        readonly writeAhead: (command: unknown) => Promise<unknown>;
+        readonly snapshot: () => PlaybookEffectLedger;
+        readonly writeAhead: (commands: PlaybookEffectLedgerCommandBatch) => Promise<PlaybookEffectLedger>;
     };
 }
 export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> = {
@@ -122,7 +123,8 @@ export interface PlaybookCaptainFrameSnapshot {
     readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
 }
 interface PlaybookCaptainShellSnapshotFields {
-    readonly schemaVersion: 3;
+    readonly schemaVersion: 4;
+    readonly effectLedger: DeepReadonly<PlaybookEffectLedger>;
     readonly captain: {
         readonly sessionId: string;
         readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;

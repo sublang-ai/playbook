@@ -213,7 +213,7 @@ function fixtureRegistryEntry() {
           if (!retainParked) return undefined;
           const state = activeState();
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: session.playerSessions.snapshot(),
@@ -227,6 +227,7 @@ function fixtureRegistryEntry() {
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyEffectLedger(),
           };
         },
         async handleBossInput({ text, signal }) {
@@ -311,7 +312,7 @@ function fixtureCaptainRuntime({ controller }) {
 function runtimeSnapshot(turn) {
   const state = activeState();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId: 'captain',
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -325,6 +326,16 @@ function runtimeSnapshot(turn) {
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: emptyEffectLedger(),
+  };
+}
+
+function emptyEffectLedger() {
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    boundaries: [],
+    logicalOperations: [],
   };
 }
 

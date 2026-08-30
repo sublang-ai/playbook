@@ -19,6 +19,8 @@ import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
   NormalizedError,
+  PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
   PlaybookCallRequest,
   PlaybookCallResult,
   PlaybookCallStart,
@@ -33,6 +35,8 @@ import type {
 } from '@sublang/playbook/runtime';
 import {
   assertPlaybookRuntimeSnapshot,
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
   hiddenControlEnvelope,
   registerPlaybookAbortCleanup,
   snapshotJsonValue,
@@ -117,7 +121,10 @@ export interface PlaybookHostConstructionCapabilities {
     readonly runCohort: (options: unknown) => Promise<unknown>;
   };
   readonly effectLedger: {
-    readonly writeAhead: (command: unknown) => Promise<unknown>;
+    readonly snapshot: () => PlaybookEffectLedger;
+    readonly writeAhead: (
+      commands: PlaybookEffectLedgerCommandBatch,
+    ) => Promise<PlaybookEffectLedger>;
   };
 }
 
@@ -194,7 +201,8 @@ export interface PlaybookCaptainFrameSnapshot {
 }
 
 interface PlaybookCaptainShellSnapshotFields {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
+  readonly effectLedger: DeepReadonly<PlaybookEffectLedger>;
   readonly captain: {
     readonly sessionId: string;
     readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
@@ -1216,6 +1224,7 @@ function validateHostCapabilities(
     'gitDir',
   ]);
   const effectLedger = exactOwnDataRecord(capability?.effectLedger, [
+    'snapshot',
     'writeAhead',
   ]);
   if (
@@ -1243,13 +1252,35 @@ function validateHostCapabilities(
     typeof repository.acquire !== 'function' ||
     typeof repository.runExclusive !== 'function' ||
     typeof repository.runCohort !== 'function' ||
-    typeof effectLedger?.writeAhead !== 'function'
+    typeof effectLedger?.snapshot !== 'function' ||
+    typeof effectLedger.writeAhead !== 'function'
   ) {
     throw new Error(
       `/${command} schema-3 current-host capability authority does not match its imported artifact`,
     );
   }
   return value as PlaybookHostConstructionCapabilities;
+}
+
+function effectLedgerMirrorFromCapabilities(
+  capabilities: ReadonlyMap<string, PlaybookHostConstructionCapabilities>,
+): PlaybookEffectLedger {
+  const values = [...capabilities.values()];
+  if (values.length === 0) return emptyPlaybookEffectLedger();
+  const mirror = assertPlaybookEffectLedger(values[0]!.effectLedger.snapshot());
+  for (const capability of values.slice(1)) {
+    if (
+      !isDeepStrictEqual(
+        assertPlaybookEffectLedger(capability.effectLedger.snapshot()),
+        mirror,
+      )
+    ) {
+      throw new Error(
+        'schema-3 current-host capabilities disagree on their effect ledger',
+      );
+    }
+  }
+  return mirror;
 }
 
 function validateRuntimeProfile(
@@ -1609,19 +1640,20 @@ export function assertPlaybookCaptainShellSnapshot(
 ): PlaybookCaptainShellSnapshot {
   const detached = snapshotJsonValue(value, 'Captain shell snapshot');
   const snapshot = snapshotRecord(detached, 'Captain shell snapshot');
-  if (snapshot.schemaVersion !== 3) {
+  if (snapshot.schemaVersion !== 4) {
     if (snapshot.schemaVersion === 1) {
       throw new TypeError(
-        'Captain shell snapshot schemaVersion 1 has incompatible player identity; schema 3 is required',
+        'Captain shell snapshot schemaVersion 1 has incompatible player identity; schema 4 is required',
       );
     }
     throw new TypeError(
-      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
+      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 4)`,
     );
   }
   const mode = snapshot.mode;
   const commonKeys = [
     'schemaVersion',
+    'effectLedger',
     'captain',
     'playerSessions',
     'issuedSessionIds',
@@ -1666,6 +1698,17 @@ export function assertPlaybookCaptainShellSnapshot(
     captain.runtime,
     INTERNAL_CAPTAIN_ID,
   );
+  const effectLedger = assertPlaybookEffectLedger(snapshot.effectLedger);
+  if (
+    !isDeepStrictEqual(
+      captainRuntime.effectLedger,
+      emptyPlaybookEffectLedger(),
+    )
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot internal Captain runtime effect ledger must be empty',
+    );
+  }
   const captainAgent = snapshotFixedAgent(
     captain.agent,
     'Captain shell snapshot.captain.agent',
@@ -1895,7 +1938,8 @@ export function assertPlaybookCaptainShellSnapshot(
     'Captain shell snapshot.playerSessions',
   );
   const common: PlaybookCaptainShellSnapshotFields = {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    effectLedger,
     captain: {
       sessionId: captainSessionId,
       runtime: captainRuntime,
@@ -2044,6 +2088,15 @@ export function assertPlaybookCaptainShellSnapshot(
   const issuedIds = new Set(issued);
   const rootSessionId = normalizedFrames[0]!.sessionId;
   for (const [index, frame] of normalizedFrames.entries()) {
+    const frameLedger = frame.runtime.effectLedger;
+    if (
+      !isDeepStrictEqual(frameLedger, emptyPlaybookEffectLedger()) &&
+      !isDeepStrictEqual(frameLedger, effectLedger)
+    ) {
+      throw new TypeError(
+        `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger is neither empty nor the shell mirror`,
+      );
+    }
     if (activePlaybooks.has(frame.playbookId)) {
       throw new TypeError(
         'Captain shell snapshot engagement path must not contain a playbook cycle',
@@ -2600,6 +2653,7 @@ export function createPlaybookCaptainShell(
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
   let pendingHostCapabilities = deps.hostCapabilities;
+  let currentEffectLedger = () => emptyPlaybookEffectLedger();
   // The returned shell must not retain the caller's aggregate dependency
   // object after its one live capability input has moved to a clearable slot.
   deps = {};
@@ -6613,6 +6667,15 @@ export function createPlaybookCaptainShell(
           `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} role bindings changed`,
         );
       }
+      const expectedLedger =
+        enablement.artifactSchema === 3
+          ? snapshot.effectLedger
+          : emptyPlaybookEffectLedger();
+      if (!isDeepStrictEqual(frame.runtime.effectLedger, expectedLedger)) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger does not match its artifact schema`,
+        );
+      }
     }
   };
 
@@ -6916,8 +6979,10 @@ export function createPlaybookCaptainShell(
       if (captainSnapshot === undefined) return undefined;
       const frameSnapshots = captureFrameSnapshots(true);
       if (frameSnapshots === undefined) return undefined;
+      const effectLedger = assertPlaybookEffectLedger(currentEffectLedger());
       const common = {
-        schemaVersion: 3 as const,
+        schemaVersion: 4 as const,
+        effectLedger,
         captain: {
           sessionId: captainSessionId,
           runtime: captainSnapshot,
@@ -7026,6 +7091,7 @@ export function createPlaybookCaptainShell(
       'sequences',
       'pendingBossQuestions',
       'suspendedCall',
+      'effectLedger',
     ] as const) {
       if (!isDeepStrictEqual(normalized[key], expected[key])) {
         throw new Error(
@@ -7074,6 +7140,7 @@ export function createPlaybookCaptainShell(
     enablementById = new Map();
     hostCapabilitiesById = new Map();
     pendingHostCapabilities = undefined;
+    currentEffectLedger = () => emptyPlaybookEffectLedger();
     captainAgent = undefined;
     captainAdapter = undefined;
     playerAgents = new Map();
@@ -7122,6 +7189,15 @@ export function createPlaybookCaptainShell(
     try {
       const snapshot = assertPlaybookCaptainShellSnapshot(untrusted);
       const built = await buildCurrentEnablements();
+      const builtHostCapabilities = new Map(built.hostCapabilitiesById);
+      const readEffectLedger = () =>
+        effectLedgerMirrorFromCapabilities(builtHostCapabilities);
+      const hostLedger = readEffectLedger();
+      if (!isDeepStrictEqual(snapshot.effectLedger, hostLedger)) {
+        throw new Error(
+          'Captain shell restore effect ledger does not match current-host authority',
+        );
+      }
       captainAgent = built.captainAgent;
       captainAdapter = captainAgent.adapter;
       playerAgents = built.playerAgents;
@@ -7132,7 +7208,8 @@ export function createPlaybookCaptainShell(
       byCommand = built.byCommand;
       byId = built.byId;
       enablementById = built.enablementById;
-      hostCapabilitiesById = new Map(built.hostCapabilitiesById);
+      hostCapabilitiesById = builtHostCapabilities;
+      currentEffectLedger = readEffectLedger;
       for (const [playerId, saved] of Object.entries(snapshot.playerSessions)) {
         playerLedger.set(playerId, {
           adapter: saved.adapter,
@@ -7336,11 +7413,16 @@ export function createPlaybookCaptainShell(
       try {
         installSession(initSession, true);
         const built = await buildCurrentEnablements();
+        const builtHostCapabilities = new Map(built.hostCapabilitiesById);
+        const readEffectLedger = () =>
+          effectLedgerMirrorFromCapabilities(builtHostCapabilities);
+        readEffectLedger();
         entries = built.entries;
         byCommand = built.byCommand;
         byId = built.byId;
         enablementById = built.enablementById;
-        hostCapabilitiesById = new Map(built.hostCapabilitiesById);
+        hostCapabilitiesById = builtHostCapabilities;
+        currentEffectLedger = readEffectLedger;
         captainAgent = built.captainAgent;
         captainAdapter = captainAgent.adapter;
         playerAgents = built.playerAgents;
@@ -7570,6 +7652,7 @@ export function createPlaybookCaptainShell(
     playerTransactions.clear();
     hostCapabilitiesById = new Map();
     pendingHostCapabilities = undefined;
+    currentEffectLedger = () => emptyPlaybookEffectLedger();
     lifecycle = 'closed';
     if (failure !== undefined) throw failure;
   }

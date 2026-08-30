@@ -18,6 +18,12 @@ import {
 } from 'node:fs/promises';
 import { hostname as systemHostname } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+  snapshotJsonValue,
+} from '../../../../src/xstate-runtime.js';
 
 const CLAIM_SCHEMA = 1;
 const CLAIM_OWNER_FILE = 'owner.json';
@@ -26,6 +32,8 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const CLAIM_COLLISION_CODES = new Set(['EEXIST', 'ENOTEMPTY']);
+const processClaims = new Map();
+const processClaimEntries = new WeakMap();
 
 export const REPOSITORY_RECEIPT_CLASSIFICATIONS = Object.freeze([
   'unchanged',
@@ -49,6 +57,73 @@ export class RepositoryObservationAmbiguousError extends Error {
 
 function errorCode(error) {
   return typeof error === 'object' && error !== null ? error.code : undefined;
+}
+
+function processClaimKey(identity) {
+  return `${identity.gitDir}\0${identity.worktree}`;
+}
+
+function registerProcessClaim(claim) {
+  const key = processClaimKey(claim.identity);
+  const entry = { claim, key, state: 'active' };
+  processClaims.set(key, entry);
+  processClaimEntries.set(claim, entry);
+}
+
+function quarantineProcessClaim(claim, recovery) {
+  const entry = processClaimEntries.get(claim);
+  if (entry === undefined) return;
+  entry.state = 'quarantined';
+  if (recovery !== undefined) entry.recovery = recovery;
+}
+
+function processClaimRecovery(claim) {
+  return processClaimEntries.get(claim)?.recovery;
+}
+
+function sameProcessRecovery(left, right) {
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    left.sessionId === right.sessionId &&
+    left.playbookId === right.playbookId &&
+    sameOrderedSet(left.boundaryIds, right.boundaryIds)
+  );
+}
+
+function forgetProcessClaim(claim) {
+  const entry = processClaimEntries.get(claim);
+  if (entry === undefined) return;
+  if (processClaims.get(entry.key) === entry) processClaims.delete(entry.key);
+  processClaimEntries.delete(claim);
+}
+
+async function acquireRecoveryClaim(coordinator, identity, recovery) {
+  const key = processClaimKey(identity);
+  const entry = processClaims.get(key);
+  if (entry === undefined) {
+    return coordinator.acquire(identity.worktree);
+  }
+  if (entry.state !== 'quarantined') {
+    throw new Error('repository claim is not available for recovery');
+  }
+  if (!sameProcessRecovery(entry.recovery, recovery)) {
+    throw new Error(
+      'repository claim belongs to another live reconciliation boundary',
+    );
+  }
+  entry.state = 'recovering';
+  try {
+    await entry.claim.assertOwner();
+    return entry.claim;
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') {
+      forgetProcessClaim(entry.claim);
+      return coordinator.acquire(identity.worktree);
+    }
+    entry.state = 'quarantined';
+    throw error;
+  }
 }
 
 function isPlainObject(value) {
@@ -1098,6 +1173,7 @@ export function createRepositoryEffectCoordinator(options = {}) {
         await assertOwnerUnserialized();
         return result;
       });
+    let claim;
     const release = () =>
       runClaimOperation(async () => {
         await assertOwnerUnserialized();
@@ -1105,8 +1181,9 @@ export function createRepositoryEffectCoordinator(options = {}) {
           throw new Error('repository claim retirement target is occupied');
         }
         released = true;
+        forgetProcessClaim(claim);
       });
-    return Object.freeze({
+    claim = Object.freeze({
       identity,
       ownerToken: owner.ownerToken,
       assertOwner,
@@ -1114,6 +1191,8 @@ export function createRepositoryEffectCoordinator(options = {}) {
       capture,
       release,
     });
+    registerProcessClaim(claim);
+    return claim;
   };
 
   const runExclusive = async (runOptions) => {
@@ -1290,6 +1369,624 @@ function rejectBoundRepositoryOverride(options, member, forbiddenKeys) {
   }
 }
 
+function assertEffectLedgerService(value) {
+  if (
+    !isPlainObject(value) ||
+    typeof value.snapshot !== 'function' ||
+    typeof value.writeAhead !== 'function'
+  ) {
+    throw new TypeError(
+      'schema-3 repository capability write-ahead factory must return snapshot and writeAhead operations',
+    );
+  }
+  const initial = assertPlaybookEffectLedger(value.snapshot());
+  let mirror = initial;
+  return Object.freeze({
+    snapshot() {
+      const current = assertPlaybookEffectLedger(value.snapshot());
+      if (!isDeepStrictEqual(current, mirror)) mirror = current;
+      return mirror;
+    },
+    async writeAhead(authority, commands) {
+      const next = assertPlaybookEffectLedger(
+        await value.writeAhead(authority, commands),
+      );
+      mirror = next;
+      return next;
+    },
+  });
+}
+
+function effectBoundarySeed(value, authority, baseline) {
+  if (!isPlainObject(value)) {
+    throw new TypeError(
+      'repository operation effectBoundary must be an object',
+    );
+  }
+  for (const key of [
+    'sequence',
+    'attemptId',
+    'attemptNumber',
+    'playbookId',
+    'canonicalWorktree',
+    'baseline',
+    'after',
+    'physicalReceipt',
+    'cohortId',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new TypeError(
+        `repository operation effectBoundary cannot override host-owned ${key}`,
+      );
+    }
+  }
+  return {
+    ...value,
+    playbookId: authority.playbookId,
+    canonicalWorktree: authority.canonicalWorktree,
+    baseline,
+  };
+}
+
+function boundaryById(ledger, boundaryId) {
+  const boundary = ledger.boundaries.find(
+    (candidate) => candidate.boundaryId === boundaryId,
+  );
+  if (boundary === undefined) {
+    throw new Error(
+      `effect-ledger write did not publish boundary ${JSON.stringify(boundaryId)}`,
+    );
+  }
+  return boundary;
+}
+
+function completedBoundary(boundary, effectReceipt) {
+  return {
+    ...boundary,
+    ...(effectReceipt.after === undefined
+      ? {}
+      : { after: effectReceipt.after }),
+    physicalReceipt: effectReceipt,
+  };
+}
+
+function effectCompletionCallback(options, label) {
+  const callback = options.completeEffectBoundary;
+  if (callback !== undefined && typeof callback !== 'function') {
+    throw new TypeError(`${label} completeEffectBoundary must be a function`);
+  }
+  return callback;
+}
+
+async function effectCompletion({
+  callback,
+  boundary,
+  operation,
+  receipt: effectReceipt,
+  roleId,
+}) {
+  if (callback === undefined) {
+    return { boundary: completedBoundary(boundary, effectReceipt), commands: [] };
+  }
+  const value = await callback(
+    Object.freeze({
+      boundary,
+      operation,
+      receipt: effectReceipt,
+      ...(roleId === undefined ? {} : { roleId }),
+    }),
+  );
+  if (!isPlainObject(value)) {
+    throw new TypeError(
+      'repository completeEffectBoundary must return an evidence object',
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const allowed = new Set([
+    'finalText',
+    'semanticCandidate',
+    'logicalOperationId',
+    'commands',
+  ]);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (
+      !allowed.has(key) ||
+      descriptor.get !== undefined ||
+      descriptor.set !== undefined ||
+      !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+    ) {
+      throw new TypeError(
+        `repository completeEffectBoundary returned unsupported member ${JSON.stringify(key)}`,
+      );
+    }
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'finalText') &&
+    typeof value.finalText !== 'string'
+  ) {
+    throw new TypeError(
+      'repository completeEffectBoundary finalText must be a string',
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'commands') &&
+    (!Array.isArray(value.commands) || value.commands.length === 0)
+  ) {
+    throw new TypeError(
+      'repository completeEffectBoundary commands must be a nonempty array',
+    );
+  }
+  const evidence = {
+    ...(Object.prototype.hasOwnProperty.call(value, 'finalText')
+      ? { finalText: value.finalText }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, 'semanticCandidate')
+      ? { semanticCandidate: value.semanticCandidate }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, 'logicalOperationId')
+      ? { logicalOperationId: value.logicalOperationId }
+      : {}),
+  };
+  return {
+    boundary: completedBoundary(
+      { ...boundary, ...evidence },
+      effectReceipt,
+    ),
+    commands: value.commands ?? [],
+  };
+}
+
+async function releaseRepositoryClaim(claim, primaryError) {
+  try {
+    await claim.release();
+  } catch (releaseError) {
+    if (primaryError === undefined) throw releaseError;
+    throw new AggregateError(
+      [primaryError, releaseError],
+      'repository effect operation failed and its claim could not be released',
+    );
+  }
+}
+
+async function runDurableExclusive({
+  coordinator,
+  identity,
+  authority,
+  ledgerService,
+  options,
+}) {
+  if (!isPlainObject(options) || typeof options.operation !== 'function') {
+    throw new TypeError('exclusive repository operation must be a function');
+  }
+  const completeEffectBoundary = effectCompletionCallback(
+    options,
+    'exclusive repository operation',
+  );
+  rejectBoundRepositoryOverride(options, 'runExclusive', ['cwd']);
+  const claim = await coordinator.acquire(identity.worktree, {
+    signal: options.signal,
+  });
+  let effectPossible = false;
+  let recovery;
+  try {
+    const baseline = await claim.observe(options.observation);
+    const seed = effectBoundarySeed(
+      options.effectBoundary,
+      authority,
+      baseline,
+    );
+    const startCommands = snapshotJsonValue([
+      {
+        kind: 'start-boundaries',
+        boundaries: [seed],
+      },
+    ], 'exclusive repository start commands');
+    recovery = {
+      sessionId: authority.sessionId,
+      playbookId: authority.playbookId,
+      boundaryIds: [seed.boundaryId],
+      startCommands,
+      operationStarted: false,
+    };
+    effectPossible = true;
+    const started = await ledgerService.writeAhead(authority, startCommands);
+    const current = boundaryById(started, seed.boundaryId);
+    recovery = { ...recovery, operationStarted: true };
+    let operation;
+    try {
+      operation = Object.freeze({
+        status: 'fulfilled',
+        value: await options.operation({
+          baseline,
+          identity: claim.identity,
+        }),
+      });
+    } catch (error) {
+      operation = Object.freeze({ status: 'rejected', reason: error });
+    }
+    const effectReceipt = await claim.capture(baseline, {
+      allowedDispositions: current.dispositions,
+      observation: options.afterObservation,
+    });
+    const latest = boundaryById(
+      ledgerService.snapshot(),
+      seed.boundaryId,
+    );
+    const completion = await effectCompletion({
+      callback: completeEffectBoundary,
+      boundary: latest,
+      operation,
+      receipt: effectReceipt,
+    });
+    const commands = snapshotJsonValue([
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          {
+            expected: latest,
+            next: completion.boundary,
+          },
+        ],
+      },
+      ...completion.commands,
+    ], 'exclusive repository completion commands');
+    recovery = { ...recovery, commands };
+    const completed = await ledgerService.writeAhead(authority, commands);
+    await releaseRepositoryClaim(claim);
+    return Object.freeze({
+      baseline,
+      operation,
+      receipt: effectReceipt,
+      effectLedger: completed,
+    });
+  } catch (error) {
+    if (!effectPossible) {
+      await releaseRepositoryClaim(claim, error);
+    } else {
+      quarantineProcessClaim(claim, recovery);
+    }
+    throw error;
+  }
+}
+
+async function runDurableCohort({
+  coordinator,
+  identity,
+  authority,
+  concurrentRoleSets,
+  ledgerService,
+  options,
+}) {
+  rejectBoundRepositoryOverride(options, 'runCohort', [
+    'cwd',
+    'concurrentRoleSets',
+  ]);
+  const completeEffectBoundary = effectCompletionCallback(
+    options,
+    'repository cohort',
+  );
+  const roleIds = validateCohort({ ...options, concurrentRoleSets });
+  if (!isPlainObject(options.effectBoundaries)) {
+    throw new TypeError(
+      'repository cohort effectBoundaries must be an object',
+    );
+  }
+  const effectKeys = Object.keys(options.effectBoundaries).sort();
+  if (!sameOrderedSet(effectKeys, [...roleIds].sort())) {
+    throw new TypeError(
+      'repository cohort effect boundaries must exactly match its roles',
+    );
+  }
+  const claim = await coordinator.acquire(identity.worktree, {
+    signal: options.signal,
+  });
+  let effectPossible = false;
+  let recovery;
+  try {
+    const baseline = await claim.observe(options.observation);
+    const cohortId = randomUUID();
+    const seeds = roleIds.map((roleId) => ({
+      ...effectBoundarySeed(
+        options.effectBoundaries[roleId],
+        authority,
+        baseline,
+      ),
+      cohortId,
+    }));
+    const startCommands = snapshotJsonValue([
+      {
+        kind: 'start-boundaries',
+        boundaries: seeds,
+      },
+    ], 'repository cohort start commands');
+    recovery = {
+      sessionId: authority.sessionId,
+      playbookId: authority.playbookId,
+      boundaryIds: seeds.map((seed) => seed.boundaryId),
+      startCommands,
+      operationStarted: false,
+    };
+    effectPossible = true;
+    const started = await ledgerService.writeAhead(authority, startCommands);
+    for (const seed of seeds) boundaryById(started, seed.boundaryId);
+    recovery = { ...recovery, operationStarted: true };
+    const settled = await Promise.allSettled(
+      roleIds.map((roleId) =>
+        Promise.resolve().then(() =>
+          options.operations[roleId]({
+            baseline,
+            identity: claim.identity,
+            invocationId: options.invocationId,
+            roleId,
+          }),
+        ),
+      ),
+    );
+    const effectReceipt = await claim.capture(baseline, {
+      allowedDispositions: ['unchanged'],
+      cohort: true,
+      observation: options.afterObservation,
+    });
+    const latest = seeds.map((seed) =>
+      boundaryById(ledgerService.snapshot(), seed.boundaryId),
+    );
+    const completions = await Promise.all(
+      latest.map((boundary, index) =>
+        effectCompletion({
+          callback: completeEffectBoundary,
+          boundary,
+          operation: settled[index],
+          receipt: effectReceipt,
+          roleId: roleIds[index],
+        }),
+      ),
+    );
+    const commands = snapshotJsonValue([
+      {
+        kind: 'replace-boundaries',
+        replacements: latest.map((boundary, index) => ({
+          expected: boundary,
+          next: completions[index].boundary,
+        })),
+      },
+      ...completions.flatMap((completion) => completion.commands),
+    ], 'repository cohort completion commands');
+    recovery = { ...recovery, commands };
+    const completed = await ledgerService.writeAhead(authority, commands);
+    await releaseRepositoryClaim(claim);
+    const operations = Object.create(null);
+    const receipts = Object.create(null);
+    for (const [index, roleId] of roleIds.entries()) {
+      operations[roleId] = settled[index];
+      receipts[roleId] = effectReceipt;
+    }
+    return Object.freeze({
+      baseline,
+      invocationId: options.invocationId,
+      operations: Object.freeze(operations),
+      receipts: Object.freeze(receipts),
+      effectLedger: completed,
+    });
+  } catch (error) {
+    if (!effectPossible) {
+      await releaseRepositoryClaim(claim, error);
+    } else {
+      quarantineProcessClaim(claim, recovery);
+    }
+    throw error;
+  }
+}
+
+export async function recoverIncompleteRepositoryEffects({
+  catalog,
+  capabilities,
+} = {}) {
+  const entries = detachedSchema3CatalogEntries(catalog);
+  if (entries.length === 0) return emptyPlaybookEffectLedger();
+  const first = capabilities[entries[0].playbookId];
+  if (first === undefined) {
+    throw new Error('repository recovery has no current-host capability');
+  }
+  const coordinator = createRepositoryEffectCoordinator();
+  let ledger = first.effectLedger.snapshot();
+  for (const capability of Object.values(capabilities)) {
+    const entry = processClaims.get(
+      processClaimKey(capability.authority.canonicalWorktree),
+    );
+    const recovery = entry?.recovery;
+    if (
+      entry?.state !== 'quarantined' ||
+      recovery?.sessionId !== capability.authority.sessionId ||
+      recovery.playbookId !== capability.authority.playbookId
+    ) {
+      continue;
+    }
+    const savedBoundaries = recovery.boundaryIds.map((boundaryId) =>
+      ledger.boundaries.find((boundary) => boundary.boundaryId === boundaryId),
+    );
+    if (
+      recovery.startCommands !== undefined &&
+      savedBoundaries.some((boundary) => boundary === undefined)
+    ) {
+      const claim = await acquireRecoveryClaim(
+        coordinator,
+        capability.authority.canonicalWorktree,
+        recovery,
+      );
+      try {
+        ledger = await capability.effectLedger.writeAhead(
+          recovery.startCommands,
+        );
+        for (const boundaryId of recovery.boundaryIds) {
+          boundaryById(ledger, boundaryId);
+        }
+        quarantineProcessClaim(claim, recovery);
+      } catch (error) {
+        quarantineProcessClaim(claim, recovery);
+        throw error;
+      }
+    }
+    const currentBoundaries = recovery.boundaryIds.map((boundaryId) =>
+      ledger.boundaries.find((boundary) => boundary.boundaryId === boundaryId),
+    );
+    if (
+      currentBoundaries.every(
+        (boundary) => boundary?.physicalReceipt !== undefined,
+      )
+    ) {
+      const claim = await acquireRecoveryClaim(
+        coordinator,
+        capability.authority.canonicalWorktree,
+        recovery,
+      );
+      try {
+        await releaseRepositoryClaim(claim);
+      } catch (error) {
+        quarantineProcessClaim(claim, recovery);
+        throw error;
+      }
+    }
+  }
+  ledger = first.effectLedger.snapshot();
+  for (let index = 0; index < ledger.boundaries.length; index += 1) {
+    const saved = ledger.boundaries[index];
+    if (saved.physicalReceipt !== undefined) continue;
+    const capability = capabilities[saved.playbookId];
+    if (capability === undefined) {
+      throw new Error(
+        `effect ledger names unavailable playbook ${JSON.stringify(saved.playbookId)}`,
+      );
+    }
+    const cohort = incompleteRecoveryCohort(
+      ledger.boundaries,
+      index,
+      capability.authority.concurrentRoleSets,
+    );
+    let recovery = {
+      sessionId: capability.authority.sessionId,
+      playbookId: capability.authority.playbookId,
+      boundaryIds: cohort.map((boundary) => boundary.boundaryId),
+    };
+    if (
+      !isDeepStrictEqual(
+        saved.canonicalWorktree,
+        capability.authority.canonicalWorktree,
+      )
+    ) {
+      throw new Error(
+        'effect ledger canonical worktree does not match current host authority',
+      );
+    }
+    const claim = await acquireRecoveryClaim(
+      coordinator,
+      capability.authority.canonicalWorktree,
+      recovery,
+    );
+    try {
+      if (!isDeepStrictEqual(claim.identity, saved.canonicalWorktree)) {
+        throw new Error(
+          'effect ledger canonical worktree changed before recovery',
+        );
+      }
+      const pending = processClaimRecovery(claim);
+      if (pending !== undefined) {
+        if (!sameProcessRecovery(pending, recovery)) {
+          throw new Error(
+            'repository recovery batch does not match the incomplete boundaries',
+          );
+        }
+        recovery = pending;
+      }
+      if (recovery.commands === undefined && recovery.operationStarted === true) {
+        throw new Error(
+          'live post-operation repository claim has no exact completion batch; process death is required before reconstruction',
+        );
+      }
+      if (recovery.commands === undefined) {
+        const effectReceipt = await claim.capture(saved.baseline, {
+          allowedDispositions:
+            cohort.length > 1 ? ['unchanged'] : saved.dispositions,
+          ...(cohort.length > 1 ? { cohort: true } : {}),
+        });
+        recovery = {
+          ...recovery,
+          commands: [
+            {
+              kind: 'replace-boundaries',
+              replacements: cohort.map((boundary) => ({
+                expected: boundary,
+                next: completedBoundary(boundary, effectReceipt),
+              })),
+            },
+          ],
+        };
+      }
+      ledger = await capability.effectLedger.writeAhead(recovery.commands);
+      for (const boundaryId of recovery.boundaryIds) {
+        if (boundaryById(ledger, boundaryId).physicalReceipt === undefined) {
+          throw new Error(
+            `repository recovery did not complete boundary ${JSON.stringify(boundaryId)}`,
+          );
+        }
+      }
+      await releaseRepositoryClaim(claim);
+      index += cohort.length - 1;
+    } catch (error) {
+      // This boundary was already durably started. Capture or persistence
+      // failure leaves the claim active for authoritative or dead-owner
+      // recovery.
+      quarantineProcessClaim(claim, recovery);
+      throw error;
+    }
+  }
+  return ledger;
+}
+
+function incompleteRecoveryCohort(
+  boundaries,
+  startIndex,
+  concurrentRoleSets,
+) {
+  const first = boundaries[startIndex];
+  if (first.cohortId === undefined) return [first];
+  const commonKeys = [
+    'attemptId',
+    'attemptNumber',
+    'playbookId',
+    'runtimeSessionId',
+    'turnId',
+    'canonicalWorktree',
+    'baseline',
+  ];
+  const candidates = [];
+  for (const boundary of boundaries.slice(startIndex)) {
+    if (boundary.cohortId !== first.cohortId) break;
+    candidates.push(boundary);
+  }
+  if (
+    candidates.length < 2 ||
+    candidates.some(
+      (boundary) =>
+        boundary.physicalReceipt !== undefined ||
+        !boundary.dispositions.every((value) => value === 'unchanged') ||
+        !commonKeys.every((key) =>
+          isDeepStrictEqual(boundary[key], first[key]),
+        ),
+    ) ||
+    !concurrentRoleSets.some((roles) =>
+      sameOrderedSet(
+        roles,
+        candidates.map((boundary) => boundary.roleId),
+      ),
+    )
+  ) {
+    throw new Error(
+      `effect ledger cohort ${JSON.stringify(first.cohortId)} does not match current host authority`,
+    );
+  }
+  return candidates;
+}
+
 // PBCLI-20/49: assemble live schema-3 facilities only after the caller owns
 // the durable Captain session and has selected its compatible working
 // directory. Schema-2-only catalogs intentionally avoid every lease, Git,
@@ -1335,12 +2032,8 @@ export async function createRepositoryEffectCapabilities({
   }
 
   await sessionLease.assertOwner();
-  const writeAhead = await createWriteAhead(sessionLease);
-  if (typeof writeAhead !== 'function') {
-    throw new TypeError(
-      'schema-3 repository capability write-ahead factory must return a function',
-    );
-  }
+  const createdWriteAhead = await createWriteAhead(sessionLease);
+  const ledgerService = assertEffectLedgerService(createdWriteAhead);
   const identity = await resolveCanonicalGitWorktree(cwd);
   await sessionLease.assertOwner();
   const coordinator = createRepositoryEffectCoordinator();
@@ -1366,18 +2059,22 @@ export async function createRepositoryEffectCapabilities({
         return coordinator.acquire(identity.worktree, options);
       };
       const runExclusive = async (options) => {
-        rejectBoundRepositoryOverride(options, 'runExclusive', ['cwd']);
-        return coordinator.runExclusive({ ...options, cwd: identity.worktree });
+        return runDurableExclusive({
+          coordinator,
+          identity,
+          authority,
+          ledgerService,
+          options,
+        });
       };
       const runCohort = async (options) => {
-        rejectBoundRepositoryOverride(options, 'runCohort', [
-          'cwd',
-          'concurrentRoleSets',
-        ]);
-        return coordinator.runCohort({
-          ...options,
-          cwd: identity.worktree,
+        return runDurableCohort({
+          coordinator,
+          identity,
+          authority,
           concurrentRoleSets,
+          ledgerService,
+          options,
         });
       };
       return [
@@ -1392,7 +2089,9 @@ export async function createRepositoryEffectCapabilities({
             runCohort,
           },
           effectLedger: {
-            writeAhead: async (command) => writeAhead(authority, command),
+            snapshot: () => ledgerService.snapshot(),
+            writeAhead: async (commands) =>
+              ledgerService.writeAhead(authority, commands),
           },
         }),
       ];

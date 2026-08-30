@@ -2641,6 +2641,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // The recovery input travels in the machine snapshot the record already
     // carries; nothing was added beside it for this.
     expect(Object.keys(snapshot!.frames![0]!.runtime).sort()).toEqual([
+      'effectLedger',
       'machine',
       'pendingBossQuestions',
       'playbookId',

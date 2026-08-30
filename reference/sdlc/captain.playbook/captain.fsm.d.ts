@@ -164,6 +164,9 @@ export declare const captainMachine: import("xstate").StateMachine<Context, Boss
     type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 }, {
+    type: "runtime";
+    params: unknown;
+} | {
     type: "start";
     params: unknown;
 } | {
@@ -180,9 +183,6 @@ export declare const captainMachine: import("xstate").StateMachine<Context, Boss
     params: unknown;
 } | {
     type: "deliver";
-    params: unknown;
-} | {
-    type: "runtime";
     params: unknown;
 } | {
     type: "hasBossTurnText";

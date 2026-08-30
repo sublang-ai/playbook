@@ -26,15 +26,20 @@ import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedEffort } from '@sublang/cligent';
 import { KNOWN_PLAYER_ADAPTERS } from '@sublang/cligent/tmux-play';
 import {
+  assertPlaybookEffectLedger,
   assertPlaybookRuntimeSnapshot,
+  emptyPlaybookEffectLedger,
+  isPlaybookEffectLedgerMonotonicExtension,
   snapshotJsonValue,
 } from '../../../../src/xstate-runtime.js';
 import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 5;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
-// The interrupted retention change emitted this compatible required-member
-// shape before canonical writes returned to additive schema 3.
+const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
+// The interrupted retention change emitted this required-member shape before
+// canonical writes returned to additive schema 3. Both pre-effect shapes can
+// migrate only when every stored artifact is still schema 2.
 const COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION = 4;
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -58,7 +63,11 @@ const COMMON_RECORD_KEYS = [
   'structuralProjection',
   'lastAppliedExecutionProjection',
   'snapshot',
+  'effectLedger',
 ];
+const LEGACY_COMMON_RECORD_KEYS = COMMON_RECORD_KEYS.filter(
+  (key) => key !== 'effectLedger',
+);
 const UNCERTAIN_KEYS = [
   'baseUpdatedAt',
   'input',
@@ -691,6 +700,7 @@ export function createCaptainSessionStore(options = {}) {
         owner: stage.owner,
         readRecord,
         writeRecord,
+        syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
         selectAdoptionPredecessor,
         acquireSession: acquire,
@@ -734,6 +744,7 @@ function createLease({
   owner,
   readRecord,
   writeRecord,
+  syncRecordDirectory,
   deleteRecord,
   selectAdoptionPredecessor,
   acquireSession,
@@ -744,6 +755,7 @@ function createLease({
 }) {
   let released = false;
   let operationActive = false;
+  let indeterminateEffectLedgerWrite;
 
   const requireActive = () => {
     if (released) throw new Error('Captain session lease was already released');
@@ -809,6 +821,7 @@ function createLease({
       structuralProjection: initial.structuralProjection,
       lastAppliedExecutionProjection: applied,
       snapshot: initial.snapshot,
+      effectLedger: emptyPlaybookEffectLedger(),
       retainedGenerations: {},
     });
   };
@@ -1086,6 +1099,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
         ...retainedGenerationsMember(prior),
         uncertain: {
           baseUpdatedAt: prior.updatedAt,
@@ -1130,6 +1144,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
         ...retainedGenerationsMember(prior),
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
@@ -1156,6 +1171,12 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         attemptId,
       );
+      const settledSnapshot = assertPlaybookCaptainShellSnapshot(snapshot);
+      if (!isDeepStrictEqual(settledSnapshot.effectLedger, prior.effectLedger)) {
+        throw new Error(
+          'Captain session settlement snapshot effect ledger differs from its durable ledger',
+        );
+      }
       const timestamp = nextTimestamp(now(), prior.updatedAt);
       const record = validateCaptainSessionRecord({
         schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
@@ -1168,7 +1189,8 @@ function createLease({
         structuralProjection: prior.structuralProjection,
         lastAppliedExecutionProjection:
           prior.uncertain.attemptedExecutionProjection,
-        snapshot,
+        snapshot: settledSnapshot,
+        effectLedger: prior.effectLedger,
         retainedGenerations: applyRetainedGenerationUpdates(
           prior.retainedGenerations ?? {},
           updates,
@@ -1181,6 +1203,67 @@ function createLease({
       return record;
     });
 
+  const writeEffectLedger = (authorityValue, commandsValue) =>
+    runExclusive(async () => {
+      await assertOwnerUnchecked();
+      const prior = await readRecord(sessionId, { missing: 'undefined' });
+      if (prior === undefined) {
+        throw new Error('Captain session does not exist for effect-ledger write-ahead');
+      }
+      if (prior.state !== 'uncertain') {
+        throw new Error(
+          'Captain session effect-ledger write-ahead requires an uncertain turn',
+        );
+      }
+      const authority = validateEffectLedgerAuthority(
+        authorityValue,
+        prior,
+        owner,
+      );
+      const commands = snapshotJsonValue(
+        commandsValue,
+        'effect-ledger write commands',
+      );
+      if (
+        indeterminateEffectLedgerWrite !== undefined &&
+        isDeepStrictEqual(commands, indeterminateEffectLedgerWrite.commands) &&
+        isDeepStrictEqual(
+          prior.effectLedger,
+          indeterminateEffectLedgerWrite.ledger,
+        )
+      ) {
+        await assertOwnerUnchecked();
+        await syncRecordDirectory();
+        await assertOwnerUnchecked();
+        indeterminateEffectLedgerWrite = undefined;
+        return prior.effectLedger;
+      }
+      indeterminateEffectLedgerWrite = undefined;
+      const nextLedger = applyEffectLedgerCommands(
+        prior.effectLedger,
+        authority,
+        prior.uncertain,
+        commands,
+      );
+      if (isDeepStrictEqual(nextLedger, prior.effectLedger)) {
+        await assertOwnerUnchecked();
+        return prior.effectLedger;
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        effectLedger: nextLedger,
+      });
+      indeterminateEffectLedgerWrite = {
+        commands,
+        ledger: record.effectLedger,
+      };
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      indeterminateEffectLedgerWrite = undefined;
+      return record.effectLedger;
+    });
+
   const discard = ({ attemptId } = {}) =>
     runExclusive(async () => {
       assertUuid(attemptId, 'Captain session attempt id');
@@ -1189,6 +1272,11 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         attemptId,
       );
+      if (!isDeepStrictEqual(prior.effectLedger, prior.snapshot.effectLedger)) {
+        throw new Error(
+          'Captain session uncertain effect ledger differs from its pre-turn checkpoint and cannot be discarded',
+        );
+      }
       await assertOwnerUnchecked();
       if (prior.uncertain.baseUpdatedAt === null) {
         await deleteRecord(sessionId);
@@ -1209,6 +1297,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
         ...retainedGenerationsMember(prior),
       });
       await writeRecord(record, { noReplace: false });
@@ -1231,6 +1320,7 @@ function createLease({
     abandonFreshSettled,
     beginTurn,
     beginRetry,
+    writeEffectLedger,
     settle,
     discard,
     assertOwner,
@@ -1334,39 +1424,51 @@ export function validateCaptainSessionRecord(value) {
     snapshotJsonValue(value, 'Captain session record'),
     'Captain session record',
   );
+  if (record.schemaVersion === 2) {
+    assertReleasedSchema2CaptainSessionRecord(record);
+    throw new CaptainSessionRecordSchemaError(
+      record.schemaVersion,
+      'Captain session record schema 2 has incompatible root-owned player identity; schema 5 is required',
+    );
+  }
   if (
-    record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION &&
-    record.schemaVersion !== COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+    record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION ||
+    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
   ) {
-    if (record.schemaVersion === 2) {
-      assertReleasedSchema2CaptainSessionRecord(record);
-      throw new CaptainSessionRecordSchemaError(
-        record.schemaVersion,
-        'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
-      );
-    }
+    return validateCanonicalCaptainSessionRecord(
+      migratePreEffectCaptainSessionRecord(record),
+    );
+  }
+  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
     throw new CaptainSessionRecordSchemaError(
       record.schemaVersion,
       `Captain session record schema ${JSON.stringify(record.schemaVersion)} is not supported`,
     );
   }
+  return validateCanonicalCaptainSessionRecord(record);
+}
+
+function validateCanonicalCaptainSessionRecord(record) {
+  record = requireRecord(
+    snapshotJsonValue(record, 'Captain session record'),
+    'Captain session record',
+  );
   if (record.state !== 'settled' && record.state !== 'uncertain') {
     throw new Error('Captain session record state is not supported');
   }
-  const recordKeys =
-    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
-      ? [...COMMON_RECORD_KEYS, 'retainedGenerations']
-      : COMMON_RECORD_KEYS;
   exactOptionalKeys(
     record,
     record.state === 'uncertain'
-      ? [...recordKeys, 'uncertain']
-      : recordKeys,
-    record.schemaVersion === CAPTAIN_SESSION_RECORD_SCHEMA_VERSION
-      ? ['retainedGenerations']
-      : [],
+      ? [...COMMON_RECORD_KEYS, 'uncertain']
+      : COMMON_RECORD_KEYS,
+    ['retainedGenerations'],
     'Captain session record',
   );
+  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
+    throw new Error(
+      `Captain session record schemaVersion must be ${CAPTAIN_SESSION_RECORD_SCHEMA_VERSION}`,
+    );
+  }
   if (record.kind !== CAPTAIN_SESSION_RECORD_KIND) {
     throw new Error('Captain session record kind is not supported');
   }
@@ -1398,6 +1500,27 @@ export function validateCaptainSessionRecord(value) {
   void lastApplied;
   const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
   assertSnapshotMatchesStructure(snapshot, structural);
+  const effectLedger = assertPlaybookEffectLedger(
+    record.effectLedger,
+    'Captain session record effectLedger',
+  );
+  assertEffectLedgerMatchesCatalog(effectLedger, structural.catalog);
+  if (record.state === 'settled') {
+    if (!isDeepStrictEqual(effectLedger, snapshot.effectLedger)) {
+      throw new Error(
+        'settled Captain session effect ledger differs from its shell snapshot mirror',
+      );
+    }
+  } else if (
+    !isPlaybookEffectLedgerMonotonicExtension(
+      snapshot.effectLedger,
+      effectLedger,
+    )
+  ) {
+    throw new Error(
+      'uncertain Captain session effect ledger is not a monotonic extension of its pre-turn shell snapshot mirror',
+    );
+  }
   if (Object.hasOwn(record, 'retainedGenerations')) {
     validateRetainedGenerations(record.retainedGenerations, structural);
   }
@@ -1446,6 +1569,41 @@ export function validateCaptainSessionRecord(value) {
     ) {
       throw new Error('Captain session attempt number must be a positive integer');
     }
+    const newBoundaries = effectLedger.boundaries.slice(
+      snapshot.effectLedger.boundaries.length,
+    );
+    const attemptIds = new Map();
+    const attemptNumbersById = new Map();
+    for (const boundary of newBoundaries) {
+      if (boundary.attemptNumber > uncertain.attemptNumber) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundary names a future uncertain attempt',
+        );
+      }
+      const priorId = attemptIds.get(boundary.attemptNumber);
+      if (priorId !== undefined && priorId !== boundary.attemptId) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundaries use inconsistent ids for one attempt number',
+        );
+      }
+      const priorNumber = attemptNumbersById.get(boundary.attemptId);
+      if (priorNumber !== undefined && priorNumber !== boundary.attemptNumber) {
+        throw new Error(
+          'Captain session post-checkpoint effect attempts reuse one id across attempt numbers',
+        );
+      }
+      attemptIds.set(boundary.attemptNumber, boundary.attemptId);
+      attemptNumbersById.set(boundary.attemptId, boundary.attemptNumber);
+      if (
+        boundary.attemptNumber === uncertain.attemptNumber
+          ? boundary.attemptId !== uncertain.attemptId
+          : boundary.attemptId === uncertain.attemptId
+      ) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundary attempt identity conflicts with the current uncertain marker',
+        );
+      }
+    }
     const markedAt = canonicalTimestamp(
       uncertain.markedAt,
       'uncertain.markedAt',
@@ -1473,6 +1631,816 @@ export function validateCaptainSessionRecord(value) {
   }
 
   return record;
+}
+
+function migratePreEffectCaptainSessionRecord(record) {
+  if (record.state !== 'settled' && record.state !== 'uncertain') {
+    throw new Error('Captain session record state is not supported');
+  }
+  const recordKeys =
+    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+      ? [...LEGACY_COMMON_RECORD_KEYS, 'retainedGenerations']
+      : LEGACY_COMMON_RECORD_KEYS;
+  exactOptionalKeys(
+    record,
+    record.state === 'uncertain'
+      ? [...recordKeys, 'uncertain']
+      : recordKeys,
+    record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION
+      ? ['retainedGenerations']
+      : [],
+    'Captain session record',
+  );
+  const structural = validateCaptainSessionStructuralProjection(
+    record.structuralProjection,
+    'Captain session record structuralProjection',
+  );
+  const schema3Id = Object.values(structural.catalog).find(
+    (entry) => entry.artifactSchema === 3,
+  )?.id;
+  if (schema3Id !== undefined) {
+    throw new CaptainSessionRecordSchemaError(
+      record.schemaVersion,
+      `Captain session record schema ${record.schemaVersion} predates effect-ledger persistence and cannot migrate schema-3 playbook ${JSON.stringify(schema3Id)}`,
+    );
+  }
+  const effectLedger = emptyPlaybookEffectLedger();
+  return {
+    ...record,
+    schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+    snapshot: migratePreEffectShellSnapshot(record.snapshot, effectLedger),
+    effectLedger,
+    ...(Object.hasOwn(record, 'retainedGenerations')
+      ? {
+          retainedGenerations: migratePreEffectRetainedGenerations(
+            record.retainedGenerations,
+          ),
+        }
+      : {}),
+  };
+}
+
+function migratePreEffectShellSnapshot(value, effectLedger) {
+  const snapshot = requireRecord(value, 'legacy Captain shell snapshot');
+  if (snapshot.schemaVersion !== 3) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `legacy Captain shell snapshot schema ${JSON.stringify(snapshot.schemaVersion)} cannot migrate to schema 4`,
+    );
+  }
+  if (Object.hasOwn(snapshot, 'effectLedger')) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      'legacy Captain shell snapshot must not contain an effect ledger',
+    );
+  }
+  const captain = requireRecord(
+    snapshot.captain,
+    'legacy Captain shell snapshot.captain',
+  );
+  const frames =
+    snapshot.frames === undefined
+      ? undefined
+      : Array.isArray(snapshot.frames)
+        ? snapshot.frames.map((frame, index) => {
+            const captured = requireRecord(
+              frame,
+              `legacy Captain shell snapshot.frames[${index}]`,
+            );
+            return {
+              ...captured,
+              runtime: migratePreEffectRuntimeSnapshot(
+                captured.runtime,
+                `legacy Captain shell snapshot.frames[${index}].runtime`,
+              ),
+            };
+          })
+        : snapshot.frames;
+  return {
+    ...snapshot,
+    schemaVersion: 4,
+    captain: {
+      ...captain,
+      runtime: migratePreEffectRuntimeSnapshot(
+        captain.runtime,
+        'legacy Captain shell snapshot.captain.runtime',
+      ),
+    },
+    effectLedger,
+    ...(frames === undefined ? {} : { frames }),
+  };
+}
+
+function migratePreEffectRuntimeSnapshot(value, path) {
+  const snapshot = requireRecord(value, path);
+  if (snapshot.schemaVersion !== 3) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `${path} schema ${JSON.stringify(snapshot.schemaVersion)} cannot migrate to schema 4`,
+    );
+  }
+  if (Object.hasOwn(snapshot, 'effectLedger')) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `${path} must not contain an effect ledger`,
+    );
+  }
+  return {
+    ...snapshot,
+    schemaVersion: 4,
+    effectLedger: emptyPlaybookEffectLedger(),
+  };
+}
+
+function migratePreEffectRetainedGenerations(value) {
+  const retained = requireRecord(
+    value,
+    'legacy Captain session retainedGenerations',
+  );
+  return Object.fromEntries(
+    Object.entries(retained).map(([rootPlaybookId, rawGeneration]) => {
+      const path =
+        'legacy Captain session retainedGenerations' +
+        `[${JSON.stringify(rootPlaybookId)}]`;
+      const generation = requireRecord(rawGeneration, path);
+      if (!Array.isArray(generation.frames)) return [rootPlaybookId, generation];
+      return [
+        rootPlaybookId,
+        {
+          ...generation,
+          frames: generation.frames.map((rawFrame, index) => {
+            const frame = requireRecord(rawFrame, `${path}.frames[${index}]`);
+            return {
+              ...frame,
+              runtime: migratePreEffectRuntimeSnapshot(
+                frame.runtime,
+                `${path}.frames[${index}].runtime`,
+              ),
+            };
+          }),
+        },
+      ];
+    }),
+  );
+}
+
+const EFFECT_AUTHORITY_KEYS = [
+  'playbookId',
+  'artifactSchema',
+  'cwd',
+  'sessionId',
+  'leaseOwnerToken',
+  'canonicalWorktree',
+  'requiredRoleIds',
+  'concurrentRoleSets',
+];
+const EFFECT_BOUNDARY_START_KEYS = [
+  'boundaryId',
+  'playbookId',
+  'runtimeSessionId',
+  'turnId',
+  'callId',
+  'roleId',
+  'sourceStateId',
+  'sourceOutcomeSchema',
+  'dispositions',
+  'canonicalWorktree',
+  'baseline',
+  'correctionBudget',
+];
+const EFFECT_BOUNDARY_IDENTITY_KEYS = [
+  'sequence',
+  'boundaryId',
+  'attemptId',
+  'attemptNumber',
+  'playbookId',
+  'runtimeSessionId',
+  'turnId',
+  'callId',
+  'roleId',
+  'sourceStateId',
+  'sourceOutcomeSchema',
+  'dispositions',
+  'canonicalWorktree',
+  'baseline',
+];
+const EFFECT_BOUNDARY_OPTIONAL_KEYS = [
+  'after',
+  'physicalReceipt',
+  'finalText',
+  'semanticCandidate',
+  'cohortId',
+  'logicalOperationId',
+];
+const EFFECT_LOGICAL_START_KEYS = [
+  'operationId',
+  'playbookId',
+  'runtimeSessionId',
+  'boundaryIds',
+  'originalBaseline',
+  'checkpointRestorationEligible',
+];
+const EFFECT_LOGICAL_OPTIONAL_KEYS = [
+  'checkpoint',
+  'pendingQuestion',
+  'playerContinuation',
+  'logicalReceipt',
+];
+
+function assertEffectLedgerMatchesCatalog(ledger, catalog) {
+  const cohorts = new Map();
+  for (const boundary of ledger.boundaries) {
+    const entry = catalog[boundary.playbookId];
+    if (
+      entry?.artifactSchema !== 3 ||
+      !entry.requiredRoleIds.includes(boundary.roleId)
+    ) {
+      throw new Error(
+        `Captain session effect boundary ${JSON.stringify(boundary.boundaryId)} does not match its stored schema-3 catalog role`,
+      );
+    }
+    if (boundary.cohortId === undefined) continue;
+    const members = cohorts.get(boundary.cohortId) ?? [];
+    members.push(boundary);
+    cohorts.set(boundary.cohortId, members);
+  }
+  for (const [cohortId, members] of cohorts) {
+    const entry = catalog[members[0].playbookId];
+    const roles = members.map((boundary) => boundary.roleId);
+    if (
+      !members.every(
+        (boundary) => boundary.playbookId === members[0].playbookId,
+      ) ||
+      !entry.concurrentRoleSets.some((candidate) =>
+        isDeepStrictEqual(candidate, roles),
+      )
+    ) {
+      throw new Error(
+        `Captain session effect cohort ${JSON.stringify(cohortId)} is not one stored declared concurrent role set`,
+      );
+    }
+  }
+}
+
+function validateEffectLedgerAuthority(value, record, owner) {
+  const authority = requireRecord(
+    snapshotJsonValue(value, 'effect-ledger write authority'),
+    'effect-ledger write authority',
+  );
+  rejectUnknownOrMissingKeys(
+    authority,
+    EFFECT_AUTHORITY_KEYS,
+    'effect-ledger write authority',
+  );
+  const identity = requireRecord(
+    authority.canonicalWorktree,
+    'effect-ledger write authority.canonicalWorktree',
+  );
+  rejectUnknownOrMissingKeys(
+    identity,
+    ['worktree', 'gitDir'],
+    'effect-ledger write authority.canonicalWorktree',
+  );
+  const entry = record.structuralProjection.catalog[authority.playbookId];
+  if (
+    authority.artifactSchema !== 3 ||
+    authority.sessionId !== record.sessionId ||
+    authority.sessionId !== owner.sessionId ||
+    authority.leaseOwnerToken !== owner.ownerToken ||
+    authority.cwd !== record.cwd ||
+    entry?.artifactSchema !== 3 ||
+    entry.id !== authority.playbookId ||
+    !isDeepStrictEqual(authority.requiredRoleIds, entry.requiredRoleIds) ||
+    !isDeepStrictEqual(
+      authority.concurrentRoleSets,
+      entry.concurrentRoleSets,
+    )
+  ) {
+    throw new Error(
+      'effect-ledger write authority does not match the current Captain session lease and stored schema-3 playbook',
+    );
+  }
+  for (const [key, path] of [
+    ['worktree', 'effect-ledger write authority canonical worktree'],
+    ['gitDir', 'effect-ledger write authority canonical Git directory'],
+  ]) {
+    if (
+      typeof identity[key] !== 'string' ||
+      !isAbsolute(identity[key]) ||
+      resolve(identity[key]) !== identity[key]
+    ) {
+      throw new Error(`${path} must be a normalized absolute path`);
+    }
+  }
+  return authority;
+}
+
+function applyEffectLedgerCommands(
+  ledgerValue,
+  authority,
+  uncertain,
+  commandsValue,
+) {
+  const previous = assertPlaybookEffectLedger(
+    ledgerValue,
+    'Captain session effect ledger',
+  );
+  const commands = requireNonemptyBatch(
+    snapshotJsonValue(commandsValue, 'effect-ledger write commands'),
+    'effect-ledger write commands',
+  );
+  let candidate = previous;
+  for (const [index, commandValue] of commands.entries()) {
+    candidate = applyEffectLedgerCommand(
+      candidate,
+      authority,
+      uncertain,
+      commandValue,
+      `effect-ledger write commands[${index}]`,
+    );
+  }
+  if (isDeepStrictEqual(candidate, previous)) return previous;
+  return validateNextEffectLedger(previous, {
+    ...candidate,
+    revision: previous.revision + 1,
+  });
+}
+
+function applyEffectLedgerCommand(
+  ledger,
+  authority,
+  uncertain,
+  commandValue,
+  path,
+) {
+  const command = requireRecord(
+    commandValue,
+    path,
+  );
+  if (command.kind === 'start-boundaries') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'boundaries'],
+      path,
+    );
+    return startEffectBoundaries(ledger, authority, uncertain, command.boundaries);
+  }
+  if (command.kind === 'replace-boundaries') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'replacements'],
+      path,
+    );
+    return replaceEffectBoundaries(ledger, authority, command.replacements);
+  }
+  if (command.kind === 'append-logical-operations') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'operations'],
+      path,
+    );
+    return appendEffectLogicalOperations(
+      ledger,
+      authority,
+      command.operations,
+    );
+  }
+  if (command.kind === 'replace-logical-operations') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'replacements'],
+      path,
+    );
+    return replaceEffectLogicalOperations(
+      ledger,
+      authority,
+      command.replacements,
+    );
+  }
+  throw new Error(
+    `${path}.kind ${JSON.stringify(command.kind)} is not supported`,
+  );
+}
+
+function requireNonemptyBatch(value, path) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${path} must be a nonempty array`);
+  }
+  return value;
+}
+
+function startEffectBoundaries(ledger, authority, uncertain, value) {
+  const inputs = requireNonemptyBatch(
+    value,
+    'effect-ledger start command boundaries',
+  ).map((raw, index) => {
+    const path = `effect-ledger start command boundaries[${index}]`;
+    const input = requireRecord(raw, path);
+    exactOptionalKeys(
+      input,
+      EFFECT_BOUNDARY_START_KEYS,
+      ['cohortId', 'logicalOperationId'],
+      path,
+    );
+    assertBoundaryAuthority(input, authority, path);
+    return input;
+  });
+  assertDistinctCommandIdentities(inputs, 'boundaryId', 'boundary start');
+  const existingById = new Map(
+    ledger.boundaries.map((boundary) => [boundary.boundaryId, boundary]),
+  );
+  const existing = inputs.map((input) => existingById.get(input.boundaryId));
+  if (existing.some((boundary) => boundary !== undefined)) {
+    if (
+      existing.every((boundary) => boundary !== undefined) &&
+      existing.every((boundary, index) => {
+        const payload = { ...boundary };
+        const sequence = payload.sequence;
+        delete payload.sequence;
+        delete payload.attemptId;
+        delete payload.attemptNumber;
+        return (
+          sequence === ledger.boundaries.length - inputs.length + index + 1 &&
+          isDeepStrictEqual(payload, inputs[index])
+        );
+      })
+    ) {
+      return ledger;
+    }
+    throw new Error(
+      'effect-ledger boundary start reuses an existing boundary id with different data',
+    );
+  }
+  const cohorts = new Map();
+  for (const input of inputs) {
+    if (input.cohortId === undefined) continue;
+    const members = cohorts.get(input.cohortId) ?? [];
+    members.push(input);
+    cohorts.set(input.cohortId, members);
+  }
+  for (const [cohortId, members] of cohorts) {
+    if (
+      members.length < 2 ||
+      !authority.concurrentRoleSets.some((roles) =>
+        isDeepStrictEqual(
+          roles,
+          members.map((boundary) => boundary.roleId),
+        ),
+      ) ||
+      ledger.boundaries.some((boundary) => boundary.cohortId === cohortId)
+    ) {
+      throw new Error(
+        `effect-ledger boundary cohort ${JSON.stringify(cohortId)} is not one new declared concurrent role set`,
+      );
+    }
+  }
+  let sequence = ledger.boundaries.at(-1)?.sequence ?? 0;
+  const additions = inputs.map((input) => ({
+    sequence: ++sequence,
+    boundaryId: input.boundaryId,
+    attemptId: uncertain.attemptId,
+    attemptNumber: uncertain.attemptNumber,
+    playbookId: input.playbookId,
+    runtimeSessionId: input.runtimeSessionId,
+    turnId: input.turnId,
+    callId: input.callId,
+    roleId: input.roleId,
+    sourceStateId: input.sourceStateId,
+    sourceOutcomeSchema: input.sourceOutcomeSchema,
+    dispositions: input.dispositions,
+    canonicalWorktree: input.canonicalWorktree,
+    baseline: input.baseline,
+    correctionBudget: input.correctionBudget,
+    ...(input.cohortId === undefined ? {} : { cohortId: input.cohortId }),
+    ...(input.logicalOperationId === undefined
+      ? {}
+      : { logicalOperationId: input.logicalOperationId }),
+  }));
+  return {
+    ...ledger,
+    boundaries: [...ledger.boundaries, ...additions],
+  };
+}
+
+function replaceEffectBoundaries(ledger, authority, value) {
+  const replacements = captureReplacements(
+    value,
+    'boundaryId',
+    'effect-ledger boundary replacement command',
+  );
+  const byId = new Map(
+    ledger.boundaries.map((boundary, index) => [
+      boundary.boundaryId,
+      { boundary, index },
+    ]),
+  );
+  let alreadyApplied = true;
+  const nextBoundaries = [...ledger.boundaries];
+  for (const [index, replacement] of replacements.entries()) {
+    const path = `effect-ledger boundary replacement command.replacements[${index}]`;
+    assertBoundaryCommandShape(replacement.expected, `${path}.expected`);
+    assertBoundaryCommandShape(replacement.next, `${path}.next`);
+    assertBoundaryAuthority(replacement.expected, authority, `${path}.expected`);
+    assertBoundaryAuthority(replacement.next, authority, `${path}.next`);
+    assertMonotonicBoundaryReplacement(
+      replacement.expected,
+      replacement.next,
+      path,
+    );
+    const current = byId.get(replacement.expected.boundaryId);
+    if (current === undefined) {
+      throw new Error(`${path} names an absent boundary`);
+    }
+    if (!isDeepStrictEqual(current.boundary, replacement.expected)) {
+      throw new Error(`${path}.expected does not match the durable boundary`);
+    }
+    if (isDeepStrictEqual(current.boundary, replacement.next)) continue;
+    alreadyApplied = false;
+    nextBoundaries[current.index] = replacement.next;
+  }
+  if (alreadyApplied) return ledger;
+  return {
+    ...ledger,
+    boundaries: nextBoundaries,
+  };
+}
+
+function appendEffectLogicalOperations(ledger, authority, value) {
+  const inputs = requireNonemptyBatch(
+    value,
+    'effect-ledger logical-operation append command operations',
+  ).map((raw, index) => {
+    const path = `effect-ledger logical-operation append command operations[${index}]`;
+    const input = requireRecord(raw, path);
+    exactOptionalKeys(
+      input,
+      EFFECT_LOGICAL_START_KEYS,
+      EFFECT_LOGICAL_OPTIONAL_KEYS,
+      path,
+    );
+    assertLogicalOperationAuthority(input, authority, path);
+    return input;
+  });
+  assertDistinctCommandIdentities(
+    inputs,
+    'operationId',
+    'logical-operation append',
+  );
+  const existingById = new Map(
+    ledger.logicalOperations.map((operation) => [
+      operation.operationId,
+      operation,
+    ]),
+  );
+  const existing = inputs.map((input) => existingById.get(input.operationId));
+  if (existing.some((operation) => operation !== undefined)) {
+    if (
+      existing.every((operation) => operation !== undefined) &&
+      existing.every((operation, index) => {
+        const { sequence, ...payload } = operation;
+        return (
+          sequence ===
+            ledger.logicalOperations.length - inputs.length + index + 1 &&
+          isDeepStrictEqual(payload, inputs[index])
+        );
+      })
+    ) {
+      return ledger;
+    }
+    throw new Error(
+      'effect-ledger logical-operation append reuses an existing operation id with different data',
+    );
+  }
+  let sequence = ledger.logicalOperations.at(-1)?.sequence ?? 0;
+  const additions = inputs.map((input) => ({ sequence: ++sequence, ...input }));
+  return {
+    ...ledger,
+    logicalOperations: [...ledger.logicalOperations, ...additions],
+  };
+}
+
+function replaceEffectLogicalOperations(ledger, authority, value) {
+  const replacements = captureReplacements(
+    value,
+    'operationId',
+    'effect-ledger logical-operation replacement command',
+  );
+  const byId = new Map(
+    ledger.logicalOperations.map((operation, index) => [
+      operation.operationId,
+      { operation, index },
+    ]),
+  );
+  let alreadyApplied = true;
+  const nextOperations = [...ledger.logicalOperations];
+  for (const [index, replacement] of replacements.entries()) {
+    const path = `effect-ledger logical-operation replacement command.replacements[${index}]`;
+    assertLogicalOperationCommandShape(
+      replacement.expected,
+      `${path}.expected`,
+    );
+    assertLogicalOperationCommandShape(replacement.next, `${path}.next`);
+    assertLogicalOperationAuthority(
+      replacement.expected,
+      authority,
+      `${path}.expected`,
+    );
+    assertLogicalOperationAuthority(
+      replacement.next,
+      authority,
+      `${path}.next`,
+    );
+    assertMonotonicLogicalReplacement(
+      replacement.expected,
+      replacement.next,
+      path,
+    );
+    const current = byId.get(replacement.expected.operationId);
+    if (current === undefined) {
+      throw new Error(`${path} names an absent logical operation`);
+    }
+    if (!isDeepStrictEqual(current.operation, replacement.expected)) {
+      throw new Error(`${path}.expected does not match the durable logical operation`);
+    }
+    if (isDeepStrictEqual(current.operation, replacement.next)) continue;
+    alreadyApplied = false;
+    nextOperations[current.index] = replacement.next;
+  }
+  if (alreadyApplied) return ledger;
+  return {
+    ...ledger,
+    logicalOperations: nextOperations,
+  };
+}
+
+function captureReplacements(value, identityKey, path) {
+  const replacements = requireNonemptyBatch(value, `${path}.replacements`).map(
+    (raw, index) => {
+      const replacementPath = `${path}.replacements[${index}]`;
+      const replacement = requireRecord(raw, replacementPath);
+      rejectUnknownOrMissingKeys(
+        replacement,
+        ['expected', 'next'],
+        replacementPath,
+      );
+      const expected = requireRecord(
+        replacement.expected,
+        `${replacementPath}.expected`,
+      );
+      const next = requireRecord(replacement.next, `${replacementPath}.next`);
+      if (expected[identityKey] !== next[identityKey]) {
+        throw new Error(
+          `${replacementPath} cannot change ${identityKey}`,
+        );
+      }
+      return { expected, next };
+    },
+  );
+  assertDistinctCommandIdentities(
+    replacements.map(({ expected }) => expected),
+    identityKey,
+    path,
+  );
+  return replacements;
+}
+
+function assertBoundaryAuthority(boundary, authority, path) {
+  if (
+    boundary.playbookId !== authority.playbookId ||
+    !isDeepStrictEqual(
+      boundary.canonicalWorktree,
+      authority.canonicalWorktree,
+    ) ||
+    !authority.requiredRoleIds.includes(boundary.roleId)
+  ) {
+    throw new Error(`${path} does not match its schema-3 host authority`);
+  }
+}
+
+function assertBoundaryCommandShape(boundary, path) {
+  exactOptionalKeys(
+    boundary,
+    [...EFFECT_BOUNDARY_IDENTITY_KEYS, 'correctionBudget'],
+    EFFECT_BOUNDARY_OPTIONAL_KEYS,
+    path,
+  );
+}
+
+function assertLogicalOperationAuthority(operation, authority, path) {
+  if (operation.playbookId !== authority.playbookId) {
+    throw new Error(`${path} does not match its schema-3 host authority`);
+  }
+}
+
+function assertLogicalOperationCommandShape(operation, path) {
+  exactOptionalKeys(
+    operation,
+    ['sequence', ...EFFECT_LOGICAL_START_KEYS],
+    EFFECT_LOGICAL_OPTIONAL_KEYS,
+    path,
+  );
+}
+
+function assertDistinctCommandIdentities(values, key, label) {
+  const identities = values.map((value) => value[key]);
+  if (new Set(identities).size !== identities.length) {
+    throw new Error(`effect-ledger ${label} contains duplicate ${key}`);
+  }
+}
+
+function assertMonotonicBoundaryReplacement(expected, next, path) {
+  for (const key of EFFECT_BOUNDARY_IDENTITY_KEYS) {
+    if (!isDeepStrictEqual(expected[key], next[key])) {
+      throw new Error(`${path}.next cannot change boundary field ${key}`);
+    }
+  }
+  for (const key of [
+    'after',
+    'physicalReceipt',
+    'finalText',
+    'semanticCandidate',
+  ]) {
+    if (
+      expected[key] !== undefined &&
+      !isDeepStrictEqual(expected[key], next[key])
+    ) {
+      throw new Error(`${path}.next cannot remove or replace boundary field ${key}`);
+    }
+  }
+  if (
+    expected.cohortId !== next.cohortId
+  ) {
+    throw new Error(`${path}.next cannot change boundary field cohortId`);
+  }
+  if (
+    expected.logicalOperationId !== undefined &&
+    expected.logicalOperationId !== next.logicalOperationId
+  ) {
+    throw new Error(
+      `${path}.next cannot remove or replace boundary field logicalOperationId`,
+    );
+  }
+  const expectedBudget = requireRecord(
+    expected.correctionBudget,
+    `${path}.expected.correctionBudget`,
+  );
+  const nextBudget = requireRecord(
+    next.correctionBudget,
+    `${path}.next.correctionBudget`,
+  );
+  if (
+    expectedBudget.limit !== nextBudget.limit ||
+    (expectedBudget.spent === true && nextBudget.spent !== true)
+  ) {
+    throw new Error(`${path}.next cannot replenish its correction budget`);
+  }
+}
+
+function assertMonotonicLogicalReplacement(expected, next, path) {
+  for (const key of [
+    'sequence',
+    'operationId',
+    'playbookId',
+    'runtimeSessionId',
+    'originalBaseline',
+  ]) {
+    if (!isDeepStrictEqual(expected[key], next[key])) {
+      throw new Error(`${path}.next cannot change logical-operation field ${key}`);
+    }
+  }
+  if (
+    !Array.isArray(expected.boundaryIds) ||
+    !Array.isArray(next.boundaryIds) ||
+    expected.boundaryIds.some(
+      (boundaryId, index) => next.boundaryIds[index] !== boundaryId,
+    )
+  ) {
+    throw new Error(
+      `${path}.next boundaryIds must preserve the existing ordered prefix`,
+    );
+  }
+  if (
+    expected.logicalReceipt !== undefined &&
+    !isDeepStrictEqual(expected.logicalReceipt, next.logicalReceipt)
+  ) {
+    throw new Error(`${path}.next cannot remove or replace logicalReceipt`);
+  }
+}
+
+function validateNextEffectLedger(previous, candidate) {
+  if (!Number.isSafeInteger(previous.revision + 1)) {
+    throw new Error('Captain session effect-ledger revision cannot advance');
+  }
+  const next = assertPlaybookEffectLedger(
+    candidate,
+    'Captain session next effect ledger',
+  );
+  if (!isPlaybookEffectLedgerMonotonicExtension(previous, next)) {
+    throw new Error(
+      'Captain session next effect ledger is not a monotonic extension',
+    );
+  }
+  return next;
 }
 
 function assertReleasedSchema2CaptainSessionRecord(record) {
@@ -1960,6 +2928,15 @@ function assertSnapshotMatchesStructure(snapshot, structural) {
         `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} role bindings differ from structuralProjection`,
       );
     }
+    const expectedLedger =
+      item.artifactSchema === 3
+        ? snapshot.effectLedger
+        : emptyPlaybookEffectLedger();
+    if (!isDeepStrictEqual(frame.runtime.effectLedger, expectedLedger)) {
+      throw new Error(
+        `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger differs from its structural schema authority`,
+      );
+    }
   }
 }
 
@@ -2136,6 +3113,7 @@ function settledRecordWithRetainedGenerations(
     structuralProjection: record.structuralProjection,
     lastAppliedExecutionProjection: record.lastAppliedExecutionProjection,
     snapshot: record.snapshot,
+    effectLedger: record.effectLedger,
     retainedGenerations,
   });
 }

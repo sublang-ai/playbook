@@ -295,7 +295,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     const record = await fixture.store.read(fixture.sessionId);
     expect(record).toEqual(visible.durableRecord);
     expect(record).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 5,
       state: 'settled',
       sessionId: fixture.sessionId,
       snapshot: {
@@ -642,12 +642,12 @@ async function assertSettledTurnZero(
 ) {
   const record = await fixture.store.read(fixture.sessionId);
   expect(record).toMatchObject({
-    schemaVersion: 3,
+    schemaVersion: 5,
     state: 'settled',
     sessionId: fixture.sessionId,
     cwd: fixture.cwd,
     snapshot: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       sequences: { turn: 0, journal: 0 },
       playerSessions: { 'dev.coder': { adapter: 'claude' } },
     },
@@ -869,7 +869,7 @@ function fixtureCaptainRuntime({ controller }: any): PlaybookRuntime {
 function runtimeSnapshot(turn: number): PlaybookRuntimeSnapshot {
   const state = activeState();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId: 'captain',
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -883,6 +883,12 @@ function runtimeSnapshot(turn: number): PlaybookRuntimeSnapshot {
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: {
+      schemaVersion: 1,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    },
   };
 }
 
