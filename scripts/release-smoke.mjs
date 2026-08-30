@@ -757,6 +757,82 @@ process.exitCode = result.code ?? 0;
 `;
 }
 
+// Run from the registry-installed cligent package itself. This exercises the
+// public no-presenter runtime that Playbook consumes, including the 0.23.0
+// result-less fallback that must retain whole Codex message boundaries.
+function cligentMessageBoundaryProbeSource() {
+  return `import { createEvent } from '@sublang/cligent';
+import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+
+const commentary = 'Reworked the small packages.';
+const finalResponse = 'Commit: abc123';
+const sessionId = 'playbook-release-message-boundary';
+let playerResult;
+
+class CodexMessageAdapter {
+  agent = 'codex';
+
+  async *run() {
+    yield createEvent('text', this.agent, { content: commentary }, sessionId);
+    yield createEvent('text', this.agent, { content: finalResponse }, sessionId);
+    yield createEvent(
+      'done',
+      this.agent,
+      {
+        status: 'success',
+        usage: { toolUses: 0 },
+        durationMs: 1,
+      },
+      sessionId,
+    );
+  }
+
+  async isAvailable() {
+    return true;
+  }
+}
+
+class UnusedCaptainAdapter extends CodexMessageAdapter {
+  agent = 'claude-code';
+
+  async *run() {
+    throw new Error('the transport probe must not call the Captain adapter');
+  }
+}
+
+const runtime = await createTmuxPlayRuntime({
+  captain: {
+    async handleBossTurn(turn, context) {
+      playerResult = await context.callPlayer('coder', turn.prompt);
+    },
+  },
+  captainConfig: { adapter: 'claude' },
+  players: [{ id: 'coder', adapter: 'codex' }],
+  adapterImports: {
+    claude: async () => UnusedCaptainAdapter,
+    codex: async () => CodexMessageAdapter,
+  },
+});
+
+await runtime.runBossTurn('transport probe');
+
+const expected = commentary + '\\n' + finalResponse;
+const finalResponseLines = playerResult?.finalText
+  ?.split('\\n')
+  .filter((line) => line === finalResponse);
+if (
+  playerResult?.status !== 'ok' ||
+  playerResult.finalText !== expected ||
+  finalResponseLines?.length !== 1
+) {
+  throw new Error(
+    'installed cligent did not preserve complete Codex messages: ' +
+      JSON.stringify(playerResult),
+  );
+}
+`;
+}
+
 // The installed package's own module scope: self-referencing imports resolve
 // exactly as consumer imports of the four public playbook subpaths do,
 // exports map included.
@@ -1816,9 +1892,17 @@ function stepCligentFloor(root, state) {
       ].join('\n'),
     );
   }
+  const messageBoundaryProbe = join(
+    cligentRoot,
+    'playbook-message-boundary-probe.mjs',
+  );
+  writeFileSync(messageBoundaryProbe, cligentMessageBoundaryProbeSource());
+  run(process.execPath, [messageBoundaryProbe], { cwd: cligentRoot });
+  rmSync(messageBoundaryProbe);
   return [
     `nested @sublang/cligent ${installedVersion} satisfies ${declared}`,
     `${surface.specifier} type-checks ${surface.proven.join(' and ')}`,
+    'Codex commentary and final response remain separate complete messages',
   ];
 }
 
@@ -1828,6 +1912,7 @@ export const _testing = Object.freeze({
   smokeRetuneOverlay,
   assertSmokeCalls,
   compiledRuntimeImportProbeSource,
+  cligentMessageBoundaryProbeSource,
 });
 
 if (

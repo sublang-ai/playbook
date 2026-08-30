@@ -189,9 +189,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 22 ||
-            (declaredFloor[1] === 22 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.22.0 capability floor`,
+          (declaredFloor[1] > 23 ||
+            (declaredFloor[1] === 23 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.23.0 capability floor`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -214,9 +214,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 22 ||
-              (resolvedFloor[1] === 22 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.22.0 capability floor`,
+            (resolvedFloor[1] > 23 ||
+              (resolvedFloor[1] === 23 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.23.0 capability floor`,
       ).toBe(true);
     }
   });
