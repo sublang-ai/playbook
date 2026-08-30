@@ -23,7 +23,6 @@ const COMMIT_CODER_PROMPT = [
     '',
     'Commit the result as one new commit, following @specs/packages/git.md.',
     'Make the commit message explain concisely what changed and why.',
-    'Include exactly one final-response line beginning `Commit: `, followed only by the exact commit identity; other final-response content may appear on other lines.',
     'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 const REVIEW_INPUT_TEMPLATE = [
@@ -57,13 +56,6 @@ function commitOutput(event) {
     if (output.guard !== 'committed' ||
         !isNonEmptyString(output.coderOutput) ||
         !isNonEmptyString(output.latestCommit)) {
-        return undefined;
-    }
-    const commitLines = output.coderOutput
-        .split('\n')
-        .filter((line) => line.startsWith('Commit: '));
-    if (commitLines.length !== 1 ||
-        commitLines[0] !== `Commit: ${output.latestCommit}`) {
         return undefined;
     }
     return {
@@ -305,6 +297,7 @@ export const decideMachine = setup({
         }),
     },
     actions: {
+        'playbook.acceptedOutcome': (_args, _params) => undefined,
         copyStartTopic: assign({
             callerTopic: ({ event }) => event.type === 'START_DECIDE' ? event.callerTopic : undefined,
             coderProposal: undefined,
@@ -514,14 +507,24 @@ export const decideMachine = setup({
                                     {
                                         guard: 'needsBossReplyWithQuestion',
                                         target: 'waiting',
-                                        actions: {
-                                            type: 'setPendingBossQuestion',
-                                            params: {
-                                                ...stateMetadata.askCoderProposal,
-                                                resumeStateId: 'askCoderProposal',
-                                                question: '',
+                                        actions: [
+                                            {
+                                                type: 'playbook.acceptedOutcome',
+                                                params: {
+                                                    source: 'askCoderProposal',
+                                                    target: 'waitCoderProposalReply',
+                                                    acceptedOutcome: 'needsBossReply',
+                                                },
                                             },
-                                        },
+                                            {
+                                                type: 'setPendingBossQuestion',
+                                                params: {
+                                                    ...stateMetadata.askCoderProposal,
+                                                    resumeStateId: 'askCoderProposal',
+                                                    question: '',
+                                                },
+                                            },
+                                        ],
                                     },
                                     {
                                         guard: 'needsBossReplyWithoutQuestion',
@@ -535,6 +538,16 @@ export const decideMachine = setup({
                                         guard: 'coderProposed',
                                         target: 'complete',
                                         actions: [
+                                            {
+                                                type: 'playbook.acceptedOutcome',
+                                                params: ({ context }) => ({
+                                                    source: 'askCoderProposal',
+                                                    target: context.stagedReviewerResult === undefined
+                                                        ? 'coderProposalComplete'
+                                                        : 'commitCoderProposal',
+                                                    acceptedOutcome: 'proposed',
+                                                }),
+                                            },
                                             'stageCoderProposal',
                                             {
                                                 type: 'clearBranchBossReplyContext',
@@ -630,14 +643,24 @@ export const decideMachine = setup({
                                     {
                                         guard: 'needsBossReplyWithQuestion',
                                         target: 'waiting',
-                                        actions: {
-                                            type: 'setPendingBossQuestion',
-                                            params: {
-                                                ...stateMetadata.askReviewerProposal,
-                                                resumeStateId: 'askReviewerProposal',
-                                                question: '',
+                                        actions: [
+                                            {
+                                                type: 'playbook.acceptedOutcome',
+                                                params: {
+                                                    source: 'askReviewerProposal',
+                                                    target: 'waitReviewerProposalReply',
+                                                    acceptedOutcome: 'needsBossReply',
+                                                },
                                             },
-                                        },
+                                            {
+                                                type: 'setPendingBossQuestion',
+                                                params: {
+                                                    ...stateMetadata.askReviewerProposal,
+                                                    resumeStateId: 'askReviewerProposal',
+                                                    question: '',
+                                                },
+                                            },
+                                        ],
                                     },
                                     {
                                         guard: 'needsBossReplyWithoutQuestion',
@@ -651,6 +674,16 @@ export const decideMachine = setup({
                                         guard: 'reviewerProposed',
                                         target: 'complete',
                                         actions: [
+                                            {
+                                                type: 'playbook.acceptedOutcome',
+                                                params: ({ context }) => ({
+                                                    source: 'askReviewerProposal',
+                                                    target: context.stagedCoderResult === undefined
+                                                        ? 'reviewerProposalComplete'
+                                                        : 'commitCoderProposal',
+                                                    acceptedOutcome: 'proposed',
+                                                }),
+                                            },
                                             'stageReviewerProposal',
                                             {
                                                 type: 'clearBranchBossReplyContext',
@@ -748,14 +781,24 @@ export const decideMachine = setup({
                     {
                         guard: 'needsBossReplyWithQuestion',
                         target: 'awaitBossReply',
-                        actions: {
-                            type: 'setPendingBossQuestion',
-                            params: {
-                                ...stateMetadata.commitCoderProposal,
-                                resumeStateId: 'commitCoderProposal',
-                                question: '',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'commitCoderProposal',
+                                    target: 'awaitBossReply',
+                                    acceptedOutcome: 'needsBossReply',
+                                },
                             },
-                        },
+                            {
+                                type: 'setPendingBossQuestion',
+                                params: {
+                                    ...stateMetadata.commitCoderProposal,
+                                    resumeStateId: 'commitCoderProposal',
+                                    question: '',
+                                },
+                            },
+                        ],
                     },
                     {
                         guard: 'needsBossReplyWithoutQuestion',
@@ -769,6 +812,14 @@ export const decideMachine = setup({
                         guard: 'committed',
                         target: 'reviewCommit',
                         actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'commitCoderProposal',
+                                    target: 'reviewCommit',
+                                    acceptedOutcome: 'committed',
+                                },
+                            },
                             'rememberCommit',
                             {
                                 type: 'clearBranchBossReplyContext',

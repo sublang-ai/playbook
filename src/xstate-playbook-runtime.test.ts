@@ -53,6 +53,7 @@ import createCodePlaybookRuntime, {
 import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
 import createDecidePlaybookRuntime, {
   _internal as decideArtifact,
+  type DecidePlaybookHostCapabilities,
 } from '../reference/sdlc/decide.playbook/decide.playbook.js';
 import { reviewMachine } from '../reference/sdlc/review.playbook/review.fsm.js';
 import { _internal as reviewArtifact } from '../reference/sdlc/review.playbook/review.playbook.js';
@@ -366,6 +367,44 @@ function codeRuntimeConstruction(
       },
     },
   } as unknown as Parameters<typeof createCodePlaybookRuntime>[0];
+}
+
+function decideRuntimeConstruction(): Parameters<
+  typeof createDecidePlaybookRuntime
+>[0] {
+  const identity = Object.freeze({
+    worktree: '/repo',
+    gitDir: '/repo/.git',
+  });
+  const ledger = emptyPlaybookEffectLedger();
+  const unavailable = async (): Promise<never> => {
+    throw new Error('DECIDE repository work is outside this test');
+  };
+  const hostCapabilities: DecidePlaybookHostCapabilities = {
+    authority: {
+      playbookId: 'decide',
+      artifactSchema: 3,
+      cwd: identity.worktree,
+      sessionId: '70000000-0000-4000-8000-000000000001',
+      leaseOwnerToken: '70000000-0000-4000-8000-000000000002',
+      canonicalWorktree: identity,
+      requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [['coder', 'reviewer']],
+    },
+    repository: {
+      identity,
+      observe: async () => CODE_EFFECT_OBSERVATION,
+      acquire: unavailable,
+      runExclusive: unavailable,
+      runCohort: unavailable,
+      runDeferred: unavailable,
+    },
+    effectLedger: {
+      snapshot: () => ledger,
+      writeAhead: async () => ledger,
+    },
+  };
+  return { configuredOptions: {}, hostCapabilities };
 }
 
 function adoptionFrom(
@@ -932,7 +971,9 @@ describe('generic strategy defaults', () => {
     const unclassifiedRuntime = createWorkflowRuntime({});
     expect(unclassifiedRuntime.retainedGenerationMetadata).toBeUndefined();
     expect(typeof unclassifiedRuntime.adopt).toBe('function');
-    expect(createDecidePlaybookRuntime({}).adopt).toBeUndefined();
+    expect(
+      createDecidePlaybookRuntime(decideRuntimeConstruction()).adopt,
+    ).toBeUndefined();
   });
 
   it.each(['implement', 'missing'])(

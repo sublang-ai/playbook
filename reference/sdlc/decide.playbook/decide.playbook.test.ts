@@ -3,18 +3,17 @@
 
 import { createHash } from 'node:crypto';
 
-import { enqueueActions } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
-
-import { ACCEPTED_OUTCOME_ACTION_TYPE } from '../../../src/accepted-outcome.js';
 
 import type {
   PlayerResult,
   PlayerSessionStore,
   PlaybookEffectBoundary,
   PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
+  PlaybookRepositoryReceipt,
 } from '../../../src/runtime.js';
-import createPlaybookRuntime, {
+import createLinkedPlaybookRuntime, {
   _internal,
   type PlayerCallOptions,
   type PlaybookCallRequest,
@@ -91,9 +90,9 @@ function session(
   roleBindings?: PlaybookSession['roleBindings'],
 ): PlaybookSession {
   return {
-    sessionId: 'decide-test-session',
+    sessionId: DECIDE_TEST_SESSION_ID,
     playbookId: 'decide',
-    rootSessionId: 'decide-test-session',
+    rootSessionId: DECIDE_TEST_SESSION_ID,
     depth: 0,
     playerSessions,
     ...(roleBindings === undefined ? {} : { roleBindings }),
@@ -101,23 +100,8 @@ function session(
   };
 }
 
+const DECIDE_TEST_SESSION_ID = '30000000-0000-4000-8000-000000000000';
 const REPLAY_SESSION_ID = '30000000-0000-4000-8000-000000000001';
-const FOREIGN_REPLAY_SESSION_ID =
-  '30000000-0000-4000-8000-000000000002';
-const FIRST_REPLAY_ATTEMPT_ID =
-  '30000000-0000-4000-8000-000000000003';
-const SECOND_REPLAY_ATTEMPT_ID =
-  '30000000-0000-4000-8000-000000000004';
-const FOREIGN_REPLAY_ATTEMPT_ID =
-  '30000000-0000-4000-8000-000000000005';
-
-type ReplayReceiptEvidence = 'unchanged' | 'nonzero' | 'incomplete';
-
-interface StartedPlayerBoundary {
-  readonly callId: string;
-  readonly turnId: number;
-  readonly stateId: string;
-}
 
 function replayObservation(projection: Record<string, unknown> = {}) {
   return {
@@ -132,59 +116,7 @@ function replayObservation(projection: Record<string, unknown> = {}) {
 }
 
 const REPLAY_BASELINE = replayObservation();
-
-function replayBoundary(options: {
-  readonly sequence: number;
-  readonly attemptId: string;
-  readonly attemptNumber: number;
-  readonly playbookId?: string;
-  readonly runtimeSessionId: string;
-  readonly turnId: number;
-  readonly callId: string;
-  readonly roleId: string;
-  readonly sourceStateId: string;
-  readonly evidence: ReplayReceiptEvidence;
-}): PlaybookEffectBoundary {
-  const base = {
-    sequence: options.sequence,
-    boundaryId: `40000000-0000-4000-8000-${String(options.sequence).padStart(12, '0')}`,
-    attemptId: options.attemptId,
-    attemptNumber: options.attemptNumber,
-    playbookId: options.playbookId ?? 'decide',
-    runtimeSessionId: options.runtimeSessionId,
-    turnId: options.turnId,
-    callId: options.callId,
-    roleId: options.roleId,
-    sourceStateId: options.sourceStateId,
-    sourceOutcomeSchema: { type: 'object' },
-    dispositions: ['unchanged'] as const,
-    canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
-    baseline: REPLAY_BASELINE,
-    correctionBudget: { limit: 1 as const, spent: false },
-  };
-  if (options.evidence === 'incomplete') return base;
-  if (options.evidence === 'unchanged') {
-    return {
-      ...base,
-      after: REPLAY_BASELINE,
-      physicalReceipt: {
-        classification: 'unchanged',
-        baseline: REPLAY_BASELINE,
-        after: REPLAY_BASELINE,
-      },
-    };
-  }
-  const after = replayObservation({ 'foreign.txt': 'changed' });
-  return {
-    ...base,
-    after,
-    physicalReceipt: {
-      classification: 'concurrent-or-foreign-change',
-      baseline: REPLAY_BASELINE,
-      after,
-    },
-  };
-}
+const DEFAULT_COMMIT_OID = `${'0'.repeat(39)}b`;
 
 function replayLedger(
   boundaries: readonly PlaybookEffectBoundary[],
@@ -195,6 +127,333 @@ function replayLedger(
     boundaries,
     logicalOperations: [],
   };
+}
+
+type TestReceiptClassification =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'worktree-only-change'
+  | 'concurrent-or-foreign-change'
+  | 'observation-ambiguous';
+
+interface TestEffectHostOptions {
+  readonly exclusiveClassifications?: readonly TestReceiptClassification[];
+  readonly cohortClassifications?: readonly TestReceiptClassification[];
+  readonly sessionId?: string;
+}
+
+function createTestEffectHost(options: TestEffectHostOptions = {}) {
+  let ledger = replayLedger([]);
+  let observation = REPLAY_BASELINE;
+  let boundarySequence = 0;
+  let attemptSequence = 0;
+  let commitSequence = 10;
+  const exclusiveClassifications = [
+    ...(options.exclusiveClassifications ?? []),
+  ];
+  const cohortClassifications = [...(options.cohortClassifications ?? [])];
+
+  const writeAhead = async (
+    commands: PlaybookEffectLedgerCommandBatch,
+  ): Promise<PlaybookEffectLedger> => {
+    const boundaries = [...ledger.boundaries] as PlaybookEffectBoundary[];
+    const logicalOperations = [...ledger.logicalOperations];
+    for (const command of commands) {
+      if (command.kind === 'start-boundaries') {
+        const attemptId = `61000000-0000-4000-8000-${String(++attemptSequence).padStart(12, '0')}`;
+        for (const seed of command.boundaries) {
+          boundaries.push({
+            sequence: ++boundarySequence,
+            attemptId,
+            attemptNumber: 1,
+            ...seed,
+          });
+        }
+        continue;
+      }
+      if (command.kind === 'replace-boundaries') {
+        for (const { expected, next } of command.replacements) {
+          const index = boundaries.findIndex(
+            ({ boundaryId }) => boundaryId === expected.boundaryId,
+          );
+          if (
+            index < 0 ||
+            JSON.stringify(boundaries[index]) !== JSON.stringify(expected)
+          ) {
+            throw new Error('DECIDE test effect boundary replacement is stale');
+          }
+          boundaries[index] = next;
+        }
+        continue;
+      }
+      if (command.kind === 'append-logical-operations') {
+        for (const operation of command.operations) {
+          logicalOperations.push({
+            sequence: logicalOperations.length + 1,
+            ...operation,
+          });
+        }
+        continue;
+      }
+      for (const { expected, next } of command.replacements) {
+        const index = logicalOperations.findIndex(
+          ({ operationId }) => operationId === expected.operationId,
+        );
+        if (
+          index < 0 ||
+          JSON.stringify(logicalOperations[index]) !== JSON.stringify(expected)
+        ) {
+          throw new Error(
+            'DECIDE test logical-operation replacement is stale',
+          );
+        }
+        logicalOperations[index] = next;
+      }
+    }
+    ledger = {
+      schemaVersion: 1,
+      revision: ledger.revision + 1,
+      boundaries,
+      logicalOperations,
+    };
+    return ledger;
+  };
+
+  const receipt = (
+    baseline: typeof REPLAY_BASELINE,
+    classification: TestReceiptClassification,
+  ): PlaybookRepositoryReceipt => {
+    if (classification === 'unchanged') {
+      return { classification, baseline, after: baseline };
+    }
+    if (classification === 'one-descendant-commit') {
+      const commitOid = (++commitSequence).toString(16).padStart(40, '0');
+      const after = { ...baseline, head: commitOid };
+      return { classification, baseline, after, commitOid };
+    }
+    const after = replayObservation({ foreign: String(++commitSequence) });
+    return { classification, baseline, after };
+  };
+
+  const settle = async (operation: (context: any) => Promise<unknown>, context: any) => {
+    try {
+      return { status: 'fulfilled' as const, value: await operation(context) };
+    } catch (reason) {
+      return { status: 'rejected' as const, reason };
+    }
+  };
+
+  const completedBoundary = (
+    current: PlaybookEffectBoundary,
+    physicalReceipt: PlaybookRepositoryReceipt,
+    completion: any,
+    logicalOperationId?: string,
+  ): PlaybookEffectBoundary => ({
+    ...current,
+    ...(physicalReceipt.after === undefined
+      ? {}
+      : { after: physicalReceipt.after }),
+    physicalReceipt,
+    ...(completion.finalText === undefined
+      ? {}
+      : { finalText: completion.finalText }),
+    ...(completion.semanticCandidate === undefined
+      ? {}
+      : { semanticCandidate: completion.semanticCandidate }),
+    ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
+  });
+
+  const repository = {
+    identity: { worktree: '/repo', gitDir: '/repo/.git' },
+    observe: async () => observation,
+    acquire: async () => ({}),
+    async runExclusive(raw: any) {
+      const baseline = observation;
+      const seed = {
+        ...raw.effectBoundary,
+        playbookId: 'decide',
+        canonicalWorktree: repository.identity,
+        baseline,
+      };
+      await writeAhead([{ kind: 'start-boundaries', boundaries: [seed] }]);
+      const started = ledger.boundaries.find(
+        ({ boundaryId }) => boundaryId === seed.boundaryId,
+      )!;
+      const operation = await settle(raw.operation, {
+        baseline,
+        identity: repository.identity,
+      });
+      const defaultClassification: TestReceiptClassification =
+        seed.sourceStateId === 'commitCoderProposal'
+          ? operation.status === 'fulfilled' &&
+            /\?|question/i.test(String((operation.value as any)?.finalText ?? ''))
+            ? 'unchanged'
+            : 'one-descendant-commit'
+          : 'unchanged';
+      const physicalReceipt = receipt(
+        baseline,
+        exclusiveClassifications.shift() ?? defaultClassification,
+      );
+      observation = physicalReceipt.after ?? baseline;
+      const completion = await raw.completeEffectBoundary({
+        boundary: started,
+        operation,
+        receipt: physicalReceipt,
+        outcomeReceipt: physicalReceipt,
+      });
+      const current = ledger.boundaries.find(
+        ({ boundaryId }) => boundaryId === seed.boundaryId,
+      )!;
+      const operationId = completion.deferred?.operationId;
+      const commands: any[] = [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            {
+              expected: current,
+              next: completedBoundary(
+                current,
+                physicalReceipt,
+                completion,
+                operationId,
+              ),
+            },
+          ],
+        },
+      ];
+      if (completion.deferred !== undefined) {
+        commands.push({
+          kind: 'append-logical-operations',
+          operations: [
+            {
+              operationId,
+              playbookId: 'decide',
+              runtimeSessionId: current.runtimeSessionId,
+              boundaryIds: [current.boundaryId],
+              originalBaseline: current.baseline,
+              checkpoint: physicalReceipt.after,
+              pendingQuestion: completion.deferred.pendingQuestion,
+              playerContinuation: completion.deferred.playerContinuation,
+              checkpointRestorationEligible: false,
+            },
+          ],
+        });
+      }
+      const effectLedger = await writeAhead(
+        commands as PlaybookEffectLedgerCommandBatch,
+      );
+      return {
+        operation,
+        receipt: physicalReceipt,
+        effectLedger,
+        ...(completion.deferred === undefined
+          ? {}
+          : { deferredStatus: 'bound' as const }),
+      };
+    },
+    async runCohort(raw: any) {
+      const baseline = observation;
+      const cohortId = `62000000-0000-4000-8000-${String(++attemptSequence).padStart(12, '0')}`;
+      const roleIds = [...raw.roleIds] as Array<'coder' | 'reviewer'>;
+      const seeds = roleIds.map((roleId) => ({
+        ...raw.effectBoundaries[roleId],
+        playbookId: 'decide',
+        canonicalWorktree: repository.identity,
+        baseline,
+        cohortId,
+      }));
+      await writeAhead([{ kind: 'start-boundaries', boundaries: seeds }]);
+      const operations = Object.fromEntries(
+        await Promise.all(
+          roleIds.map(async (roleId) => [
+            roleId,
+            await settle(raw.operations[roleId], {
+              baseline,
+              identity: repository.identity,
+              invocationId: raw.invocationId,
+              roleId,
+            }),
+          ]),
+        ),
+      ) as Record<'coder' | 'reviewer', any>;
+      const physicalReceipt = receipt(
+        baseline,
+        cohortClassifications.shift() ?? 'unchanged',
+      );
+      observation = physicalReceipt.after ?? baseline;
+      const completions = await Promise.all(
+        roleIds.map((roleId) => {
+          const boundary = ledger.boundaries.find(
+            ({ boundaryId }) =>
+              boundaryId === raw.effectBoundaries[roleId].boundaryId,
+          )!;
+          return raw.completeEffectBoundary({
+            boundary,
+            operation: operations[roleId],
+            receipt: physicalReceipt,
+            outcomeReceipt: physicalReceipt,
+            roleId,
+          });
+        }),
+      );
+      const replacements = roleIds.map((roleId, index) => {
+        const current = ledger.boundaries.find(
+          ({ boundaryId }) =>
+            boundaryId === raw.effectBoundaries[roleId].boundaryId,
+        )!;
+        return {
+          expected: current,
+          next: completedBoundary(
+            current,
+            physicalReceipt,
+            completions[index],
+          ),
+        };
+      });
+      const effectLedger = await writeAhead([
+        { kind: 'replace-boundaries', replacements },
+      ]);
+      const receipts = Object.fromEntries(
+        roleIds.map((roleId) => [roleId, physicalReceipt]),
+      );
+      return {
+        baseline,
+        invocationId: raw.invocationId,
+        operations,
+        receipts,
+        effectLedger,
+      };
+    },
+    async runDeferred() {
+      throw new Error('unexpected default DECIDE deferred continuation');
+    },
+  };
+
+  const hostCapabilities = {
+    authority: {
+      playbookId: 'decide',
+      artifactSchema: 3 as const,
+      cwd: '/repo',
+      sessionId: options.sessionId ?? DECIDE_TEST_SESSION_ID,
+      leaseOwnerToken: '64000000-0000-4000-8000-000000000001',
+      canonicalWorktree: repository.identity,
+      requiredRoleIds: ['coder', 'reviewer'] as const,
+      concurrentRoleSets: [['coder', 'reviewer']] as const,
+    },
+    repository,
+    effectLedger: { snapshot: () => ledger, writeAhead },
+  };
+  return { hostCapabilities, readEffectLedger: () => ledger };
+}
+
+function createPlaybookRuntime(
+  options: unknown = {},
+  host = createTestEffectHost(),
+) {
+  return createLinkedPlaybookRuntime({
+    configuredOptions: options as Record<string, never>,
+    hostCapabilities: host.hostCapabilities,
+  });
 }
 
 const DEFERRED_ATTEMPT_ID = '50000000-0000-4000-8000-000000000002';
@@ -219,6 +478,57 @@ function createDeferredRepositoryHarness() {
         operation.operationId === operationId ? update(operation) : operation,
       ),
     };
+  };
+  const writeAhead = async (
+    commands: PlaybookEffectLedgerCommandBatch,
+  ): Promise<PlaybookEffectLedger> => {
+    const boundaries = [...ledger.boundaries];
+    const logicalOperations = [...ledger.logicalOperations];
+    for (const command of commands) {
+      if (command.kind === 'replace-boundaries') {
+        for (const { expected, next } of command.replacements) {
+          const index = boundaries.findIndex(
+            ({ boundaryId }) => boundaryId === expected.boundaryId,
+          );
+          if (
+            index < 0 ||
+            JSON.stringify(boundaries[index]) !== JSON.stringify(expected)
+          ) {
+            throw new Error(
+              'DECIDE deferred boundary replacement is stale',
+            );
+          }
+          boundaries[index] = next;
+        }
+      } else if (command.kind === 'replace-logical-operations') {
+        for (const { expected, next } of command.replacements) {
+          const index = logicalOperations.findIndex(
+            ({ operationId }) => operationId === expected.operationId,
+          );
+          if (
+            index < 0 ||
+            JSON.stringify(logicalOperations[index]) !==
+              JSON.stringify(expected)
+          ) {
+            throw new Error(
+              'DECIDE deferred logical-operation replacement is stale',
+            );
+          }
+          logicalOperations[index] = next;
+        }
+      } else {
+        throw new Error(
+          `unexpected DECIDE deferred write-ahead command ${command.kind}`,
+        );
+      }
+    }
+    ledger = {
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries,
+      logicalOperations,
+    };
+    return ledger;
   };
   const boundaryFrom = (
     seed: Record<string, unknown>,
@@ -261,6 +571,105 @@ function createDeferredRepositoryHarness() {
   });
 
   const repository = {
+    identity: { worktree: '/repo', gitDir: '/repo/.git' },
+    observe: async () => REPLAY_BASELINE,
+    acquire: async () => ({}),
+    async runCohort(options: any) {
+      calls.push({ mode: 'cohort' });
+      const cohortId = '51000000-0000-4000-8000-000000000001';
+      const roleIds = [...options.roleIds] as Array<'coder' | 'reviewer'>;
+      const started = Object.fromEntries(
+        roleIds.map((roleId) => {
+          const seed = options.effectBoundaries[roleId];
+          return [
+            roleId,
+            {
+              ...seed,
+              sequence: ledger.boundaries.length + roleIds.indexOf(roleId) + 1,
+              attemptId: DEFERRED_ATTEMPT_ID,
+              attemptNumber: 1,
+              playbookId: 'decide',
+              canonicalWorktree: repository.identity,
+              baseline: REPLAY_BASELINE,
+              cohortId,
+            },
+          ];
+        }),
+      ) as Record<'coder' | 'reviewer', PlaybookEffectBoundary>;
+      ledger = {
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries: [
+          ...ledger.boundaries,
+          ...roleIds.map((roleId) => started[roleId]),
+        ],
+      };
+      const operations = Object.fromEntries(
+        await Promise.all(
+          roleIds.map(async (roleId) => [
+            roleId,
+            await Promise.resolve()
+              .then(() =>
+                options.operations[roleId]({
+                  baseline: REPLAY_BASELINE,
+                  identity: repository.identity,
+                  invocationId: options.invocationId,
+                  roleId,
+                }),
+              )
+              .then(
+                (value) => ({ status: 'fulfilled' as const, value }),
+                (reason) => ({ status: 'rejected' as const, reason }),
+              ),
+          ]),
+        ),
+      ) as Record<'coder' | 'reviewer', any>;
+      const receipt = {
+        classification: 'unchanged' as const,
+        baseline: REPLAY_BASELINE,
+        after: REPLAY_BASELINE,
+      };
+      const completions = await Promise.all(
+        roleIds.map((roleId) =>
+          options.completeEffectBoundary({
+            boundary: started[roleId],
+            operation: operations[roleId],
+            receipt,
+            outcomeReceipt: receipt,
+            roleId,
+          }),
+        ),
+      );
+      ledger = {
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries: ledger.boundaries.map((boundary) => {
+          const index = roleIds.findIndex(
+            (roleId) => started[roleId].boundaryId === boundary.boundaryId,
+          );
+          if (index < 0) return boundary;
+          const completion = completions[index];
+          return {
+            ...boundary,
+            after: REPLAY_BASELINE,
+            physicalReceipt: receipt,
+            ...(completion.finalText === undefined
+              ? {}
+              : { finalText: completion.finalText }),
+            ...(completion.semanticCandidate === undefined
+              ? {}
+              : { semanticCandidate: completion.semanticCandidate }),
+          };
+        }),
+      };
+      return {
+        baseline: REPLAY_BASELINE,
+        invocationId: options.invocationId,
+        operations,
+        receipts: { coder: receipt, reviewer: receipt },
+        effectLedger: ledger,
+      };
+    },
     async runExclusive(options: any) {
       calls.push({ mode: 'exclusive' });
       const operation = await Promise.resolve()
@@ -285,6 +694,7 @@ function createDeferredRepositoryHarness() {
         boundary: provisional,
         operation,
         receipt,
+        outcomeReceipt: receipt,
       });
       const operationId = completion.deferred?.operationId;
       if (typeof operationId !== 'string') {
@@ -303,12 +713,13 @@ function createDeferredRepositoryHarness() {
         operationId,
       });
       ledger = {
-        schemaVersion: 1,
-        revision: 1,
-        boundaries: [boundary],
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries: [...ledger.boundaries, boundary],
         logicalOperations: [
+          ...ledger.logicalOperations,
           {
-            sequence: 1,
+            sequence: ledger.logicalOperations.length + 1,
             operationId,
             playbookId: 'decide',
             runtimeSessionId: boundary.runtimeSessionId,
@@ -392,7 +803,7 @@ function createDeferredRepositoryHarness() {
         );
       const committed =
         operation.status === 'fulfilled' &&
-        String(operation.value.finalText ?? '').includes('Commit:');
+        String(operation.value.finalText ?? '') === 'Committed proposal';
       const after = committed
         ? { ...baseline, head: 'b'.repeat(40) }
         : baseline;
@@ -414,10 +825,23 @@ function createDeferredRepositoryHarness() {
         receipt,
         operationId: options.operationId,
       });
+      const outcomeReceipt = committed
+        ? {
+            classification: 'one-descendant-commit' as const,
+            baseline: current.originalBaseline,
+            after,
+            commitOid: 'b'.repeat(40),
+          }
+        : {
+            classification: 'unchanged' as const,
+            baseline: current.originalBaseline,
+            after,
+          };
       const completion = await options.completeEffectBoundary({
         boundary: provisional,
         operation,
         receipt,
+        outcomeReceipt,
       });
       if (failContinuationCompletion) {
         failContinuationCompletion = false;
@@ -431,14 +855,7 @@ function createDeferredRepositoryHarness() {
         semanticCandidate: completion.semanticCandidate,
         operationId: options.operationId,
       });
-      const logicalReceipt = committed
-        ? {
-            classification: 'one-descendant-commit' as const,
-            baseline: current.originalBaseline,
-            after,
-            commitOid: 'b'.repeat(40),
-          }
-        : undefined;
+      const logicalReceipt = committed ? outcomeReceipt : undefined;
       ledger = {
         ...ledger,
         revision: ledger.revision + 1,
@@ -490,8 +907,29 @@ function createDeferredRepositoryHarness() {
     },
   };
 
+  const effectLedger = {
+    snapshot: () => ledger,
+    writeAhead,
+  };
+  const hostCapabilities = {
+    authority: {
+      playbookId: 'decide',
+      artifactSchema: 3 as const,
+      cwd: '/repo',
+      sessionId: REPLAY_SESSION_ID,
+      leaseOwnerToken: '52000000-0000-4000-8000-000000000001',
+      canonicalWorktree: repository.identity,
+      requiredRoleIds: ['coder', 'reviewer'] as const,
+      concurrentRoleSets: [['coder', 'reviewer']] as const,
+    },
+    repository,
+    effectLedger,
+  };
+
   return {
     repository,
+    effectLedger,
+    hostCapabilities,
     calls,
     readEffectLedger: () => ledger,
     setCheckpointMatches(value: boolean) {
@@ -515,58 +953,6 @@ function replaySession(ports: PlaybookPorts): PlaybookSession {
     sessionId: REPLAY_SESSION_ID,
     rootSessionId: REPLAY_SESSION_ID,
   };
-}
-
-function rememberStartedPlayerBoundary(
-  record: TelemetryRecord,
-  startedByRole: Map<string, StartedPlayerBoundary>,
-): void {
-  if (record.topic !== 'playbook.trace') return;
-  const trace = record.payload as PlaybookTraceEvent;
-  if (trace.type !== 'player.call.started') return;
-  const payload = trace.payload as Record<string, unknown>;
-  if (
-    typeof payload.roleId !== 'string' ||
-    typeof payload.stateId !== 'string' ||
-    trace.callId === undefined ||
-    trace.turnId === undefined
-  ) {
-    throw new Error('player start trace lacks replay-boundary identity');
-  }
-  startedByRole.set(payload.roleId, {
-    callId: trace.callId,
-    turnId: trace.turnId,
-    stateId: payload.stateId,
-  });
-}
-
-function appendStartedReplayBoundary(
-  boundaries: PlaybookEffectBoundary[],
-  startedByRole: ReadonlyMap<string, StartedPlayerBoundary>,
-  roleId: string,
-  options: {
-    readonly attemptId: string;
-    readonly attemptNumber: number;
-    readonly evidence: ReplayReceiptEvidence;
-  },
-): void {
-  const started = startedByRole.get(roleId);
-  if (started === undefined) {
-    throw new Error(`missing started trace for ${roleId}`);
-  }
-  boundaries.push(
-    replayBoundary({
-      sequence: boundaries.length + 1,
-      attemptId: options.attemptId,
-      attemptNumber: options.attemptNumber,
-      runtimeSessionId: REPLAY_SESSION_ID,
-      turnId: started.turnId,
-      callId: started.callId,
-      roleId,
-      sourceStateId: started.stateId,
-      evidence: options.evidence,
-    }),
-  );
 }
 
 function completePorts(overrides: Partial<PlaybookPorts>): PlaybookPorts {
@@ -597,84 +983,20 @@ function judgeReply(prompt: string): string {
     return JSON.stringify({ guard: 'proposed' });
   }
   if (prompt.includes('source item DECIDE-3')) {
-    return JSON.stringify({ guard: 'committed', latestCommit: 'abc123' });
+    return JSON.stringify({ guard: 'committed' });
   }
   throw new Error(`unexpected judge prompt: ${prompt}`);
 }
 
-interface StagedAcceptedOutcomeContext {
-  readonly pendingBossQuestions?: Readonly<Record<string, unknown>>;
-  readonly bossReplies?: Readonly<Record<string, unknown>>;
-  readonly stagedCoderResult?: unknown;
-  readonly stagedReviewerResult?: unknown;
-}
-
-function withoutStagedKey(
-  record: Readonly<Record<string, unknown>> | undefined,
-  key: string,
-): Readonly<Record<string, unknown>> | undefined {
-  if (record?.[key] === undefined) return record;
-  const next = { ...record };
-  delete next[key];
-  return Object.keys(next).length === 0 ? undefined : next;
-}
-
-const stagedAcceptedOutcomeAction = enqueueActions<
-  StagedAcceptedOutcomeContext,
-  { type: string },
-  { stateId: string }
->(({ context, enqueue }, { stateId }) => {
-  const declared =
-    stateId === 'askCoderProposal'
-      ? {
-          target:
-            context.stagedReviewerResult === undefined
-              ? 'coderProposalComplete'
-              : 'commitCoderProposal',
-          acceptedOutcome: 'proposed',
-        }
-      : stateId === 'askReviewerProposal'
-        ? {
-            target:
-              context.stagedCoderResult === undefined
-                ? 'reviewerProposalComplete'
-                : 'commitCoderProposal',
-            acceptedOutcome: 'proposed',
-          }
-        : stateId === 'commitCoderProposal'
-          ? { target: 'reviewCommit', acceptedOutcome: 'committed' }
-          : undefined;
-  if (declared === undefined) {
-    throw new TypeError(`unknown staged accepted-outcome source ${stateId}`);
-  }
-  enqueue.assign({
-    pendingBossQuestions: ({ context: current }) =>
-      withoutStagedKey(current.pendingBossQuestions, stateId),
-    bossReplies: ({ context: current }) =>
-      withoutStagedKey(current.bossReplies, stateId),
-  });
-  enqueue({
-    type: ACCEPTED_OUTCOME_ACTION_TYPE,
-    params: {
-      source: stateId,
-      target: declared.target,
-      acceptedOutcome: declared.acceptedOutcome,
-    },
-  });
-});
-
-function createStagedAcceptedOutcomeDecideRuntime() {
-  return _internal.createStagedSchema3AcceptedOutcomeRuntime(
-    {},
-    { readEffectLedger: () => replayLedger([]) },
-    stagedAcceptedOutcomeAction,
-  );
+function createAcceptedOutcomeDecideRuntime() {
+  return createPlaybookRuntime({});
 }
 
 interface ReviewBoundary {
   runtime: ReturnType<typeof createPlaybookRuntime>;
   request: PlaybookCallRequest;
   telemetry: TelemetryRecord[];
+  host: ReturnType<typeof createTestEffectHost>;
 }
 
 async function runToReview(
@@ -696,7 +1018,7 @@ async function runToReview(
             ? 'Coder proposal'
             : roleId === 'reviewer'
               ? 'Reviewer proposal'
-              : 'Committed proposal\nCommit: abc123',
+              : 'Committed proposal',
       };
     },
     callJudge: async (prompt) => judgeReply(prompt),
@@ -709,7 +1031,8 @@ async function runToReview(
       await onTelemetry?.(record);
     },
   });
-  const runtime = createPlaybookRuntime({});
+  const host = createTestEffectHost();
+  const runtime = createPlaybookRuntime({}, host);
   await runtime.init(session(ports));
   const result = await runtime.handleBossInput({
     text: 'Choose the durable design.',
@@ -717,12 +1040,11 @@ async function runToReview(
   });
   expect(result).toMatchObject({ outcome: 'suspended' });
   if (!request) throw new Error('DECIDE did not call REVIEW');
-  return { runtime, request, telemetry };
+  return { runtime, request, telemetry, host };
 }
 
 async function startWithCommitOutput(
   commitOutput: string,
-  latestCommit: string,
   callPlaybook: PlaybookPorts['callPlaybook'] = async () => ({
     state: 'suspended',
     childSessionId: 'review-child',
@@ -752,7 +1074,7 @@ async function startWithCommitOutput(
     },
     callJudge: async (prompt) =>
       prompt.includes('source item DECIDE-3')
-        ? JSON.stringify({ guard: 'committed', latestCommit })
+        ? JSON.stringify({ guard: 'committed' })
         : judgeReply(prompt),
     callPlaybook: async (request, boundarySignal) => {
       nestedRequests.push(request);
@@ -820,7 +1142,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         return {
           status: 'ok',
           resumeToken: 'coder-token-2',
-          finalText: 'Committed Coder proposal.\nCommit: abc123',
+          finalText: 'Committed Coder proposal.',
         };
       },
       callJudge: async (prompt) => judgeReply(prompt),
@@ -887,7 +1209,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       options: { resume: 'coder-token-1' },
     });
     expect(playerCalls[2].prompt).toContain('Coder is GPT-5.6 Sol');
-    expect(playerCalls[2].prompt).toContain(
+    expect(playerCalls[2].prompt).not.toContain(
       'Include exactly one final-response line beginning `Commit: `, followed only by the exact commit identity; other final-response content may appear on other lines.',
     );
     expect(playerCalls[2].prompt).not.toContain(reviewerProposal);
@@ -969,30 +1291,26 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
   });
 
   it.each([
-    ['a missing marker', 'Committed proposal.', 'abc123'],
+    ['missing', 'Committed proposal.'],
+    ['glued', 'Committed proposal. Commit:deadbeef'],
+    ['fenced', '```text\nCommit: deadbeef\n```'],
+    ['quoted', '> Commit: deadbeef'],
     [
-      'duplicate markers',
-      'Committed proposal.\nCommit: old\nCommit: abc123',
-      'abc123',
+      'duplicated',
+      'Committed proposal.\nCommit: old\nCommit: deadbeef',
     ],
     [
-      'a marker that disagrees with adjudication',
-      'Committed proposal.\nCommit: def456',
-      'abc123',
+      'misleading',
+      'This prose says Commit: definitely-not-the-repository-oid.',
     ],
-  ])('rejects commit identity with %s', async (_label, output, latestCommit) => {
-    const { runtime, result, nestedRequests } = await startWithCommitOutput(
-      output,
-      latestCommit,
-    );
+  ])('ignores %s Commit prose under equal effect evidence', async (_label, output) => {
+    const { runtime, result, nestedRequests } =
+      await startWithCommitOutput(output);
     await expect(result).resolves.toMatchObject({
-      outcome: 'failed',
-      state: { stateId: 'failed' },
-      error: {
-        message: expect.stringContaining('"guard":"committed"'),
-      },
+      outcome: 'suspended',
+      state: { stateId: 'reviewCommit' },
     });
-    expect(nestedRequests).toEqual([]);
+    expect(nestedRequests).toHaveLength(1);
     await runtime.dispose();
   });
 
@@ -1011,7 +1329,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
             count === 1
               ? `Need ${roleId} input`
               : roleId === 'coder' && count === 3
-                ? 'Committed replacement proposal\nCommit: replacement-commit'
+                ? 'Committed replacement proposal'
                 : `${roleId} replacement proposal`,
         };
       },
@@ -1028,16 +1346,10 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         ) {
           const match = prompt.match(/Need (coder|reviewer) input/);
           return match
-            ? JSON.stringify({
-                guard: 'needsBossReply',
-                question: `${match[1]} question?`,
-              })
+            ? JSON.stringify({ guard: 'needsBossReply' })
             : JSON.stringify({ guard: 'proposed' });
         }
-        return JSON.stringify({
-          guard: 'committed',
-          latestCommit: 'replacement-commit',
-        });
+        return JSON.stringify({ guard: 'committed' });
       },
       callPlaybook: async () => ({
         state: 'suspended',
@@ -1140,10 +1452,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
             const roleId = prompt.includes('Need coder clarification')
               ? 'coder'
               : 'reviewer';
-            return JSON.stringify({
-              guard: 'needsBossReply',
-              question: `${roleId} question?`,
-            });
+            return JSON.stringify({ guard: 'needsBossReply' });
           },
           emitStatus: async (message) => {
             statuses.push(message);
@@ -1164,22 +1473,22 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         {
           questionId: 'askCoderProposal',
           asker: { kind: 'role', roleId: 'coder' },
-          question: 'coder question?',
+          question: 'Need coder clarification',
           sourceItem: 'DECIDE-1',
         },
         {
           questionId: 'askReviewerProposal',
           asker: { kind: 'role', roleId: 'reviewer' },
-          question: 'reviewer question?',
+          question: 'Need reviewer clarification',
           sourceItem: 'DECIDE-2',
         },
       ],
     });
     expect(statuses).toEqual(
       expect.arrayContaining([
-        'coder asks: coder question?',
+        'coder asks: Need coder clarification',
         '◆ awaiting Boss reply · askCoderProposal · coder · DECIDE-1',
-        'reviewer asks: reviewer question?',
+        'reviewer asks: Need reviewer clarification',
         '◆ awaiting Boss reply · askReviewerProposal · reviewer · DECIDE-2',
       ]),
     );
@@ -1257,10 +1566,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
             const roleId = prompt.includes('Need coder clarification')
               ? 'coder'
               : 'reviewer';
-            return JSON.stringify({
-              guard: 'needsBossReply',
-              question: `${roleId} question ${coderCalls}?`,
-            });
+            return JSON.stringify({ guard: 'needsBossReply' });
           },
           emitTelemetry: async (record) => {
             telemetry.push(record);
@@ -1315,7 +1621,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
   });
 });
 
-describe('DECIDE staged accepted-outcome consumer', () => {
+describe('DECIDE accepted-outcome consumer', () => {
   it.each(['coder', 'reviewer'] as const)(
     'publishes executed parallel outcomes when %s finishes first and drains them before settlement',
     async (firstRole) => {
@@ -1342,7 +1648,7 @@ describe('DECIDE staged accepted-outcome consumer', () => {
           }
           return {
             status: 'ok',
-            finalText: 'Committed proposal\nCommit: abc123',
+            finalText: 'Committed proposal',
           };
         },
         callJudge: async (prompt) => judgeReply(prompt),
@@ -1365,7 +1671,7 @@ describe('DECIDE staged accepted-outcome consumer', () => {
           }
         },
       });
-      const runtime = createStagedAcceptedOutcomeDecideRuntime();
+      const runtime = createAcceptedOutcomeDecideRuntime();
       await runtime.init(session(ports));
 
       const running = runtime
@@ -1382,16 +1688,23 @@ describe('DECIDE staged accepted-outcome consumer', () => {
         status: 'ok',
         finalText: `${firstRole} proposal`,
       });
-      await acceptedObserved.promise;
       await Promise.resolve();
 
       expect(settled).toBe(false);
+      expect(
+        playbookTraces(telemetry).filter(
+          ({ type }) => type === 'outcome.accepted',
+        ),
+      ).toEqual([]);
       expect(statuses.some((status) => status.startsWith('→ '))).toBe(false);
-      releaseAccepted.resolve();
       proposals[secondRole].resolve({
         status: 'ok',
         finalText: `${secondRole} proposal`,
       });
+      await acceptedObserved.promise;
+      expect(settled).toBe(false);
+      expect(statuses.some((status) => status.startsWith('→ '))).toBe(false);
+      releaseAccepted.resolve();
       await expect(running).resolves.toMatchObject({ outcome: 'suspended' });
 
       const acceptedTraces = playbookTraces(telemetry).filter(
@@ -1441,7 +1754,7 @@ describe('DECIDE staged accepted-outcome consumer', () => {
   it('publishes no accepted outcome when DECIDE selects its fallback arm', async () => {
     const telemetry: TelemetryRecord[] = [];
     const statuses: string[] = [];
-    const runtime = createStagedAcceptedOutcomeDecideRuntime();
+    const runtime = createAcceptedOutcomeDecideRuntime();
     await runtime.init(
       session(
         completePorts({
@@ -1476,83 +1789,156 @@ describe('DECIDE staged accepted-outcome consumer', () => {
       ),
     ).toEqual([]);
     expect(statuses.some((status) => status.startsWith('→ '))).toBe(false);
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    expect(runtime.unresolvedEffectEnvelopes?.()).toHaveLength(2);
     await runtime.dispose();
   });
+
+  it.each([
+    ['proposal', 'concurrent-or-foreign-change', 2, 'proposed'],
+    ['proposal', 'observation-ambiguous', 2, 'proposed'],
+    ['merge', 'worktree-only-change', 3, 'committed'],
+    ['merge', 'observation-ambiguous', 3, 'committed'],
+  ] as const)(
+    'parks a %s outcome under %s evidence without another player call',
+    async (boundary, classification, expectedPlayerCalls, rejectedOutcome) => {
+      const statuses: string[] = [];
+      let coderCalls = 0;
+      let reviewCalls = 0;
+      const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async (roleId) => {
+        if (roleId === 'reviewer') {
+          return { status: 'ok', finalText: 'Reviewer proposal' };
+        }
+        coderCalls += 1;
+        return {
+          status: 'ok',
+          finalText:
+            coderCalls === 1 ? 'Coder proposal' : 'Committed proposal',
+        };
+      });
+      const host = createTestEffectHost({
+        ...(boundary === 'proposal'
+          ? { cohortClassifications: [classification] }
+          : { exclusiveClassifications: [classification] }),
+      });
+      const runtime = createLinkedPlaybookRuntime({
+        configuredOptions: {},
+        hostCapabilities: host.hostCapabilities,
+      });
+      await runtime.init(
+        session(
+          completePorts({
+            callPlayer,
+            callJudge: async (prompt) => judgeReply(prompt),
+            callPlaybook: async () => {
+              reviewCalls += 1;
+              return { state: 'suspended', childSessionId: 'review-child' };
+            },
+            emitStatus: async (message) => {
+              statuses.push(message);
+            },
+          }),
+        ),
+      );
+
+      await expect(
+        runtime.handleBossInput({
+          text: 'Choose the durable design.',
+          signal: signal(),
+        }),
+      ).resolves.toMatchObject({
+        outcome: 'failed',
+        state: { stateId: 'failed' },
+      });
+      expect(callPlayer).toHaveBeenCalledTimes(expectedPlayerCalls);
+      expect(reviewCalls).toBe(0);
+      expect(statuses).not.toContain(`→ ${rejectedOutcome}`);
+      const unresolvedView = runtime.describe?.();
+      expect(unresolvedView).not.toHaveProperty('stateDescription');
+      expect(unresolvedView?.pendingQuestions).toEqual([]);
+      expect(unresolvedView?.actions).toEqual([
+        {
+          id: 'reconcile:unresolved-effect',
+          label: 'Retry unresolved effect reconciliation',
+        },
+        {
+          id: 'abandon:unresolved-effect',
+          label: 'Abandon unresolved workflow attempt',
+        },
+      ]);
+      expect(runtime.unresolvedEffectEnvelopes?.()).toHaveLength(
+        boundary === 'proposal' ? 2 : 1,
+      );
+
+      await expect(
+        runtime.apply?.({
+          actionId: 'reconcile:unresolved-effect',
+          key: 'retry-unresolved-effect',
+          signal: signal(),
+        }),
+      ).resolves.toMatchObject({
+        disposition: 'executed',
+        run: { outcome: 'no-action', state: { stateId: 'failed' } },
+      });
+      expect(callPlayer).toHaveBeenCalledTimes(expectedPlayerCalls);
+      expect(reviewCalls).toBe(0);
+
+      const unresolvedState = runtime.describe?.().state;
+      const abandonment = await runtime.apply?.({
+        actionId: 'abandon:unresolved-effect',
+        key: 'abandon-unresolved-effect',
+        signal: signal(),
+      });
+      expect(abandonment).toEqual({
+        disposition: 'executed',
+        run: { outcome: 'unresolved-effect', state: unresolvedState },
+      });
+      if (abandonment?.disposition === 'executed') {
+        expect(Object.keys(abandonment.run).sort()).toEqual([
+          'outcome',
+          'state',
+        ]);
+      }
+      expect(callPlayer).toHaveBeenCalledTimes(expectedPlayerCalls);
+      expect(reviewCalls).toBe(0);
+      await runtime.dispose();
+    },
+  );
 });
 
 describe('DECIDE automatic-replay effect fence', () => {
   it.each([
-    ['artifact schema 2', 'legacy', true],
     ['an unchanged exact receipt', 'unchanged', true],
-    ['a nonzero exact receipt', 'nonzero', false],
-    ['an incomplete exact boundary', 'incomplete', false],
+    [
+      'a nonzero exact receipt',
+      'concurrent-or-foreign-change',
+      false,
+    ],
   ] as const)(
-    'permits empty-ok correction under %s only when legacy or durably unchanged',
-    async (_label, mode, expectedCorrection) => {
-      const boundaries: PlaybookEffectBoundary[] = [];
-      const startedByRole = new Map<string, StartedPlayerBoundary>();
-      const proposalPairStarted = deferred<void>();
-      let initialProposalCalls = 0;
+    'permits empty-ok correction under %s only when durably unchanged',
+    async (_label, classification, expectedCorrection) => {
       let coderCalls = 0;
-      let reviewerCalls = 0;
       let reviewCalls = 0;
-      let exactCallDecoyAdded = false;
       const ports = completePorts({
         callPlayer: async (roleId) => {
-          const count =
-            roleId === 'coder' ? ++coderCalls : ++reviewerCalls;
-          const started = startedByRole.get(roleId);
-          if (started === undefined) {
-            throw new Error(`missing started trace for ${roleId}`);
-          }
-          if (roleId === 'coder' && count === 1) {
-            // An unrelated unchanged receipt with the same process-local call
-            // id cannot authorize correction of this runtime's exact call.
-            boundaries.push(
-              replayBoundary({
-                sequence: boundaries.length + 1,
-                attemptId: FOREIGN_REPLAY_ATTEMPT_ID,
-                attemptNumber: 1,
-                playbookId: 'review',
-                runtimeSessionId: FOREIGN_REPLAY_SESSION_ID,
-                turnId: started.turnId,
-                callId: started.callId,
-                roleId: 'reviewer',
-                sourceStateId: 'foreign-review',
-                evidence: 'unchanged',
-              }),
-            );
-            exactCallDecoyAdded = true;
-          }
-          appendStartedReplayBoundary(boundaries, startedByRole, roleId, {
-            attemptId: FIRST_REPLAY_ATTEMPT_ID,
-            attemptNumber: 1,
-            evidence:
-              roleId === 'coder' && count === 1
-                ? mode === 'legacy'
-                  ? 'nonzero'
-                  : mode
-                : 'unchanged',
-          });
-          if (count === 1) {
-            initialProposalCalls += 1;
-            if (initialProposalCalls === 2) proposalPairStarted.resolve();
-            await proposalPairStarted.promise;
-          }
           if (roleId === 'reviewer') {
             return {
               status: 'ok',
               finalText: 'Reviewer proposal',
             };
           }
+          coderCalls += 1;
           return {
             status: 'ok',
             finalText:
-              count === 1
+              coderCalls === 1
                 ? ''
-                : count === 2
+                : coderCalls === 2
                   ? 'Coder proposal'
-                  : 'Committed proposal\nCommit: abc123',
+                  : 'Committed proposal',
           };
         },
         callJudge: async (prompt) => judgeReply(prompt),
@@ -1560,17 +1946,15 @@ describe('DECIDE automatic-replay effect fence', () => {
           reviewCalls += 1;
           return { state: 'suspended', childSessionId: 'review-child' };
         },
-        emitTelemetry: async (record) => {
-          rememberStartedPlayerBoundary(record, startedByRole);
-        },
       });
-      const runtime =
-        mode === 'legacy'
-          ? createPlaybookRuntime({})
-          : _internal.createStagedSchema3AutomaticReplayRuntime(
-              {},
-              { readEffectLedger: () => replayLedger(boundaries) },
-            );
+      const host = createTestEffectHost({
+        sessionId: REPLAY_SESSION_ID,
+        cohortClassifications: [classification],
+      });
+      const runtime = createLinkedPlaybookRuntime({
+        configuredOptions: {},
+        hostCapabilities: host.hostCapabilities,
+      });
       await runtime.init(replaySession(ports));
 
       const result = await runtime.handleBossInput({
@@ -1578,7 +1962,6 @@ describe('DECIDE automatic-replay effect fence', () => {
         signal: signal(),
       });
 
-      expect(exactCallDecoyAdded).toBe(true);
       if (expectedCorrection) {
         expect(result).toMatchObject({ outcome: 'suspended' });
         expect(coderCalls).toBe(3);
@@ -1587,7 +1970,11 @@ describe('DECIDE automatic-replay effect fence', () => {
         expect(result).toMatchObject({
           outcome: 'failed',
           state: { stateId: 'failed' },
-          error: { message: expect.stringContaining('no finalText') },
+          error: {
+            message: expect.stringContaining(
+              'repository-disposition-mismatch',
+            ),
+          },
         });
         expect(coderCalls).toBe(1);
         expect(reviewCalls).toBe(0);
@@ -1598,62 +1985,38 @@ describe('DECIDE automatic-replay effect fence', () => {
   );
 
   it.each([
-    ['artifact schema 2', 'legacy', true],
     ['an all-unchanged host attempt', 'unchanged', true],
-    ['a foreign nonzero boundary in the host attempt', 'nonzero', false],
-    ['a foreign incomplete boundary in the host attempt', 'incomplete', false],
+    [
+      'a nonzero host attempt',
+      'concurrent-or-foreign-change',
+      false,
+    ],
   ] as const)(
     'permits failed-state restart under %s only when the whole attempt is safe',
-    async (_label, mode, expectedRestart) => {
-      const boundaries: PlaybookEffectBoundary[] = [
-        replayBoundary({
-          sequence: 1,
-          attemptId: FIRST_REPLAY_ATTEMPT_ID,
-          attemptNumber: 1,
-          playbookId: 'review',
-          runtimeSessionId: FOREIGN_REPLAY_SESSION_ID,
-          turnId: 1,
-          callId: 'nested-player-1',
-          roleId: 'reviewer',
-          sourceStateId: 'nested-review',
-          evidence: mode === 'legacy' ? 'nonzero' : mode,
-        }),
-      ];
-      const startedByRole = new Map<string, StartedPlayerBoundary>();
-      const proposalPairStarted = deferred<void>();
+    async (_label, classification, expectedRestart) => {
       let firstAttemptCalls = 0;
       let playerCalls = 0;
-      let attemptId = FIRST_REPLAY_ATTEMPT_ID;
       let attemptNumber = 1;
       const ports = completePorts({
-        callPlayer: async (roleId) => {
+        callPlayer: async () => {
           playerCalls += 1;
-          appendStartedReplayBoundary(boundaries, startedByRole, roleId, {
-            attemptId,
-            attemptNumber,
-            evidence: 'unchanged',
-          });
           if (attemptNumber === 1) {
             firstAttemptCalls += 1;
-            if (firstAttemptCalls === 2) proposalPairStarted.resolve();
-            await proposalPairStarted.promise;
           }
           return {
             status: 'error',
             error: `attempt ${attemptNumber} failed`,
           };
         },
-        emitTelemetry: async (record) => {
-          rememberStartedPlayerBoundary(record, startedByRole);
-        },
       });
-      const runtime =
-        mode === 'legacy'
-          ? createPlaybookRuntime({})
-          : _internal.createStagedSchema3AutomaticReplayRuntime(
-              {},
-              { readEffectLedger: () => replayLedger(boundaries) },
-            );
+      const host = createTestEffectHost({
+        sessionId: REPLAY_SESSION_ID,
+        cohortClassifications: [classification],
+      });
+      const runtime = createLinkedPlaybookRuntime({
+        configuredOptions: {},
+        hostCapabilities: host.hostCapabilities,
+      });
       await runtime.init(replaySession(ports));
       await expect(
         runtime.handleBossInput({ text: 'First topic.', signal: signal() }),
@@ -1663,7 +2026,6 @@ describe('DECIDE automatic-replay effect fence', () => {
       });
       expect(firstAttemptCalls).toBe(2);
       const callsBeforeRetry = playerCalls;
-      attemptId = SECOND_REPLAY_ATTEMPT_ID;
       attemptNumber = 2;
 
       const retry = await runtime.handleBossInput({
@@ -1690,7 +2052,7 @@ describe('DECIDE automatic-replay effect fence', () => {
   );
 });
 
-describe('DECIDE staged deferred effect continuation', () => {
+describe('DECIDE deferred effect continuation', () => {
   function stagedFixture(
     harness = createDeferredRepositoryHarness(),
   ) {
@@ -1719,10 +2081,10 @@ describe('DECIDE staged deferred effect continuation', () => {
             coderCalls === 1
               ? 'Coder proposal'
               : coderCalls === 2
-                ? 'Need approval'
+                ? 'Approve this checkpoint?'
                 : coderCalls === 3
-                  ? 'Need second approval'
-                  : 'Committed proposal\nCommit: abc123',
+                  ? 'Approve the second checkpoint?'
+                  : 'Committed proposal',
         };
       },
       callJudge: async (prompt) => {
@@ -1748,19 +2110,13 @@ describe('DECIDE staged deferred effect continuation', () => {
         if (prompt.includes('source item DECIDE-2')) {
           return JSON.stringify({ guard: 'proposed' });
         }
-        if (prompt.includes('Need second approval')) {
-          return JSON.stringify({
-            guard: 'needsBossReply',
-            question: 'Approve the second checkpoint?',
-          });
+        if (prompt.includes('Approve the second checkpoint?')) {
+          return JSON.stringify({ guard: 'needsBossReply' });
         }
-        if (prompt.includes('Need approval')) {
-          return JSON.stringify({
-            guard: 'needsBossReply',
-            question: 'Approve this checkpoint?',
-          });
+        if (prompt.includes('Approve this checkpoint?')) {
+          return JSON.stringify({ guard: 'needsBossReply' });
         }
-        return JSON.stringify({ guard: 'committed', latestCommit: 'abc123' });
+        return JSON.stringify({ guard: 'committed' });
       },
       callPlaybook: async () => ({
         state: 'suspended',
@@ -1770,10 +2126,10 @@ describe('DECIDE staged deferred effect continuation', () => {
         statuses.push(message);
       },
     });
-    const runtime = _internal.createStagedSchema3DeferredRuntime(
-      {},
-      harness as never,
-    );
+    const runtime = createLinkedPlaybookRuntime({
+      configuredOptions: {},
+      hostCapabilities: harness.hostCapabilities,
+    });
     return {
       harness,
       playerSessions,
@@ -1902,6 +2258,7 @@ describe('DECIDE staged deferred effect continuation', () => {
       text: 'Choose the durable design.',
       signal: signal(),
     });
+    const statusesBeforeContinuation = continuationFailure.statuses.length;
     continuationFailure.harness.failNextContinuationCompletion();
     await expect(
       continuationFailure.runtime.handleBossInput({
@@ -1914,7 +2271,15 @@ describe('DECIDE staged deferred effect continuation', () => {
     ).toMatchObject({ stateId: 'awaitBossReply' });
     expect(
       continuationFailure.runtime.exportSnapshot?.()?.pendingBossQuestions,
-    ).toEqual([]);
+    ).toMatchObject([
+      {
+        questionId: 'commitCoderProposal',
+        question: 'Approve this checkpoint?',
+      },
+    ]);
+    expect(
+      continuationFailure.statuses.slice(statusesBeforeContinuation),
+    ).not.toContain('coder asks: Approve the second checkpoint?');
     await continuationFailure.runtime.dispose();
   });
 
@@ -1956,9 +2321,19 @@ describe('DECIDE staged deferred effect continuation', () => {
     const restoredFixture = stagedFixture(fixture.harness);
     await restoredFixture.restore(parkedSnapshot!);
     const beforeRestore = restoredFixture.counts();
-    expect(
-      await restoredFixture.runtime._reconcileDeferred(signal()),
-    ).toBe('restored');
+    await expect(
+      restoredFixture.runtime.apply?.({
+        actionId: 'reconcile:unresolved-effect',
+        key: 'restore-deferred-checkpoint',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      disposition: 'executed',
+      run: {
+        outcome: 'quiescent',
+        state: { stateId: 'awaitBossReply' },
+      },
+    });
     expect(restoredFixture.counts()).toEqual(beforeRestore);
     expect(
       restoredFixture.runtime.exportSnapshot?.()?.pendingBossQuestions,
@@ -1992,6 +2367,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
       runtime: source,
       request,
       telemetry: sourceTelemetry,
+      host,
     } = await runToReview();
     const snapshot = source.exportSnapshot?.();
     if (
@@ -2019,7 +2395,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     const nestedRequests: PlaybookCallRequest[] = [];
     const restoredStatuses: string[] = [];
     const restoredTelemetry: TelemetryRecord[] = [];
-    const restored = createPlaybookRuntime({});
+    const restored = createPlaybookRuntime({}, host);
     const restoredPorts = completePorts({
       callPlaybook: async (nestedRequest) => {
         nestedRequests.push(nestedRequest);
@@ -2143,17 +2519,17 @@ describe('DECIDE suspended REVIEW persistence', () => {
       /restored actor state does not match snapshot state/,
     ],
     [
-      'effect ledger is not canonical empty',
+      'effect ledger differs from the current host mirror',
       (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => ({
         ...snapshot,
         effectLedger: { ...snapshot.effectLedger, revision: 1 },
       }),
-      /revision must be zero/,
+      /must equal the current host mirror/,
     ],
   ] as const)(
     'rolls back a failed restore when the %s',
     async (_label, mutate, expectedError) => {
-      const { runtime: source } = await runToReview();
+      const { runtime: source, host } = await runToReview();
       const snapshot = source.exportSnapshot?.();
       if (!snapshot) throw new Error('DECIDE did not export a snapshot');
       const invalidSnapshot = mutate(
@@ -2164,7 +2540,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
       const telemetry: TelemetryRecord[] = [];
       const playerSessions = createPlayerSessionStore();
       playerSessions.update('coder', 'keep-me');
-      const restored = createPlaybookRuntime({});
+      const restored = createPlaybookRuntime({}, host);
       const restoredPorts = completePorts({
         callPlaybook: async (request) => {
           nestedRequests.push(request);
@@ -2295,10 +2671,7 @@ describe('DECIDE local-role continuation', () => {
           callJudge: async (prompt) =>
             prompt.includes('source item DECIDE-1')
               ? JSON.stringify({ guard: 'proposed' })
-              : JSON.stringify({
-                  guard: 'needsBossReply',
-                  question: 'Reviewer question?',
-                }),
+              : JSON.stringify({ guard: 'needsBossReply' }),
         }),
         playerSessions,
       ),
@@ -2378,7 +2751,7 @@ describe('DECIDE terminal settlement from REVIEW', () => {
         stateDescription:
           'DECIDE reports REVIEW’s failure and its last commit.',
         output: {
-          lastDecideCommit: 'abc123',
+          lastDecideCommit: DEFAULT_COMMIT_OID,
           noUnsettledFindings: false,
           reviewStatus,
         },
@@ -2405,7 +2778,7 @@ describe('DECIDE terminal settlement from REVIEW', () => {
     expect(result).toMatchObject({
       outcome: 'terminal',
       output: {
-        lastDecideCommit: 'abc123',
+        lastDecideCommit: DEFAULT_COMMIT_OID,
         noUnsettledFindings: false,
         reviewStatus: 'error',
         error: { name: 'ReviewProtocolError' },
@@ -2417,8 +2790,7 @@ describe('DECIDE terminal settlement from REVIEW', () => {
   it('parks when the nested REVIEW call rejects outside its result contract', async () => {
     const transportError = new Error('REVIEW transport failed.');
     const { runtime, result, nestedRequests } = await startWithCommitOutput(
-      'Committed proposal.\nCommit: abc123',
-      'abc123',
+      'Committed proposal.',
       async () => {
         throw transportError;
       },
@@ -2675,7 +3047,8 @@ describe('DECIDE abort classification', () => {
     let reviewerSignal: AbortSignal | undefined;
     let reviewerFinishRejected = false;
     const playerCalls: string[] = [];
-    const runtime = createPlaybookRuntime({});
+    const host = createTestEffectHost();
+    const runtime = createPlaybookRuntime({}, host);
     await runtime.init(
       session(
         completePorts({
@@ -2727,6 +3100,11 @@ describe('DECIDE abort classification', () => {
     });
     expect(reviewerSignal?.aborted).toBe(true);
     expect(reviewerFinishRejected).toBe(true);
+    expect(host.readEffectLedger().boundaries).toHaveLength(2);
+    for (const boundary of host.readEffectLedger().boundaries) {
+      expect(boundary).not.toHaveProperty('finalText');
+      expect(boundary.physicalReceipt?.classification).toBe('unchanged');
+    }
     await runtime.dispose();
   });
 
@@ -2938,4 +3316,147 @@ describe('DECIDE abort classification', () => {
     expect(doneSinkTriggered).toBe(true);
     await runtime.dispose();
   });
+});
+
+describe('DECIDE unresolved apply settlement', () => {
+  async function unresolvedApplyFixture(
+    onTelemetry?: (record: TelemetryRecord) => void | Promise<void>,
+  ) {
+    const telemetry: TelemetryRecord[] = [];
+    const host = createTestEffectHost({
+      cohortClassifications: ['concurrent-or-foreign-change'],
+    });
+    const runtime = createPlaybookRuntime({}, host);
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId) => ({
+            status: 'ok',
+            finalText:
+              roleId === 'coder' ? 'Coder proposal' : 'Reviewer proposal',
+          }),
+          callJudge: async (prompt) => judgeReply(prompt),
+          emitTelemetry: async (record) => {
+            telemetry.push(record);
+            await onTelemetry?.(record);
+          },
+        }),
+      ),
+    );
+    await expect(
+      runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    return { runtime, telemetry };
+  }
+
+  it.each([
+    ['a rejected start sink', false, 'error'],
+    ['an abort while the start sink drains', true, 'aborted'],
+  ] as const)(
+    'finishes %s before acceptance and leaves its key reusable',
+    async (_label, abortAtStart, expectedStatus) => {
+      const controller = new AbortController();
+      const failure = new Error(
+        abortAtStart ? 'apply cancelled during start' : 'apply start sink failed',
+      );
+      let armed = false;
+      const { runtime, telemetry } = await unresolvedApplyFixture(
+        async (record) => {
+          if (!armed || record.topic !== 'playbook.trace') return;
+          const trace = record.payload as PlaybookTraceEvent;
+          if (trace.type !== 'apply.started') return;
+          armed = false;
+          if (abortAtStart) controller.abort(failure);
+          else throw failure;
+        },
+      );
+      armed = true;
+
+      await expect(
+        runtime.apply!({
+          actionId: 'reconcile:unresolved-effect',
+          key: 'pre-acceptance',
+          signal: controller.signal,
+        }),
+      ).rejects.toBe(failure);
+
+      const pair = playbookTraces(telemetry).filter(
+        ({ type }) => type === 'apply.started' || type === 'apply.finished',
+      );
+      expect(pair.map(({ type, callId }) => ({ type, callId }))).toEqual([
+        { type: 'apply.started', callId: 'apply-1' },
+        { type: 'apply.finished', callId: 'apply-1' },
+      ]);
+      expect(pair[1]?.payload).toMatchObject({
+        actionId: 'reconcile:unresolved-effect',
+        key: 'pre-acceptance',
+        disposition: 'rejected',
+        reason: abortAtStart
+          ? 'aborted before acceptance'
+          : 'apply.started trace sink rejected',
+        status: expectedStatus,
+        error: { message: failure.message },
+      });
+      expect(pair[1]?.payload).not.toHaveProperty('stateId');
+
+      await expect(
+        runtime.apply!({
+          actionId: 'reconcile:unresolved-effect',
+          key: 'pre-acceptance',
+          signal: signal(),
+        }),
+      ).resolves.toMatchObject({ disposition: 'executed' });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    ['drops the exact apply abort reason', true],
+    ['re-latches a distinct delivery failure', false],
+  ] as const)(
+    '%s after receipt publication',
+    async (_label, identical) => {
+      const controller = new AbortController();
+      const abortReason = new Error('apply cancelled after publication');
+      const deliveryFailure = identical
+        ? abortReason
+        : new Error('apply finish sink failed');
+      let armed = false;
+      const { runtime } = await unresolvedApplyFixture(async (record) => {
+        if (!armed || record.topic !== 'playbook.trace') return;
+        const trace = record.payload as PlaybookTraceEvent;
+        if (trace.type !== 'apply.finished') return;
+        armed = false;
+        controller.abort(abortReason);
+        throw deliveryFailure;
+      });
+      armed = true;
+
+      await expect(
+        runtime.apply!({
+          actionId: 'reconcile:unresolved-effect',
+          key: 'published-receipt',
+          signal: controller.signal,
+        }),
+      ).resolves.toMatchObject({ disposition: 'executed' });
+
+      const nextTurn = runtime.handleBossInput({ text: '', signal: signal() });
+      if (identical) {
+        await expect(nextTurn).resolves.toMatchObject({ outcome: 'no-action' });
+      } else {
+        await expect(nextTurn).rejects.toBe(deliveryFailure);
+      }
+      await runtime.dispose();
+    },
+  );
 });

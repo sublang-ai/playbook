@@ -70,7 +70,7 @@ When Reviewer reports no unsettled findings, REVIEW shall terminate successfully
 
 #### playbook-22
 
-When DECIDE receives a topic, DECIDE shall request independent Coder and Reviewer proposals concurrently, reveal neither proposal before both finish and Coder commits Coder's own proposal, and then call REVIEW with the initial intent and both proposal contexts available through the authored prompt and shared Reviewer conversation.
+When DECIDE receives a topic, DECIDE shall request independent Coder and Reviewer proposals concurrently under [[playbook-36](#playbook-36)], reveal neither proposal before both proposal outcomes are receipt-validated and a qualifying repository receipt proves Coder's own commit, and then call REVIEW with the initial intent and both proposal contexts available through the authored prompt and shared Reviewer conversation.
 
 #### playbook-25
 
@@ -137,6 +137,27 @@ Missing, incomplete, mismatched, concurrent, foreign, or ambiguous evidence shal
 Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)].
 The REVIEW source, GEARS, FSM, linked runtime, declarations, and registry shall move atomically to artifact schema `3` under runtime ABI `1` [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] while preserving their agreement under [[playbook-1](#playbook-1)].
 
+#### playbook-36
+
+Where DECIDE runs under artifact schema `3`, each delegated outcome shall declare and reconcile the exact authority, repository disposition, and accepted transition in this matrix under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)]:
+
+| Source state | Accepted outcome | Payload authority | Repository disposition | Target state |
+| --- | --- | --- | --- | --- |
+| `askCoderProposal` | `proposed` | presentation `coderProposal` | `unchanged` | `coderProposalComplete` when Coder finishes first; `commitCoderProposal` when Coder completes the pair |
+| `askCoderProposal` | `needsBossReply` | presentation `question` | `unchanged` | `waitCoderProposalReply` |
+| `askReviewerProposal` | `proposed` | presentation `reviewerProposal` | `unchanged` | `reviewerProposalComplete` when Reviewer finishes first; `commitCoderProposal` when Reviewer completes the pair |
+| `askReviewerProposal` | `needsBossReply` | presentation `question` | `unchanged` | `waitReviewerProposalReply` |
+| `commitCoderProposal` | `committed` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewCommit` |
+| `commitCoderProposal` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
+
+The two proposal calls shall execute as one declared concurrent all-`unchanged` cohort under [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)], while `commitCoderProposal` shall begin only after both cohort receipts complete and shall execute through the exclusive host transaction of [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
+Each proposal `proposed` or `needsBossReply` arm shall require an exact matching `unchanged` receipt under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)] before staging its presentation or publishing its question.
+Each proposal question's authored continuation shall run as a new separately governed `unchanged` boundary under [[playbook-runtime-73](playbook-runtime.md#playbook-runtime-73)].
+The commit prompt shall continue to require one commit but shall prescribe no `Commit:` marker or other response formatting, while the reconciler shall treat `coderOutput` as opaque presentation and obtain `latestCommit` only from the matching receipt OID under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)].
+Missing, incomplete, mismatched, concurrent, foreign, or ambiguous evidence shall remain unresolved under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)] without revealing a proposal early, starting REVIEW, or replaying either player.
+Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)], and the deferred merge arm shall use the checkpoint-bound continuation of [[playbook-30](#playbook-30)].
+The DECIDE source, GEARS, FSM, bespoke linked runtime, declarations, and registry shall move atomically to artifact schema `3` while preserving their agreement under [[playbook-1](#playbook-1)] and their declared parallel role set under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
+
 ### Boss-reply suspension
 
 #### playbook-12
@@ -195,8 +216,7 @@ When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CO
 
 #### playbook-29
 
-When maintained-workflow conformance drives equivalent staged artifact-schema-3 governed boundaries through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both apply the same host-acknowledged `unchanged`-only gates to empty-`ok` correction and ordinary failure-state retry, both retain evidence and start no automatic player call for a missing, incomplete, or non-`unchanged` receipt, and DECIDE's authored and generated runtime siblings stay behaviorally identical.
-The suite shall further fail unless the shipped artifact-schema-2 DECIDE profile retains its existing correction and retry behavior (verifying [[playbook-28](#playbook-28)]).
+When maintained-workflow conformance drives equivalent artifact-schema-3 governed boundaries through the shared flat runtimes and DECIDE's bespoke parallel runtime, it shall fail unless both apply the same host-acknowledged `unchanged`-only gates to empty-`ok` correction and ordinary failure-state retry, both retain evidence and start no automatic player call for a missing, incomplete, or non-`unchanged` receipt, and DECIDE's authored and generated runtime siblings stay behaviorally identical (verifying [[playbook-28](#playbook-28)]).
 
 #### playbook-33
 
@@ -206,6 +226,11 @@ When the CODE conformance suites drive its real artifact-schema-3 runtime, they 
 
 When the REVIEW conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every outcome from all three Reviewer states accepts only a matching `unchanged` receipt, including each question and separately governed answer continuation; Coder `committed` accepts only `one-descendant-commit`; Coder `rejectedAll` accepts only `unchanged`; mismatched or ambiguous evidence remains unresolved without replaying Coder; and Coder `needsBossReply` uses one exact-checkpoint cumulative deferred operation (verifying [[playbook-12](#playbook-12)], [[playbook-21](#playbook-21)], [[playbook-30](#playbook-30)], and [[playbook-34](#playbook-34)]).
 The suites shall further fail unless every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither, and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-34](#playbook-34)] (verifying [[playbook-1](#playbook-1)]).
+
+#### playbook-37
+
+When the DECIDE conformance suites drive its real artifact-schema-3 runtime, they shall fail unless the source, GEARS, and compiled prompts contain no `Commit:` response-format instruction; no presentation parser influences a transition; missing, glued, fenced, quoted, duplicated, or misleading `Commit:` prose leaves the accepted arm unchanged under equal semantic and effect evidence; both proposal calls overlap from one common baseline without revealing either proposal early; every proposal `proposed` and `needsBossReply` outcome and every separately governed proposal answer continuation accepts only a matching `unchanged` receipt; the merge waits for both proposal receipts and then runs exclusively; `committed` accepts only a matching `one-descendant-commit` receipt and obtains `latestCommit` from its exact OID; every mismatched or ambiguous proposal or merge receipt remains unresolved without an unauthorized player call; and merge `needsBossReply` uses one exact-checkpoint cumulative deferred operation (verifying [[playbook-12](#playbook-12)], [[playbook-22](#playbook-22)], [[playbook-30](#playbook-30)], and [[playbook-36](#playbook-36)]).
+The suites shall further fail unless each accepted matrix row publishes its exact confirmed marker and status, including the completion-order-specific proposal target, while an unaccepted fallback publishes neither, and the source, GEARS, FSM, bespoke linked runtime, declarations, and registry agree on schema `3` and the matrix of [[playbook-36](#playbook-36)] (verifying [[playbook-1](#playbook-1)]).
 
 ### Boss-reply suspension coverage
 
@@ -219,5 +244,4 @@ When a workflow FSM leaves or abandons a Boss-reply path, its conformance suite 
 
 #### playbook-31
 
-When maintained-workflow conformance drives equivalent staged artifact-schema-3 deferred question chains through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both withhold the question until its logical operation is durable, start one authored continuation only from a valid exact-checkpoint answer, preserve one original baseline and cumulative receipt across repeated questions, keep invalid answers waiting, park another exit or checkpoint mismatch without a player, and restore an eligible exact-checkpoint wait without a player or judge; authored and generated DECIDE runtime siblings shall remain behaviorally identical (verifying [[playbook-30](#playbook-30)]).
-The suite shall further fail unless the shipped artifact-schema-2 DECIDE profile retains its existing Boss-question behavior (verifying [[playbook-30](#playbook-30)]).
+When maintained-workflow conformance drives equivalent artifact-schema-3 deferred question chains through the shared flat runtimes and DECIDE's bespoke parallel runtime, it shall fail unless both withhold the question until its logical operation is durable, start one authored continuation only from a valid exact-checkpoint answer, preserve one original baseline and cumulative receipt across repeated questions, keep invalid answers waiting, park another exit or checkpoint mismatch without a player, and restore an eligible exact-checkpoint wait without a player or judge; authored and generated DECIDE runtime siblings shall remain behaviorally identical (verifying [[playbook-30](#playbook-30)]).

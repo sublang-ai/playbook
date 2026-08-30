@@ -1495,21 +1495,47 @@ interface TestRepositoryOperationSettlement {
   readonly reason?: unknown;
 }
 
+interface TestRepositoryOperationContext {
+  readonly baseline: PlaybookRepositoryObservation;
+  readonly identity: { readonly worktree: string; readonly gitDir: string };
+  readonly playerContinuation?: unknown;
+  readonly invocationId?: string;
+  readonly roleId?: string;
+}
+
+type TestRepositoryOperation = (
+  context?: TestRepositoryOperationContext,
+) => Promise<unknown>;
+
+type TestRepositoryCompletion = (input: {
+  readonly boundary: PlaybookEffectBoundary;
+  readonly operation: TestRepositoryOperationSettlement;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly outcomeReceipt: PlaybookRepositoryReceipt;
+  readonly roleId?: string;
+}) =>
+  | TestRepositoryCompletionEvidence
+  | Promise<TestRepositoryCompletionEvidence>;
+
 interface TestRepositoryRunOptions {
   readonly mode?: 'continue' | 'park' | 'restore';
   readonly operationId?: string;
   readonly effectBoundary?: PlaybookEffectBoundaryStart;
-  readonly operation?: (context?: {
-    readonly baseline: PlaybookRepositoryObservation;
-    readonly identity: { readonly worktree: string; readonly gitDir: string };
-    readonly playerContinuation?: unknown;
-  }) => Promise<unknown>;
-  readonly completeEffectBoundary?: (input: {
-    readonly boundary: PlaybookEffectBoundary;
-    readonly operation: TestRepositoryOperationSettlement;
-    readonly receipt: PlaybookRepositoryReceipt;
-    readonly outcomeReceipt: PlaybookRepositoryReceipt;
-  }) => TestRepositoryCompletionEvidence | Promise<TestRepositoryCompletionEvidence>;
+  readonly operation?: TestRepositoryOperation;
+  readonly completeEffectBoundary?: TestRepositoryCompletion;
+}
+
+interface TestRepositoryCohortRunOptions {
+  readonly invocationId?: string;
+  readonly roleIds?: readonly string[];
+  readonly dispositionsByRole?: Readonly<
+    Record<string, readonly TestRepositoryClassification[]>
+  >;
+  readonly effectBoundaries?: Readonly<
+    Record<string, PlaybookEffectBoundaryStart>
+  >;
+  readonly operations?: Readonly<Record<string, TestRepositoryOperation>>;
+  readonly completeEffectBoundary?: TestRepositoryCompletion;
 }
 
 const TEST_REPOSITORY_IDENTITY = Object.freeze({
@@ -1535,11 +1561,13 @@ function sameJson(left: unknown, right: unknown): boolean {
 function shellEffectHost(
   entries: readonly RegisteredEntry[],
   classifications: readonly TestRepositoryClassification[] = [],
+  authoritySessionId = 'e1000000-0000-4000-8000-000000000001',
 ) {
   let ledger = emptyPlaybookEffectLedger();
   let observation = testRepositoryObservation('0'.repeat(39) + '1');
   let commitSequence = 1;
   let attemptSequence = 0;
+  let cohortSequence = 0;
   const attemptIds = new Map<string, string>();
   const scriptedClassifications = [...classifications];
 
@@ -1628,8 +1656,8 @@ function shellEffectHost(
   };
 
   const settleOperation = async (
-    operation: NonNullable<TestRepositoryRunOptions['operation']>,
-    context?: Parameters<NonNullable<TestRepositoryRunOptions['operation']>>[0],
+    operation: TestRepositoryOperation,
+    context?: TestRepositoryOperationContext,
   ): Promise<TestRepositoryOperationSettlement> => {
     try {
       return Object.freeze({
@@ -1668,7 +1696,7 @@ function shellEffectHost(
           playbookId,
           artifactSchema: 3 as const,
           cwd: TEST_REPOSITORY_IDENTITY.worktree,
-          sessionId: 'e1000000-0000-4000-8000-000000000001',
+          sessionId: authoritySessionId,
           leaseOwnerToken: 'e2000000-0000-4000-8000-000000000001',
           canonicalWorktree: TEST_REPOSITORY_IDENTITY,
           requiredRoleIds: entry.requiredRoleIds,
@@ -1757,6 +1785,164 @@ function shellEffectHost(
             ...(completion.deferred === undefined
               ? {}
               : { deferredStatus: 'bound' as const }),
+          };
+        };
+
+        const runCohort = async (raw: unknown) => {
+          const options = raw as TestRepositoryCohortRunOptions;
+          const invocationId = options.invocationId;
+          const roleIds = [...(options.roleIds ?? [])];
+          const declaredRoleSet = authority.concurrentRoleSets.some(
+            (declared) =>
+              declared.length === roleIds.length &&
+              declared.every((roleId) => roleIds.includes(roleId)),
+          );
+          if (
+            typeof invocationId !== 'string' ||
+            invocationId.length === 0 ||
+            roleIds.length !== 2 ||
+            new Set(roleIds).size !== roleIds.length ||
+            !declaredRoleSet ||
+            options.dispositionsByRole === undefined ||
+            options.effectBoundaries === undefined ||
+            options.operations === undefined ||
+            options.completeEffectBoundary === undefined ||
+            roleIds.some(
+              (roleId) =>
+                !sameJson(options.dispositionsByRole![roleId], ['unchanged']) ||
+                options.effectBoundaries![roleId] === undefined ||
+                typeof options.operations![roleId] !== 'function',
+            )
+          ) {
+            throw new Error(
+              'Captain integration cohort must be one declared two-role all-unchanged set',
+            );
+          }
+
+          const baseline = observation;
+          const cohortId = `f0000000-0000-4000-8000-${String(++cohortSequence).padStart(12, '0')}`;
+          const seeds = roleIds.map((roleId) => ({
+            ...options.effectBoundaries![roleId],
+            cohortId,
+            playbookId,
+            canonicalWorktree: TEST_REPOSITORY_IDENTITY,
+            baseline,
+          }));
+          await writeAhead([
+            { kind: 'start-boundaries', boundaries: seeds },
+          ]);
+          const started = Object.fromEntries(
+            seeds.map((seed) => [
+              seed.roleId,
+              ledger.boundaries.find(
+                ({ boundaryId }) => boundaryId === seed.boundaryId,
+              )!,
+            ]),
+          );
+          const operationEntries = await Promise.all(
+            roleIds.map(async (roleId) => [
+              roleId,
+              await settleOperation(options.operations![roleId]!, {
+                baseline,
+                identity: TEST_REPOSITORY_IDENTITY,
+                invocationId,
+                roleId,
+              }),
+            ] as const),
+          );
+          const operations = Object.fromEntries(operationEntries);
+          const receipt = nextReceipt(baseline);
+          if (receipt.classification !== 'unchanged') {
+            throw new Error(
+              'Captain integration cohort repository receipt was not unchanged',
+            );
+          }
+          observation = receipt.after ?? baseline;
+
+          const completionSettlements = await Promise.allSettled(
+            roleIds.map((roleId) =>
+              options.completeEffectBoundary!({
+                boundary: started[roleId]!,
+                operation: operations[roleId]!,
+                receipt,
+                outcomeReceipt: receipt,
+                roleId,
+              }),
+            ),
+          );
+          const completions = completionSettlements.map((settlement) => {
+            if (settlement.status === 'rejected') throw settlement.reason;
+            return settlement.value;
+          });
+          const current = roleIds.map((roleId) =>
+            ledger.boundaries.find(
+              ({ boundaryId }) =>
+                boundaryId === started[roleId]!.boundaryId,
+            )!,
+          );
+          const deferredCompletions = current.flatMap((boundary, index) => {
+            const deferred = completions[index]!.deferred;
+            return deferred === undefined
+              ? []
+              : [
+                  {
+                    operationId: deferred.operationId,
+                    playbookId,
+                    runtimeSessionId: boundary.runtimeSessionId,
+                    boundaryIds: [boundary.boundaryId],
+                    originalBaseline: boundary.baseline,
+                    checkpoint: receipt.after!,
+                    pendingQuestion: deferred.pendingQuestion,
+                    playerContinuation: deferred.playerContinuation as never,
+                    checkpointRestorationEligible: false,
+                  },
+                ];
+          });
+          const effectLedger = await writeAhead([
+            {
+              kind: 'replace-boundaries',
+              replacements: current.map((boundary, index) => ({
+                expected: boundary,
+                next: completedBoundary(
+                  boundary,
+                  receipt,
+                  completions[index]!,
+                  completions[index]!.deferred?.operationId,
+                ),
+              })),
+            },
+            ...(deferredCompletions.length === 0
+              ? []
+              : [
+                  {
+                    kind: 'append-logical-operations' as const,
+                    operations: deferredCompletions,
+                  },
+                ]),
+          ]);
+          const receipts = Object.fromEntries(
+            roleIds.map((roleId) => {
+              const acknowledged = effectLedger.boundaries.find(
+                ({ boundaryId }) =>
+                  boundaryId === started[roleId]!.boundaryId,
+              )?.physicalReceipt;
+              if (
+                acknowledged === undefined ||
+                !sameJson(acknowledged, receipt)
+              ) {
+                throw new Error(
+                  'Captain integration cohort ledger did not acknowledge every receipt atomically',
+                );
+              }
+              return [roleId, acknowledged];
+            }),
+          );
+          return {
+            baseline,
+            invocationId,
+            operations,
+            receipts,
+            effectLedger,
           };
         };
 
@@ -1927,9 +2113,7 @@ function shellEffectHost(
               observe: async () => observation,
               acquire: async () => ({}),
               runExclusive,
-              runCohort: async () => {
-                throw new Error('Captain integration CODE fixture has no cohort');
-              },
+              runCohort,
               runDeferred,
             },
             effectLedger: {
@@ -2020,9 +2204,15 @@ function makeShellHarness(
   if (!/^[0-9a-f]{4}$/i.test(sessionNamespace)) {
     throw new Error('test session namespace must be four hexadecimal digits');
   }
+  const sessionIdAt = (sequence: number): string =>
+    `${sessionNamespace}0000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
+  // Shell init allocates the session Captain first, so the first root
+  // playbook frame is sequence two. Schema-3 DECIDE binds its runtime session
+  // to the same host authority before crossing any governed boundary.
   const effectHost = shellEffectHost(
     entries,
     harnessOptions.repositoryClassifications,
+    sessionIdAt(2),
   );
   const shell = createPlaybookCaptainShell(
     {
@@ -2039,8 +2229,7 @@ function makeShellHarness(
     },
     {
       loadModule: async (specifier: string) => modules[specifier],
-      createSessionId: () =>
-        `${sessionNamespace}0000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
+      createSessionId: () => sessionIdAt(++sessionSequence),
       hostCapabilities: effectHost.capabilityById,
     },
   );
@@ -2925,21 +3114,28 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     await target.shell.dispose?.();
   });
 
-  it('degrades the real capability-less DECIDE artifact to fresh behavior', async () => {
+  it('treats the real non-adoptable DECIDE artifact as fresh behavior', async () => {
     const decideQuestions = (prompt: string): unknown => {
       if (prompt.includes('source item DECIDE-1')) {
-        return { guard: 'needsBossReply', question: 'Coder question?' };
+        return { guard: 'needsBossReply' };
       }
       if (prompt.includes('source item DECIDE-2')) {
-        return { guard: 'needsBossReply', question: 'Reviewer question?' };
+        return { guard: 'needsBossReply' };
       }
       throw new Error(`unexpected DECIDE adjudication prompt: ${prompt}`);
     };
-    const decidePlayers = (playerId: string) => ({
-      status: 'ok',
-      finalText: `Need ${playerId} clarification`,
-      resumeToken: `${playerId}-token`,
-    });
+    const decidePlayers = (playerId: string) =>
+      playerId.endsWith('-coder')
+        ? {
+            status: 'ok',
+            finalText: 'Coder question?',
+            resumeToken: `${playerId}-token`,
+          }
+        : {
+            status: 'ok',
+            finalText: 'Reviewer question?',
+            resumeToken: `${playerId}-token`,
+          };
     const sourceDecide = realEntry(decideRegistryEntry);
     const source = realArtifactHarness(
       [sourceDecide],
@@ -3458,10 +3654,10 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     expect(JSON.stringify(runtime.describe!())).toBe(before);
   });
 
-  // A29-19: the real compiled DECIDE artifact ships its bespoke runtime
-  // without the control-surface pair. Capability absence bounds the machine
-  // verbs against that leaf; it never bounds the conversation.
-  it('bounds only the machine verbs on the capability-less DECIDE leaf', async () => {
+  // A29-19: the real compiled DECIDE artifact exposes only unresolved-effect
+  // actions. Its ordinary failed view has no action, which bounds machine
+  // verbs against that leaf without bounding the conversation.
+  it('bounds machine verbs on an ordinary failed DECIDE leaf', async () => {
     const decide = realEntry(decideRegistryEntry);
     const harness = realArtifactHarness([decide], {
       players: () => ({ status: 'error', error: 'proposal agent stopped' }),
@@ -3478,31 +3674,24 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     await harness.init();
     await harness.turn('/decide the retry policy', 1);
 
-    // The DR-022 gate: the pair is absent, distinctly — neither member is
-    // implemented, so the shell composes the degraded digest.
+    // The DR-022 gate sees the pair, while the ordinary failure state offers
+    // no unresolved-effect action.
     const runtime = decide.runtimes[0]!;
-    expect(runtime.describe).toBeUndefined();
-    expect(runtime.apply).toBeUndefined();
+    expect(runtime.describe).toBeTypeOf('function');
+    expect(runtime.apply).toBeTypeOf('function');
+    expect(runtime.describe!()).toMatchObject({
+      stateDescription: 'DECIDE failed and is waiting for a new topic.',
+      actions: [],
+    });
 
     const before = harness.playerCalls.length;
     await harness.turn('Where are we right now?', 2);
 
     const digest = harness.decisionPrompts().at(-1) ?? '';
-    expect(digest).toContain('/decide runtime advertises no control surface.');
-    // No control view means no published state description, and the shell
-    // says so rather than substituting the state id it holds from telemetry:
-    // grounding is the state's meaning, and where none is published none is
-    // spoken (CAPPLAY-5).
-    expect(digest).toContain(
-      'Leaf state: (this runtime publishes no description of its current state);',
-    );
+    expect(digest).toContain('DECIDE failed and is waiting for a new topic.');
     expect(digest).toContain('Advertised actions: none.');
-    expect(digest).toContain(
-      'plain text delivery is the only machine verb against it and a `runtime` selection is invalid',
-    );
-    expect(digest).toContain('`respond` stays valid for any turn');
-    // The status question settled `respond` on the degraded digest: no
-    // delivery, no FSM event, no apply.
+    // The status question settled `respond` on the published control view:
+    // no delivery, no FSM event, no apply.
     expect(harness.playerCalls.length).toBe(before);
     expect(harness.surfaced.at(-1)).toContain('No machine action is offered');
     expect(
@@ -3516,9 +3705,10 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     ).toHaveLength(0);
   });
 
-  // CAPTAIN-37 / DR-037: DECIDE deliberately ships without describe/apply,
-  // so its terminal result is the only runtime-owned channel that can carry
-  // the exact meaning of the final state into the root completion fact.
+  // CAPTAIN-37 / DR-037: DECIDE's terminal result remains the runtime-owned
+  // channel that carries the exact meaning of the final state into the root
+  // completion fact; its unresolved-only control pair supplies no substitute
+  // outcome authority.
   it.each([
     {
       label: 'approval-backed completion',
@@ -3576,12 +3766,16 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
           finalText:
             coderCalls === 1
               ? 'Coder proposal'
-              : 'Committed proposal.\nCommit: abc123',
+              : 'The spec-design change is committed.',
         };
       },
+      repositoryClassifications: [
+        'unchanged',
+        'one-descendant-commit',
+      ],
       adjudicate: (prompt) => {
         if (prompt.includes('source item DECIDE-3')) {
-          return { guard: 'committed', latestCommit: 'abc123' };
+          return { guard: 'committed' };
         }
         if (
           prompt.includes('source item DECIDE-1') ||
@@ -3600,8 +3794,19 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     await harness.turn('/decide choose the durable design', 1);
 
     const runtime = decide.runtimes[0]!;
-    expect(runtime.describe).toBeUndefined();
-    expect(runtime.apply).toBeUndefined();
+    expect(runtime.describe).toBeTypeOf('function');
+    expect(runtime.apply).toBeTypeOf('function');
+    const commitPlayerPrompt = harness.playerPrompts.find((prompt) =>
+      prompt.includes('Turn your proposal into the necessary spec items or DRs.'),
+    );
+    expect(commitPlayerPrompt).toBeDefined();
+    expect(commitPlayerPrompt).not.toContain('Commit:');
+    const commitAdjudicationPrompt = harness.captainCalls.find(({ prompt }) =>
+      prompt.includes('source item DECIDE-3'),
+    )?.prompt;
+    expect(commitAdjudicationPrompt).toContain(
+      'The spec-design change is committed.',
+    );
     const terminalStates = harness.telemetry
       .filter((event) => event.topic === 'playbook.fsm.state')
       .map(

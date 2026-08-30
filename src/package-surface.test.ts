@@ -1462,6 +1462,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './decide/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
+      'DecidePlaybookHostCapabilities',
+      'DecidePlaybookRuntimeConstruction',
       'JsonValue',
       'NormalizedError',
       'PlaybookCallRequest',
@@ -1756,6 +1758,11 @@ import { codePlaybookRegistryEntry } from '@sublang/playbook/code/registry';
 import type { CodePlaybookHostCapabilities } from '@sublang/playbook/code/playbook';
 import { reviewPlaybookRegistryEntry } from '@sublang/playbook/review/registry';
 import type { ReviewPlaybookHostCapabilities } from '@sublang/playbook/review/playbook';
+import { decidePlaybookRegistryEntry } from '@sublang/playbook/decide/registry';
+import type {
+  DecidePlaybookHostCapabilities,
+  DecidePlaybookRuntimeConstruction,
+} from '@sublang/playbook/decide/playbook';
 
 interface Options { readonly mode: string }
 interface Capabilities {
@@ -1822,6 +1829,7 @@ declare const configuredOptions: unknown;
 declare const hostCapabilities: PlaybookHostConstructionCapabilities;
 declare const codeHostCapabilities: CodePlaybookHostCapabilities;
 declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
+declare const decideHostCapabilities: DecidePlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
@@ -1851,6 +1859,20 @@ const reviewCapabilities: PlaybookHostConstructionCapabilities = reviewHostCapab
 reviewPlaybookRegistryEntry.createRuntime({}, reviewHostCapabilities);
 // @ts-expect-error REVIEW is schema 3 and requires current-host capabilities
 reviewPlaybookRegistryEntry.createRuntime({});
+const decideSchema: 3 = decidePlaybookRegistryEntry.artifactSchema;
+const decideProfile: PlaybookCaptainRuntimeProfile<3> = decidePlaybookRegistryEntry.runtimeProfile;
+const decideEntry: PlaybookCaptainRegistryEntryV3 = decidePlaybookRegistryEntry;
+const decideCapabilities: PlaybookHostConstructionCapabilities = decideHostCapabilities;
+const decideConstruction: DecidePlaybookRuntimeConstruction = {
+  configuredOptions: {},
+  hostCapabilities: decideHostCapabilities,
+};
+decidePlaybookRegistryEntry.createRuntime(
+  decideConstruction.configuredOptions,
+  decideConstruction.hostCapabilities,
+);
+// @ts-expect-error DECIDE is schema 3 and requires current-host capabilities
+decidePlaybookRegistryEntry.createRuntime({});
 void v2FactorySchema;
 void v3FactorySchema;
 void v2Profile;
@@ -1863,6 +1885,11 @@ void reviewSchema;
 void reviewProfile;
 void reviewEntry;
 void reviewCapabilities;
+void decideSchema;
+void decideProfile;
+void decideEntry;
+void decideCapabilities;
+void decideConstruction;
 void wrongProfile;
 `,
       );

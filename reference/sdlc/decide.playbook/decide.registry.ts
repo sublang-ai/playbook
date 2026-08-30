@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import createPlaybookRuntime, {
+  type DecidePlaybookHostCapabilities,
   type PlaybookRuntime,
 } from './decide.playbook.js';
 
@@ -20,16 +21,19 @@ export interface DecidePlaybookRegistryEntry {
   id: 'decide';
   command: 'decide';
   intent: string;
-  artifactSchema: 2;
+  artifactSchema: 3;
   runtimeProfile: {
     readonly kind: 'bespoke';
-    readonly artifactSchema: 2;
+    readonly artifactSchema: 3;
   };
   requiredRoleIds: readonly ['coder', 'reviewer'];
   concurrentRoleSets: readonly [readonly ['coder', 'reviewer']];
   summaryPolicy: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): DecideOptions;
-  createRuntime(options: DecideOptions): PlaybookRuntime;
+  createRuntime(
+    options: DecideOptions,
+    hostCapabilities: DecidePlaybookHostCapabilities,
+  ): PlaybookRuntime;
 }
 
 export const decideStateCountLabels = {
@@ -92,17 +96,20 @@ export const decidePlaybookRegistryEntry: DecidePlaybookRegistryEntry = {
   command: 'decide',
   intent:
     'turn independent Coder and Reviewer proposals into an approved spec-design commit',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'bespoke',
-    artifactSchema: 2,
+    artifactSchema: 3,
   }),
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [['coder', 'reviewer']],
   summaryPolicy: decideSummaryPolicy,
   validateOptions: validateDecideOptions,
-  createRuntime(options) {
-    return createPlaybookRuntime(options);
+  createRuntime(options, hostCapabilities) {
+    return createPlaybookRuntime({
+      configuredOptions: options,
+      hostCapabilities,
+    });
   },
 };
 

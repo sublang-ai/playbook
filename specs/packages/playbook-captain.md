@@ -262,7 +262,7 @@ runtime may pass to `callPlayer`), `concurrentRoleSets` (ordered arrays of at le
 entry's own option slice, and a `createRuntime` factory for the
 linked runtime.
 The registry-entry contract shall be discriminated by that advertisement: schema `2` shall expose `createRuntime(configuredOptions)`, while schema `3` shall expose `createRuntime(configuredOptions, hostCapabilities)` with the second input required and host-owned; both variants shall retain the common manifest fields above.
-The CODE entry shall declare `id` and command `code` with artifact schema `3`, required role `coder`, and no concurrent role set; REVIEW shall declare `review` with schema `2`, roles `coder` and `reviewer`, and no concurrent role set; and DECIDE shall declare `decide` with schema `2`, roles `coder` and `reviewer`, and exact concurrent role sets `[['coder', 'reviewer']]`.
+The CODE entry shall declare `id` and command `code` with artifact schema `3`, required role `coder`, and no concurrent role set; REVIEW shall declare `review` with schema `3`, roles `coder` and `reviewer`, and no concurrent role set; and DECIDE shall declare `decide` with schema `3`, roles `coder` and `reviewer`, exact concurrent role sets `[['coder', 'reviewer']]`, and the bespoke runtime profile `{ kind: 'bespoke', artifactSchema: 3 }`.
 The shell shall capture each imported manifest member once, reject a missing or malformed runtime profile, and reject an advertised artifact schema that differs from the shared factory's captured `spec.compat.artifactSchema` or from the bespoke implementation's directly declared schema under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] before option validation or runtime construction.
 The shell shall take each playbook's artifact schema, required roles, concurrent role sets, summary policy,
 option validator, and runtime factory
@@ -1251,7 +1251,7 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 #### playbook-captain-15
 
 
-Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless CODE and REVIEW declare artifact schema `3`, DECIDE declares artifact schema `2`, CODE and REVIEW expose shared-factory profiles each carrying its own factory's identical immutable compatibility record, and DECIDE exposes a bespoke schema-2 profile; a schema-3 manifest shape with an agreeing profile is accepted; a missing, malformed, unsupported, shared-factory-disagreeing, or bespoke-disagreeing schema rejects before option validation or runtime construction; every imported manifest member is read once before later use; raw and validator-produced `hostCapabilities` reject before factory work; absent, extra, malformed, or artifact-authority-mismatched current-host schema-3 capabilities reject before `createRuntime`; an exact capability is delivered as the factory's distinct second argument while the first remains only configured options; CODE declares role `coder`; REVIEW and DECIDE declare `coder` and `reviewer`; CODE and REVIEW declare no concurrent role set; DECIDE declares exactly `[['coder', 'reviewer']]`; malformed concurrent sets reject; each normalized role map covers the exact required set; each current empty option schema is validated without constructing a runtime; each runtime init receives exact role bindings whose prompt identities use the concrete model value or the established adapter for `provider-default`; and each later player call reaches only its explicitly bound player id (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
+Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless all three declare artifact schema `3`, CODE and REVIEW expose shared-factory profiles each carrying its own factory's identical immutable compatibility record, and DECIDE exposes the exact bespoke profile `{ kind: 'bespoke', artifactSchema: 3 }`; a schema-2 manifest shape with an agreeing profile is accepted; a missing, malformed, unsupported, shared-factory-disagreeing, or bespoke-disagreeing schema rejects before option validation or runtime construction; every imported manifest member is read once before later use; raw and validator-produced `hostCapabilities` reject before factory work; absent, extra, malformed, or artifact-authority-mismatched current-host schema-3 capabilities reject before `createRuntime`; each real registry receives its exact capability as the distinct second factory argument while the first remains only configured options; CODE declares role `coder`; REVIEW and DECIDE declare `coder` and `reviewer`; CODE and REVIEW declare no concurrent role set; DECIDE declares exactly `[['coder', 'reviewer']]`; malformed concurrent sets reject; each normalized role map covers the exact required set; each current empty option schema is validated without constructing a runtime; each runtime init receives exact role bindings whose prompt identities use the concrete model value or the established adapter for `provider-default`; and each later player call reaches only its explicitly bound player id (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
 The suite shall reject an absent `sessionAgents` projection, a referenced player missing from it, or an extra unreferenced player before runtime construction (verifying [[playbook-captain-16](#playbook-captain-16)]).
 The suite shall also fail unless runtime Captain and judge calls preserve their visibility, resume, and optional tool-isolation selections through the shared single-flight Captain queue (verifying [[playbook-captain-9](#playbook-captain-9)] and [[playbook-captain-10](#playbook-captain-10)]).
 
@@ -1534,22 +1534,9 @@ validated prose surfaced through `emitReply`.
 The suite shall fail unless a pure chat turn settles in exactly one
 durable call (`respond`) with no separate summary call, while an
 acting turn costs two durable calls plus bounded correctives.
-The suite shall fail unless the real compiled DECIDE artifact
-engaged as leaf — its bespoke runtime shipping without the
-`describe`/`apply` pair — is reported by the DR-022 gate as lacking
-the pair, advertises no actions, and bounds only the machine verbs
-against that leaf: plain text delivery is the only one, and a
-`runtime` selection is invalid with zero `apply` calls.
-The suite shall fail unless a status question on that capability-less
-leaf still settles as `respond` — no `deliver`,
-no FSM event, the leaf snapshot identical before and after — grounded
-in the degraded ControlView digest the shell composes from the
-engagement frame and its mirrored leaf facts
-([[playbook-captain-9](playbook-captain.md#playbook-captain-9)]), the captured
-decision prompt carrying that digest with its empty action list and
-with the leaf state stated as publishing no description rather than
-falling back to the state id the shell holds from telemetry.
-The suite shall further fail unless the real pair-less DECIDE runtime reaches both its approval-backed and REVIEW-failure final states with the exact authored `stateDescription` on each terminal result, and the real shell's one completion fact carries that meaning before disposal without reading opaque output (verifying [[playbook-captain-20](#playbook-captain-20)]).
+The suite shall fail unless the real compiled DECIDE artifact engaged as leaf exposes its unresolved-effect-only `describe`/`apply` pair, advertises no action in an ordinary failure state, and makes zero `apply` calls while that actionless view is presented.
+The suite shall fail unless a status question on that ordinary failed leaf still settles as `respond` — no `deliver`, no FSM event, the leaf snapshot identical before and after — grounded in the exact published ControlView state description and empty action list ([[playbook-captain-9](playbook-captain.md#playbook-captain-9)]).
+The suite shall further fail unless the real DECIDE runtime reaches both its approval-backed and REVIEW-failure final states with the exact authored `stateDescription` on each terminal result, and the real shell's one completion fact carries that meaning before disposal without reading opaque output (verifying [[playbook-captain-20](#playbook-captain-20)]).
 The suite shall fail unless a full Boss turn through the real shell
 and real CODE artifact with a scripted empty-then-text player
 recovers with normal lifecycle markers and exactly one turn summary,
@@ -1791,7 +1778,7 @@ The suite shall further fail unless replacement or clear disposes every retired 
 
 #### playbook-captain-49
 
-Where the retained-resumption end-to-end suite drives the maintained real CODE and REVIEW linked artifacts and the maintained capability-less DECIDE runtime, the suite shall fail unless this interruption matrix holds (verifying [[playbook-captain-4](#playbook-captain-4)], [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-8](#playbook-captain-8)], [[playbook-captain-26](#playbook-captain-26)], [[playbook-captain-29](#playbook-captain-29)], [[playbook-captain-44](#playbook-captain-44)], [[playbook-captain-46](#playbook-captain-46)], and [[playbook-captain-47](#playbook-captain-47)]):
+Where the retained-resumption end-to-end suite drives the maintained real CODE and REVIEW linked artifacts and the maintained non-adoptable DECIDE runtime, the suite shall fail unless this interruption matrix holds (verifying [[playbook-captain-4](#playbook-captain-4)], [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-8](#playbook-captain-8)], [[playbook-captain-26](#playbook-captain-26)], [[playbook-captain-29](#playbook-captain-29)], [[playbook-captain-44](#playbook-captain-44)], [[playbook-captain-46](#playbook-captain-46)], and [[playbook-captain-47](#playbook-captain-47)]):
 
 | Interruption class | Required proof |
 | --- | --- |
@@ -1804,7 +1791,7 @@ Where the retained-resumption end-to-end suite drives the maintained real CODE a
 | Dismissed root | The exact turn-start generation survives dismissal and later resumes. |
 | Adapter-swap fresh session | Current-ledger binding selects the replacement adapter with a fresh player conversation without returning the machine to its initial state. |
 | Stale external world | Resumed REVIEW surfaces the post-capture change through its ordinary findings round before eventual completion. |
-| Capability-less degradation | DECIDE retains and advertises no generation, and ordinary fresh use remains available. |
+| Non-adoptable degradation | DECIDE retains and advertises no generation, and ordinary fresh use remains available. |
 
 #### playbook-captain-55
 
