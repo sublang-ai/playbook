@@ -412,25 +412,26 @@ const machine = setup({}).createMachine({
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'SMOKE',
   // Link-time literal per slc/link.md, so the fixture models linker output.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
 });
 
 export default {
   id: 'smoke',
   command: 'smoke',
   intent: 'deterministic release smoke fixture',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
-    return createRuntime({});
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
   },
 };
 `;
@@ -537,25 +538,26 @@ const machine = setup({}).createMachine({
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'RECOVER',
   // Link-time literal per slc/link.md, so the fixture models linker output.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
 });
 
 export default {
   id: 'recover',
   command: 'recover',
   intent: 'deterministic recoverable-failure fixture',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
-    return createRuntime({});
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
   },
 };
 `;
@@ -570,14 +572,14 @@ export default {
   id: 'lanes',
   command: 'lanes',
   intent: 'exercise segmented shared and isolated session players',
-  artifactSchema: 2,
-  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+  artifactSchema: 3,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
   requiredRoleIds: ['first', 'second', 'isolated'],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
+  createRuntime(_configuredOptions, _hostCapabilities) {
     let session;
     return {
       async init(next) {
@@ -764,6 +766,7 @@ import captainFactory from '@sublang/playbook/captain/playbook';
 import codeFactory from '@sublang/playbook/code/playbook';
 import reviewFactory from '@sublang/playbook/review/playbook';
 import decideFactory from '@sublang/playbook/decide/playbook';
+import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
 
 const enabledPlaybooks = [
   { id: 'code', command: 'code', intent: 'implement a coding intent' },
@@ -785,6 +788,44 @@ const coreMembers = [
 ];
 const controlMembers = ['describe', 'apply'];
 const adoptionMembers = ['adopt'];
+const probeSessionId = '00000000-0000-4000-8000-000000000017';
+const probeRepositoryIdentity = {
+  worktree: process.cwd(),
+  gitDir: process.cwd(),
+};
+const unavailableRepositoryOperation = async () => {
+  throw new Error('the construction probe must not use the repository');
+};
+function construction(playbookId, requiredRoleIds, concurrentRoleSets) {
+  const ledger = emptyPlaybookEffectLedger();
+  return {
+    configuredOptions: {},
+    hostCapabilities: {
+      authority: {
+        playbookId,
+        artifactSchema: 3,
+        cwd: process.cwd(),
+        sessionId: probeSessionId,
+        leaseOwnerToken: 'release-smoke-construction-probe',
+        canonicalWorktree: probeRepositoryIdentity,
+        requiredRoleIds,
+        concurrentRoleSets,
+      },
+      repository: {
+        identity: probeRepositoryIdentity,
+        observe: unavailableRepositoryOperation,
+        acquire: unavailableRepositoryOperation,
+        runExclusive: unavailableRepositoryOperation,
+        runCohort: unavailableRepositoryOperation,
+        runDeferred: unavailableRepositoryOperation,
+      },
+      effectLedger: {
+        snapshot: () => ledger,
+        writeAhead: async () => ledger,
+      },
+    },
+  };
+}
 const cases = [
   {
     id: 'captain',
@@ -793,17 +834,19 @@ const cases = [
   },
   {
     id: 'code',
-    runtime: codeFactory({}),
+    runtime: codeFactory(construction('code', ['coder'], [])),
     members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
   {
     id: 'review',
-    runtime: reviewFactory({}),
+    runtime: reviewFactory(construction('review', ['coder', 'reviewer'], [])),
     members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
   {
     id: 'decide',
-    runtime: decideFactory({}),
+    runtime: decideFactory(
+      construction('decide', ['coder', 'reviewer'], [['coder', 'reviewer']]),
+    ),
     members: coreMembers,
     absentMembers: adoptionMembers,
   },
@@ -1154,7 +1197,7 @@ function stepHermetic(root, state) {
     (player) => player.id,
   );
   if (
-    firstRecord.schemaVersion !== 3 ||
+    firstRecord.schemaVersion !== 5 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
@@ -1269,7 +1312,7 @@ function stepHermetic(root, state) {
   const finalPlayerIds = Object.keys(finalPlayers).sort();
   const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
   if (
-    finalRecord.schemaVersion !== 3 ||
+    finalRecord.schemaVersion !== 5 ||
     finalRecord.kind !== 'captain-session' ||
     finalRecord.sessionId !== firstEnvelope.sessionId ||
     finalRecord.state !== 'settled' ||

@@ -230,9 +230,9 @@ export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabi
         readonly effectLedger: PlaybookEffectLedgerCapability;
     };
 }
-export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = [HostCapabilities] extends [never] ? ConfiguredOptions : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
 /** Shared XState factory with its captured, validated artifact compatibility. */
-export type XStatePlaybookRuntimeFactory<Options = unknown, ArtifactSchema extends 2 | 3 = 2 | 3> = PlaybookRuntimeFactory<Options> & {
+export type XStatePlaybookRuntimeFactory<Options = unknown, ArtifactSchema extends 3 = 3> = PlaybookRuntimeFactory<Options> & {
     readonly compat: Readonly<{
         readonly artifactSchema: ArtifactSchema;
         readonly runtimeAbi: typeof RUNTIME_ABI;
@@ -365,28 +365,14 @@ interface XStatePlaybookRuntimeSpecBase<TOptions> {
     /** Working directory for `script` actors. Default: the validated options' string `cwd`, else the process working directory. */
     scriptCwd?: (options: TOptions) => string | undefined;
 }
-/**
- * Legacy schema-2-compatible shared-engine spec name. Its optional compat
- * member is retained for downstream source compatibility; construction still
- * rejects an absent or unsupported declaration before interpretation.
- */
 export interface XStatePlaybookRuntimeSpec<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
-    compat?: XStatePlaybookRuntimeCompat;
-    outcomeAuthority?: never;
-}
-/** Exact schema-2 shared-engine spec; its one-argument factory is intact. */
-export interface XStatePlaybookRuntimeSpecV2<TOptions> extends XStatePlaybookRuntimeSpec<TOptions> {
-    compat: XStatePlaybookRuntimeCompat & {
-        artifactSchema: 2;
-    };
-}
-/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
-export interface XStatePlaybookRuntimeSpecV3<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
     compat: XStatePlaybookRuntimeCompat & {
         artifactSchema: 3;
     };
     outcomeAuthority: XStateOutcomeAuthoritySpec;
 }
+/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
+export type XStatePlaybookRuntimeSpecV3<TOptions> = XStatePlaybookRuntimeSpec<TOptions>;
 /** Strip a single Markdown code fence that wraps the whole string. */
 export declare function stripCodeFence(text: string): string;
 export declare function extractJsonValue(text: string, start: number, repair: boolean): string | undefined;
@@ -480,6 +466,5 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * state key — so each snapshot exposes exactly one playbook state id.
  * Parallel-region FSMs keep their own linked runtimes.
  */
-export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): XStatePlaybookRuntimeFactory<TOptions, 2>;
 export declare function createXStatePlaybookRuntime<TOptions, THostCapabilities extends object>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpecV3<TOptions>): XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>, 3>;
 export {};

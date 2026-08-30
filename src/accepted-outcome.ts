@@ -71,17 +71,13 @@ function exactMarkerParams(value: unknown): AcceptedOutcomeReceipt {
 }
 
 export function createAcceptedOutcomeConsumer(
-  artifactSchema: 2 | 3,
   isDeclared: (source: string, acceptedOutcome: string) => boolean,
 ): AcceptedOutcomeConsumer {
   let pending: AcceptedOutcomeReceipt[] = [];
   let invalidBatch = false;
   return Object.freeze({
     capture(action: InspectedAction) {
-      if (
-        artifactSchema !== 3 ||
-        action.type !== ACCEPTED_OUTCOME_ACTION_TYPE
-      ) {
+      if (action.type !== ACCEPTED_OUTCOME_ACTION_TYPE) {
         return;
       }
       if (invalidBatch) return;

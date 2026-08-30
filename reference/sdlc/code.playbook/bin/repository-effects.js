@@ -1303,7 +1303,11 @@ function detachedSchema3CatalogEntries(catalog) {
   }
   const entries = [];
   for (const [playbookId, item] of Object.entries(catalog)) {
-    if (!isPlainObject(item) || item.artifactSchema !== 3) continue;
+    if (!isPlainObject(item) || item.artifactSchema !== 3) {
+      throw new TypeError(
+        `repository capability catalog ${JSON.stringify(playbookId)} must declare artifact schema 3`,
+      );
+    }
     if (
       typeof playbookId !== 'string' ||
       playbookId.length === 0 ||
@@ -2787,8 +2791,7 @@ function incompleteRecoveryCohort(
 
 // PBCLI-20/49: assemble live schema-3 facilities only after the caller owns
 // the durable Captain session and has selected its compatible working
-// directory. Schema-2-only catalogs intentionally avoid every lease, Git,
-// and write-ahead dependency.
+// directory.
 export async function createRepositoryEffectCapabilities({
   cwd,
   catalog,
@@ -2797,7 +2800,6 @@ export async function createRepositoryEffectCapabilities({
   createWriteAhead,
 } = {}) {
   const schema3Entries = detachedSchema3CatalogEntries(catalog);
-  if (schema3Entries.length === 0) return Object.freeze({});
 
   if (typeof cwd !== 'string' || cwd.length === 0) {
     throw new TypeError(

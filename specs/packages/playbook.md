@@ -17,7 +17,7 @@ Where a maintained workflow source declares an opening `Roles:` list, delegated-
 Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
 The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
 The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE and REVIEW shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
-Each maintained artifact shall keep its registry advertisement, compatibility declaration, delegated-player state/result topology, and schema-gated authority metadata mutually exact: schema `2` shall omit authority metadata, while a schema-3 migration shall atomically declare every delegated-player state, outcome payload field, and repository disposition under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
+Each maintained artifact, registry, and authored or generated runtime sibling shall declare artifact schema `3` and keep its compatibility declaration, delegated-player state/result topology, and authority metadata mutually exact by declaring every delegated-player state, outcome payload field, and repository disposition under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
 
 #### playbook-2
 
@@ -178,7 +178,7 @@ Where a maintained workflow runs under artifact schema `3` and one governed dele
 #### playbook-7
 
 When the workflow conformance suites run, they shall fail unless source and GEARS carry the same exact `Roles:` declaration with no Boss, Captain, alias, exact duplicate, or canonical-lowercase collision; the registry manifest declares exactly their canonical local ids; the FSM export and manifest agree on the ordered concurrent role sets derived from every GEARS parallel group; every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set; no compiled item lacks source authority; and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
-The suite shall also fail if a maintained registry and runtime compatibility schema disagree, a schema-2 artifact carries authority metadata, or a schema-3 fixture's state, outcome, payload-field, authority, or repository-disposition declarations drift from its FSM contract (verifying [[playbook-1](#playbook-1)]).
+The suite shall also fail if any maintained artifact, registry, or authored or generated runtime sibling does not declare artifact schema `3`, if a registry and runtime compatibility schema disagree, or if a state, outcome, payload-field, authority, or repository-disposition declaration drifts from its FSM contract (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-8
 

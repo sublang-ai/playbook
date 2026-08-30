@@ -79,35 +79,31 @@ export interface PlaybookHostConstructionCapabilities {
         readonly writeAhead: (commands: PlaybookEffectLedgerCommandBatch) => Promise<PlaybookEffectLedger>;
     };
 }
-export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> = {
+export type PlaybookCaptainRuntimeProfile = {
     readonly kind: 'shared-factory';
     readonly compat: {
-        readonly artifactSchema: ArtifactSchema;
+        readonly artifactSchema: 3;
         readonly runtimeAbi: number;
     };
 } | {
     readonly kind: 'bespoke';
-    readonly artifactSchema: ArtifactSchema;
+    readonly artifactSchema: 3;
 };
-interface PlaybookCaptainRegistryEntryBase<ArtifactSchema extends 2 | 3> {
+interface PlaybookCaptainRegistryEntryBase {
     id: string;
     command: string;
     intent: string;
-    runtimeProfile: PlaybookCaptainRuntimeProfile<ArtifactSchema>;
+    runtimeProfile: PlaybookCaptainRuntimeProfile;
     requiredRoleIds: readonly string[];
     concurrentRoleSets: readonly (readonly string[])[];
     summaryPolicy?: PlaybookSummaryPolicy;
     validateOptions(optionSlice: unknown): unknown;
 }
-export interface PlaybookCaptainRegistryEntryV2 extends PlaybookCaptainRegistryEntryBase<2> {
-    artifactSchema: 2;
-    createRuntime(configuredOptions: unknown): PlaybookRuntime;
-}
-export interface PlaybookCaptainRegistryEntryV3 extends PlaybookCaptainRegistryEntryBase<3> {
+export interface PlaybookCaptainRegistryEntryV3 extends PlaybookCaptainRegistryEntryBase {
     artifactSchema: 3;
     createRuntime(configuredOptions: unknown, hostCapabilities: PlaybookHostConstructionCapabilities): PlaybookRuntime;
 }
-export type PlaybookCaptainRegistryEntry = PlaybookCaptainRegistryEntryV2 | PlaybookCaptainRegistryEntryV3;
+export type PlaybookCaptainRegistryEntry = PlaybookCaptainRegistryEntryV3;
 type PlaybookCaptainConversationSnapshot = {
     readonly kind: 'unopened';
 } | {

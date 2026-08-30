@@ -1304,8 +1304,8 @@ export function invalidRegistryEntryReason(value) {
     return 'command must be a canonical trimmed nonblank string';
   }
   if (typeof value.intent !== 'string') return 'intent must be a string';
-  if (value.artifactSchema !== 2 && value.artifactSchema !== 3) {
-    return 'artifactSchema must be 2 or 3';
+  if (value.artifactSchema !== 3) {
+    return 'artifactSchema must be 3';
   }
   const runtimeProfileProblem = invalidRuntimeProfileReason(
     value.runtimeProfile,
@@ -1463,9 +1463,9 @@ function validateStoredStructuralProjection(value) {
     ) {
       throw new Error(`stored structural catalog.${id} is malformed`);
     }
-    if (item.artifactSchema !== 2 && item.artifactSchema !== 3) {
+    if (item.artifactSchema !== 3) {
       throw new Error(
-        `stored structural catalog.${id}.artifactSchema must be 2 or 3`,
+        `stored structural catalog.${id}.artifactSchema must be 3`,
       );
     }
     rejectConfiguredHostCapabilities(

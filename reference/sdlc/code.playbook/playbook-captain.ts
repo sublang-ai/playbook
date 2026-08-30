@@ -153,38 +153,32 @@ export interface PlaybookHostConstructionCapabilities {
   };
 }
 
-export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> =
+export type PlaybookCaptainRuntimeProfile =
   | {
       readonly kind: 'shared-factory';
       readonly compat: {
-        readonly artifactSchema: ArtifactSchema;
+        readonly artifactSchema: 3;
         readonly runtimeAbi: number;
       };
     }
   | {
       readonly kind: 'bespoke';
-      readonly artifactSchema: ArtifactSchema;
+      readonly artifactSchema: 3;
     };
 
-interface PlaybookCaptainRegistryEntryBase<ArtifactSchema extends 2 | 3> {
+interface PlaybookCaptainRegistryEntryBase {
   id: string;
   command: string;
   intent: string;
-  runtimeProfile: PlaybookCaptainRuntimeProfile<ArtifactSchema>;
+  runtimeProfile: PlaybookCaptainRuntimeProfile;
   requiredRoleIds: readonly string[];
   concurrentRoleSets: readonly (readonly string[])[];
   summaryPolicy?: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): unknown;
 }
 
-export interface PlaybookCaptainRegistryEntryV2
-  extends PlaybookCaptainRegistryEntryBase<2> {
-  artifactSchema: 2;
-  createRuntime(configuredOptions: unknown): PlaybookRuntime;
-}
-
 export interface PlaybookCaptainRegistryEntryV3
-  extends PlaybookCaptainRegistryEntryBase<3> {
+  extends PlaybookCaptainRegistryEntryBase {
   artifactSchema: 3;
   createRuntime(
     configuredOptions: unknown,
@@ -192,9 +186,7 @@ export interface PlaybookCaptainRegistryEntryV3
   ): PlaybookRuntime;
 }
 
-export type PlaybookCaptainRegistryEntry =
-  | PlaybookCaptainRegistryEntryV2
-  | PlaybookCaptainRegistryEntryV3;
+export type PlaybookCaptainRegistryEntry = PlaybookCaptainRegistryEntryV3;
 
 type PlaybookCaptainConversationSnapshot =
   | { readonly kind: 'unopened' }
@@ -359,7 +351,7 @@ export interface PlaybookCaptainShell extends Captain {
 // normalized `captain.options.playbooks.<id>` role map.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
-  artifactSchema: 2 | 3;
+  artifactSchema: 3;
   command: string;
   options: JsonValue;
   roleBindings: ReadonlyMap<string, EffectivePlayerBinding>;
@@ -372,21 +364,13 @@ function createRuntimeForEnablement(
     PlaybookHostConstructionCapabilities
   >,
 ): PlaybookRuntime {
-  if (enablement.artifactSchema === 3) {
-    const hostCapabilities = hostCapabilitiesById.get(enablement.entry.id);
-    if (hostCapabilities === undefined) {
-      throw new Error(
-        `/${enablement.command} schema-3 runtime requires current-host construction capabilities`,
-      );
-    }
-    return (enablement.entry as PlaybookCaptainRegistryEntryV3).createRuntime(
-      enablement.options,
-      hostCapabilities,
+  const hostCapabilities = hostCapabilitiesById.get(enablement.entry.id);
+  if (hostCapabilities === undefined) {
+    throw new Error(
+      `/${enablement.command} schema-3 runtime requires current-host construction capabilities`,
     );
   }
-  return (enablement.entry as PlaybookCaptainRegistryEntryV2).createRuntime(
-    enablement.options,
-  );
+  return enablement.entry.createRuntime(enablement.options, hostCapabilities);
 }
 
 interface EffectivePlayerBinding {
@@ -1250,13 +1234,9 @@ function summaryProgressRoundCount(
   return [...stateCounts.values()].reduce((total, count) => total + count, 0);
 }
 
-function guardFromJudgeReply(finalText: string): string | undefined {
-  return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
-}
-
 interface ValidatedRuntimeProfile {
   readonly kind: 'shared-factory' | 'bespoke';
-  readonly artifactSchema: 2 | 3;
+  readonly artifactSchema: 3;
 }
 
 function captureRegistryEntry(value: unknown): unknown {
@@ -1433,7 +1413,7 @@ function validateRuntimeProfile(
       'runtimeAbi',
     ]);
     if (
-      (compat?.artifactSchema === 2 || compat?.artifactSchema === 3) &&
+      compat?.artifactSchema === 3 &&
       typeof compat.runtimeAbi === 'number' &&
       Number.isSafeInteger(compat.runtimeAbi)
     ) {
@@ -1447,7 +1427,7 @@ function validateRuntimeProfile(
   const bespoke = exactOwnDataRecord(value, ['kind', 'artifactSchema']);
   if (
     bespoke?.kind === 'bespoke' &&
-    (bespoke.artifactSchema === 2 || bespoke.artifactSchema === 3)
+    bespoke.artifactSchema === 3
   ) {
     return { kind: 'bespoke', artifactSchema: bespoke.artifactSchema };
   }
@@ -1492,7 +1472,7 @@ function isValidRegistryEntry(
     typeof e.id === 'string' &&
     typeof e.command === 'string' &&
     typeof e.intent === 'string' &&
-    (artifactSchema === 2 || artifactSchema === 3) &&
+    artifactSchema === 3 &&
     typeof e.validateOptions === 'function' &&
     typeof e.createRuntime === 'function'
   );
@@ -2783,7 +2763,7 @@ async function buildEnablements(
       (capturedEntry as { runtimeProfile?: unknown } | null)?.runtimeProfile,
     );
     if (
-      (artifactSchema !== 2 && artifactSchema !== 3) ||
+      artifactSchema !== 3 ||
       runtimeProfile === undefined ||
       !isValidRegistryEntry(capturedEntry, artifactSchema)
     ) {
@@ -2892,18 +2872,13 @@ async function buildEnablements(
     entries.push(entry);
     byId.set(entry.id, entry);
     byCommand.set(command, entry);
-    const hostCapability =
-      artifactSchema === 3
-        ? validateHostCapabilities(
-            suppliedHostCapabilities[entry.id],
-            entry as PlaybookCaptainRegistryEntryV3,
-            command,
-          )
-        : undefined;
-    if (artifactSchema === 3) expectedHostCapabilityIds.push(entry.id);
-    if (hostCapability !== undefined) {
-      hostCapabilitiesById.set(entry.id, hostCapability);
-    }
+    const hostCapability = validateHostCapabilities(
+      suppliedHostCapabilities[entry.id],
+      entry,
+      command,
+    );
+    expectedHostCapabilityIds.push(entry.id);
+    hostCapabilitiesById.set(entry.id, hostCapability);
     enablementById.set(entry.id, {
       entry,
       artifactSchema,
@@ -3155,7 +3130,7 @@ export function createPlaybookCaptainShell(
       advertisesUnresolved = true;
     }
     if (typeof frame.runtime.unresolvedEffectEnvelopes !== 'function') {
-      if (frame.enablement.artifactSchema === 3 && advertisesUnresolved) {
+      if (advertisesUnresolved) {
         throw new Error(
           `${frameLabel(frame)} unresolved-effect runtime exposes no envelope identities`,
         );
@@ -3609,20 +3584,7 @@ export function createPlaybookCaptainShell(
           { allowSuspendedCall: true },
         );
         const retainedReconciliation = runtime.retainedEffectReconciliation;
-        if (frameEnablement.artifactSchema === 2) {
-          if (
-            !isDeepStrictEqual(
-              runtime.effectLedger,
-              emptyPlaybookEffectLedger(),
-            ) ||
-            retainedReconciliation !== undefined ||
-            runtime.retainedEffectSourceSessionId !== undefined
-          ) {
-            throw new TypeError(
-              `${framePath}.runtime schema-2 effect state must be empty`,
-            );
-          }
-        } else if (retainedReconciliation === undefined) {
+        if (retainedReconciliation === undefined) {
           if (!isDeepStrictEqual(runtime.effectLedger, generationEffectLedger)) {
             throw new TypeError(
               `${framePath}.runtime effect ledger differs from the retained checkpoint`,
@@ -3743,16 +3705,11 @@ export function createPlaybookCaptainShell(
       const markedFrames = normalizedFrames.filter(
         ({ runtime }) => runtime.retainedEffectReconciliation !== undefined,
       );
-      const schema3Frames = normalizedFrames.filter(
-        ({ playbookId }) => enablementById.get(playbookId)!.artifactSchema === 3,
-      );
       if (
         (sourceGenerationId === undefined && markedFrames.length !== 0) ||
         (sourceGenerationId !== undefined &&
-          markedFrames.length !== schema3Frames.length) ||
+          markedFrames.length !== normalizedFrames.length) ||
         (sourceGenerationId !== undefined &&
-          enablementById.get(normalizedFrames[0]!.playbookId)!
-              .artifactSchema === 3 &&
           normalizedFrames[0]!.runtime.retainedEffectReconciliation
             ?.sourceSessionId !== sourceGenerationId)
       ) {
@@ -4251,7 +4208,6 @@ export function createPlaybookCaptainShell(
     frame: EngagementFrame,
     payload: unknown,
   ): void => {
-    if (frame.enablement.artifactSchema !== 3) return;
     const trace = payloadRecord(payload);
     const turn = activeTurn;
     const summary = activeTurnSummary;
@@ -4507,20 +4463,6 @@ export function createPlaybookCaptainShell(
       if (result.finalText === undefined) {
         throw new Error('callCaptain returned status=ok with no finalText');
       }
-      const summary = activeTurnSummary;
-      if (
-        frame.enablement.artifactSchema === 2 &&
-        summary &&
-        summaryIncludes(frame)
-      ) {
-        const guard = guardFromJudgeReply(result.finalText);
-        if (
-          guard &&
-          frame.entry.summaryPolicy?.copyPasteGuardNames.includes(guard)
-        ) {
-          summary.counts.copyPastes++;
-        }
-      }
       return result.finalText;
     },
     callPlaybook: (request, signal) => {
@@ -4738,17 +4680,6 @@ export function createPlaybookCaptainShell(
       try {
         if (resumeToken === undefined) delete ledger.resumeToken;
         else ledger.resumeToken = resumeToken;
-        // CAPTAIN-20: a result counts only after the runtime validated it and
-        // atomically published its authorized continuation transition.
-        const summary = activeTurnSummary;
-        if (
-          frame.enablement.artifactSchema === 2 &&
-          pending.status === 'ok' &&
-          summary &&
-          summaryIncludes(frame)
-        ) {
-          summary.counts.interruptions++;
-        }
       } finally {
         playerTransactions.delete(binding.playerId);
       }
@@ -5715,7 +5646,6 @@ export function createPlaybookCaptainShell(
         readonly label: string;
       }[] = [];
       if (
-        leaf.enablement.artifactSchema === 3 &&
         typeof leaf.runtime.describe === 'function' &&
         typeof leaf.runtime.apply === 'function'
       ) {
@@ -7098,7 +7028,7 @@ export function createPlaybookCaptainShell(
       selection.action === 'runtime' &&
       (selection.actionId === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
         selection.actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID) &&
-      fencedLeaf?.enablement.artifactSchema === 3;
+      fencedLeaf !== undefined;
     if (
       retainedEffectReconciliation !== undefined &&
       !routesRetainedReconciliation
@@ -7745,27 +7675,16 @@ export function createPlaybookCaptainShell(
           `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} role bindings changed`,
         );
       }
-      const expectedLedger =
-        enablement.artifactSchema === 3
-          ? snapshot.effectLedger
-          : emptyPlaybookEffectLedger();
-      if (!isDeepStrictEqual(frame.runtime.effectLedger, expectedLedger)) {
+      if (
+        !isDeepStrictEqual(frame.runtime.effectLedger, snapshot.effectLedger)
+      ) {
         throw new TypeError(
           `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger does not match its artifact schema`,
         );
       }
       const runtimeReconciliation =
         frame.runtime.retainedEffectReconciliation;
-      if (enablement.artifactSchema === 2) {
-        if (
-          runtimeReconciliation !== undefined ||
-          frame.runtime.retainedEffectSourceSessionId !== undefined
-        ) {
-          throw new TypeError(
-            `Captain shell snapshot schema-2 frame ${JSON.stringify(frame.playbookId)} carries retained-effect adoption state`,
-          );
-        }
-      } else if (snapshot.retainedEffectReconciliation === undefined) {
+      if (snapshot.retainedEffectReconciliation === undefined) {
         if (runtimeReconciliation !== undefined) {
           throw new TypeError(
             `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} carries an unmirrored retained-effect fence`,
@@ -7785,7 +7704,6 @@ export function createPlaybookCaptainShell(
       if (
         frame.depth === 0 &&
         snapshot.retainedEffectReconciliation !== undefined &&
-        enablement.artifactSchema === 3 &&
         runtimeReconciliation?.sourceSessionId !==
           snapshot.retainedEffectReconciliation.sourceGenerationId
       ) {
@@ -7954,19 +7872,8 @@ export function createPlaybookCaptainShell(
       }
       const snapshots = capturedFrames ?? captureFrameSnapshots(true);
       if (snapshots === undefined || snapshots.length !== frames.length) return;
-      for (const [index, frameSnapshot] of snapshots.entries()) {
+      for (const frameSnapshot of snapshots) {
         const runtime = frameSnapshot.runtime;
-        const schema = frames[index]!.enablement.artifactSchema;
-        if (schema === 2) {
-          if (
-            !isDeepStrictEqual(runtime.effectLedger, emptyPlaybookEffectLedger()) ||
-            runtime.retainedEffectSourceSessionId !== undefined ||
-            runtime.retainedEffectReconciliation !== undefined
-          ) {
-            return;
-          }
-          continue;
-        }
         if (
           !isDeepStrictEqual(runtime.effectLedger, ledger) ||
           runtime.retainedEffectSourceSessionId === undefined ||

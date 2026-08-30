@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   chmod,
@@ -16,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createManagedInteractiveLifecycle,
@@ -46,6 +48,7 @@ const retainedFrameSessionId = '80000000-0000-4000-8000-000000000042';
 const attemptId = '90000000-0000-4000-8000-000000000042';
 const predecessorSessionId = '90000000-0000-4000-8000-000000000043';
 const tempDirs: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(
@@ -77,7 +80,6 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
   it('assembles schema-3 capabilities under the managed child lease', async () => {
     const execution = executionProjection();
-    (execution.catalog.code as { artifactSchema: number }).artifactSchema = 3;
     const fixture = await lifecycleFixture(execution);
     const payload = { ...fixture.payload, cwd: process.cwd() };
     const context = { ...fixture.context, cwd: process.cwd() };
@@ -136,7 +138,6 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
   it('rejects schema-3 host construction under a different session lease', async () => {
     const execution = executionProjection();
-    (execution.catalog.code as { artifactSchema: number }).artifactSchema = 3;
     const fixture = await lifecycleFixture(execution);
     let writerCreations = 0;
     let hostCreations = 0;
@@ -1286,6 +1287,24 @@ async function lifecycleFixture(
   const sessionsDir = join(root, 'sessions');
   const cwd = join(root, 'cwd');
   await mkdir(cwd);
+  await execFileAsync('git', ['init', '-q', cwd]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.name',
+    'Playbook Interactive Test',
+  ]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.email',
+    'interactive@example.invalid',
+  ]);
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
+  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
   const controls = await controlBoundary(cwd);
   const payload = {
     schemaVersion: MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,

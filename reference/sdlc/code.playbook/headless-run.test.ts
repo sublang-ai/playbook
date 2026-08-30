@@ -279,8 +279,8 @@ function nestedEntries(events: string[]) {
     id: 'code',
     command: 'code',
     intent: 'implement with review',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -339,8 +339,8 @@ function nestedEntries(events: string[]) {
     id: 'review',
     command: 'review',
     intent: 'review work',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -390,8 +390,8 @@ function retainedRootEntry(
     id: 'code',
     command: 'code',
     intent: 'retain a parked root',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -467,8 +467,8 @@ function nestedParkedEntries(
     id: 'code',
     command: 'code',
     intent: 'park on nested review',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -569,8 +569,8 @@ function nestedParkedEntries(
     id: 'review',
     command: 'review',
     intent: 'park then accept exact Boss reply',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -650,6 +650,11 @@ async function writeConfig(contents: string) {
 async function initHeadlessTestRepository(prefix: string) {
   const cwd = await mkdtemp(join(tmpdir(), prefix));
   tempDirs.push(cwd);
+  await initializeHeadlessTestRepository(cwd);
+  return cwd;
+}
+
+async function initializeHeadlessTestRepository(cwd: string) {
   await execFileAsync('git', ['init', '-q', cwd]);
   await execFileAsync('git', ['-C', cwd, 'config', 'user.name', 'Playbook Test']);
   await execFileAsync('git', [
@@ -662,7 +667,6 @@ async function initHeadlessTestRepository(prefix: string) {
   await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
   await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
   await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
-  return cwd;
 }
 
 function sharedConfig() {
@@ -1085,11 +1089,12 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       createCaptainRuntime: () =>
         createXStatePlaybookRuntime(captainMachine, {
           label: 'CAPTAIN',
-          compat: { artifactSchema: 2, runtimeAbi: 999 },
+          compat: { artifactSchema: 3, runtimeAbi: 999 },
           snapshotOptions: () => ({}),
           machineInput: () => ({ enabledPlaybooks: [] }),
           roleStates: {},
-        })({}),
+          outcomeAuthority: { governedPlayerStates: {} },
+        })({} as never),
     });
     expect(captainSkew.result.code).toBe(1);
     expect(captainSkew.stdout).toBe('');
@@ -1593,8 +1598,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
 
   it('restores an explicit session instead of init and preserves cwd and timestamps', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-continue-'));
-    const frozenCwd = await mkdtemp(join(tmpdir(), 'playbook-frozen-cwd-'));
-    tempDirs.push(stateRoot, frozenCwd);
+    const frozenCwd = await initHeadlessTestRepository(
+      'playbook-frozen-cwd-',
+    );
+    tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
     const lifecycle = { init: 0, restore: 0 };
     const seen: string[] = [];
@@ -2234,6 +2241,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         mkdir(path, { recursive: true }),
       ),
     );
+    await Promise.all(
+      [localCwd, foreignCwd, unmatchedCwd].map((path) =>
+        initializeHeadlessTestRepository(path),
+      ),
+    );
 
     const local = await headlessHarness(['run', 'local session'], {
       sessionsDir,
@@ -2301,7 +2313,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
   });
 
-  it('selects the newest valid same-cwd session by updatedAt for --continue', async () => {
+  it('selects the newest resumable same-cwd session and refuses pre-effect records', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-latest-'));
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
@@ -2344,16 +2356,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       3,
       false,
     );
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify(memberlessSchema3)}\n`,
-      { mode: 0o600 },
-    );
-    const memberlessInstalls: unknown[] = [];
-    const observeMemberlessInstall = async (options: any) => {
-      memberlessInstalls.push(options.retainedGenerations);
-      return installRetainedGenerationsForLaunch(options);
-    };
+    const memberlessSchema3Bytes = `${JSON.stringify(memberlessSchema3)}\n`;
+    await writeFile(memberlessSchema3Path, memberlessSchema3Bytes, {
+      mode: 0o600,
+    });
 
     let explicitLegacyHosts = 0;
     const explicitLegacy = await headlessHarness(
@@ -2379,92 +2385,110 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:02.000Z'),
-        installRetainedGenerationsForLaunch: observeMemberlessInstall,
       },
     );
     expect(continued.result.code).toBe(0);
-    expect(continued.result.sessionId).toBe(fourthId);
+    expect(continued.result.sessionId).toBe(secondId);
     expect(continued.inputs).toEqual(['latest reply']);
-    expect(memberlessInstalls).toEqual([{}]);
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
     );
     expect(continued.stderr).toContain(
       'schema 2 has incompatible player identity',
     );
-    expect(continued.stderr).not.toContain(
-      `skipping legacy Captain session "${fourthId}"`,
+    expect(continued.stderr).toContain(
+      `skipping legacy Captain session "${fourthId}" at "${memberlessSchema3Path}"`,
     );
+    expect(continued.stderr).toContain('schema 3 is unsupported');
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
     );
-    const canonicalized = JSON.parse(
-      await readFile(memberlessSchema3Path, 'utf8'),
-    );
-    expect(canonicalized).toMatchObject({
-      schemaVersion: 5,
-      snapshot: {
-        schemaVersion: 4,
-        effectLedger: emptyPlaybookEffectLedger(),
-      },
-      effectLedger: emptyPlaybookEffectLedger(),
-      retainedGenerations: {},
-    });
-    const {
-      retainedGenerations: _canonicalRetainedGenerations,
-      ...memberlessAgain
-    } = canonicalized;
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify(memberlessAgain)}\n`,
-      'utf8',
+    expect(await readFile(memberlessSchema3Path, 'utf8')).toBe(
+      memberlessSchema3Bytes,
     );
 
-    const explicitCompatible = await headlessHarness(
-      ['run', '--session', fourthId, 'member-less reply'],
+    let explicitPreEffectHosts = 0;
+    const explicitPreEffect = await headlessHarness(
+      ['run', '--session', fourthId, 'must not run'],
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:03.000Z'),
-        installRetainedGenerationsForLaunch: observeMemberlessInstall,
+        createHostRuntime: async () => {
+          explicitPreEffectHosts += 1;
+          throw new Error('must not construct host for schema 3');
+        },
       },
     );
-    expect(explicitCompatible.result.code).toBe(0);
-    expect(explicitCompatible.result.sessionId).toBe(fourthId);
-    expect(explicitCompatible.inputs).toEqual(['member-less reply']);
-    expect(memberlessInstalls).toEqual([{}, {}]);
-    expect(explicitCompatible.stderr).not.toContain(
-      'no retained-generation state',
+    expect(explicitPreEffect.result.code).toBe(1);
+    expect(explicitPreEffect.stdout).toBe('');
+    expect(explicitPreEffect.inputs).toEqual([]);
+    expect(explicitPreEffectHosts).toBe(0);
+    expect(explicitPreEffect.stderr).toContain(
+      'schema 3 predates the artifact-schema-3 effect-authority cutover',
     );
 
     const transientSchema4 = preEffectSessionRecord(
-      JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
+      { ...settledRecord, sessionId: fourthId },
       4,
       true,
     );
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify(transientSchema4)}\n`,
-      'utf8',
-    );
+    const transientSchema4Bytes = `${JSON.stringify(transientSchema4)}\n`;
+    await writeFile(memberlessSchema3Path, transientSchema4Bytes, 'utf8');
+    let explicitSchema4Hosts = 0;
     const continuedSchema4 = await headlessHarness(
-      ['run', '--session', fourthId, 'schema-4 reply'],
+      ['run', '--session', fourthId, 'must not run'],
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:04.000Z'),
+        createHostRuntime: async () => {
+          explicitSchema4Hosts += 1;
+          throw new Error('must not construct host for schema 4');
+        },
       },
     );
-    expect(continuedSchema4.result.code).toBe(0);
-    expect(continuedSchema4.result.sessionId).toBe(fourthId);
-    expect(continuedSchema4.inputs).toEqual(['schema-4 reply']);
-    expect(continuedSchema4.stderr).not.toContain('schema 4 is unsupported');
-    expect(
-      JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
-    ).toMatchObject({
-      schemaVersion: 5,
-      snapshot: { schemaVersion: 4 },
-      effectLedger: emptyPlaybookEffectLedger(),
-      retainedGenerations: {},
-    });
+    expect(continuedSchema4.result.code).toBe(1);
+    expect(continuedSchema4.stdout).toBe('');
+    expect(continuedSchema4.inputs).toEqual([]);
+    expect(explicitSchema4Hosts).toBe(0);
+    expect(continuedSchema4.stderr).toContain(
+      'schema 4 predates the artifact-schema-3 effect-authority cutover',
+    );
+    expect(await readFile(memberlessSchema3Path, 'utf8')).toBe(
+      transientSchema4Bytes,
+    );
+
+    const malformedPreEffect = preEffectSessionRecord(
+      { ...settledRecord, sessionId: fourthId },
+      3,
+      false,
+    );
+    malformedPreEffect.snapshot.captain.runtime.schemaVersion = 2;
+    await writeFile(
+      memberlessSchema3Path,
+      `${JSON.stringify(malformedPreEffect)}\n`,
+      'utf8',
+    );
+    let malformedHosts = 0;
+    const malformed = await headlessHarness(
+      ['run', '--session', fourthId, 'must not run'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          malformedHosts += 1;
+          throw new Error('must not construct host for malformed schema 3');
+        },
+      },
+    );
+    expect(malformed.result.code).toBe(1);
+    expect(malformed.stdout).toBe('');
+    expect(malformed.inputs).toEqual([]);
+    expect(malformedHosts).toBe(0);
+    expect(malformed.stderr).toContain(
+      'runtime schema 2 cannot migrate to schema 4',
+    );
+    expect(malformed.stderr).not.toContain(
+      'predates the artifact-schema-3 effect-authority cutover',
+    );
   });
 
   it.each([
@@ -2736,8 +2760,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       id: 'code',
       command: 'code',
       intent: 'finish unsuccessfully on the first turn',
-      artifactSchema: 2 as const,
-      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+      artifactSchema: 3 as const,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
       requiredRoleIds: ['coder'],
       concurrentRoleSets: [] as const,
       validateOptions: (value: unknown) => value,
@@ -3059,25 +3083,9 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         };
       },
     });
-    const observeSchema2Entry = (entry: any) => ({
-      ...entry,
-      createRuntime(options: unknown) {
-        const runtime = entry.createRuntime(options);
-        return {
-          ...runtime,
-          async restore(session: unknown, snapshot: any) {
-            restoredFrameLedgers.push({
-              playbookId: entry.id,
-              ledger: snapshot.effectLedger,
-            });
-            return runtime.restore(session, snapshot);
-          },
-        };
-      },
-    });
     const entries = {
       code: promoteEntry(baseEntries.code),
-      review: observeSchema2Entry(baseEntries.review),
+      review: promoteEntry(baseEntries.review),
     };
     const loadModule = async (specifier: string) => ({
       default: specifier === 'mod://code' ? entries.code : entries.review,
@@ -3188,7 +3196,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     ]);
     expect(restoredFrameLedgers).toEqual([
       { playbookId: 'code', ledger: beforeRetry.effectLedger },
-      { playbookId: 'review', ledger: emptyPlaybookEffectLedger() },
+      { playbookId: 'review', ledger: beforeRetry.effectLedger },
     ]);
     expect(retried.result.snapshot.captain.runtime.effectLedger).toEqual(
       emptyPlaybookEffectLedger(),
@@ -3199,9 +3207,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     for (const frame of retried.result.snapshot.frames ?? []) {
       expect(frame.runtime.effectLedger).toEqual(
-        frame.playbookId === 'code'
-          ? retried.result.record.effectLedger
-          : emptyPlaybookEffectLedger(),
+        retried.result.record.effectLedger,
       );
     }
   });
@@ -4309,8 +4315,8 @@ const active = {
 };
 export default {
   id: 'fixture', command: 'fixture', intent: 'filesystem fixture',
-  artifactSchema: 2,
-  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+  artifactSchema: 3,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
   requiredRoleIds: [], validateOptions(value) { return value; },
   concurrentRoleSets: [],
   createRuntime() {

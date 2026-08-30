@@ -561,8 +561,7 @@ function deferredValue() {
 function hasCompleteUnchangedReceipt(boundary) {
     return boundary.physicalReceipt?.classification === 'unchanged';
 }
-// A schema-3 corrective call is bound to the exact physical boundary it would
-// repeat.
+// A corrective call is bound to the exact physical boundary it would repeat.
 // A failed-state restart replays the whole entry event. Cooperative host
 // attempts are serialized in ledger order, so the latest durable boundary
 // identifies the causal host attempt even when a nested or sibling runtime
@@ -570,16 +569,7 @@ function hasCompleteUnchangedReceipt(boundary) {
 // receipt.
 // The durable ledger remains the authority in both cases; no process-local
 // player result or presentation text can make a replay safe.
-function createAutomaticReplayPolicy(artifactSchema, evidence) {
-    if (artifactSchema === 2) {
-        return Object.freeze({
-            allowsEmptyOkCorrection: () => true,
-            allowsFailureStateRetry: () => true,
-        });
-    }
-    if (evidence === undefined) {
-        throw new TypeError('DECIDE schema-3 automatic replay requires durable effect-ledger evidence');
-    }
+function createAutomaticReplayPolicy(evidence) {
     const readLedger = () => assertPlaybookEffectLedger(evidence.effectLedger.snapshot(), 'DECIDE automatic-replay effect ledger');
     return Object.freeze({
         allowsEmptyOkCorrection(runtimeSessionId, callId) {
@@ -718,12 +708,11 @@ function telemetryPayload(previousState, state, event, context, hiddenQuestionId
     return payload;
 }
 function createDecidePlaybookRuntime(options, deferredEffects) {
-    const artifactSchema = 3;
-    const automaticReplayPolicy = createAutomaticReplayPolicy(artifactSchema, deferredEffects);
+    const automaticReplayPolicy = createAutomaticReplayPolicy(deferredEffects);
     const fsmInput = snapshotDecideRuntimeOptions(options);
     const readEffectLedger = () => assertPlaybookEffectLedger(deferredEffects.effectLedger.snapshot(), 'DECIDE current host effect ledger');
     let effectLedgerMirror = readEffectLedger();
-    const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(artifactSchema, (source, acceptedOutcome) => Object.prototype.hasOwnProperty.call(ACCEPTED_OUTCOME_DECLARATIONS, source) &&
+    const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer((source, acceptedOutcome) => Object.prototype.hasOwnProperty.call(ACCEPTED_OUTCOME_DECLARATIONS, source) &&
         ACCEPTED_OUTCOME_DECLARATIONS[source]?.has(acceptedOutcome) === true);
     let ports;
     let sessionIdentity;

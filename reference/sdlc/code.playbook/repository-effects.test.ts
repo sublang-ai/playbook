@@ -1146,16 +1146,15 @@ describe('canonical-worktree cooperative claims (PBCLI-58)', () => {
 });
 
 describe('schema-3 repository host capabilities', () => {
-  it('leaves schema-2-only catalogs independent of Git, leases, and ledgers', async () => {
-    const capabilities = await createRepositoryEffectCapabilities({
-      cwd: '/not/a/repository',
-      catalog: {
-        code: { id: 'code', artifactSchema: 2 },
-      },
-    });
-
-    expect(capabilities).toEqual({});
-    expect(Object.isFrozen(capabilities)).toBe(true);
+  it('rejects a legacy artifact before Git, lease, or ledger work', async () => {
+    await expect(
+      createRepositoryEffectCapabilities({
+        cwd: '/not/a/repository',
+        catalog: {
+          code: { id: 'code', artifactSchema: 2 },
+        },
+      }),
+    ).rejects.toThrow('must declare artifact schema 3');
   });
 
   it('refreshes the shared capability mirror from its durable service', async () => {

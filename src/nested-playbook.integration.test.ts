@@ -25,6 +25,7 @@ import type {
 import {
   assertJsonSafe,
   createNestedPlaybookBridge,
+  emptyPlaybookEffectLedger,
   normalizeError,
   normalizePlaybookSnapshot,
   waitForPlaybookQuiescence,
@@ -32,6 +33,7 @@ import {
 } from './xstate-runtime.js';
 import {
   createPlaybookCaptainShell,
+  type PlaybookHostConstructionCapabilities,
   type PlaybookCaptainRegistryEntry,
 } from '../reference/sdlc/code.playbook/playbook-captain.ts';
 
@@ -463,13 +465,52 @@ function registryEntry(
     id,
     command,
     intent: `${id} integration playbook`,
-    artifactSchema: 2,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+    artifactSchema: 3,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
     requiredRoleIds,
     concurrentRoleSets: [],
     validateOptions: (options) => options,
-    createRuntime,
+    createRuntime: () => createRuntime(),
   };
+}
+
+function hostCapabilities(
+  entry: PlaybookCaptainRegistryEntry,
+): PlaybookHostConstructionCapabilities {
+  const identity = Object.freeze({
+    worktree: '/fixture',
+    gitDir: '/fixture/.git',
+  });
+  const ledger = emptyPlaybookEffectLedger();
+  const unavailable = async (): Promise<never> => {
+    throw new Error('repository work is outside this fixture');
+  };
+  return Object.freeze({
+    authority: Object.freeze({
+      playbookId: entry.id,
+      artifactSchema: 3 as const,
+      cwd: identity.worktree,
+      sessionId: '30000000-0000-4000-8000-000000000001',
+      leaseOwnerToken: '30000000-0000-4000-8000-000000000002',
+      canonicalWorktree: identity,
+      requiredRoleIds: Object.freeze([...entry.requiredRoleIds]),
+      concurrentRoleSets: Object.freeze(
+        entry.concurrentRoleSets.map((roles) => Object.freeze([...roles])),
+      ),
+    }),
+    repository: Object.freeze({
+      identity,
+      observe: unavailable,
+      acquire: unavailable,
+      runExclusive: unavailable,
+      runCohort: unavailable,
+      runDeferred: unavailable,
+    }),
+    effectLedger: Object.freeze({
+      snapshot: () => ledger,
+      writeAhead: async () => ledger,
+    }),
+  });
 }
 
 interface Harness {
@@ -537,6 +578,9 @@ function createHarness(
     },
     {
       loadModule: async (specifier) => modules[specifier],
+      hostCapabilities: Object.fromEntries(
+        entries.map((entry) => [entry.id, hostCapabilities(entry)]),
+      ),
       createSessionId: () => {
         if (!captainIdIssued) {
           captainIdIssued = true;

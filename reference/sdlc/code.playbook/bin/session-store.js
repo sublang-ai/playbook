@@ -41,9 +41,12 @@ export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 5;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
 const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 // The interrupted retention change emitted this required-member shape before
-// canonical writes returned to additive schema 3. Both pre-effect shapes can
-// migrate only when every stored artifact is still schema 2.
+// canonical writes returned to additive schema 3. Both pre-effect shapes are
+// projected in memory only far enough to validate malformed data before the
+// artifact-schema-3 cutover classifies them as nonresumable.
 const COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION = 4;
+const CURRENT_ARTIFACT_SCHEMAS = new Set([3]);
+const PRE_EFFECT_ARTIFACT_SCHEMAS = new Set([2, 3]);
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION = 1;
@@ -1739,8 +1742,24 @@ export function validateCaptainSessionExecutionProjection(
   value,
   path = 'Captain session execution projection',
 ) {
+  return validateCaptainSessionExecutionProjectionWithSchemas(
+    value,
+    path,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function validateCaptainSessionExecutionProjectionWithSchemas(
+  value,
+  path,
+  artifactSchemas,
+) {
   const projection = requireRecord(snapshotJsonValue(value, path), path);
-  validateCaptainSessionProjection(projection, { path, structural: false });
+  validateCaptainSessionProjection(projection, {
+    path,
+    structural: false,
+    artifactSchemas,
+  });
   return projection;
 }
 
@@ -1748,13 +1767,40 @@ export function validateCaptainSessionStructuralProjection(
   value,
   path = 'Captain session structural projection',
 ) {
+  return validateCaptainSessionStructuralProjectionWithSchemas(
+    value,
+    path,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function validateCaptainSessionStructuralProjectionWithSchemas(
+  value,
+  path,
+  artifactSchemas,
+) {
   const projection = requireRecord(snapshotJsonValue(value, path), path);
-  validateCaptainSessionProjection(projection, { path, structural: true });
+  validateCaptainSessionProjection(projection, {
+    path,
+    structural: true,
+    artifactSchemas,
+  });
   return projection;
 }
 
 export function projectCaptainSessionStructure(value) {
-  const execution = validateCaptainSessionExecutionProjection(value);
+  return projectCaptainSessionStructureWithSchemas(
+    value,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function projectCaptainSessionStructureWithSchemas(value, artifactSchemas) {
+  const execution = validateCaptainSessionExecutionProjectionWithSchemas(
+    value,
+    'Captain session execution projection',
+    artifactSchemas,
+  );
   const fixedAgent = (agent) => ({
     adapter: agent.adapter,
     ...(agent.instruction === undefined
@@ -1764,49 +1810,72 @@ export function projectCaptainSessionStructure(value) {
       ? {}
       : { permissions: agent.permissions }),
   });
-  return validateCaptainSessionStructuralProjection({
-    schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
-    captain: fixedAgent(execution.captain),
-    players: execution.players.map(({ id, ...agent }) => ({
-      id,
-      ...fixedAgent(agent),
-    })),
-    catalog: Object.fromEntries(
-      Object.entries(execution.catalog).map(([id, item]) => [
+  return validateCaptainSessionStructuralProjectionWithSchemas(
+    {
+      schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
+      captain: fixedAgent(execution.captain),
+      players: execution.players.map(({ id, ...agent }) => ({
         id,
-        {
-          id: item.id,
-          from: item.from,
-          manifestCommand: item.manifestCommand,
-          command: item.command,
-          intent: item.intent,
-          artifactSchema: item.artifactSchema,
-          requiredRoleIds: item.requiredRoleIds,
-          concurrentRoleSets: item.concurrentRoleSets,
-          roles: Object.fromEntries(
-            Object.entries(item.roles).map(([roleId, binding]) => [
-              roleId,
-              { playerId: binding.playerId },
-            ]),
-          ),
-          options: item.options,
-        },
-      ]),
-    ),
-  });
+        ...fixedAgent(agent),
+      })),
+      catalog: Object.fromEntries(
+        Object.entries(execution.catalog).map(([id, item]) => [
+          id,
+          {
+            id: item.id,
+            from: item.from,
+            manifestCommand: item.manifestCommand,
+            command: item.command,
+            intent: item.intent,
+            artifactSchema: item.artifactSchema,
+            requiredRoleIds: item.requiredRoleIds,
+            concurrentRoleSets: item.concurrentRoleSets,
+            roles: Object.fromEntries(
+              Object.entries(item.roles).map(([roleId, binding]) => [
+                roleId,
+                { playerId: binding.playerId },
+              ]),
+            ),
+            options: item.options,
+          },
+        ]),
+      ),
+    },
+    'Captain session structural projection',
+    artifactSchemas,
+  );
 }
 
 export function assertCaptainSessionExecutionCompatible(
   structuralProjection,
   executionProjection,
 ) {
-  const structural = validateCaptainSessionStructuralProjection(
+  return assertCaptainSessionExecutionCompatibleWithSchemas(
     structuralProjection,
-  );
-  const execution = validateCaptainSessionExecutionProjection(
     executionProjection,
+    CURRENT_ARTIFACT_SCHEMAS,
   );
-  const projected = projectCaptainSessionStructure(execution);
+}
+
+function assertCaptainSessionExecutionCompatibleWithSchemas(
+  structuralProjection,
+  executionProjection,
+  artifactSchemas,
+) {
+  const structural = validateCaptainSessionStructuralProjectionWithSchemas(
+    structuralProjection,
+    'Captain session structural projection',
+    artifactSchemas,
+  );
+  const execution = validateCaptainSessionExecutionProjectionWithSchemas(
+    executionProjection,
+    'Captain session execution projection',
+    artifactSchemas,
+  );
+  const projected = projectCaptainSessionStructureWithSchemas(
+    execution,
+    artifactSchemas,
+  );
   if (!isDeepStrictEqual(projected, structural)) {
     throw new Error(
       'Captain session execution projection does not reproduce the stored structural projection',
@@ -1842,8 +1911,13 @@ export function validateCaptainSessionRecord(value) {
     record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION ||
     record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
   ) {
-    return validateCanonicalCaptainSessionRecord(
-      migratePreEffectCaptainSessionRecord(record),
+    validateCanonicalCaptainSessionRecord(
+      projectPreEffectCaptainSessionRecordForValidation(record),
+      PRE_EFFECT_ARTIFACT_SCHEMAS,
+    );
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      `Captain session record schema ${record.schemaVersion} predates the artifact-schema-3 effect-authority cutover and is not resumable`,
     );
   }
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
@@ -1855,7 +1929,10 @@ export function validateCaptainSessionRecord(value) {
   return validateCanonicalCaptainSessionRecord(record);
 }
 
-function validateCanonicalCaptainSessionRecord(record) {
+function validateCanonicalCaptainSessionRecord(
+  record,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
   record = requireRecord(
     snapshotJsonValue(record, 'Captain session record'),
     'Captain session record',
@@ -1896,17 +1973,19 @@ function validateCanonicalCaptainSessionRecord(record) {
   if (resolve(record.cwd) !== record.cwd) {
     throw new Error('Captain session record cwd must be normalized');
   }
-  const structural = validateCaptainSessionStructuralProjection(
+  const structural = validateCaptainSessionStructuralProjectionWithSchemas(
     record.structuralProjection,
     'Captain session record structuralProjection',
+    artifactSchemas,
   );
-  const lastApplied = assertCaptainSessionExecutionCompatible(
+  const lastApplied = assertCaptainSessionExecutionCompatibleWithSchemas(
     structural,
     record.lastAppliedExecutionProjection,
+    artifactSchemas,
   );
   void lastApplied;
   const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
-  assertSnapshotMatchesStructure(snapshot, structural);
+  assertSnapshotMatchesStructure(snapshot, structural, artifactSchemas);
   const effectLedger = assertPlaybookEffectLedger(
     record.effectLedger,
     'Captain session record effectLedger',
@@ -1937,6 +2016,7 @@ function validateCanonicalCaptainSessionRecord(record) {
       record.retainedGenerations,
       structural,
       effectLedger,
+      artifactSchemas,
     );
   }
   if (
@@ -2029,9 +2109,10 @@ function validateCanonicalCaptainSessionRecord(record) {
         'Captain session uncertain markedAt must equal updatedAt',
       );
     }
-    const attempted = assertCaptainSessionExecutionCompatible(
+    const attempted = assertCaptainSessionExecutionCompatibleWithSchemas(
       structural,
       uncertain.attemptedExecutionProjection,
+      artifactSchemas,
     );
     if (uncertain.baseUpdatedAt === null) {
       if (!isDeepStrictEqual(lastApplied, attempted)) {
@@ -2155,7 +2236,7 @@ function validateCanonicalCaptainSessionRecord(record) {
   return record;
 }
 
-function migratePreEffectCaptainSessionRecord(record) {
+function projectPreEffectCaptainSessionRecordForValidation(record) {
   if (record.state !== 'settled' && record.state !== 'uncertain') {
     throw new Error('Captain session record state is not supported');
   }
@@ -2173,13 +2254,11 @@ function migratePreEffectCaptainSessionRecord(record) {
       : [],
     'Captain session record',
   );
-  const structural = validateCaptainSessionStructuralProjection(
+  validateCaptainSessionStructuralProjectionWithSchemas(
     record.structuralProjection,
     'Captain session record structuralProjection',
+    PRE_EFFECT_ARTIFACT_SCHEMAS,
   );
-  const schema3Id = Object.values(structural.catalog).find(
-    (entry) => entry.artifactSchema === 3,
-  )?.id;
   const effectLedger = emptyPlaybookEffectLedger();
   const migrated = {
     ...record,
@@ -2195,13 +2274,6 @@ function migratePreEffectCaptainSessionRecord(record) {
         }
       : {}),
   };
-  if (schema3Id !== undefined) {
-    validateCanonicalCaptainSessionRecord(migrated);
-    throw new CaptainSessionRecordNonresumableError(
-      record.schemaVersion,
-      `Captain session record schema ${record.schemaVersion} predates effect-ledger persistence and cannot migrate schema-3 playbook ${JSON.stringify(schema3Id)}`,
-    );
-  }
   return migrated;
 }
 
@@ -3186,7 +3258,7 @@ function assertTurnZeroSnapshot(snapshot, path) {
 
 function validateCaptainSessionProjection(
   projection,
-  { path, structural },
+  { path, structural, artifactSchemas },
 ) {
   rejectUnknownOrMissingKeys(
     projection,
@@ -3277,8 +3349,11 @@ function validateCaptainSessionProjection(
     if (typeof item.intent !== 'string') {
       throw new Error(`${itemPath}.intent must be a string`);
     }
-    if (item.artifactSchema !== 2 && item.artifactSchema !== 3) {
-      throw new Error(`${itemPath}.artifactSchema must be 2 or 3`);
+    if (!artifactSchemas.has(item.artifactSchema)) {
+      const expected = artifactSchemas === CURRENT_ARTIFACT_SCHEMAS
+        ? '3'
+        : '2 or 3';
+      throw new Error(`${itemPath}.artifactSchema must be ${expected}`);
     }
     if (
       item.options !== null &&
@@ -3504,7 +3579,11 @@ function referencedPlayerIds(catalog) {
   return ids;
 }
 
-function assertSnapshotMatchesStructure(snapshot, structural) {
+function assertSnapshotMatchesStructure(
+  snapshot,
+  structural,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
   if (!isDeepStrictEqual(snapshot.captain.agent, structural.captain)) {
     throw new Error(
       'Captain session snapshot Captain envelope differs from structuralProjection',
@@ -3552,9 +3631,10 @@ function assertSnapshotMatchesStructure(snapshot, structural) {
       );
     }
     const expectedLedger =
-      item.artifactSchema === 3
-        ? snapshot.effectLedger
-        : emptyPlaybookEffectLedger();
+      artifactSchemas === PRE_EFFECT_ARTIFACT_SCHEMAS &&
+      item.artifactSchema === 2
+        ? emptyPlaybookEffectLedger()
+        : snapshot.effectLedger;
     if (!isDeepStrictEqual(frame.runtime.effectLedger, expectedLedger)) {
       throw new Error(
         `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger differs from its structural schema authority`,
@@ -3756,7 +3836,12 @@ function settledRecordWithRetainedGenerations(
   });
 }
 
-function validateRetainedGenerations(value, structural, authoritativeLedger) {
+function validateRetainedGenerations(
+  value,
+  structural,
+  authoritativeLedger,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
   const retained = requireRecord(
     value,
     'Captain session record retainedGenerations',
@@ -3839,6 +3924,7 @@ function validateRetainedGenerations(value, structural, authoritativeLedger) {
         authoritativeLedger,
         sessionIds,
         `${path}.frames[${index}]`,
+        artifactSchemas,
       ),
     );
     const schema3Frames = frames.filter(
@@ -3890,6 +3976,7 @@ function validateRetainedGenerationFrame(
   authoritativeLedger,
   sessionIds,
   path,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
 ) {
   const frame = requireRecord(value, path);
   exactOptionalKeys(
@@ -3957,6 +4044,7 @@ function validateRetainedGenerationFrame(
   }
   const runtimeReconciliation = runtime.retainedEffectReconciliation;
   if (
+    artifactSchemas === PRE_EFFECT_ARTIFACT_SCHEMAS &&
     catalogItem.artifactSchema === 2 &&
     (!isDeepStrictEqual(runtime.effectLedger, emptyPlaybookEffectLedger()) ||
       runtimeReconciliation !== undefined ||
@@ -3966,7 +4054,6 @@ function validateRetainedGenerationFrame(
       `${path}.runtime schema-2 effect state must be empty`,
     );
   } else if (
-    catalogItem.artifactSchema === 3 &&
     runtimeReconciliation === undefined &&
     !isDeepStrictEqual(runtime.effectLedger, generationLedger)
   ) {
@@ -3974,7 +4061,6 @@ function validateRetainedGenerationFrame(
       `${path}.runtime effect ledger differs from its retained-generation checkpoint`,
     );
   } else if (
-    catalogItem.artifactSchema === 3 &&
     runtimeReconciliation !== undefined &&
     (!isDeepStrictEqual(runtimeReconciliation.checkpoint, generationLedger) ||
       isDeepStrictEqual(runtime.effectLedger, generationLedger) ||

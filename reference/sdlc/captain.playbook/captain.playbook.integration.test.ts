@@ -1261,6 +1261,7 @@ class ScriptedRuntime {
   session?: PlaybookSession;
   disposeCount = 0;
   stateId = 'ready';
+  private traceSequence = 0;
 
   constructor(private readonly script: ShellRuntimeScript) {
     if (script.control) {
@@ -1319,6 +1320,43 @@ class ScriptedRuntime {
     await this.script.onInit?.();
   }
 
+  async emitAcceptedOutcome(acceptedOutcome: string): Promise<void> {
+    const session = this.session;
+    const ports = this.ports;
+    if (session === undefined || ports === undefined) {
+      throw new Error('scripted runtime must be initialized before tracing');
+    }
+    await ports.emitTelemetry({
+      topic: 'playbook.trace',
+      payload: {
+        schemaVersion: 4,
+        sessionId: session.sessionId,
+        playbookId: session.playbookId,
+        rootSessionId: session.rootSessionId,
+        ...(session.parentSessionId === undefined
+          ? {}
+          : { parentSessionId: session.parentSessionId }),
+        ...(session.parentCallId === undefined
+          ? {}
+          : { parentCallId: session.parentCallId }),
+        depth: session.depth,
+        sequence: ++this.traceSequence,
+        timestamp: Date.now(),
+        type: 'outcome.accepted',
+        turnId: 1,
+        payload: {
+          source: 'working',
+          target: 'ready',
+          acceptedOutcome,
+        },
+      },
+    });
+  }
+
+  unresolvedEffectEnvelopes(): readonly [] {
+    return [];
+  }
+
   async handleBossInput(turn: {
     text: string;
     signal: AbortSignal;
@@ -1356,8 +1394,8 @@ function shellEntry(
       id,
       command,
       intent: `${id} playbook`,
-      artifactSchema: 2,
-      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
       requiredRoleIds: ['worker'],
       concurrentRoleSets: [],
       ...(summaryPolicy === undefined ? {} : { summaryPolicy }),
@@ -3975,6 +4013,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
         { resume },
       );
       store.update(role, result.resumeToken);
+      await runtime.emitAcceptedOutcome('completed');
     };
     const review = shellEntry('review', 'review', {
       onInput: async (_text, runtime) => {
@@ -4481,6 +4520,11 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       'test://code': { default: code.entry },
     };
     let sessionSequence = 0;
+    const effectHost = shellEffectHost(
+      [code],
+      [],
+      '40000000-0000-4000-8000-000000000002',
+    );
     const shell = createPlaybookCaptainShell(
       {
         playbooks: {
@@ -4514,6 +4558,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       },
       {
         loadModule: async (specifier: string) => modules[specifier],
+        hostCapabilities: effectHost.capabilityById,
         createSessionId: () =>
           `40000000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
         // A stub session Captain that submits twice in one Boss turn — the
@@ -6391,6 +6436,7 @@ describe('amended CAPTAIN-21 summary gating', () => {
               'worker',
               result.resumeToken,
             );
+            await runtime.emitAcceptedOutcome('completed');
           }
           return { outcome: 'quiescent', state: runtime.state() };
         },
@@ -6626,6 +6672,7 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
               'worker',
               result.resumeToken,
             );
+            await runtime.emitAcceptedOutcome('completed');
           }
           return { outcome: 'quiescent', state: runtime.state() };
         },

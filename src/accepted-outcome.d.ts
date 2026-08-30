@@ -14,5 +14,5 @@ export interface AcceptedOutcomeConsumer {
     confirm(previousState: PlaybookState | undefined, state: PlaybookState): readonly AcceptedOutcomeReceipt[];
     reset(): void;
 }
-export declare function createAcceptedOutcomeConsumer(artifactSchema: 2 | 3, isDeclared: (source: string, acceptedOutcome: string) => boolean): AcceptedOutcomeConsumer;
+export declare function createAcceptedOutcomeConsumer(isDeclared: (source: string, acceptedOutcome: string) => boolean): AcceptedOutcomeConsumer;
 export {};

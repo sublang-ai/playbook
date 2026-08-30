@@ -33,13 +33,12 @@ function exactMarkerParams(value) {
         acceptedOutcome: stringValue('acceptedOutcome'),
     });
 }
-export function createAcceptedOutcomeConsumer(artifactSchema, isDeclared) {
+export function createAcceptedOutcomeConsumer(isDeclared) {
     let pending = [];
     let invalidBatch = false;
     return Object.freeze({
         capture(action) {
-            if (artifactSchema !== 3 ||
-                action.type !== ACCEPTED_OUTCOME_ACTION_TYPE) {
+            if (action.type !== ACCEPTED_OUTCOME_ACTION_TYPE) {
                 return;
             }
             if (invalidBatch)

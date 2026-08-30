@@ -75,8 +75,8 @@ const fakeEntry = {
   id: 'code',
   command: 'code',
   intent: 'software development / SDLC coding workflow',
-  artifactSchema: 2 as const,
-  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+  artifactSchema: 3 as const,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [] as const,
   validateOptions: () => ({}),
@@ -2032,8 +2032,9 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
     const execution = executionConfigFromPlan(baseline);
     const structuralProjection = projectCaptainSessionStructure(execution);
+    const effectLedger = emptyEffectLedger();
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 3,
+      schemaVersion: 5,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,
@@ -2043,6 +2044,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       structuralProjection,
       lastAppliedExecutionProjection: execution,
       snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger,
+      unresolvedEffects: [],
       retainedGenerations: {},
     });
     const uncertain = validateCaptainSessionRecord({
@@ -2154,8 +2157,9 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
     const execution = executionConfigFromPlan(baseline);
     const structuralProjection = projectCaptainSessionStructure(execution);
+    const effectLedger = emptyEffectLedger();
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 3,
+      schemaVersion: 5,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,
@@ -2165,6 +2169,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       structuralProjection,
       lastAppliedExecutionProjection: execution,
       snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger,
+      unresolvedEffects: [],
       retainedGenerations: {},
     });
     const unresolvedEffects = [
@@ -2353,11 +2359,11 @@ function selectedTurnZeroSnapshot(execution: any) {
     stateId: 'routing',
   };
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     captain: {
       sessionId: '80000000-0000-4000-8000-000000000058',
       runtime: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: 'captain',
         machine: { value: parked.value, status: parked.status },
         roleResumeTokens: {},
@@ -2371,6 +2377,7 @@ function selectedTurnZeroSnapshot(execution: any) {
         },
         state: parked,
         pendingBossQuestions: [],
+        effectLedger: emptyEffectLedger(),
       },
       agent: structural.captain,
       conversation: { kind: 'unopened' },
@@ -2382,6 +2389,16 @@ function selectedTurnZeroSnapshot(execution: any) {
     sequences: { turn: 0, journal: 0 },
     journal: [],
     mode: 'chat',
+    effectLedger: emptyEffectLedger(),
+  };
+}
+
+function emptyEffectLedger() {
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    boundaries: [],
+    logicalOperations: [],
   };
 }
 

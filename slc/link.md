@@ -351,13 +351,16 @@ type PlaybookRuntimeFactory<Options = unknown> = (
 ) => PlaybookRuntime;
 
 export default function createPlaybookRuntime(
-  options: PlaybookRuntimeOptions,
+  construction: XStatePlaybookRuntimeConstruction<
+    PlaybookRuntimeOptions,
+    HostCapabilities
+  >,
 ): PlaybookRuntime;
 ```
 
-The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`, the generic factory type the shared contract module exposes (§Output).
+For a Captain-hosted linked workflow, the default export conforms to `PlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>>`, where `HostCapabilities` is the artifact's exact live schema-3 capability type and `PlaybookRuntimeFactory` is the generic factory type the shared contract module exposes (§Output).
+The roleless session-Captain is the sole signature exception: its public options-only `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` wrapper supplies its fixed empty-ledger, fail-closed schema-3 capabilities internally because no Captain host exists above it.
 
-Artifact schema `2` shall omit `outcomeAuthority` and shall retain the existing one-argument `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` contract.
 Artifact schema `3` shall require `outcomeAuthority` as an own plain-JSON data property and shall instantiate the shared factory with exactly `{ configuredOptions, hostCapabilities }`, where `configuredOptions` is the registry-validated plain-JSON workflow slice and `hostCapabilities` is a non-null live current-host object.
 For schema `3`, the `Options` argument of the one-argument shared `PlaybookRuntimeFactory<Options>` shall be `XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>`; the registry's public entry receives the two members separately and composes that one internal argument only at the artifact boundary.
 For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations, whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion; and the ledger exposes its synchronous detached `snapshot(): PlaybookEffectLedger` mirror plus `writeAhead(commands: PlaybookEffectLedgerCommandBatch): Promise<PlaybookEffectLedger>` against the current host's atomic writer.
@@ -421,7 +424,7 @@ Each state shall name exactly the outcomes in that state's `invoke.input.result`
 The outcome key owns the semantic discriminator, so `guard` shall not appear in `fields`; the `fields` keys shall equal every additional payload field named by that outcome's result description.
 Each field shall have exactly one authority from `presentation`, `semantic`, `effect`, or `runtime`; every linker-declared verbatim payload field and `question` shall be `presentation`, `latestCommit` shall be `effect`, and the payload fields `irNumber` and `irTask` shall be `semantic`, while outcome keys such as `moreTasks` and `finalTask` remain semantic discriminators.
 Each repository disposition shall be exactly `unchanged`, `one-descendant-commit`, or `deferred`; an effect-owned field is valid only on `one-descendant-commit`, and `deferred` is valid only on `needsBossReply` with presentation-owned `question` and another outcome in that state declaring `one-descendant-commit`.
-The shared factory shall reject schema-2 authority metadata and reject schema-3 missing, extra, unknown, wrongly owned, or inconsistent metadata before the affected player call.
+The shared factory shall reject every legacy artifact schema and reject schema-3 missing, extra, unknown, wrongly owned, or inconsistent metadata before the affected player call.
 
 `init` receives the host-owned playbook session identity and ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
 The runtime owns the actor for its lifetime; `handleBossInput` runs one turn, and `dispose` stops the actor and drains pending port emissions.
@@ -444,8 +447,7 @@ Only the terminal variant may carry `stateDescription`; the runtime shall omit i
 Control-plane exceptions reject the runtime method rather than masquerade as a
 recoverable workflow `failed` result.
 
-For schema `2`, `PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ workflow knobs, strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
-For schema `3`, configured options shall instead be plain JSON and live host seams shall enter only through `hostCapabilities` in the disjoint construction input above.
+Configured options shall be plain JSON and live host seams shall enter only through `hostCapabilities` in the disjoint schema-3 construction input above.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
 The CLI's absence of `--link-option` values does not mean that
 `PlaybookRuntimeOptions` is empty. CLI link options are compile-time inputs;
@@ -1050,7 +1052,7 @@ clause (or equivalent typed output metadata). Backticked prose before that
 clause can name statuses, guards, or concepts such as `ok`, `aborted`, and
 `error`; those names are not output properties and shall never become required
 judge fields.
-For an artifact-schema-2 or nongoverned delegated-player field annotated exactly `` `<field>: <verbatim final text>` ``, the judge shall select the guard but the runtime shall replace any judge-supplied value with the player's canonical non-empty final text before returning the actor output.
+For a nongoverned delegated-player field annotated exactly `` `<field>: <verbatim final text>` ``, the judge shall select the guard but the runtime shall replace any judge-supplied value with the player's canonical non-empty final text before returning the actor output.
 For an artifact-schema-3 governed field, that annotation instead declares presentation authority and any judge-supplied value is a structural error under the authority rule below.
 The linker shall derive the complete `verbatimPayloadFields` set from those annotations across the FSM result maps.
 A field name that is annotated in one result map and unannotated in another is a link error because the shared adjudication strategy cannot give one property both ownership policies.
@@ -1064,9 +1066,6 @@ After validating that selection, the runtime shall inject the exact non-empty
 It shall reject a judge reply that supplies either presentation field as an
 undeclared extra key, so hidden adjudication cannot replace, paraphrase, or
 decorate prose Boss already saw.
-Artifact-schema-2 delegated-player adjudication retains extraction of every
-required field from the judge reply, including a player-authored Boss
-question.
 For an artifact-schema-3 governed delegated-player call, the shared engine
 shall instead use one semantic reconciler for both the default linked runtime
 and any bespoke linked runtime that adopts schema `3`.
@@ -1144,7 +1143,7 @@ player or judge call.
 The adjudicator shall use the same document-order tolerant JSON recovery as
 the Boss classifier. Unlike invalid classification, a reply from which no
 object can be recovered, an undeclared guard, or a missing required field is a
-control-plane error for artifact schema `2` and direct-Captain adjudication and
+control-plane error for nongoverned delegated-player and direct-Captain adjudication and
 shall throw after the invocation reaches its FSM error path and ordered
 emissions drain; schema-3 governed adjudication follows the bounded
 reconciliation contract above instead.
@@ -1155,7 +1154,7 @@ Two default adjudication strategies, in selection order:
   names the source item's actor (and delegated player where applicable),
   includes the actor's verbatim output,
   lists the `result` keys with their descriptions, and demands a JSON
-  answer keyed to exactly one of the declared guards: schema `2` uses
+  answer keyed to exactly one of the declared guards: a nongoverned player uses
   `{ guard, …structuralPayloadFields }`, while a governed schema-3 player uses
   `{ guard, …semanticOwnedPayloadFields }` and explicitly forbids every other
   payload field. Both forms exclude the runtime-injected direct-Captain
@@ -1232,7 +1231,7 @@ the `{ visibility: 'visible', resume: false }` workflow-call selection
 (§PlaybookPorts contract, §Captain prompt composition) stay the
 visible-presentation shape for non-controller playbooks.
 
-The artifact-schema-2 player adjudicator and every direct-Captain adjudicator shall fail loudly on:
+The nongoverned player adjudicator and every direct-Captain adjudicator shall fail loudly on:
 
 - A guard the state does not declare,
 - A missing payload field the state's `result` description requires,
@@ -1254,7 +1253,7 @@ failure path specified above. Captain transport, result-shape, trace-sink, and
 adjudication failures remain control-plane errors unless the transport failure
 is causally identical to the active abort signal.
 Because XState still needs the invoked promise to settle, the linked runtime
-shall latch an artifact-schema-2 or direct-Captain adjudicator failure, actor-output JSON-validation, or nested-boundary
+shall latch a nongoverned delegated-player or direct-Captain adjudicator failure, actor-output JSON-validation, or nested-boundary
 control error outside machine context, allow the invocation's `onError` path to
 reach quiescence, drain all emissions, and then reject the public runtime
 method with that original error. It shall not return such a failure as a
@@ -1623,12 +1622,12 @@ The `PlaybookRuntime` shall:
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
 Presence of linker-emitted `roleStates` selects the canonical factory-backed status profile.
 That profile shall emit the selected Boss event type
-before sending that event; for artifact schema `2`, exactly `→ <guard>` (with no payload-count or tally
-rider) when a settling actor output carries a guard; for artifact schema `3`, exactly `→ <acceptedOutcome>` only from a confirmed accepted-outcome marker; and
+before sending that event; exactly `→ <acceptedOutcome>` (with no payload-count or tally
+rider) only from a confirmed accepted-outcome marker; and
 `⤷ <Role>: <label>` only when the entered state appears in the linked module's `roleStates` metadata.
 It shall emit no raw state-id fallback for any other state.
 `roleStates` shall be a complete map of the FSM states
-that invoke the typed `player` actor; each schema-2 or schema-3 value carries the exact
+that invoke the typed `player` actor; each value carries the exact
 local role from that state's source-derived `meta.playbook.role` and the state's exact FSM description as `{ role, label }`.
 The factory shall reject an
 incomplete entry, a non-player state, or a role or label that differs from the FSM metadata.
@@ -1639,7 +1638,6 @@ For artifact schema `3`, an accepted-outcome marker is a root-machine XState act
 The runtime shall observe that action only through the public root `@xstate.action` inspection event, retain it privately until the corresponding next public root `@xstate.snapshot` confirms `source` active in the prior snapshot and `target` active in the new snapshot, then emit one trace-schema-4 `outcome.accepted` event with those exact params before its canonical status and before public settlement; markers confirmed together shall retain their XState execution order.
 A valid unmarked transition, including an unexecuted guarded arm or rejected-guard fallback, shall settle normally with neither accepted-outcome evidence nor claimed-outcome status.
 An executed marker that is malformed, undeclared, or unconfirmed by those adjacent snapshots, or a batch that instruments one governed source more than once regardless of target or outcome, shall clear the entire pending marker batch and fail the current public boundary after retaining the ordinary transitioned state but before settlement, accepted-outcome evidence, or claimed-outcome status.
-Artifact schema `2` shall ignore accepted-outcome markers and retain the settling-output guard path during compatibility staging.
 For the default Captain runtime, an initial `ready` state and a terminal `done`
 state shall not emit human status. The terminal response is already visible
 Captain prose; a synthetic “entered done” message would present it twice.
@@ -1689,9 +1687,9 @@ At a safe capture point it shall return a JSON-safe
   (for example FSM `lastError`) normalized to `{ name, message, stack? }`
   first. The value is opaque to hosts.
 - `effectLedger`: the detached immutable schema-version-1 mirror most recently
-  acknowledged by the current host's atomic ledger channel; a schema-3 runtime
-  carries the complete current-host mirror, while a schema-2 runtime and the
-  internal compiled Captain runtime carry the exact empty ledger.
+  acknowledged by the current host's atomic ledger channel; a linked workflow
+  runtime carries the complete current-host mirror, while the internal compiled
+  Captain runtime carries the exact empty ledger.
 - `roleResumeTokens`: the local-role resume-token projection as a plain object
   (§PlaybookPorts contract).
 - `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
@@ -1727,10 +1725,10 @@ factory with equivalent options; the runtime does not diff options, and
 module identity — that the factory constructing this runtime still
 belongs to the snapshot's playbook — is likewise the host's check to
 make before calling `restore`.
-Before actor or source-state restoration, a schema-3 runtime shall require the
-snapshot ledger to equal the detached synchronous mirror exposed by its
-current-host capability; schema-2 and internal Captain runtimes shall require
-both mirrors to be empty.
+Before actor or source-state restoration, a linked workflow runtime shall require
+the snapshot ledger to equal the detached synchronous mirror exposed by its
+current-host capability; the internal Captain runtime shall require its mirror
+to be empty.
 `restore` shall bind the session and its current detached role bindings, restore the local-role token projection, the
 sequence counters, and the
 prior-state descriptor from the snapshot,
@@ -1785,10 +1783,9 @@ owns the working-directory and complete catalog-entry comparison — registry
 module identity, manifest command, options, and role set — plus every retained
 frame's artifact-schema comparison, and shall perform them before calling the
 runtime capability (DR-038 §3).
-The preflight shall apply the same exact full-mirror rule as restore: a
-schema-3 target receives a current-host mirror equal to the retained ledger,
-while schema-2 and internal Captain targets require the retained ledger to be
-empty.
+The preflight shall apply the same exact full-mirror rule as restore: a linked
+workflow target receives a current-host mirror equal to the retained ledger,
+while the internal Captain target requires the retained ledger to be empty.
 
 Adoption shall not restore any source counter. The fresh target trace, turn,
 judge-call, player-call, supported direct-Captain-call, playbook-call, and
@@ -2248,10 +2245,10 @@ The thin emitted module:
   complete `roleStates` status map derived from every FSM state that invokes
   the typed `player` actor, with each `role` copied from that state's
   source-derived `meta.playbook.role` (an empty map when there is no such
-  state); for artifact schema `3`, the exact `outcomeAuthority` map derived
+  state); the exact schema-3 `outcomeAuthority` map derived
   from every such state's `invoke.input.result` contract and its linked field
   authorities and repository dispositions (an explicit empty governed map
-  when there is no such state), while schema `2` omits that member; the
+  when there is no such state); the
   `verbatimPayloadFields` set derived from annotated result fields above; the
   explicitly empty or populated `unfinishedFinalStateIds` set declared above;
   the `controlContextFields` projection of §Control surface; and any
@@ -2311,9 +2308,7 @@ The thin emitted module:
   runtime-owned arm to have lost payload detail under erasure shall report
   that gap rather than emit the entry.
 - Supplies `spec.compat` with the compatibility values current at link time:
-  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `2` for the
-  legacy local-role thin-module format or `3` for the authority-bearing
-  format defined above, and `runtimeAbi` is the installed shared engine's
+  `{ artifactSchema: 3, runtimeAbi }`, where `runtimeAbi` is the installed shared engine's
   `RUNTIME_ABI` self-report.
   The linker shall verify that the installed engine lists the emitted
   schema in `SUPPORTED_ARTIFACT_SCHEMAS` and treat its absence as a
@@ -2330,19 +2325,17 @@ The thin emitted module:
   factory profile is `{ kind: 'shared-factory', compat }`, where `compat` is
   the immutable compatibility record captured by that actual factory from
   its validated `spec.compat`; a bespoke profile is
-  `{ kind: 'bespoke', artifactSchema }`, with the schema declared directly by
-  that implementation and no `runtimeAbi` claim. A schema-2 registry factory accepts configured options
-  alone; a schema-3 registry factory accepts configured options and current
+  `{ kind: 'bespoke', artifactSchema }`, with schema `3` declared directly by
+  that implementation and no `runtimeAbi` claim. A registry factory accepts configured options and current
   host capabilities separately and composes the linked runtime's exact
   `{ configuredOptions, hostCapabilities }` input. The Captain host shall
   capture the imported manifest fields once, require capabilities for every
-  and only enabled schema-3 id, validate each capability's artifact, role,
+  and only enabled artifact id, validate each capability's artifact, role,
   cohort, and canonical-worktree authority, and reject a missing, extra,
   malformed, or mismatched capability before runtime construction.
-- Default-exports the factory call as `createPlaybookRuntime`, typed
-  `XStatePlaybookRuntimeFactory<PlaybookRuntimeOptions, 2>` for schema `2` or as a
+- Default-exports the factory call as `createPlaybookRuntime`, typed as
   `XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>, 3>`
-  with the artifact's declared live capability type for schema `3`. A registry module loads
+  with the artifact's declared live capability type. A registry module loads
   dynamically inside the host's caught boundary, so its eager module-scope
   factory call fails fast there. The compiled session Captain module is the
   exception: the shell and both CLI front ends import it statically, so it

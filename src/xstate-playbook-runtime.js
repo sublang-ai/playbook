@@ -21,7 +21,7 @@ import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
 import { createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
-import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, emptyPlaybookEffectLedger, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
+import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
 export const BOSS_REPLY_ERRORS = {
     missingQuestion: "needsBossReply outcome missing 'question' field",
     unregisteredState: (stateId) => `state ${stateId} declared needsBossReply but is not registered as resumable`,
@@ -79,11 +79,7 @@ function assertNoConfiguredHostCapabilities(value, label) {
         throw new TypeError(`${label} configured options must not contain hostCapabilities`);
     }
 }
-function configuredOptionsFromFactoryInput(value, artifactSchema, label) {
-    if (artifactSchema === 2) {
-        assertNoConfiguredHostCapabilities(value, label);
-        return { configuredOptions: value };
-    }
+function configuredOptionsFromFactoryInput(value, label) {
     if (value === null ||
         typeof value !== 'object' ||
         Array.isArray(value) ||
@@ -175,7 +171,6 @@ function isEmptyOkRetryFailure(error) {
 export const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS = Object.freeze([
-    2,
     3,
 ]);
 // PBRT-50: validate a declaration against the loaded engine, schema first,
@@ -1091,9 +1086,9 @@ function makeDefaultNormalizeTransitionEvent(transitionEventFields) {
         return snapshotJsonValue(out, 'FSM event');
     };
 }
-function snapshotRoleStateStatuses(value, label, artifactSchema, machine, stateDescriptions) {
+function snapshotRoleStateStatuses(value, label, machine, stateDescriptions) {
     if (value === undefined) {
-        throw new TypeError(`${label} roleStates must be supplied for schema ${artifactSchema}`);
+        throw new TypeError(`${label} roleStates must be supplied for schema 3`);
     }
     const captured = snapshotJsonValue(value, `${label} roleStates`);
     if (!isPlainObject(captured)) {
@@ -1168,14 +1163,8 @@ function requireAuthorityIdentifier(value, path) {
         throw new TypeError(`${path} must be an identifier`);
     }
 }
-function snapshotOutcomeAuthority(descriptor, artifactSchema, label, playerStates, verbatimPayloadFields) {
+function snapshotOutcomeAuthority(descriptor, label, playerStates, verbatimPayloadFields) {
     const path = `${label} outcomeAuthority`;
-    if (artifactSchema === 2) {
-        if (descriptor !== undefined) {
-            throw new TypeError(`${path} is not allowed for schema 2`);
-        }
-        return undefined;
-    }
     if (descriptor === undefined ||
         !Object.prototype.hasOwnProperty.call(descriptor, 'value') ||
         descriptor.enumerable !== true) {
@@ -1319,14 +1308,6 @@ function assertGovernedPlayerInput(authority, input, extractFields, label) {
                 'must exactly match its described output fields');
         }
     }
-}
-function settlingGuard(event) {
-    if (!isPlainObject(event) || !isPlainObject(event.output))
-        return undefined;
-    const guard = event.output.guard;
-    return typeof guard === 'string' && guard.trim().length > 0
-        ? guard
-        : undefined;
 }
 function askerLabel(asker) {
     return asker.kind === 'captain' ? 'Captain' : asker.roleId;
@@ -1751,10 +1732,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
     const artifactSchema = assertRuntimeCompat(spec.compat, label);
     const specDescriptors = Object.getOwnPropertyDescriptors(spec);
     if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
-        throw new TypeError(`${label} schema-2 artifacts must supply roleStates, not playerStates`);
+        throw new TypeError(`${label} artifacts must supply roleStates, not playerStates`);
     }
     if (Object.prototype.hasOwnProperty.call(specDescriptors, 'resolvePlayerId')) {
-        throw new TypeError(`${label} schema-2 artifacts must not derive concrete player bindings`);
+        throw new TypeError(`${label} artifacts must not derive concrete player bindings`);
     }
     if (machineDeclaresParallelState(machine)) {
         throw new Error(`${label} uses a parallel state; the shared runtime supports only single-region FSMs`);
@@ -1781,7 +1762,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         !Object.prototype.hasOwnProperty.call(roleStatesDescriptor, 'value')) {
         throw new TypeError(`${label} roleStates must be an own data property`);
     }
-    const roleStates = snapshotRoleStateStatuses(roleStatesDescriptor?.value, label, artifactSchema, machine, stateDescriptions);
+    const roleStates = snapshotRoleStateStatuses(roleStatesDescriptor?.value, label, machine, stateDescriptions);
     const declaredRoleIds = Object.freeze([
         ...new Set([...roleStates.values()].map(({ role }) => role)),
     ]);
@@ -1812,13 +1793,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
         extractRequiredFields: extractFields,
         verbatimPayloadFields,
     };
-    const outcomeAuthority = snapshotOutcomeAuthority(specDescriptors.outcomeAuthority, artifactSchema, label, roleStates, verbatimPayloadFields);
-    if (outcomeAuthority !== undefined) {
-        for (const [stateId, outcomes] of Object.entries(outcomeAuthority.governedPlayerStates)) {
-            if (Object.values(outcomes).some(({ repositoryDisposition }) => repositoryDisposition === 'deferred') &&
-                !resumableStateIds.has(stateId)) {
-                throw new TypeError(`${label} outcomeAuthority deferred state ${stateId} must be registered in resumableStateIds`);
-            }
+    const outcomeAuthority = snapshotOutcomeAuthority(specDescriptors.outcomeAuthority, label, roleStates, verbatimPayloadFields);
+    for (const [stateId, outcomes] of Object.entries(outcomeAuthority.governedPlayerStates)) {
+        if (Object.values(outcomes).some(({ repositoryDisposition }) => repositoryDisposition === 'deferred') &&
+            !resumableStateIds.has(stateId)) {
+            throw new TypeError(`${label} outcomeAuthority deferred state ${stateId} must be registered in resumableStateIds`);
         }
     }
     // Build the derived classifier unconditionally: it is the sole validator of
@@ -1841,15 +1820,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
             return typeof cwd === 'string' ? cwd : undefined;
         });
     const createPlaybookRuntime = function createPlaybookRuntime(factoryOptions) {
-        const construction = configuredOptionsFromFactoryInput(factoryOptions, artifactSchema, label);
+        const construction = configuredOptionsFromFactoryInput(factoryOptions, label);
         const configuredOptions = construction.configuredOptions;
         const effectLedgerCapability = construction.effectLedger;
-        const hasGovernedPlayerStates = outcomeAuthority !== undefined &&
-            Object.keys(outcomeAuthority.governedPlayerStates).length > 0;
-        const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(artifactSchema, (source, acceptedOutcome) => {
-            const governedPlayerStates = outcomeAuthority?.governedPlayerStates;
-            if (governedPlayerStates === undefined ||
-                !Object.prototype.hasOwnProperty.call(governedPlayerStates, source)) {
+        const hasGovernedPlayerStates = Object.keys(outcomeAuthority.governedPlayerStates).length > 0;
+        const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer((source, acceptedOutcome) => {
+            const governedPlayerStates = outcomeAuthority.governedPlayerStates;
+            if (!Object.prototype.hasOwnProperty.call(governedPlayerStates, source)) {
                 return false;
             }
             const declarations = governedPlayerStates[source];
@@ -1859,9 +1836,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         const repositoryCapability = hasGovernedPlayerStates
             ? repositoryCapabilityFromHostCapabilities(construction.hostCapabilities, label)
             : undefined;
-        const currentEffectLedger = () => effectLedgerCapability === undefined
-            ? emptyPlaybookEffectLedger()
-            : assertPlaybookEffectLedger(effectLedgerCapability.snapshot(), `${label} current host effect ledger`);
+        const currentEffectLedger = () => assertPlaybookEffectLedger(effectLedgerCapability.snapshot(), `${label} current host effect ledger`);
         let effectLedgerMirror = currentEffectLedger();
         let retainedEffectSourceSessionId;
         let retainedEffectReconciliation;
@@ -2269,7 +2244,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 unresolvedSemanticBoundaryIds.size > 0);
         }
         function unresolvedEffectEnvelopeIdentities() {
-            if (artifactSchema !== 3 || session === undefined)
+            if (session === undefined)
                 return [];
             const current = currentEffectLedger();
             effectLedgerMirror = current;
@@ -3474,10 +3449,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
             },
             async callJudge(purpose, stateId, prompt, signal) {
                 return judgeQueue.add(async () => {
-                    const governedSemanticJudge = artifactSchema === 3 &&
-                        purpose === 'player-output-adjudication' &&
+                    const governedSemanticJudge = purpose === 'player-output-adjudication' &&
                         stateId !== undefined &&
-                        outcomeAuthority?.governedPlayerStates[stateId] !== undefined;
+                        outcomeAuthority.governedPlayerStates[stateId] !== undefined;
                     signal.throwIfAborted();
                     // A transition/status queued synchronously by XState must reach
                     // the host before the judge call that follows it.
@@ -4153,16 +4127,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         const payload = structuredStateTelemetryPayload(previousState, state, inspectionEvent.event, context);
                         const stateStatuses = statusesForState(state, context, inspectionEvent.event);
                         const outcomeStatuses = usesDefaultStatuses
-                            ? artifactSchema === 2
-                                ? (() => {
-                                    const guard = settlingGuard(inspectionEvent.event);
-                                    return guard === undefined
-                                        ? []
-                                        : [{ message: `→ ${guard}` }];
-                                })()
-                                : acceptedOutcomes.map(({ acceptedOutcome }) => ({
-                                    message: `→ ${acceptedOutcome}`,
-                                }))
+                            ? acceptedOutcomes.map(({ acceptedOutcome }) => ({
+                                message: `→ ${acceptedOutcome}`,
+                            }))
                             : [];
                         const statuses = [...outcomeStatuses, ...stateStatuses];
                         const publish = () => enqueueTransitionEmission(payload, state, acceptedOutcomes, statuses, tracePositionForActiveTurn(), settlementAborts);
@@ -4593,11 +4560,6 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 (boundSnapshot.retainedEffectReconciliation?.checkpoint ??
                     boundSnapshot.effectLedger).boundaries.some(({ physicalReceipt }) => physicalReceipt === undefined)) {
                 throw new TypeError('retained runtime checkpoint contains an incomplete physical boundary');
-            }
-            if (artifactSchema === 2 &&
-                (boundSnapshot.retainedEffectSourceSessionId !== undefined ||
-                    boundSnapshot.retainedEffectReconciliation !== undefined)) {
-                throw new TypeError('schema-2 runtime snapshots must not carry retained effect lineage');
             }
             const hostEffectLedger = currentEffectLedger();
             if (kind === 'restore' &&

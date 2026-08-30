@@ -616,6 +616,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         validateCaptainResult,
         validatePlayerResult,
         waitForPlaybookQuiescence,
+        emptyPlaybookEffectLedger,
         RUNTIME_ABI,
         SUPPORTED_ARTIFACT_SCHEMAS,
       } from '@sublang/playbook/xstate-runtime';
@@ -662,9 +663,8 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       if (
         !Array.isArray(SUPPORTED_ARTIFACT_SCHEMAS) ||
         !Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS) ||
-        SUPPORTED_ARTIFACT_SCHEMAS.length !== 2 ||
-        SUPPORTED_ARTIFACT_SCHEMAS[0] !== 2 ||
-        SUPPORTED_ARTIFACT_SCHEMAS[1] !== 3
+        SUPPORTED_ARTIFACT_SCHEMAS.length !== 1 ||
+        SUPPORTED_ARTIFACT_SCHEMAS[0] !== 3
       ) {
         throw new Error('unexpected SUPPORTED_ARTIFACT_SCHEMAS');
       }
@@ -683,11 +683,24 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         }),
         {
           label: 'probe',
-          compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+          compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
           snapshotOptions: (value) => value ?? {},
           roleStates: {},
+          outcomeAuthority: { governedPlayerStates: {} },
         },
-      )({});
+      )({
+        configuredOptions: {},
+        hostCapabilities: {
+          repository: {
+            runExclusive() { throw new Error('unused'); },
+            runDeferred() { throw new Error('unused'); },
+          },
+          effectLedger: {
+            snapshot: () => emptyPlaybookEffectLedger(),
+            writeAhead: async () => emptyPlaybookEffectLedger(),
+          },
+        },
+      });
       if (
         typeof probeRuntime.describe !== 'function' ||
         typeof probeRuntime.apply !== 'function'
@@ -713,6 +726,89 @@ describe('canonical Captain compiler bundle (CAPPLAY-11)', () => {
         `canonical Captain bundle missing ${artifact}`,
       ).toBe(true);
     }
+  });
+});
+
+describe('artifact schema cutover (RELEASE-15)', () => {
+  it('keeps every shipped runtime and registry sibling on schema 3', () => {
+    const schemaDeclaration = /artifactSchema:\s*3/;
+    const legacyDeclaration =
+      /artifactSchema:\s*2|SchemaV2|RegistryEntryV2/;
+
+    for (const id of BUNDLED_WORKFLOW_IDS) {
+      const base = `reference/sdlc/${id}.playbook/`;
+      const runtimeSource = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.ts`),
+        'utf8',
+      );
+      const runtimeJavaScript = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.js`),
+        'utf8',
+      );
+      const runtimeDeclaration = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.d.ts`),
+        'utf8',
+      );
+      for (const [kind, contents] of [
+        ['TypeScript', runtimeSource],
+        ['JavaScript', runtimeJavaScript],
+      ] as const) {
+        const currentSchemaContract =
+          id === 'decide'
+            ? /authority\.artifactSchema !== 3/
+            : schemaDeclaration;
+        expect(
+          contents,
+          `${id} ${kind} runtime omits its artifact-schema-3 contract`,
+        ).toMatch(currentSchemaContract);
+        expect(
+          contents,
+          `${id} ${kind} runtime retains artifact schema 2`,
+        ).not.toMatch(legacyDeclaration);
+      }
+      expect(runtimeDeclaration).not.toMatch(legacyDeclaration);
+      if (id === 'code' || id === 'review') {
+        expect(runtimeDeclaration).toMatch(
+          /XStatePlaybookRuntimeFactory<[\s\S]*, 3>;/,
+        );
+      } else {
+        expect(runtimeDeclaration).toContain(
+          'PlaybookRuntimeFactory<DecidePlaybookRuntimeConstruction>',
+        );
+      }
+
+      for (const extension of ['ts', 'js', 'd.ts'] as const) {
+        const registry = readFileSync(
+          join(repoRoot, `${base}${id}.registry.${extension}`),
+          'utf8',
+        );
+        expect(
+          registry,
+          `${id} registry.${extension} omits artifact schema 3`,
+        ).toMatch(schemaDeclaration);
+        expect(registry).not.toMatch(legacyDeclaration);
+      }
+    }
+
+    for (const extension of ['ts', 'js'] as const) {
+      const captain = readFileSync(
+        join(repoRoot, `${CAPTAIN_BASE}captain.playbook.${extension}`),
+        'utf8',
+      );
+      expect(
+        captain,
+        `Captain ${extension} runtime omits artifact schema 3`,
+      ).toMatch(schemaDeclaration);
+      expect(captain).not.toMatch(legacyDeclaration);
+    }
+    const captainDeclaration = readFileSync(
+      join(repoRoot, `${CAPTAIN_BASE}captain.playbook.d.ts`),
+      'utf8',
+    );
+    expect(captainDeclaration).toContain(
+      'createPlaybookRuntime(options: PlaybookRuntimeOptions)',
+    );
+    expect(captainDeclaration).not.toMatch(legacyDeclaration);
   });
 });
 
@@ -1275,7 +1371,6 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStatePlaybookRuntimeConstruction',
       'XStatePlaybookRuntimeFactory',
       'XStatePlaybookRuntimeFactoryOptions',
-      'XStatePlaybookRuntimeSpecV2',
       'XStatePlaybookRuntimeSpecV3',
       'XStatePromptIdentity',
       'XStateRoleStateStatus',
@@ -1403,7 +1498,6 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainDeps',
       'PlaybookCaptainFrameSnapshot',
       'PlaybookCaptainRegistryEntry',
-      'PlaybookCaptainRegistryEntryV2',
       'PlaybookCaptainRegistryEntryV3',
       'PlaybookCaptainRuntimeProfile',
       'PlaybookCaptainRetainedGeneration',
@@ -1739,12 +1833,10 @@ if (snapshot.mode === 'engaged.parked') {
         `import {
   createXStatePlaybookRuntime,
   type XStatePlaybookRuntimeSpec,
-  type XStatePlaybookRuntimeSpecV2,
   type XStatePlaybookRuntimeSpecV3,
   type XStateRepositoryCapability,
 } from '@sublang/playbook/xstate-runtime';
 import type {
-  PlaybookCaptainRegistryEntryV2,
   PlaybookCaptainRegistryEntryV3,
   PlaybookCaptainRuntimeProfile,
   PlaybookHostConstructionCapabilities,
@@ -1773,8 +1865,7 @@ declare const machine: any;
 declare const boundaryStart: PlaybookEffectBoundaryStart;
 declare const effectLedger: PlaybookEffectLedgerCapability;
 declare const repository: XStateRepositoryCapability;
-declare const legacySpec: XStatePlaybookRuntimeSpec<Options>;
-declare const v2Spec: XStatePlaybookRuntimeSpecV2<Options>;
+declare const canonicalSpec: XStatePlaybookRuntimeSpec<Options>;
 declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
 
 // @ts-expect-error a start command cannot carry completion evidence
@@ -1792,14 +1883,11 @@ const invalidExclusiveOperation: ExclusiveOperation = resumeShapedOperation;
 void exclusiveOperation;
 void invalidExclusiveOperation;
 
-const legacyFactory = createXStatePlaybookRuntime<Options>(machine, legacySpec);
-legacyFactory({ mode: 'safe' });
-
-const v2Factory = createXStatePlaybookRuntime<Options>(machine, v2Spec);
-v2Factory({ mode: 'safe' });
-const v2FactorySchema: 2 = v2Factory.compat.artifactSchema;
-// @ts-expect-error schema 2 retains raw configured factory options
-v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+const canonicalFactory = createXStatePlaybookRuntime<Options, Capabilities>(machine, canonicalSpec);
+canonicalFactory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', repository, effectLedger } });
+const canonicalFactorySchema: 3 = canonicalFactory.compat.artifactSchema;
+// @ts-expect-error the schema-3-only factory rejects raw configured options
+canonicalFactory({ mode: 'safe' });
 
 const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
 v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', repository, effectLedger } });
@@ -1818,11 +1906,8 @@ inferredV3Factory({ mode: 'safe' });
 // @ts-expect-error inferred schema 3 still requires an object capability
 inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: 1 });
 
-// @ts-expect-error schema 2 forbids outcome authority metadata
-const wrongV2: XStatePlaybookRuntimeSpecV2<Options> = { ...v2Spec, outcomeAuthority: { governedPlayerStates: {} } };
 // @ts-expect-error schema 3 requires outcome authority metadata
-const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { ...v2Spec, compat: { artifactSchema: 3, runtimeAbi: 1 } };
-void wrongV2;
+const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { snapshotOptions: () => ({ mode: 'safe' }), compat: { artifactSchema: 3, runtimeAbi: 1 } };
 void wrongV3;
 
 declare const configuredOptions: unknown;
@@ -1831,36 +1916,29 @@ declare const codeHostCapabilities: CodePlaybookHostCapabilities;
 declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
 declare const decideHostCapabilities: DecidePlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
-declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
 // @ts-expect-error live construction capabilities are not runtime ports
 ports.hostCapabilities;
-const v2Profile: PlaybookCaptainRuntimeProfile<2> = v2Entry.runtimeProfile;
-const v3Profile: PlaybookCaptainRuntimeProfile<3> = v3Entry.runtimeProfile;
-// @ts-expect-error a schema-2 registry profile cannot claim schema 3
-const wrongProfile: PlaybookCaptainRuntimeProfile<2> = { kind: 'bespoke', artifactSchema: 3 };
-v2Entry.createRuntime(configuredOptions);
-// @ts-expect-error schema 2 registry construction has no capability argument
-v2Entry.createRuntime(configuredOptions, hostCapabilities);
+const v3Profile: PlaybookCaptainRuntimeProfile = v3Entry.runtimeProfile;
 // @ts-expect-error schema 3 registry construction requires capabilities
 v3Entry.createRuntime(configuredOptions);
 v3Entry.createRuntime(configuredOptions, hostCapabilities);
 const codeSchema: 3 = codePlaybookRegistryEntry.artifactSchema;
-const codeProfile: PlaybookCaptainRuntimeProfile<3> = codePlaybookRegistryEntry.runtimeProfile;
+const codeProfile: PlaybookCaptainRuntimeProfile = codePlaybookRegistryEntry.runtimeProfile;
 const codeEntry: PlaybookCaptainRegistryEntryV3 = codePlaybookRegistryEntry;
 const codeCapabilities: PlaybookHostConstructionCapabilities = codeHostCapabilities;
 codePlaybookRegistryEntry.createRuntime({}, codeHostCapabilities);
 // @ts-expect-error CODE is schema 3 and requires current-host capabilities
 codePlaybookRegistryEntry.createRuntime({});
 const reviewSchema: 3 = reviewPlaybookRegistryEntry.artifactSchema;
-const reviewProfile: PlaybookCaptainRuntimeProfile<3> = reviewPlaybookRegistryEntry.runtimeProfile;
+const reviewProfile: PlaybookCaptainRuntimeProfile = reviewPlaybookRegistryEntry.runtimeProfile;
 const reviewEntry: PlaybookCaptainRegistryEntryV3 = reviewPlaybookRegistryEntry;
 const reviewCapabilities: PlaybookHostConstructionCapabilities = reviewHostCapabilities;
 reviewPlaybookRegistryEntry.createRuntime({}, reviewHostCapabilities);
 // @ts-expect-error REVIEW is schema 3 and requires current-host capabilities
 reviewPlaybookRegistryEntry.createRuntime({});
 const decideSchema: 3 = decidePlaybookRegistryEntry.artifactSchema;
-const decideProfile: PlaybookCaptainRuntimeProfile<3> = decidePlaybookRegistryEntry.runtimeProfile;
+const decideProfile: PlaybookCaptainRuntimeProfile = decidePlaybookRegistryEntry.runtimeProfile;
 const decideEntry: PlaybookCaptainRegistryEntryV3 = decidePlaybookRegistryEntry;
 const decideCapabilities: PlaybookHostConstructionCapabilities = decideHostCapabilities;
 const decideConstruction: DecidePlaybookRuntimeConstruction = {
@@ -1873,9 +1951,8 @@ decidePlaybookRegistryEntry.createRuntime(
 );
 // @ts-expect-error DECIDE is schema 3 and requires current-host capabilities
 decidePlaybookRegistryEntry.createRuntime({});
-void v2FactorySchema;
+void canonicalFactorySchema;
 void v3FactorySchema;
-void v2Profile;
 void v3Profile;
 void codeSchema;
 void codeProfile;
@@ -1890,7 +1967,6 @@ void decideProfile;
 void decideEntry;
 void decideCapabilities;
 void decideConstruction;
-void wrongProfile;
 `,
       );
       const program = ts.createProgram([fixture], {

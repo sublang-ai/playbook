@@ -101,7 +101,7 @@ function executionProjection(
         manifestCommand: 'code',
         command: 'code',
         intent: 'Implement a requested change.',
-        artifactSchema: 2,
+        artifactSchema: 3,
         requiredRoleIds: ['coder'],
         concurrentRoleSets: [],
         roles: {
@@ -348,7 +348,7 @@ function retentionExecutionProjection(
         manifestCommand: 'review',
         command: 'review',
         intent: 'Review completed work.',
-        artifactSchema: 2,
+        artifactSchema: 3,
         requiredRoleIds: ['coder'],
         concurrentRoleSets: [],
         roles: {
@@ -458,12 +458,14 @@ function fencedRetainedCodeGeneration(authoritativeLedger: any) {
   generation.retainedEffectReconciliation = {
     sourceGenerationId: frameRuntimeId,
   };
-  generation.frames[0].runtime.effectLedger = authoritativeLedger;
-  generation.frames[0].runtime.retainedEffectSourceSessionId = frameRuntimeId;
-  generation.frames[0].runtime.retainedEffectReconciliation = {
-    sourceSessionId: frameRuntimeId,
-    checkpoint: generation.effectLedger,
-  };
+  for (const frame of generation.frames) {
+    frame.runtime.effectLedger = authoritativeLedger;
+    frame.runtime.retainedEffectSourceSessionId = frame.sessionId;
+    frame.runtime.retainedEffectReconciliation = {
+      sourceSessionId: frame.sessionId,
+      checkpoint: generation.effectLedger,
+    };
+  }
   return generation;
 }
 
@@ -870,119 +872,43 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it('migrates member-less pre-effect schema 3 before continuation', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const execution = executionProjection();
-    const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-    await firstLease.initializeSettledWithPredecessor({
-      cwd: process.cwd(),
-      structuralProjection: projectCaptainSessionStructure(execution),
-      executionProjection: execution,
-      snapshot: shellSnapshot(execution),
-    });
-    await firstLease.release();
+  it.each([3, 4] as const)(
+    'rejects a valid pre-effect schema %s record before continuation',
+    async (schemaVersion) => {
+      const { sessionsDir } = await fixtureDir();
+      const execution = executionProjection();
+      const firstLease = await fixedStore(sessionsDir, tokenO).acquire(
+        sessionId,
+      );
+      await firstLease.initializeSettledWithPredecessor({
+        cwd: process.cwd(),
+        structuralProjection: projectCaptainSessionStructure(execution),
+        executionProjection: execution,
+        snapshot: shellSnapshot(execution),
+      });
+      await firstLease.release();
 
-    const recordPath = join(sessionsDir, `${sessionId}.json`);
-    const persisted = legacyRecord(
-      JSON.parse(await readFile(recordPath, 'utf8')),
-    );
-    const { retainedGenerations: _retainedGenerations, ...memberless } =
-      persisted;
-    await writeFile(recordPath, `${JSON.stringify(memberless)}\n`, 'utf8');
+      const recordPath = join(sessionsDir, `${sessionId}.json`);
+      const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
+      const legacyBytes = `${JSON.stringify(
+        legacyRecord(persisted, schemaVersion),
+      )}\n`;
+      await writeFile(recordPath, legacyBytes, 'utf8');
 
-    const nextLease = await fixedStore(sessionsDir, tokenN).acquire(sessionId);
-    expect(await nextLease.read()).toMatchObject({
-      schemaVersion: 5,
-      snapshot: { schemaVersion: 4 },
-      effectLedger: effectLedger(),
-    });
-    expect(await nextLease.read()).not.toHaveProperty('retainedGenerations');
-    const uncertain = await nextLease.beginTurn({
-      input: 'compatible continuation',
-      attemptId: attempt1,
-      attemptedExecutionProjection: execution,
-    });
-    expect(uncertain).not.toHaveProperty('retainedGenerations');
-    const retried = await nextLease.beginRetry({
-      expectedAttemptId: attempt1,
-      nextAttemptId: attempt2,
-    });
-    expect(retried).not.toHaveProperty('retainedGenerations');
-    const discarded = await nextLease.discard({ attemptId: attempt2 });
-    expect(discarded).not.toHaveProperty('retainedGenerations');
-    expect(discarded).toMatchObject({ schemaVersion: 5 });
-    await nextLease.release();
-  });
+      const nextLease = await fixedStore(sessionsDir, tokenN).acquire(
+        sessionId,
+      );
+      await expect(nextLease.read()).rejects.toThrow(
+        new RegExp(
+          `schema ${schemaVersion} predates the artifact-schema-3 effect-authority cutover`,
+        ),
+      );
+      expect(await readFile(recordPath, 'utf8')).toBe(legacyBytes);
+      await nextLease.release();
+    },
+  );
 
-  it('migrates historical schema 4 and settles canonically as schema 5', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const execution = executionProjection();
-    const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-    await firstLease.initializeSettledWithPredecessor({
-      cwd: process.cwd(),
-      structuralProjection: projectCaptainSessionStructure(execution),
-      executionProjection: execution,
-      snapshot: shellSnapshot(execution),
-    });
-    await firstLease.release();
-
-    const recordPath = join(sessionsDir, `${sessionId}.json`);
-    const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
-    const { retainedGenerations: _retainedGenerations, ...memberless } =
-      persisted;
-    await writeFile(
-      recordPath,
-      `${JSON.stringify(legacyRecord(memberless, 4))}\n`,
-      'utf8',
-    );
-    const store = fixedStore(sessionsDir, tokenN);
-    await expect(store.latest()).rejects.toThrow(
-      /missing field "retainedGenerations"/,
-    );
-    const schema4Bytes = `${JSON.stringify(legacyRecord(persisted, 4))}\n`;
-    await writeFile(recordPath, schema4Bytes, 'utf8');
-    expect(await store.latest()).toMatchObject({
-      schemaVersion: 5,
-      snapshot: { schemaVersion: 4 },
-      effectLedger: effectLedger(),
-    });
-
-    const nextLease = await store.acquire(sessionId);
-    const uncertain = await nextLease.beginTurn({
-      input: 'compatible schema-4 continuation',
-      attemptId: attempt1,
-      attemptedExecutionProjection: execution,
-    });
-    expect(uncertain.schemaVersion).toBe(5);
-    const retried = await nextLease.beginRetry({
-      expectedAttemptId: attempt1,
-      nextAttemptId: attempt2,
-    });
-    expect(retried.schemaVersion).toBe(5);
-    const discarded = await nextLease.discard({ attemptId: attempt2 });
-    expect(discarded.schemaVersion).toBe(5);
-    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toMatchObject({
-      schemaVersion: 5,
-      effectLedger: effectLedger(),
-    });
-
-    const nextTurn = await nextLease.beginTurn({
-      input: 'canonicalize compatible schema 4',
-      attemptId: attempt3,
-      attemptedExecutionProjection: execution,
-    });
-    expect(nextTurn.schemaVersion).toBe(5);
-    const settled = await nextLease.settle({
-      attemptId: attempt3,
-      snapshot: shellSnapshot(execution, 1),
-      unresolvedEffects: [],
-    });
-    expect(settled.schemaVersion).toBe(5);
-    expect(settled.retainedGenerations).toEqual({});
-    await nextLease.release();
-  });
-
-  it('rejects pre-effect records once any stored playbook uses artifact schema 3', () => {
+  it('rejects pre-effect records and gives malformed legacy data precedence', () => {
     const execution = schema3ExecutionProjection();
     const legacy = legacyRecord(
       settledRecord({
@@ -992,7 +918,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       }),
     );
     expect(() => validateCaptainSessionRecord(legacy)).toThrow(
-      /predates effect-ledger persistence.*schema-3 playbook "code"/,
+      /predates the artifact-schema-3 effect-authority cutover/,
     );
 
     const pollutedShell = legacyRecord(settledRecord());
@@ -1360,20 +1286,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(settled.snapshot.frames[0].runtime.effectLedger).toEqual(repeated);
 
     const schema2Execution = executionProjection();
-    const schema2Snapshot: any = engagedSnapshot(schema2Execution);
-    schema2Snapshot.effectLedger = repeated;
-    schema2Snapshot.frames[0].runtime.effectLedger = repeated;
+    schema2Execution.catalog.code.artifactSchema = 2;
     expect(() =>
       validateCaptainSessionRecord(
         settledRecord({
-          structuralProjection:
-            projectCaptainSessionStructure(schema2Execution),
           lastAppliedExecutionProjection: schema2Execution,
-          snapshot: schema2Snapshot,
-          effectLedger: consumed,
         }),
       ),
-    ).toThrow(/effect ledger differs from its structural schema authority/);
+    ).toThrow(/artifactSchema must be 3/);
     await lease.release();
   });
 
@@ -2207,7 +2127,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
             code: { ...execution.catalog.code, artifactSchema: 1 },
           },
         },
-        /artifactSchema must be 2 or 3/,
+        /artifactSchema must be 3/,
       ],
       [
         'future artifact schema',
@@ -2217,7 +2137,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
             code: { ...execution.catalog.code, artifactSchema: 4 },
           },
         },
-        /artifactSchema must be 2 or 3/,
+        /artifactSchema must be 3/,
       ],
       [
         'persisted host capabilities',
@@ -3134,38 +3054,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     },
   );
 
-  it('moves a schema-4 map whole, orders its new owner, and preserves discard', async () => {
+  it('does not adopt retained generations from a pre-effect schema-4 record', async () => {
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(10);
     const targetId = adoptionSessionId(11);
     const sourceExecution = retentionExecutionProjection();
-    const targetBase = retentionExecutionProjection({
-      captainModel: 'captain-current',
-      playerModel: 'coder-current',
+    const targetExecution = retentionExecutionProjection({
       playerId: 'replacement.coder',
     });
-    const targetExecution: any = {
-      ...targetBase,
-      captain: {
-        ...targetBase.captain,
-        adapter: 'codex',
-        instruction: 'Current Captain instruction.',
-      },
-      players: targetBase.players.map((player) => ({
-        ...player,
-        instruction: 'Current player instruction.',
-      })),
-      catalog: Object.fromEntries(
-        Object.entries(targetBase.catalog).map(([id, item]) => [
-          id,
-          {
-            ...item,
-            command: `${item.command}-current`,
-            intent: `${item.intent} Current wording.`,
-          },
-        ]),
-      ),
-    };
     const retainedGenerations = {
       code: retainedCodeGeneration(),
       review: retainedReviewGeneration(),
@@ -3179,7 +3075,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       }),
       4,
     );
-    const migratedSource = validateCaptainSessionRecord(source);
     const target = freshAdoptionTargetRecord({
       id: targetId,
       execution: targetExecution,
@@ -3199,62 +3094,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       snapshot: target.snapshot,
     });
     expect(Object.isFrozen(targetAfter)).toBe(true);
-    expect(Object.isFrozen(targetAfter.retainedGenerations.code)).toBe(true);
-
-    const sourceAfter = await store.read(sourceId);
-    expect(sourceAfter).toEqual({
-      ...migratedSource,
-      updatedAt: '2026-08-11T21:00:00.041Z',
-      retainedGenerations: {},
-    });
-    expect(targetAfter).toMatchObject({
-      sessionId: targetId,
-      createdAt: '2026-08-11T21:00:00.000Z',
-      updatedAt: '2026-08-11T21:00:00.042Z',
-      retainedGenerations,
-    });
-    expect(sourceAfter.updatedAt).toBe('2026-08-11T21:00:00.041Z');
-    expect(targetAfter).toMatchObject({
-      createdAt: '2026-08-11T21:00:00.000Z',
-      updatedAt: '2026-08-11T21:00:00.042Z',
-      structuralProjection: {
-        captain: {
-          adapter: 'codex',
-          instruction: 'Current Captain instruction.',
-        },
-        players: [{ id: 'replacement.coder' }],
-        catalog: {
-          code: {
-            command: 'code-current',
-            intent: 'Implement a requested change. Current wording.',
-          },
-        },
-      },
-    });
-    expect(
-      targetAfter.retainedGenerations.code.frames[0].roleBindings,
-    ).toEqual({ coder: 'dev.coder' });
-    const targetBytes = await readFile(
-      join(sessionsDir, `${targetId}.json`),
-      'utf8',
+    expect(targetAfter.retainedGenerations).toEqual({});
+    await expect(store.read(sourceId)).rejects.toThrow(
+      /schema 4 predates the artifact-schema-3 effect-authority cutover/,
     );
-    await lease.beginTurn({
-      input: 'discard after adoption transfer',
-      attemptId: attempt1,
-      attemptedExecutionProjection: targetExecution,
-    });
-    await lease.discard({ attemptId: attempt1 });
-    expect(
-      await readFile(join(sessionsDir, `${targetId}.json`), 'utf8'),
-    ).toBe(targetBytes);
     await lease.release();
-
-    const reopened = sequencedStore(sessionsDir, 20);
-    expect((await reopened.read(sourceId)).retainedGenerations).toEqual({});
-    expect((await reopened.read(targetId)).retainedGenerations).toEqual(
-      retainedGenerations,
+    expect((await sequencedStore(sessionsDir, 20).latest()).sessionId).toBe(
+      targetId,
     );
-    expect((await reopened.latest()).sessionId).toBe(targetId);
   });
 
   it('moves retained ledger checkpoints without moving settlement evidence', async () => {
@@ -3439,7 +3286,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     'required roles',
     'concurrent roles',
     'descendant catalog',
-    'ledger authority',
   ] as const)(
     'declines an incompatible adoption %s envelope into an empty target',
     async (mismatch) => {
@@ -3449,8 +3295,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       let sourceExecution: any = retentionExecutionProjection();
       let targetExecution: any = structuredClone(sourceExecution);
       let generation: any = retainedCodeGeneration();
-      let rootPlaybookId = 'code';
-      let ledger: any = effectLedger();
       if (mismatch === 'registry module') {
         targetExecution.catalog.code.from = '@example/code/registry';
       } else if (mismatch === 'manifest command') {
@@ -3467,21 +3311,12 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         );
         generation = retainedCodeGenerationWithReviewer();
       } else {
-        if (mismatch === 'descendant catalog') {
-          delete targetExecution.catalog.review;
-        } else {
-          sourceExecution = retentionSchema3ExecutionProjection();
-          targetExecution = retentionExecutionProjection();
-          generation = retainedReviewGeneration();
-          rootPlaybookId = 'review';
-          ledger = startedEffectLedger();
-        }
+        delete targetExecution.catalog.review;
       }
       const source = retainedSettledRecord({
         id: sourceId,
         execution: sourceExecution,
-        retainedGenerations: { [rootPlaybookId]: generation },
-        ledger,
+        retainedGenerations: { code: generation },
       });
       const target = freshAdoptionTargetRecord({
         id: targetId,
@@ -3717,7 +3552,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       ['generation ledger ahead of record authority', (value) => {
         value.retainedGenerations.code.effectLedger.revision = 1;
       }],
-      ['schema-2 frame with a nonempty generation ledger mirror', (value) => {
+      ['frame with a divergent generation ledger mirror', (value) => {
         value.retainedGenerations.code.frames[0].runtime.effectLedger.revision =
           1;
       }],
@@ -3892,11 +3727,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       validateCaptainSessionRecord(divergentMarkedMirrors),
     ).toThrow(/marked generation capture mirror/);
 
-    const schema2OnlyGeneration: any = retainedReviewGeneration();
-    schema2OnlyGeneration.retainedEffectReconciliation = {
+    const unmarkedGeneration: any = retainedReviewGeneration();
+    unmarkedGeneration.retainedEffectReconciliation = {
       sourceGenerationId: reviewRootRuntimeId,
     };
-    const schema2OnlyFence = settledRecord({
+    const unmarkedFence = settledRecord({
       structuralProjection: projectCaptainSessionStructure(schema3Execution),
       lastAppliedExecutionProjection: schema3Execution,
       snapshot: {
@@ -3904,18 +3739,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         effectLedger: authoritativeLedger,
       },
       effectLedger: authoritativeLedger,
-      retainedGenerations: { review: schema2OnlyGeneration },
+      retainedGenerations: { review: unmarkedGeneration },
     });
-    expect(validateCaptainSessionRecord(schema2OnlyFence)).toMatchObject({
-      retainedGenerations: {
-        review: {
-          retainedEffectReconciliation: {
-            sourceGenerationId: reviewRootRuntimeId,
-          },
-          frames: [{ runtime: { effectLedger: effectLedger() } }],
-        },
-      },
-    });
+    expect(() => validateCaptainSessionRecord(unmarkedFence)).toThrow(
+      /inconsistent with its schema-3 frame markers/,
+    );
 
     const fencedMutations: Array<[string, (value: any) => void]> = [
       ['mismatched source generation', (value) => {
@@ -3934,14 +3762,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         value.retainedGenerations.code.frames[0].runtime.effectLedger =
           effectLedger();
       }],
-      ['schema-2 frame marker', (value) => {
+      ['extra frame marker', (value) => {
         value.retainedGenerations.code.frames[1].runtime
-          .retainedEffectSourceSessionId = childFrameRuntimeId;
-        value.retainedGenerations.code.frames[1].runtime
-          .retainedEffectReconciliation = {
-          sourceSessionId: childFrameRuntimeId,
-          checkpoint: effectLedger(),
-        };
+          .retainedEffectReconciliation.sourceSessionId = frameRuntimeId;
       }],
     ];
     for (const [label, mutate] of fencedMutations) {
@@ -4349,7 +4172,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it('selects migrations, skips nonresumable records, and fails closed on corruption', async () => {
+  it('skips nonresumable records and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -4429,10 +4252,16 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           onLegacyRecord: (record: unknown) => legacyRecords.push(record),
         })
       ).sessionId,
-    ).toBe(secondSessionId);
-    expect(legacyRecords).toEqual([]);
-    expect(await store.read(secondSessionId)).toEqual(
-      validateCaptainSessionRecord(memberlessSchema3),
+    ).toBe(sessionId);
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: secondSessionId,
+        path: secondPath,
+        schemaVersion: 3,
+      },
+    ]);
+    await expect(store.read(secondSessionId)).rejects.toThrow(
+      /schema 3 predates the artifact-schema-3 effect-authority cutover/,
     );
 
     const schema3Execution = schema3ExecutionProjection();
@@ -4473,7 +4302,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       ]);
       await expect(store.read(secondSessionId)).rejects.toThrow(
         new RegExp(
-          `schema ${schemaVersion} predates effect-ledger persistence.*schema-3 playbook "code"`,
+          `schema ${schemaVersion} predates the artifact-schema-3 effect-authority cutover`,
         ),
       );
     }

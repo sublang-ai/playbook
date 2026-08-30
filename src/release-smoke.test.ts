@@ -79,8 +79,17 @@ describe('deterministic packed release lane smoke', () => {
   it('constructs bundled runtimes with their current declared options', () => {
     const source = _testing.compiledRuntimeImportProbeSource();
 
-    expect(source).toContain('runtime: reviewFactory({})');
-    expect(source).toContain('runtime: decideFactory({})');
+    expect(source).toContain(
+      "runtime: codeFactory(construction('code', ['coder'], []))",
+    );
+    expect(source).toContain(
+      "runtime: reviewFactory(construction('review', ['coder', 'reviewer'], []))",
+    );
+    expect(source).toContain(
+      "construction('decide', ['coder', 'reviewer'], [['coder', 'reviewer']])",
+    );
+    expect(source).toContain('artifactSchema: 3');
+    expect(source).toContain('emptyPlaybookEffectLedger');
     expect(source).toContain("const adoptionMembers = ['adopt']");
     expect(source).toContain('absentMembers: adoptionMembers');
     expect(source).not.toContain('coderLlm');

@@ -18,6 +18,7 @@ import { assign, createActor, createMachine } from 'xstate';
 import type {
   PlaybookEffectBoundary,
   PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
   PlaybookAdoptionContext,
   PlaybookPorts,
   PlaybookRepositoryObservation,
@@ -42,6 +43,7 @@ import {
   resumableStateIdsFromMachine,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
+  type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
@@ -165,7 +167,8 @@ function makeSession(
   ports: PlaybookPorts,
   playerSessions?: PlayerSessionStore,
 ): PlaybookSession {
-  const sessionId = `factory-test-session-${++sessionSequence}`;
+  const suffix = String(++sessionSequence).padStart(12, '0');
+  const sessionId = `10000000-0000-4000-8000-${suffix}`;
   return {
     sessionId,
     playbookId: 'factory-test',
@@ -219,17 +222,69 @@ type CodeEffectClassification = Extract<
  * write-ahead mechanics; this double preserves their authoritative protocol
  * while keeping these factory/control tests focused on the runtime surface.
  */
-function codeRuntimeConstruction(
+function governedRuntimeConstruction<TOptions>(
+  configuredOptions: TOptions,
+  playbookId: string,
   classifications: readonly CodeEffectClassification[] = [],
-): Parameters<typeof createCodePlaybookRuntime>[0] {
-  let ledger = emptyPlaybookEffectLedger();
-  let observation = CODE_EFFECT_OBSERVATION;
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+): XStatePlaybookRuntimeConstruction<TOptions, object> {
+  let ledger = assertPlaybookEffectLedger(initialLedger);
+  let observation = ledger.boundaries.at(-1)?.after ?? CODE_EFFECT_OBSERVATION;
   let callIndex = 0;
+  const attemptIdsByTurn = new Map<number, string>();
 
   const effectLedger = {
     snapshot: () => ledger,
-    writeAhead: async () => {
-      throw new Error('semantic correction is outside this test');
+    writeAhead: async (
+      commands: PlaybookEffectLedgerCommandBatch,
+    ): Promise<PlaybookEffectLedger> => {
+      const boundaries = [...ledger.boundaries];
+      const logicalOperations = [...ledger.logicalOperations];
+      for (const command of commands) {
+        if (command.kind === 'replace-boundaries') {
+          for (const { expected, next } of command.replacements) {
+            const index = boundaries.findIndex(
+              ({ boundaryId }) => boundaryId === expected.boundaryId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(boundaries[index]) !== JSON.stringify(expected)
+            ) {
+              throw new Error('test effect-ledger boundary replacement is stale');
+            }
+            boundaries[index] = next;
+          }
+          continue;
+        }
+        if (command.kind === 'replace-logical-operations') {
+          for (const { expected, next } of command.replacements) {
+            const index = logicalOperations.findIndex(
+              ({ operationId }) => operationId === expected.operationId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(logicalOperations[index]) !==
+                JSON.stringify(expected)
+            ) {
+              throw new Error(
+                'test effect-ledger logical-operation replacement is stale',
+              );
+            }
+            logicalOperations[index] = next;
+          }
+          continue;
+        }
+        throw new Error(
+          `test effect ledger does not support ${command.kind}`,
+        );
+      }
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries,
+        logicalOperations,
+      });
+      return ledger;
     },
   };
 
@@ -258,12 +313,23 @@ function codeRuntimeConstruction(
   }) => {
     const currentCall = callIndex++;
     const baseline = observation;
+    const boundarySequence = ledger.boundaries.length + 1;
+    const rawTurnId = options.effectBoundary.turnId;
+    if (!Number.isSafeInteger(rawTurnId) || (rawTurnId as number) <= 0) {
+      throw new TypeError('test governed boundary requires a positive turn id');
+    }
+    const turnId = rawTurnId as number;
+    let attemptId = attemptIdsByTurn.get(turnId);
+    if (attemptId === undefined) {
+      attemptId = `60000000-0000-4000-8000-${String(boundarySequence).padStart(12, '0')}`;
+      attemptIdsByTurn.set(turnId, attemptId);
+    }
     const started = {
-      sequence: ledger.boundaries.length + 1,
+      sequence: boundarySequence,
       ...options.effectBoundary,
-      attemptId: `60000000-0000-4000-8000-${String(currentCall + 1).padStart(12, '0')}`,
+      attemptId,
       attemptNumber: 1,
-      playbookId: 'code',
+      playbookId,
       canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
       baseline,
     } as unknown as PlaybookEffectBoundary;
@@ -331,7 +397,7 @@ function codeRuntimeConstruction(
             {
               sequence: ledger.logicalOperations.length + 1,
               operationId: completion.deferred.operationId,
-              playbookId: 'code',
+              playbookId,
               runtimeSessionId: completed.runtimeSessionId,
               boundaryIds: [completed.boundaryId],
               originalBaseline: baseline,
@@ -356,7 +422,7 @@ function codeRuntimeConstruction(
   };
 
   return {
-    configuredOptions: {},
+    configuredOptions,
     hostCapabilities: {
       effectLedger,
       repository: {
@@ -366,7 +432,14 @@ function codeRuntimeConstruction(
         },
       },
     },
-  } as unknown as Parameters<typeof createCodePlaybookRuntime>[0];
+  } as unknown as XStatePlaybookRuntimeConstruction<TOptions, object>;
+}
+
+function codeRuntimeConstruction(
+  classifications: readonly CodeEffectClassification[] = [],
+): Parameters<typeof createCodePlaybookRuntime>[0] {
+  return governedRuntimeConstruction({}, 'code', classifications) as unknown as
+    Parameters<typeof createCodePlaybookRuntime>[0];
 }
 
 function decideRuntimeConstruction(): Parameters<
@@ -421,6 +494,10 @@ function adoptionFrom(
 function turn(text: string): { text: string; signal: AbortSignal } {
   return { text, signal: new AbortController().signal };
 }
+
+const ROLELESS_OUTCOME_AUTHORITY = Object.freeze({
+  governedPlayerStates: Object.freeze({}),
+});
 
 interface WorkflowOptions {
   command?: string;
@@ -511,24 +588,44 @@ const workflowMachine = createMachine({
             guard: ({ event }) =>
               (event.output as { guard: string }).guard === 'needsBossReply',
             target: 'awaitBossReply',
-            actions: assign({
-              pendingBossQuestion: ({ event }) => ({
-                questionId: 'q-1',
-                resumeStateId: 'implement',
-                sourceItem: 'WF-1',
-                asker: { kind: 'role', roleId: 'coder' },
-                question: (event.output as { question: string }).question,
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'implement',
+                  target: 'awaitBossReply',
+                  acceptedOutcome: 'needsBossReply',
+                },
+              },
+              assign({
+                pendingBossQuestion: ({ event }) => ({
+                  questionId: 'q-1',
+                  resumeStateId: 'implement',
+                  sourceItem: 'WF-1',
+                  asker: { kind: 'role', roleId: 'coder' },
+                  question: (event.output as { question: string }).question,
+                }),
               }),
-            }),
+            ],
           },
           {
             target: 'verify',
-            actions: assign({
-              summary: ({ event }) =>
-                (event.output as { summary: string }).summary,
-              pendingBossQuestion: () => undefined,
-              bossReply: () => undefined,
-            }),
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'implement',
+                  target: 'verify',
+                  acceptedOutcome: 'implemented',
+                },
+              },
+              assign({
+                summary: ({ event }) =>
+                  (event.output as { summary: string }).summary,
+                pendingBossQuestion: () => undefined,
+                bossReply: () => undefined,
+              }),
+            ],
           },
         ],
         onError: {
@@ -611,11 +708,15 @@ const workflowMachine = createMachine({
     },
   },
   output: ({ context }) => ({ summary: context.summary ?? null }),
+}, {
+  actions: {
+    'playbook.acceptedOutcome': () => undefined,
+  },
 });
 
 const workflowSpec: XStatePlaybookRuntimeSpec<WorkflowOptions> = {
   label: 'workflow',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: (value) => {
     const options = (value ?? {}) as WorkflowOptions;
     return options;
@@ -626,14 +727,36 @@ const workflowSpec: XStatePlaybookRuntimeSpec<WorkflowOptions> = {
   roleStates: {
     implement: { role: 'coder', label: 'implement state' },
   },
+  verbatimPayloadFields: new Set(['question']),
+  outcomeAuthority: {
+    governedPlayerStates: {
+      implement: {
+        implemented: {
+          fields: { summary: 'semantic' },
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+    },
+  },
 };
 
-const createWorkflowRuntime = createXStatePlaybookRuntime(
+const createWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   workflowSpec,
 );
+const createWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createWorkflowRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test', [], initialLedger),
+  );
 
-const createLedgerAdoptionWorkflowRuntime = createXStatePlaybookRuntime(
+const createLedgerAdoptionWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -641,8 +764,20 @@ const createLedgerAdoptionWorkflowRuntime = createXStatePlaybookRuntime(
       `[${promptIdentity(input.role)}]\n${defaultComposePlayerPrompt(input)}`,
   },
 );
+const createLedgerAdoptionWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createLedgerAdoptionWorkflowRuntimeFactory(
+    governedRuntimeConstruction(
+      options,
+      'factory-test',
+      [],
+      initialLedger,
+    ),
+  );
 
-const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
+const createWorkflowRuntimeWithBossEventsFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -662,6 +797,10 @@ const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
     ],
   },
 );
+const createWorkflowRuntimeWithBossEvents = (options: WorkflowOptions) =>
+  createWorkflowRuntimeWithBossEventsFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 const retainedFenceMachine = createMachine({
   id: 'retained-fence',
@@ -941,7 +1080,9 @@ describe('generic strategy defaults', () => {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(['done']),
     });
-    const runtime = createRuntime({});
+    const runtime = createRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     expect(typeof runtime.adopt).toBe('function');
     expect(runtime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: ['done'],
@@ -955,7 +1096,7 @@ describe('generic strategy defaults', () => {
     const emptyRuntime = createXStatePlaybookRuntime(workflowMachine, {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(),
-    })({});
+    })(governedRuntimeConstruction({}, 'factory-test'));
     expect(typeof emptyRuntime.adopt).toBe('function');
     expect(emptyRuntime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: [],
@@ -1153,7 +1294,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-abort-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const turn = runtime.handleBossInput({
         text: 'run the trap script',
@@ -1213,7 +1354,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-coop-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const turnPromise = runtime.handleBossInput({
         text: 'run the cooperative script',
@@ -1309,7 +1450,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-postexit-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const settled = await runtime.handleBossInput({
         text: 'run the daemonish script',
@@ -1383,7 +1524,7 @@ describe('player + script workflow over the shared factory', () => {
           ...workflowSpec,
           label: `script-${channel}-${failureKind}-workflow`,
           machineInput: () => ({ command }),
-        })({});
+        })(governedRuntimeConstruction({}, 'factory-test'));
         await runtime.init(makeSession(ports));
         const turnPromise = runtime.handleBossInput({
           text: 'run the daemonish script',
@@ -1583,7 +1724,6 @@ describe('player + script workflow over the shared factory', () => {
       '⤷ coder: implement state',
       '→ implemented',
       'Executed script for verify (exit 0).',
-      '→ verified',
     ]);
     const scriptEvents = telemetry.filter(
       ({ topic }) => topic === 'playbook.script',
@@ -1618,11 +1758,12 @@ describe('player + script workflow over the shared factory', () => {
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'undescribed-terminal',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       entryEvent: { type: 'COMPLETE', textField: 'task' },
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
 
@@ -1661,7 +1802,6 @@ describe('player + script workflow over the shared factory', () => {
         '⤷ coder: implement state',
         '→ implemented',
         'Executed script for verify (exit 1).',
-        '→ verificationFailed',
         '◆ workflow failed; awaiting Boss recovery.',
       ]);
       expect(statuses.at(-1)).toEqual({
@@ -1689,11 +1829,13 @@ describe('player + script workflow over the shared factory', () => {
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
-          expect(prompt).toContain('Pending Boss question: Which database?');
+          expect(prompt).toContain(
+            'Pending Boss question: Which database should I use?',
+          );
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -1705,7 +1847,7 @@ describe('player + script workflow over the shared factory', () => {
     expect(suspended.state.stateId).toBe('awaitBossReply');
     expect(statuses.slice(-3)).toEqual([
       { message: '→ needsBossReply' },
-      { message: 'coder asks: Which database?' },
+      { message: 'coder asks: Which database should I use?' },
       {
         message: '◆ awaiting Boss reply · implement · coder · WF-1',
       },
@@ -1715,7 +1857,9 @@ describe('player + script workflow over the shared factory', () => {
     expect(resumed.outcome).toBe('terminal');
     // The continuation preamble and exact Boss answer preceded the second
     // player prompt.
-    expect(playerInputsSeen[1]).toContain('Boss question:\nWhich database?');
+    expect(playerInputsSeen[1]).toContain(
+      'Boss question:\nWhich database should I use?',
+    );
     expect(playerInputsSeen[1]).toContain('Boss reply:\nuse sqlite');
     await runtime.dispose();
   });
@@ -1740,7 +1884,7 @@ describe('player + script workflow over the shared factory', () => {
             : '{"type":"START"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"restarted"}';
       },
     });
@@ -1779,7 +1923,7 @@ describe('player + script workflow over the shared factory', () => {
           return '{"type":"BOSS_INTERRUPT","targetId":"implement"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"interrupted"}';
       },
     });
@@ -1820,7 +1964,7 @@ describe('player + script workflow over the shared factory', () => {
           return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"interrupted"}';
       },
     });
@@ -1910,18 +2054,38 @@ describe('player + script workflow over the shared factory', () => {
                   (event.output as { guard: string }).guard ===
                   'needsBossReply',
                 target: 'awaitBossReply',
-                actions: assign({
-                  pendingBossQuestion: ({ event }) => ({
-                    questionId: 'chk-q',
-                    resumeStateId: 'work',
-                    sourceItem: 'CHK-1',
-                    asker: { kind: 'role', roleId: 'coder' } as const,
-                    question: (event.output as { question: string }).question,
+                actions: [
+                  {
+                    type: 'playbook.acceptedOutcome',
+                    params: {
+                      source: 'work',
+                      target: 'awaitBossReply',
+                      acceptedOutcome: 'needsBossReply',
+                    },
+                  },
+                  assign({
+                    pendingBossQuestion: ({ event }) => ({
+                      questionId: 'chk-q',
+                      resumeStateId: 'work',
+                      sourceItem: 'CHK-1',
+                      asker: { kind: 'role', roleId: 'coder' } as const,
+                      question: (event.output as { question: string }).question,
+                    }),
                   }),
-                }),
+                ],
               },
               // Deliberately retains pendingBossQuestion into the checkpoint.
-              { target: 'checkpoint' },
+              {
+                target: 'checkpoint',
+                actions: {
+                  type: 'playbook.acceptedOutcome',
+                  params: {
+                    source: 'work',
+                    target: 'checkpoint',
+                    acceptedOutcome: 'drafted',
+                  },
+                },
+              },
             ],
             onError: { target: 'checkpoint' },
           },
@@ -1962,16 +2126,37 @@ describe('player + script workflow over the shared factory', () => {
           },
         },
       },
-    });
+    },
+    {
+      actions: {
+        'playbook.acceptedOutcome': () => undefined,
+      },
+    },
+  );
     const createCheckpointRuntime = createXStatePlaybookRuntime(
       checkpointMachine,
       {
         label: 'checkpointed',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         machineInput: () => ({}),
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: { work: { role: 'coder', label: 'work state' } },
+        verbatimPayloadFields: new Set(['question']),
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              drafted: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+              needsBossReply: {
+                fields: { question: 'presentation' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
       },
     );
 
@@ -1996,12 +2181,14 @@ describe('player + script workflow over the shared factory', () => {
             : '{"type":"START"}';
         }
         return playerPrompts.length === 1
-          ? '{"guard":"needsBossReply","question":"Where should the intro go?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"drafted"}';
       },
     });
     const session = makeSession(ports);
-    const runtime = createCheckpointRuntime({});
+    const runtime = createCheckpointRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(session);
     const asked = await runtime.handleBossInput(turn('begin the draft'));
     expect(asked.state.stateId).toBe('awaitBossReply');
@@ -2064,7 +2251,14 @@ describe('player + script workflow over the shared factory', () => {
     // nor offers the checkpoint's configured BOSS_REPLY contract, which
     // only the pendingness gate can exclude.
     for (const text of ['/publish the draft', 'refine the intro']) {
-      const restored = createCheckpointRuntime({});
+      const restored = createCheckpointRuntime(
+        governedRuntimeConstruction(
+          {},
+          'factory-test',
+          [],
+          snapshot.effectLedger,
+        ),
+      );
       await restored.restore!(session, snapshot);
       const resumed = await restored.handleBossInput(turn(text));
       const prompt = classifierPrompts.at(-1)!;
@@ -2102,7 +2296,7 @@ describe('player + script workflow over the shared factory', () => {
           return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
         return playerCalls === 2
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"recovered"}';
       },
     });
@@ -2288,11 +2482,12 @@ describe('player + script workflow over the shared factory', () => {
         });
         const runtime = createXStatePlaybookRuntime(machine, {
           label: 'action-throw',
-          compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+          compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
           snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
           entryEvent: { type: 'START', textField: 'task' },
           roleStates: {},
-        })({});
+          outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+        })(governedRuntimeConstruction({}, 'factory-test'));
         await runtime.init(makeSession(makeRecordingPorts().ports));
         await expect(
           runtime.handleBossInput({ text: 'go', signal: controller.signal }),
@@ -2463,7 +2658,7 @@ describe('player + script workflow over the shared factory', () => {
       callJudge: async (prompt) =>
         prompt.includes('Classify the following Boss message')
           ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
-          : '{"guard":"needsBossReply","question":"Which database?"}',
+          : '{"guard":"needsBossReply"}',
       emitTelemetry: async (event) => {
         const trace = event.payload as { type?: string };
         if (
@@ -2508,7 +2703,7 @@ describe('player + script workflow over the shared factory', () => {
       },
       callJudge: async () => {
         judgeCalls += 1;
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
       emitTelemetry: async (event) => {
         if (event.topic !== 'playbook.trace') return;
@@ -2661,13 +2856,18 @@ const captainMachine = createMachine({
   output: ({ context }) => ({ response: context.response ?? null }),
 });
 
-const createCaptainRuntime = createXStatePlaybookRuntime(captainMachine, {
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+const createCaptainRuntimeFactory = createXStatePlaybookRuntime(captainMachine, {
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: (value) => (value ?? {}) as CaptainOptions,
   roleStates: {},
   machineInput: (options) => options,
   entryEvent: { type: 'GO', textField: 'topic' },
+  outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
 });
+const createCaptainRuntime = (options: CaptainOptions) =>
+  createCaptainRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 describe('direct-Captain actor over the shared factory', () => {
   it('finishes the captain pair aborted when the start sink cancels with the exact reason', async () => {
@@ -3661,7 +3861,7 @@ describe('host-owned player continuation (DR-030)', () => {
         };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const first = createWorkflowRuntime({});
     const firstSession = makeSession(ports, firstStore);
@@ -3690,7 +3890,7 @@ describe('host-owned player continuation (DR-030)', () => {
         }
       },
     };
-    const second = createWorkflowRuntime({});
+    const second = createWorkflowRuntime({}, snapshot.effectLedger);
     await second.restore!(makeSession(ports, restoredStore), snapshot!);
 
     expect(restoreCalls).toEqual([{ coder: 'parked-token' }]);
@@ -3785,7 +3985,7 @@ describe('host-owned player continuation (DR-030)', () => {
         resumeToken: 'snapshot-token',
       }),
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const source = createWorkflowRuntime({});
     await source.init(makeSession(ports, sourceStore));
@@ -3814,7 +4014,7 @@ describe('host-owned player continuation (DR-030)', () => {
       ...snapshot,
       machine: { ...snapshot.machine, status: 'done' },
     };
-    const restored = createWorkflowRuntime({});
+    const restored = createWorkflowRuntime({}, snapshot.effectLedger);
 
     await expect(
       restored.restore!(makeSession(ports, restoreStore), brokenSnapshot),
@@ -3927,13 +4127,18 @@ const nestedMachine = createMachine({
   output: ({ context }) => ({ childOutput: context.childOutput ?? null }),
 });
 
-const createNestedRuntime = createXStatePlaybookRuntime(nestedMachine, {
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+const createNestedRuntimeFactory = createXStatePlaybookRuntime(nestedMachine, {
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   roleStates: {},
   machineInput: () => ({}),
   entryEvent: { type: 'GO', textField: 'request' },
+  outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
 });
+const createNestedRuntime = (options: Record<string, never>) =>
+  createNestedRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 describe('nested playbook actor over the shared factory', () => {
   it('suspends on a child call and resumes to terminal through resumePlaybookCall', async () => {
@@ -5377,7 +5582,7 @@ describe('parked-session snapshot over the shared factory', () => {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -5394,13 +5599,13 @@ describe('parked-session snapshot over the shared factory', () => {
       {
         questionId: 'q-1',
         asker: { kind: 'role', roleId: 'coder' },
-        question: 'Which database?',
+        question: 'Which database should I use?',
         sourceItem: 'WF-1',
       },
     ]);
     await first.dispose();
 
-    const second = createWorkflowRuntime({});
+    const second = createWorkflowRuntime({}, snapshot!.effectLedger);
     await second.restore!(
       { ...session, ports },
       snapshot!,
@@ -5452,7 +5657,7 @@ describe('parked-session snapshot over the shared factory', () => {
         snapshot: vi.fn(() => ({})),
         restore: vi.fn(),
       };
-      const target = createWorkflowRuntime({});
+      const target = createWorkflowRuntime({}, snapshot.effectLedger);
       let targetSession = makeSession(targetRecording.ports, playerSessions);
       let candidate = snapshot;
       if (mismatch === 'schema') {
@@ -5559,7 +5764,7 @@ describe('parked-session snapshot over the shared factory', () => {
         };
       }
 
-      const target = createWorkflowRuntime({});
+      const target = createWorkflowRuntime({}, snapshot.effectLedger);
       await expect(
         target.adopt?.(
           targetSession,
@@ -5616,7 +5821,7 @@ describe('parked-session snapshot over the shared factory', () => {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -5642,7 +5847,7 @@ describe('parked-session snapshot over the shared factory', () => {
       telemetry: telemetry.length,
     };
 
-    const target = createWorkflowRuntime({});
+    const target = createWorkflowRuntime({}, snapshot.effectLedger);
     const targetSession = makeSession(ports);
     expect(targetSession.sessionId).not.toBe(sourceSession.sessionId);
     await target.adopt?.(
@@ -5827,7 +6032,7 @@ describe('parked-session snapshot over the shared factory', () => {
         };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const source = createWorkflowRuntime({});
     const sourceSession = makeSession(ports);
@@ -5847,7 +6052,7 @@ describe('parked-session snapshot over the shared factory', () => {
         throw new Error('restore is unavailable outside shell restoration');
       }),
     };
-    const target = createWorkflowRuntime({});
+    const target = createWorkflowRuntime({}, snapshot.effectLedger);
 
     await target.adopt?.(
       makeSession(ports, playerSessions),
@@ -5913,7 +6118,7 @@ describe('parked-session snapshot over the shared factory', () => {
           resumeToken: 'retained-token',
         }),
         callJudge: async () =>
-          '{"guard":"needsBossReply","question":"Which database?"}',
+          '{"guard":"needsBossReply"}',
       });
       const source = createLedgerAdoptionWorkflowRuntime({});
       const sourceSession: PlaybookSession = {
@@ -5990,7 +6195,10 @@ describe('parked-session snapshot over the shared factory', () => {
           }
         },
       });
-      const target = createLedgerAdoptionWorkflowRuntime({});
+      const target = createLedgerAdoptionWorkflowRuntime(
+        {},
+        snapshot.effectLedger,
+      );
       const targetSession: PlaybookSession = {
         ...makeSession(targetRecording.ports, playerSessions),
         roleBindings: {
@@ -6110,7 +6318,7 @@ describe('boundary hygiene', () => {
           classifierCalls += 1;
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
       emitTelemetry: async (event) => {
         if (event.topic === 'playbook.trace') {
@@ -6200,6 +6408,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
       ),
     ).toBe(true);
     expect(Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS)).toBe(true);
+    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([3]);
   });
 
   it('constructs and runs under a matching link-time declaration', async () => {
@@ -6209,7 +6418,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
         artifactSchema: SUPPORTED_ARTIFACT_SCHEMAS[0],
         runtimeAbi: RUNTIME_ABI,
       },
-    })({});
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
     const result = await runtime.handleBossInput(turn('   '));
@@ -6235,7 +6444,21 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'workflow artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
+          '@sublang/playbook/xstate-runtime engine supports [3]',
+      ),
+    );
+  });
+
+  it('rejects retired schema-2 artifacts naming schema 3 as the sole support', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(
+      new TypeError(
+        'workflow artifact declares schema 2, but this ' +
+          '@sublang/playbook/xstate-runtime engine supports [3]',
       ),
     );
   });
@@ -6244,7 +6467,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     expect(() =>
       createXStatePlaybookRuntime(workflowMachine, {
         ...workflowSpec,
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI + 1 },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI + 1 },
       }),
     ).toThrow(
       new TypeError(
@@ -6260,7 +6483,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
         ...workflowSpec,
         compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI + 1 },
       }),
-    ).toThrow(/declares schema 99.*supports \[2, 3\]/);
+    ).toThrow(/declares schema 99.*supports \[3\]/);
   });
 
   it('rejects a malformed declaration naming the offending member', () => {
@@ -6274,7 +6497,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
       createXStatePlaybookRuntime(workflowMachine, {
         ...workflowSpec,
         compat: {
-          artifactSchema: 2,
+          artifactSchema: 3,
           runtimeAbi: 'latest',
         } as unknown as { artifactSchema: number; runtimeAbi: number },
       }),
@@ -6292,7 +6515,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'decide-control artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
+          '@sublang/playbook/xstate-runtime engine supports [3]',
       ),
     );
   });
@@ -6383,7 +6606,17 @@ const conditionalMachine = createMachine({
           task: context.task,
           result: { done: 'Finished.' },
         }),
-        onDone: { target: 'ready' },
+        onDone: {
+          target: 'ready',
+          actions: {
+            type: 'playbook.acceptedOutcome',
+            params: {
+              source: 'implement',
+              target: 'ready',
+              acceptedOutcome: 'done',
+            },
+          },
+        },
         onError: {
           target: 'failed',
           actions: assign({ lastError: ({ event }) => event.error }),
@@ -6408,13 +6641,17 @@ const conditionalMachine = createMachine({
       },
     },
   },
+}, {
+  actions: {
+    'playbook.acceptedOutcome': () => undefined,
+  },
 });
 
-const createConditionalRuntime = createXStatePlaybookRuntime(
+const createConditionalRuntimeFactory = createXStatePlaybookRuntime(
   conditionalMachine,
   {
     label: 'conditional',
-    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
     roleStates: {
       implement: { role: 'coder', label: 'implement state' },
@@ -6424,14 +6661,28 @@ const createConditionalRuntime = createXStatePlaybookRuntime(
     // The declared projection names one JSON-safe member and one that is
     // not, so the sanitize row still has something to drop.
     controlContextFields: ['task', 'note', 'probe'],
+    outcomeAuthority: {
+      governedPlayerStates: {
+        implement: {
+          done: {
+            fields: {},
+            repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
   },
 );
+const createConditionalRuntime = (options: Record<string, never>) =>
+  createConditionalRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 // DR-034: the same workflow machine, whose entry action copies the entry
 // text into `task`, with that member declared as the retry payload's
 // source. Everything else matches `createWorkflowRuntime`, so a difference
 // between the two is the declaration's doing.
-const createRecoverableWorkflowRuntime = createXStatePlaybookRuntime(
+const createRecoverableWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -6439,6 +6690,13 @@ const createRecoverableWorkflowRuntime = createXStatePlaybookRuntime(
     entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
   },
 );
+const createRecoverableWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createRecoverableWorkflowRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test', [], initialLedger),
+  );
 
 describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)', () => {
   it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
@@ -6674,7 +6932,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         return { status: 'ok', finalText: 'Which database should I use?' };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const runtime = createWorkflowRuntime({});
     await runtime.init(makeSession(ports));
@@ -6716,7 +6974,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       {
         questionId: 'q-1',
         asker: { kind: 'role', roleId: 'coder' },
-        question: 'Which database?',
+        question: 'Which database should I use?',
         sourceItem: 'WF-1',
       },
     ]);
@@ -6814,7 +7072,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         if (prompt.includes('Classify the following Boss message')) {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
     });
     const runtime = createWorkflowRuntime({});
@@ -6862,6 +7120,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const snapshot = source.exportSnapshot!()!;
     expect(Object.keys(snapshot).sort()).toEqual([
       'effectLedger',
+      'failedEffectAttempt',
       'machine',
       'pendingBossQuestions',
       'playbookId',
@@ -6874,7 +7133,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
 
     // A fresh process holds no recorded event, and the same action derives
     // anyway — same id, same label — and replays the same player prompt.
-    const restored = createRecoverableWorkflowRuntime({});
+    const restored = createRecoverableWorkflowRuntime(
+      {},
+      snapshot.effectLedger,
+    );
     await restored.restore!(session, snapshot);
     expect(restored.describe!().actions).toEqual(live);
 
@@ -6905,7 +7167,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
             return '{"type":"BOSS_REPLY","questionId":"q-1"}';
           }
           return playerCalls === 1
-            ? '{"guard":"needsBossReply","question":"Which database?"}'
+            ? '{"guard":"needsBossReply"}'
             : '{"guard":"implemented","summary":"recovered"}';
         },
       });
@@ -6952,7 +7214,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(snapshot.pendingBossQuestions).toEqual([]);
     await declared.dispose();
 
-    const restored = createRecoverableWorkflowRuntime({});
+    const restored = createRecoverableWorkflowRuntime(
+      {},
+      snapshot.effectLedger,
+    );
     await restored.restore!(session, snapshot);
     const receipt = await restored.apply!({
       actionId: 'retry:START',
@@ -6984,7 +7249,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerPrompts.length === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"restarted"}';
       },
     });
@@ -7023,7 +7288,9 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const { ports } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
     });
-    const runtime = createUnsourcedRuntime({});
+    const runtime = createUnsourcedRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
     expect((await runtime.handleBossInput(turn('build it'))).outcome).toBe(
       'failed',
@@ -7054,7 +7321,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const snapshot = source.exportSnapshot!()!;
     await source.dispose();
 
-    const restored = createWorkflowRuntime({});
+    const restored = createWorkflowRuntime({}, snapshot.effectLedger);
     await restored.restore!(session, snapshot);
     expect(restored.describe!().actions.map(({ id }) => id)).toEqual([
       'jump:implement',
@@ -8003,7 +8270,17 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
               prompt: 'Run the second route.',
               result: { done: 'The second route completed.' },
             }),
-            onDone: '#firstRoute',
+            onDone: {
+              target: '#firstRoute',
+              actions: {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'secondRoute',
+                  target: 'firstRoute',
+                  acceptedOutcome: 'done',
+                },
+              },
+            },
             onError: {
               target: '#interruptFailed',
               actions: assign({
@@ -8018,15 +8295,31 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
           tags: ['playbook.parked'],
         },
       },
-    });
+    },
+    {
+      actions: {
+        'playbook.acceptedOutcome': () => undefined,
+      },
+    },
+  );
     const createInterruptRuntime = createXStatePlaybookRuntime(
       interruptMachine,
       {
         label: 'interrupt-retry',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: () => ({}),
         roleStates: {
           secondRoute: { role: 'coder', label: 'secondRoute state' },
+        },
+        outcomeAuthority: {
+          governedPlayerStates: {
+            secondRoute: {
+              done: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
         },
       },
     );
@@ -8038,7 +8331,9 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       callJudge: async () =>
         '{"type":"BOSS_INTERRUPT","targetId":"secondRoute"}',
     });
-    const runtime = createInterruptRuntime({});
+    const runtime = createInterruptRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
 
     const failed = await runtime.handleBossInput(turn('take the second route'));
@@ -8058,11 +8353,12 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(decideMachine, {
         label: 'decide-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) =>
           (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START_DECIDE', textField: 'callerTopic' },
         controlContextFields: ['callerTopic'],
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'decide-control uses a parallel state; the shared runtime supports only single-region FSMs',
@@ -8087,10 +8383,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(compoundMachine, {
         label: 'compound-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'compound-control declares a compound state; the shared runtime supports only flat single-region FSMs',
@@ -8111,10 +8408,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(splitIdentityMachine, {
         label: 'split-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'split-control state pause declares meta.playbook.stateId awaitBossReply; the shared runtime requires the playbook state id to equal the state key',
@@ -8136,10 +8434,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(missingIdentityMachine, {
         label: 'missing-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'missing-control state ready declares no string meta.playbook.stateId; the shared runtime derives every playbook state identity from it',
@@ -8156,9 +8455,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(machine, {
         label: 'zero-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'zero-control declares no root states; the shared runtime requires at least one flat playbook state',
@@ -8188,11 +8488,12 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'bare-control',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       entryEvent: { type: 'START', textField: 'task' },
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
     const idle = await runtime.handleBossInput(turn(''));
@@ -8238,10 +8539,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'boom-init',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     await expect(runtime.init(makeSession(ports))).rejects.toBe(boom);
     expect(traces.map(({ type }) => type)).toContain('session.disposed');
     // The failed binding is cleared; a fresh init succeeds.
@@ -8299,12 +8601,15 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     });
     const createJump = createXStatePlaybookRuntime(jumpMachine, {
       label: 'jump',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: () => ({}),
       roleStates: {},
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
     });
     const { ports } = makeRecordingPorts();
-    const runtime = createJump({});
+    const runtime = createJump(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
 
     // Both targets are registered resumable states and the live snapshot
@@ -8338,13 +8643,16 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     });
     const createRetry = createXStatePlaybookRuntime(retryMachine, {
       label: 'retry',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: () => ({}),
       roleStates: {},
       entryEvent: { type: 'START', textField: 'task' },
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
     });
     const { ports } = makeRecordingPorts();
-    const runtime = createRetry({});
+    const runtime = createRetry(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
     await runtime.handleBossInput(turn('do the thing'));
 

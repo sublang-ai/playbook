@@ -894,25 +894,15 @@ function reconcileWholeTurnReplaySnapshot(snapshot, ledger, catalog) {
     snapshot.mode !== 'engaged.parked'
       ? undefined
       : snapshot.frames.map((frame) => {
-          const item = catalog[frame.playbookId];
-          if (item?.artifactSchema === 3) {
-            return {
-              ...frame,
-              runtime: { ...frame.runtime, effectLedger: current },
-            };
-          }
-          if (
-            item?.artifactSchema !== 2 ||
-            !isDeepStrictEqual(
-              frame.runtime.effectLedger,
-              emptyPlaybookEffectLedger(),
-            )
-          ) {
+          if (catalog[frame.playbookId]?.artifactSchema !== 3) {
             throw new Error(
               `Captain uncertain turn cannot rebase frame ${JSON.stringify(frame.playbookId)} without exact artifact-schema authority`,
             );
           }
-          return frame;
+          return {
+            ...frame,
+            runtime: { ...frame.runtime, effectLedger: current },
+          };
         });
 
   return assertPlaybookCaptainShellSnapshot({

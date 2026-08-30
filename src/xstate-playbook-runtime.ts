@@ -41,7 +41,6 @@ import {
   normalizePlaybookSnapshot,
   snapshotJsonValue,
   snapshotPlaybookSession,
-  emptyPlaybookEffectLedger,
   isPlaybookEffectLedgerMonotonicExtension,
   PlaybookSemanticCandidateStructureError,
   reconcilePlaybookSemanticEvidence,
@@ -408,17 +407,12 @@ function assertNoConfiguredHostCapabilities(value: unknown, label: string): void
 
 function configuredOptionsFromFactoryInput(
   value: unknown,
-  artifactSchema: number,
   label: string,
 ): {
   readonly configuredOptions: unknown;
-  readonly hostCapabilities?: object;
-  readonly effectLedger?: PlaybookEffectLedgerCapability;
+  readonly hostCapabilities: object;
+  readonly effectLedger: PlaybookEffectLedgerCapability;
 } {
-  if (artifactSchema === 2) {
-    assertNoConfiguredHostCapabilities(value, label);
-    return { configuredOptions: value };
-  }
   if (
     value === null ||
     typeof value !== 'object' ||
@@ -551,7 +545,6 @@ export const RUNTIME_ABI = 1;
 
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS: readonly number[] = Object.freeze([
-  2,
   3,
 ]);
 
@@ -612,14 +605,12 @@ export interface XStatePlaybookRuntimeConstruction<
 export type XStatePlaybookRuntimeFactoryOptions<
   ConfiguredOptions,
   HostCapabilities extends object,
-> = [HostCapabilities] extends [never]
-  ? ConfiguredOptions
-  : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+> = XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
 
 /** Shared XState factory with its captured, validated artifact compatibility. */
 export type XStatePlaybookRuntimeFactory<
   Options = unknown,
-  ArtifactSchema extends 2 | 3 = 2 | 3,
+  ArtifactSchema extends 3 = 3,
 > = PlaybookRuntimeFactory<Options> & {
   readonly compat: Readonly<{
     readonly artifactSchema: ArtifactSchema;
@@ -633,7 +624,7 @@ export type XStatePlaybookRuntimeFactory<
 function assertRuntimeCompat(
   compat: XStatePlaybookRuntimeCompat | undefined,
   label: string,
-): 2 | 3 {
+): 3 {
   if (compat === undefined) {
     throw new TypeError(
       `${label} spec.compat is required for local-role artifacts`,
@@ -664,7 +655,7 @@ function assertRuntimeCompat(
         `@sublang/playbook/xstate-runtime engine implements ${RUNTIME_ABI}`,
     );
   }
-  return artifactSchema as 2 | 3;
+  return artifactSchema as 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -825,29 +816,15 @@ interface XStatePlaybookRuntimeSpecBase<TOptions> {
   scriptCwd?: (options: TOptions) => string | undefined;
 }
 
-/**
- * Legacy schema-2-compatible shared-engine spec name. Its optional compat
- * member is retained for downstream source compatibility; construction still
- * rejects an absent or unsupported declaration before interpretation.
- */
 export interface XStatePlaybookRuntimeSpec<TOptions>
-  extends XStatePlaybookRuntimeSpecBase<TOptions> {
-  compat?: XStatePlaybookRuntimeCompat;
-  outcomeAuthority?: never;
-}
-
-/** Exact schema-2 shared-engine spec; its one-argument factory is intact. */
-export interface XStatePlaybookRuntimeSpecV2<TOptions>
-  extends XStatePlaybookRuntimeSpec<TOptions> {
-  compat: XStatePlaybookRuntimeCompat & { artifactSchema: 2 };
-}
-
-/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
-export interface XStatePlaybookRuntimeSpecV3<TOptions>
   extends XStatePlaybookRuntimeSpecBase<TOptions> {
   compat: XStatePlaybookRuntimeCompat & { artifactSchema: 3 };
   outcomeAuthority: XStateOutcomeAuthoritySpec;
 }
+
+/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
+export type XStatePlaybookRuntimeSpecV3<TOptions> =
+  XStatePlaybookRuntimeSpec<TOptions>;
 
 type UncheckedXStatePlaybookRuntimeSpec<TOptions> =
   XStatePlaybookRuntimeSpecBase<TOptions> & {
@@ -2022,14 +1999,11 @@ function makeDefaultNormalizeTransitionEvent(
 function snapshotRoleStateStatuses(
   value: unknown,
   label: string,
-  artifactSchema: number,
   machine: AnyStateMachine,
   stateDescriptions: ReadonlyMap<string, string>,
 ): ReadonlyMap<string, XStateRoleStateStatus> {
   if (value === undefined) {
-    throw new TypeError(
-      `${label} roleStates must be supplied for schema ${artifactSchema}`,
-    );
+    throw new TypeError(`${label} roleStates must be supplied for schema 3`);
   }
   const captured = snapshotJsonValue(value, `${label} roleStates`);
   if (!isPlainObject(captured)) {
@@ -2132,18 +2106,11 @@ function requireAuthorityIdentifier(value: string, path: string): void {
 
 function snapshotOutcomeAuthority(
   descriptor: PropertyDescriptor | undefined,
-  artifactSchema: number,
   label: string,
   playerStates: ReadonlyMap<string, XStateRoleStateStatus>,
   verbatimPayloadFields: ReadonlySet<string>,
-): XStateOutcomeAuthoritySpec | undefined {
+): XStateOutcomeAuthoritySpec {
   const path = `${label} outcomeAuthority`;
-  if (artifactSchema === 2) {
-    if (descriptor !== undefined) {
-      throw new TypeError(`${path} is not allowed for schema 2`);
-    }
-    return undefined;
-  }
   if (
     descriptor === undefined ||
     !Object.prototype.hasOwnProperty.call(descriptor, 'value') ||
@@ -2354,14 +2321,6 @@ function assertGovernedPlayerInput(
       );
     }
   }
-}
-
-function settlingGuard(event: unknown): string | undefined {
-  if (!isPlainObject(event) || !isPlainObject(event.output)) return undefined;
-  const guard = event.output.guard;
-  return typeof guard === 'string' && guard.trim().length > 0
-    ? guard
-    : undefined;
 }
 
 function askerLabel(
@@ -2959,10 +2918,6 @@ function assertUnfinishedFinalStateIds(
  * state key — so each snapshot exposes exactly one playbook state id.
  * Parallel-region FSMs keep their own linked runtimes.
  */
-export function createXStatePlaybookRuntime<TOptions>(
-  machine: AnyStateMachine,
-  spec: XStatePlaybookRuntimeSpec<TOptions>,
-): XStatePlaybookRuntimeFactory<TOptions, 2>;
 export function createXStatePlaybookRuntime<
   TOptions,
   THostCapabilities extends object,
@@ -2989,12 +2944,12 @@ export function createXStatePlaybookRuntime<
   const specDescriptors = Object.getOwnPropertyDescriptors(spec);
   if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
     throw new TypeError(
-      `${label} schema-2 artifacts must supply roleStates, not playerStates`,
+      `${label} artifacts must supply roleStates, not playerStates`,
     );
   }
   if (Object.prototype.hasOwnProperty.call(specDescriptors, 'resolvePlayerId')) {
     throw new TypeError(
-      `${label} schema-2 artifacts must not derive concrete player bindings`,
+      `${label} artifacts must not derive concrete player bindings`,
     );
   }
   if (machineDeclaresParallelState(machine)) {
@@ -3037,7 +2992,6 @@ export function createXStatePlaybookRuntime<
   const roleStates = snapshotRoleStateStatuses(
     roleStatesDescriptor?.value,
     label,
-    artifactSchema,
     machine,
     stateDescriptions,
   );
@@ -3082,25 +3036,22 @@ export function createXStatePlaybookRuntime<
   };
   const outcomeAuthority = snapshotOutcomeAuthority(
     specDescriptors.outcomeAuthority,
-    artifactSchema,
     label,
     roleStates,
     verbatimPayloadFields,
   );
-  if (outcomeAuthority !== undefined) {
-    for (const [stateId, outcomes] of Object.entries(
-      outcomeAuthority.governedPlayerStates,
-    )) {
-      if (
-        Object.values(outcomes).some(
-          ({ repositoryDisposition }) => repositoryDisposition === 'deferred',
-        ) &&
-        !resumableStateIds.has(stateId)
-      ) {
-        throw new TypeError(
-          `${label} outcomeAuthority deferred state ${stateId} must be registered in resumableStateIds`,
-        );
-      }
+  for (const [stateId, outcomes] of Object.entries(
+    outcomeAuthority.governedPlayerStates,
+  )) {
+    if (
+      Object.values(outcomes).some(
+        ({ repositoryDisposition }) => repositoryDisposition === 'deferred',
+      ) &&
+      !resumableStateIds.has(stateId)
+    ) {
+      throw new TypeError(
+        `${label} outcomeAuthority deferred state ${stateId} must be registered in resumableStateIds`,
+      );
     }
   }
   // Build the derived classifier unconditionally: it is the sole validator of
@@ -3139,20 +3090,16 @@ export function createXStatePlaybookRuntime<
   ): PlaybookRuntime {
     const construction = configuredOptionsFromFactoryInput(
       factoryOptions,
-      artifactSchema,
       label,
     );
     const configuredOptions = construction.configuredOptions as TOptions;
     const effectLedgerCapability = construction.effectLedger;
     const hasGovernedPlayerStates =
-      outcomeAuthority !== undefined &&
       Object.keys(outcomeAuthority.governedPlayerStates).length > 0;
     const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(
-      artifactSchema,
       (source, acceptedOutcome) => {
-        const governedPlayerStates = outcomeAuthority?.governedPlayerStates;
+        const governedPlayerStates = outcomeAuthority.governedPlayerStates;
         if (
-          governedPlayerStates === undefined ||
           !Object.prototype.hasOwnProperty.call(governedPlayerStates, source)
         ) {
           return false;
@@ -3175,12 +3122,10 @@ export function createXStatePlaybookRuntime<
           )
         : undefined;
     const currentEffectLedger = (): PlaybookEffectLedger =>
-      effectLedgerCapability === undefined
-        ? emptyPlaybookEffectLedger()
-        : assertPlaybookEffectLedger(
-            effectLedgerCapability.snapshot(),
-            `${label} current host effect ledger`,
-          );
+      assertPlaybookEffectLedger(
+        effectLedgerCapability.snapshot(),
+        `${label} current host effect ledger`,
+      );
     let effectLedgerMirror = currentEffectLedger();
     let retainedEffectSourceSessionId: string | undefined;
     let retainedEffectReconciliation:
@@ -3762,7 +3707,7 @@ export function createXStatePlaybookRuntime<
       | { readonly kind: 'boundary'; readonly boundaryId: string }
       | { readonly kind: 'logical-operation'; readonly operationId: string }
     )[] {
-      if (artifactSchema !== 3 || session === undefined) return [];
+      if (session === undefined) return [];
       const current = currentEffectLedger();
       effectLedgerMirror = current;
       refreshRetainedEffectReconciliation(current);
@@ -5513,10 +5458,9 @@ export function createXStatePlaybookRuntime<
       async callJudge(purpose, stateId, prompt, signal): Promise<string> {
         return judgeQueue.add(async () => {
           const governedSemanticJudge =
-            artifactSchema === 3 &&
             purpose === 'player-output-adjudication' &&
             stateId !== undefined &&
-            outcomeAuthority?.governedPlayerStates[stateId] !== undefined;
+            outcomeAuthority.governedPlayerStates[stateId] !== undefined;
           signal.throwIfAborted();
           // A transition/status queued synchronously by XState must reach
           // the host before the judge call that follows it.
@@ -6351,16 +6295,9 @@ export function createXStatePlaybookRuntime<
               inspectionEvent.event,
             );
             const outcomeStatuses = usesDefaultStatuses
-              ? artifactSchema === 2
-                ? (() => {
-                    const guard = settlingGuard(inspectionEvent.event);
-                    return guard === undefined
-                      ? []
-                      : [{ message: `→ ${guard}` }];
-                  })()
-                : acceptedOutcomes.map(({ acceptedOutcome }) => ({
-                    message: `→ ${acceptedOutcome}`,
-                  }))
+              ? acceptedOutcomes.map(({ acceptedOutcome }) => ({
+                  message: `→ ${acceptedOutcome}`,
+                }))
               : [];
             const statuses = [...outcomeStatuses, ...stateStatuses];
             const publish = () =>
@@ -6862,15 +6799,6 @@ export function createXStatePlaybookRuntime<
       ) {
         throw new TypeError(
           'retained runtime checkpoint contains an incomplete physical boundary',
-        );
-      }
-      if (
-        artifactSchema === 2 &&
-        (boundSnapshot.retainedEffectSourceSessionId !== undefined ||
-          boundSnapshot.retainedEffectReconciliation !== undefined)
-      ) {
-        throw new TypeError(
-          'schema-2 runtime snapshots must not carry retained effect lineage',
         );
       }
       const hostEffectLedger = currentEffectLedger();

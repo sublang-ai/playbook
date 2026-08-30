@@ -627,7 +627,17 @@ const repeatMachine = createMachine({
           prompt: `Implement ${context.task}.`,
           result: { complete: 'The task is complete.' },
         }),
-        onDone: 'ready',
+        onDone: {
+          target: 'ready',
+          actions: {
+            type: ACCEPTED_OUTCOME_ACTION_TYPE,
+            params: {
+              source: 'work',
+              target: 'ready',
+              acceptedOutcome: 'complete',
+            },
+          },
+        },
         onError: 'ready',
       },
     },
@@ -1076,10 +1086,11 @@ function repeatSpec(
 ): XStatePlaybookRuntimeSpec<EmptyOptions> {
   return {
     label: 'ROLE-REPEAT',
-    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: () => ({}),
     entryEvent: { type: 'START', textField: 'task' },
     roleStates: { work: { role: 'coder', label: 'Implement the task.' } },
+    outcomeAuthority: repeatOutcomeAuthority,
     ...overrides,
   };
 }
@@ -1131,12 +1142,7 @@ function semanticEvidenceSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions
 function repeatSchema3Spec(
   overrides: Partial<XStatePlaybookRuntimeSpecV3<EmptyOptions>> = {},
 ): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
-  return {
-    ...repeatSpec(),
-    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
-    outcomeAuthority: repeatOutcomeAuthority,
-    ...overrides,
-  };
+  return repeatSpec(overrides);
 }
 
 function acceptedOutcomeSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
@@ -1318,8 +1324,8 @@ const bossTurn = (text: string) => ({
 });
 
 describe('DR-032 shared role runtime transition', () => {
-  it('advertises artifact schemas 2 and 3 and rejects legacy declarations', () => {
-    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2, 3]);
+  it('advertises artifact schema 3 and rejects legacy declarations', () => {
+    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([3]);
     expect(Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS)).toBe(true);
 
     expect(() =>
@@ -1333,13 +1339,19 @@ describe('DR-032 shared role runtime transition', () => {
         ...repeatSpec(),
         compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
       }),
-    ).toThrow('supports [2, 3]');
+    ).toThrow('supports [3]');
+    expect(() =>
+      createXStatePlaybookRuntime(repeatMachine, {
+        ...repeatSpec(),
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      } as unknown as XStatePlaybookRuntimeSpec<EmptyOptions>),
+    ).toThrow('supports [3]');
     expect(() =>
       createXStatePlaybookRuntime(repeatMachine, {
         ...repeatSpec(),
         roleStates: undefined,
       }),
-    ).toThrow('roleStates must be supplied for schema 2');
+    ).toThrow('roleStates must be supplied for schema 3');
 
     expect(() =>
       createXStatePlaybookRuntime(repeatMachine, {
@@ -1421,17 +1433,13 @@ describe('DR-032 shared role runtime transition', () => {
     expect(() =>
       createXStatePlaybookRuntime(repeatMachine, repeatSchema3Spec()),
     ).not.toThrow();
+    const { outcomeAuthority: _outcomeAuthority, ...authorityMissingSpec } =
+      repeatSpec();
     expect(() =>
-      createXStatePlaybookRuntime(repeatMachine, {
-        ...repeatSpec(),
-        outcomeAuthority: repeatOutcomeAuthority,
-      }),
-    ).toThrow('outcomeAuthority is not allowed for schema 2');
-    expect(() =>
-      createXStatePlaybookRuntime(repeatMachine, {
-        ...repeatSpec(),
-        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
-      }),
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        authorityMissingSpec as unknown as XStatePlaybookRuntimeSpec<EmptyOptions>,
+      ),
     ).toThrow(
       'outcomeAuthority must be an own enumerable data property for schema 3',
     );
@@ -2152,31 +2160,6 @@ describe('DR-032 shared role runtime transition', () => {
     await unconfirmedSourceRuntime.dispose();
   });
 
-  it('retains schema-2 raw guard status without accepted-outcome traces', async () => {
-    const telemetry: unknown[] = [];
-    const statuses: string[] = [];
-    const ports: PlaybookPorts = {
-      ...recordingPorts(async () => ({
-        status: 'ok',
-        finalText: 'Implemented.',
-      }), telemetry),
-      emitStatus: async (message) => {
-        statuses.push(message);
-      },
-    };
-    const runtime = createXStatePlaybookRuntime(
-      acceptedOutcomeMachine,
-      repeatSpec({ label: 'ROLE-OUTCOME-LEGACY' }),
-    )({});
-    await runtime.init(session(ports));
-
-    await runtime.handleBossInput(bossTurn('accept'));
-
-    expect(statuses).toContain('→ complete');
-    expect(JSON.stringify(telemetry)).not.toContain('outcome.accepted');
-    await runtime.dispose();
-  });
-
   it('confirms parallel markers in execution order and rejects duplicates', () => {
     const marker = (
       source: string,
@@ -2227,7 +2210,6 @@ describe('DR-032 shared role runtime transition', () => {
       },
     });
     const consumer = createAcceptedOutcomeConsumer(
-      3,
       (source, outcome) =>
         (source === 'leftWork' && outcome === 'leftComplete') ||
         (source === 'rightWork' && outcome === 'rightComplete'),
@@ -2294,7 +2276,6 @@ describe('DR-032 shared role runtime transition', () => {
       },
     });
     const duplicateConsumer = createAcceptedOutcomeConsumer(
-      3,
       (source, outcome) => source === 'work' && outcome === 'complete',
     );
     const duplicateConfirmed: unknown[] = [];
@@ -2338,7 +2319,6 @@ describe('DR-032 shared role runtime transition', () => {
     duplicateActor.stop();
 
     const unconfirmedSourceConsumer = createAcceptedOutcomeConsumer(
-      3,
       (source, outcome) => source === 'work' && outcome === 'complete',
     );
     unconfirmedSourceConsumer.capture(marker('work', 'done', 'complete'));
@@ -2364,7 +2344,6 @@ describe('DR-032 shared role runtime transition', () => {
     ).toThrow('source work was not confirmed by the prior public root snapshot');
 
     const initialEntryConsumer = createAcceptedOutcomeConsumer(
-      3,
       (source, outcome) => source === 'work' && outcome === 'complete',
     );
     initialEntryConsumer.capture(marker('work', 'work', 'complete'));
@@ -2380,7 +2359,6 @@ describe('DR-032 shared role runtime transition', () => {
     ).toThrow('marker has no prior public root snapshot');
 
     const poisonedConsumer = createAcceptedOutcomeConsumer(
-      3,
       (source, outcome) => source === 'work' && outcome === 'complete',
     );
     expect(() =>
@@ -2494,21 +2472,6 @@ describe('DR-032 shared role runtime transition', () => {
         hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('schema-3 factory input must contain exactly');
-
-    const mutableSchema2Spec = repeatSpec();
-    const schema2Factory = createXStatePlaybookRuntime(
-      repeatMachine,
-      mutableSchema2Spec,
-    );
-    const schema2Compat = schema2Factory.compat;
-    expect(schema2Compat).toEqual({
-      artifactSchema: 2,
-      runtimeAbi: RUNTIME_ABI,
-    });
-    expect(Object.isFrozen(schema2Compat)).toBe(true);
-    (mutableSchema2Spec.compat as { artifactSchema: number }).artifactSchema = 3;
-    expect(schema2Factory.compat).toBe(schema2Compat);
-    expect(() => schema2Factory({})).not.toThrow();
 
     expect(() =>
       createRuntime({} as {
@@ -3669,7 +3632,8 @@ describe('DR-032 shared role runtime transition', () => {
       calls.push({ roleId, prompt, resume: options.resume });
       return { status: 'ok', resumeToken: 'thread-1', finalText: 'done' };
     }, telemetry);
-    const createRuntime = createXStatePlaybookRuntime(
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const createRuntime = createXStatePlaybookRuntime<EmptyOptions, object>(
       repeatMachine,
       repeatSpec({
         composePlayerPrompt: (input, promptIdentity) => {
@@ -3678,7 +3642,7 @@ describe('DR-032 shared role runtime transition', () => {
         },
       }),
     );
-    const runtime = createRuntime({});
+    const runtime = createRuntime({ configuredOptions: {}, hostCapabilities });
     await runtime.init(
       session(ports, { roleBindings: { coder: mutableBinding } }),
     );
@@ -3721,7 +3685,7 @@ describe('DR-032 shared role runtime transition', () => {
     );
     await runtime.dispose();
 
-    const restored = createRuntime({});
+    const restored = createRuntime({ configuredOptions: {}, hostCapabilities });
     await restored.restore?.(
       session(ports, {
         roleBindings: {
@@ -3754,7 +3718,7 @@ describe('DR-032 shared role runtime transition', () => {
       finalText: 'done',
     }));
     const ports = recordingPorts(port);
-    const createRuntime = createXStatePlaybookRuntime(
+    const createRuntime = createXStatePlaybookRuntime<EmptyOptions, object>(
       repeatMachine,
       repeatSpec({
         composePlayerPrompt: (_input, promptIdentity) =>
@@ -3769,14 +3733,20 @@ describe('DR-032 shared role runtime transition', () => {
         reviewer: { playerId: 'dev.reviewer', promptIdentity: 'Reviewer' },
       },
     ]) {
-      const runtime = createRuntime({});
+      const runtime = createRuntime({
+        configuredOptions: {},
+        hostCapabilities: emptyLedgerHostCapabilities(),
+      });
       await expect(runtime.init(session(ports, { roleBindings }))).rejects.toThrow(
         'must cover exactly [coder]',
       );
       await runtime.dispose();
     }
 
-    const emptyIdentity = createRuntime({});
+    const emptyIdentity = createRuntime({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await expect(
       emptyIdentity.init(
         session(ports, {
@@ -3786,7 +3756,10 @@ describe('DR-032 shared role runtime transition', () => {
     ).rejects.toThrow('promptIdentity must be a non-empty string');
     await emptyIdentity.dispose();
 
-    const lookup = createRuntime({});
+    const lookup = createRuntime({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await lookup.init(
       session(ports, {
         roleBindings: {
@@ -3833,7 +3806,7 @@ describe('DR-032 shared role runtime transition', () => {
       resumes.push(options.resume);
       return results.shift()!;
     });
-    const runtime = createXStatePlaybookRuntime(
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
       repeatMachine,
       repeatSpec({
         composePlayerPrompt: (input, promptIdentity) => {
@@ -3841,7 +3814,10 @@ describe('DR-032 shared role runtime transition', () => {
           return input.prompt;
         },
       }),
-    )({});
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await runtime.init(session(ports, { playerSessions: store }));
 
     await runtime.handleBossInput(bossTurn('one'));
@@ -4914,7 +4890,17 @@ const aliasMachine = createMachine({
           prompt: 'Draft.',
           result: { complete: 'Complete.' },
         },
-        onDone: 'review',
+        onDone: {
+          target: 'review',
+          actions: {
+            type: ACCEPTED_OUTCOME_ACTION_TYPE,
+            params: {
+              source: 'code',
+              target: 'review',
+              acceptedOutcome: 'complete',
+            },
+          },
+        },
         onError: 'ready',
       },
     },
@@ -4930,7 +4916,17 @@ const aliasMachine = createMachine({
           prompt: 'Review.',
           result: { complete: 'Complete.' },
         },
-        onDone: 'ready',
+        onDone: {
+          target: 'ready',
+          actions: {
+            type: ACCEPTED_OUTCOME_ACTION_TYPE,
+            params: {
+              source: 'review',
+              target: 'ready',
+              acceptedOutcome: 'complete',
+            },
+          },
+        },
         onError: 'ready',
       },
     },
@@ -4939,12 +4935,22 @@ const aliasMachine = createMachine({
 
 const aliasSpec: XStatePlaybookRuntimeSpec<EmptyOptions> = {
   label: 'ROLE-ALIAS',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {
     code: { role: 'coder', label: 'Draft a proposal.' },
     review: { role: 'reviewer', label: 'Review the proposal.' },
+  },
+  outcomeAuthority: {
+    governedPlayerStates: {
+      code: {
+        complete: { fields: {}, repositoryDisposition: 'unchanged' },
+      },
+      review: {
+        complete: { fields: {}, repositoryDisposition: 'unchanged' },
+      },
+    },
   },
 };
 
@@ -4963,8 +4969,12 @@ describe('DR-032 aliased private continuation', () => {
       coder: { playerId: 'dev.shared', promptIdentity: 'Coder' },
       reviewer: { playerId: 'dev.shared', promptIdentity: 'Reviewer' },
     };
-    const createRuntime = createXStatePlaybookRuntime(aliasMachine, aliasSpec);
-    const runtime = createRuntime({});
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const createRuntime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      aliasMachine,
+      aliasSpec,
+    );
+    const runtime = createRuntime({ configuredOptions: {}, hostCapabilities });
     await runtime.init(session(ports, { roleBindings: bindings }));
     await runtime.handleBossInput(bossTurn('start'));
     expect(calls).toEqual([
@@ -4983,7 +4993,7 @@ describe('DR-032 aliased private continuation', () => {
       coder: 'thread-a',
       reviewer: 'thread-b',
     };
-    const restored = createRuntime({});
+    const restored = createRuntime({ configuredOptions: {}, hostCapabilities });
     await expect(
       restored.restore?.(
         session(ports, { roleBindings: bindings }),
@@ -5004,7 +5014,13 @@ describe('DR-032 aliased private continuation', () => {
       snapshot: () => ({ coder: 'thread-1' }),
       restore: () => undefined,
     };
-    const runtime = createXStatePlaybookRuntime(aliasMachine, aliasSpec)({});
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      aliasMachine,
+      aliasSpec,
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await runtime.init(
       session(ports, {
         roleBindings: {
@@ -5035,7 +5051,13 @@ describe('DR-032 aliased private continuation', () => {
       },
       restore: () => undefined,
     };
-    const runtime = createXStatePlaybookRuntime(repeatMachine, repeatSpec())({});
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSpec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await runtime.init(
       session(
         recordingPorts(async () => ({
@@ -5130,19 +5152,35 @@ describe('DR-032 resolved-player concurrency', () => {
         }),
     );
     const telemetry: unknown[] = [];
-    const runtime = createXStatePlaybookRuntime(collisionMachine, {
-      label: 'ROLE-COLLISION',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
-      snapshotOptions: () => ({}),
-      entryEvent: { type: 'START', textField: 'task' },
-      roleStates: {
-        work: { role: 'coder', label: 'Run simultaneous work.' },
-        reviewerDeclaration: {
-          role: 'reviewer',
-          label: 'Declare the Reviewer role.',
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      collisionMachine,
+      {
+        label: 'ROLE-COLLISION',
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: () => ({}),
+        entryEvent: { type: 'START', textField: 'task' },
+        roleStates: {
+          work: { role: 'coder', label: 'Run simultaneous work.' },
+          reviewerDeclaration: {
+            role: 'reviewer',
+            label: 'Declare the Reviewer role.',
+          },
+        },
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              complete: { fields: {}, repositoryDisposition: 'unchanged' },
+            },
+            reviewerDeclaration: {
+              complete: { fields: {}, repositoryDisposition: 'unchanged' },
+            },
+          },
         },
       },
-    })({});
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
     await runtime.init(
       session(recordingPorts(hostCalls, telemetry), {
         roleBindings: {
