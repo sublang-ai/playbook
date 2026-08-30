@@ -3280,7 +3280,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it('selects migratable schema 3, skips released schemas, and fails closed on corruption', async () => {
+  it('selects migrations, skips nonresumable records, and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -3311,13 +3311,13 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await expect(store.read(secondSessionId)).rejects.toThrow(
       /contains record/,
     );
-    const legacyRecord = releasedSchema2Record({
+    const releasedRecord = releasedSchema2Record({
       sessionId: secondSessionId,
       createdAt: wrongEmbeddedId.createdAt,
       updatedAt: wrongEmbeddedId.updatedAt,
       cwd: wrongEmbeddedId.cwd,
     });
-    await writeFile(secondPath, `${JSON.stringify(legacyRecord)}\n`, 'utf8');
+    await writeFile(secondPath, `${JSON.stringify(releasedRecord)}\n`, 'utf8');
     const legacyRecords: unknown[] = [];
     expect(
       (
@@ -3364,6 +3364,66 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(await store.read(secondSessionId)).toEqual(
       validateCaptainSessionRecord(memberlessSchema3),
     );
+
+    const schema3Execution = schema3ExecutionProjection();
+    const preEffectSchema3Artifact = settledRecord({
+      sessionId: secondSessionId,
+      createdAt: wrongEmbeddedId.createdAt,
+      updatedAt: wrongEmbeddedId.updatedAt,
+      cwd: wrongEmbeddedId.cwd,
+      structuralProjection: projectCaptainSessionStructure(schema3Execution),
+      lastAppliedExecutionProjection: schema3Execution,
+      snapshot: shellSnapshot(schema3Execution, 1, secondSessionId),
+    });
+    for (const schemaVersion of [3, 4] as const) {
+      const unmigratable = legacyRecord(
+        preEffectSchema3Artifact,
+        schemaVersion,
+      );
+      await writeFile(
+        secondPath,
+        `${JSON.stringify(unmigratable)}\n`,
+        'utf8',
+      );
+      legacyRecords.length = 0;
+      expect(
+        (
+          await store.latest({
+            onLegacyRecord: (record: unknown) =>
+              legacyRecords.push(record),
+          })
+        ).sessionId,
+      ).toBe(sessionId);
+      expect(legacyRecords).toEqual([
+        {
+          sessionId: secondSessionId,
+          path: secondPath,
+          schemaVersion,
+        },
+      ]);
+      await expect(store.read(secondSessionId)).rejects.toThrow(
+        new RegExp(
+          `schema ${schemaVersion} predates effect-ledger persistence.*schema-3 playbook "code"`,
+        ),
+      );
+    }
+
+    const malformedUnmigratable = legacyRecord(
+      preEffectSchema3Artifact,
+    );
+    malformedUnmigratable.snapshot.captain.runtime.schemaVersion = 2;
+    await writeFile(
+      secondPath,
+      `${JSON.stringify(malformedUnmigratable)}\n`,
+      'utf8',
+    );
+    legacyRecords.length = 0;
+    await expect(
+      store.latest({
+        onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+      }),
+    ).rejects.toThrow(/runtime schema 2 cannot migrate to schema 4/);
+    expect(legacyRecords).toEqual([]);
 
     await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(

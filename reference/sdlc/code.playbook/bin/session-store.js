@@ -127,6 +127,14 @@ class CaptainSessionRecordSchemaError extends Error {
   }
 }
 
+class CaptainSessionRecordNonresumableError extends
+  CaptainSessionRecordSchemaError {
+  constructor(schemaVersion, message, cause) {
+    super(schemaVersion, message, cause);
+    this.name = 'CaptainSessionRecordNonresumableError';
+  }
+}
+
 class CaptainSessionLeaseActiveError extends Error {
   constructor(sessionId, pid) {
     super(
@@ -223,8 +231,10 @@ export function createCaptainSessionStore(options = {}) {
         `Captain session ${JSON.stringify(sessionId)} at ` +
         `${JSON.stringify(path)}`;
       if (cause instanceof CaptainSessionRecordSchemaError) {
+        const nonresumable =
+          cause instanceof CaptainSessionRecordNonresumableError;
         if (
-          cause.schemaVersion === 2 &&
+          nonresumable &&
           value.sessionId !== sessionId
         ) {
           throw new Error(
@@ -232,7 +242,10 @@ export function createCaptainSessionStore(options = {}) {
               JSON.stringify(value.sessionId),
           );
         }
-        throw new CaptainSessionRecordSchemaError(
+        const SchemaError = nonresumable
+          ? CaptainSessionRecordNonresumableError
+          : CaptainSessionRecordSchemaError;
+        throw new SchemaError(
           cause.schemaVersion,
           `${context}: ${cause.message}`,
           cause,
@@ -282,10 +295,7 @@ export function createCaptainSessionStore(options = {}) {
       try {
         candidates.push(await readRecord(sessionId));
       } catch (error) {
-        if (
-          error instanceof CaptainSessionRecordSchemaError &&
-          error.schemaVersion === 2
-        ) {
+        if (error instanceof CaptainSessionRecordNonresumableError) {
           await onLegacyRecord?.(
             Object.freeze({
               sessionId,
@@ -1426,7 +1436,7 @@ export function validateCaptainSessionRecord(value) {
   );
   if (record.schemaVersion === 2) {
     assertReleasedSchema2CaptainSessionRecord(record);
-    throw new CaptainSessionRecordSchemaError(
+    throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
       'Captain session record schema 2 has incompatible root-owned player identity; schema 5 is required',
     );
@@ -1658,14 +1668,8 @@ function migratePreEffectCaptainSessionRecord(record) {
   const schema3Id = Object.values(structural.catalog).find(
     (entry) => entry.artifactSchema === 3,
   )?.id;
-  if (schema3Id !== undefined) {
-    throw new CaptainSessionRecordSchemaError(
-      record.schemaVersion,
-      `Captain session record schema ${record.schemaVersion} predates effect-ledger persistence and cannot migrate schema-3 playbook ${JSON.stringify(schema3Id)}`,
-    );
-  }
   const effectLedger = emptyPlaybookEffectLedger();
-  return {
+  const migrated = {
     ...record,
     schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
     snapshot: migratePreEffectShellSnapshot(record.snapshot, effectLedger),
@@ -1678,6 +1682,14 @@ function migratePreEffectCaptainSessionRecord(record) {
         }
       : {}),
   };
+  if (schema3Id !== undefined) {
+    validateCanonicalCaptainSessionRecord(migrated);
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      `Captain session record schema ${record.schemaVersion} predates effect-ledger persistence and cannot migrate schema-3 playbook ${JSON.stringify(schema3Id)}`,
+    );
+  }
+  return migrated;
 }
 
 function migratePreEffectShellSnapshot(value, effectLedger) {
