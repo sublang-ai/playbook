@@ -8,21 +8,23 @@
 //                callerInput; pending player questions retain BOSS_REPLY
 // Adjudication:  LLM judge per state; coderOutput and reviewerOutput are
 //                carried verbatim
-// Compat:        artifact schema 2 / runtime ABI 1
+// Compat:        artifact schema 3 / runtime ABI 1
 
 import {
   createXStatePlaybookRuntime,
   snapshotJsonValue,
   type PlaybookPlayerInput,
   type XStatePlaybookRuntimeFactory,
+  type XStatePlaybookRuntimeConstruction,
   type XStatePromptIdentity,
-  type XStatePlaybookRuntimeSpec,
+  type XStatePlaybookRuntimeSpecV3,
 } from '@sublang/playbook/xstate-runtime';
 import {
   reviewMachine,
   type PlayerInput,
   type ReviewInput,
 } from './review.fsm.js';
+import type { PlaybookHostConstructionCapabilities } from '../code.playbook/playbook-captain.js';
 import type {
   CaptainCallOptions,
   CaptainResult,
@@ -76,6 +78,9 @@ export type {
 };
 
 export type ReviewPlaybookOptions = ReviewInput;
+export type ReviewPlaybookHostCapabilities =
+  PlaybookHostConstructionCapabilities &
+    XStatePlaybookRuntimeConstruction<ReviewPlaybookOptions, object>['hostCapabilities'];
 
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
 const CONTINUATION_PREAMBLE =
@@ -162,7 +167,7 @@ const runtimeSpec = {
   // time — a literal, never the loading engine's RUNTIME_ABI self-report,
   // which would follow whatever engine loads the module and make the
   // factory's skew check compare that engine with itself.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: snapshotReviewOptions,
   entryEvent: {
     type: 'START_REVIEW',
@@ -193,6 +198,66 @@ const runtimeSpec = {
         'REVIEW-4: Reviewer adjudicates an all-rejected Coder disposition.',
     },
   },
+  outcomeAuthority: {
+    governedPlayerStates: {
+      reviewInitial: {
+        hasFindings: {
+          fields: { reviewerOutput: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        noFindings: {
+          fields: {},
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+      addressFindings: {
+        committed: {
+          fields: { coderOutput: 'presentation' },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        rejectedAll: {
+          fields: { coderOutput: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'deferred',
+        },
+      },
+      reviewAfterCommit: {
+        hasFindings: {
+          fields: { reviewerOutput: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        noFindings: {
+          fields: {},
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+      reviewAfterRebuttal: {
+        hasFindings: {
+          fields: { reviewerOutput: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        noFindings: {
+          fields: {},
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+    },
+  },
   composePlayerPrompt: (
     input: PlaybookPlayerInput,
     promptIdentity: XStatePromptIdentity,
@@ -207,11 +272,17 @@ const runtimeSpec = {
     'answer',
     'questionId',
   ],
-} satisfies XStatePlaybookRuntimeSpec<ReviewPlaybookOptions>;
+} satisfies XStatePlaybookRuntimeSpecV3<ReviewPlaybookOptions>;
 
 const createPlaybookRuntime: XStatePlaybookRuntimeFactory<
+  XStatePlaybookRuntimeConstruction<
+    ReviewPlaybookOptions,
+    ReviewPlaybookHostCapabilities
+  >,
+  3
+> = createXStatePlaybookRuntime<
   ReviewPlaybookOptions,
-  2
-> = createXStatePlaybookRuntime(reviewMachine, runtimeSpec);
+  ReviewPlaybookHostCapabilities
+>(reviewMachine, runtimeSpec);
 
 export default createPlaybookRuntime;

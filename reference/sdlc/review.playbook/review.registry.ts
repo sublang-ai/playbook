@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import createPlaybookRuntime, {
+  type ReviewPlaybookHostCapabilities,
   type PlaybookRuntime,
 } from './review.playbook.js';
 
@@ -20,11 +21,11 @@ export interface ReviewPlaybookRegistryEntry {
   id: 'review';
   command: 'review';
   intent: string;
-  artifactSchema: 2;
+  artifactSchema: 3;
   runtimeProfile: {
     readonly kind: 'shared-factory';
     readonly compat: {
-      readonly artifactSchema: 2;
+      readonly artifactSchema: 3;
       readonly runtimeAbi: number;
     };
   };
@@ -32,7 +33,10 @@ export interface ReviewPlaybookRegistryEntry {
   concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): ReviewOptions;
-  createRuntime(options: ReviewOptions): PlaybookRuntime;
+  createRuntime(
+    options: ReviewOptions,
+    hostCapabilities: ReviewPlaybookHostCapabilities,
+  ): PlaybookRuntime;
 }
 
 export const reviewStateCountLabels = {
@@ -101,7 +105,7 @@ export const reviewPlaybookRegistryEntry: ReviewPlaybookRegistryEntry = {
   command: 'review',
   intent:
     'review the latest commit until no material correctness or spec findings remain',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'shared-factory',
     compat: createPlaybookRuntime.compat,
@@ -110,8 +114,11 @@ export const reviewPlaybookRegistryEntry: ReviewPlaybookRegistryEntry = {
   concurrentRoleSets: [],
   summaryPolicy: reviewSummaryPolicy,
   validateOptions: validateReviewOptions,
-  createRuntime(options) {
-    return createPlaybookRuntime(options);
+  createRuntime(options, hostCapabilities) {
+    return createPlaybookRuntime({
+      configuredOptions: options,
+      hostCapabilities,
+    });
   },
 };
 

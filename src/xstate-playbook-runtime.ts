@@ -5011,7 +5011,12 @@ export function createXStatePlaybookRuntime<
         governedSettlement?.status === 'resolved'
           ? governedSettlement.output
           : undefined;
-      if (source === 'runExclusive' && governedOutput?.guard === 'needsBossReply') {
+      const governedDisposition =
+        governedOutput === undefined
+          ? undefined
+          : governedOutcomesForBoundary(completed)?.[governedOutput.guard]
+              ?.repositoryDisposition;
+      if (source === 'runExclusive' && governedDisposition === 'deferred') {
         if (
           value.deferredStatus !== 'bound' &&
           value.deferredStatus !== 'unresolved'
@@ -8157,6 +8162,7 @@ export function createXStatePlaybookRuntime<
               | PlaybookPendingBossQuestionContext
               | undefined;
             let deferredOperation: PlaybookEffectLogicalOperation | undefined;
+            let pendingRequiresDeferredBinding = false;
             const trimmed = text.trim();
             if (trimmed !== '') {
               const snapshot = actor.getSnapshot();
@@ -8169,10 +8175,15 @@ export function createXStatePlaybookRuntime<
                 normalizePlaybookSnapshot(snapshot),
                 snapshotContext,
               );
+              pendingRequiresDeferredBinding =
+                deferredPending !== undefined &&
+                outcomeAuthority?.governedPlayerStates[
+                  deferredPending.resumeStateId
+                ]?.needsBossReply?.repositoryDisposition === 'deferred';
               deferredOperation =
-                deferredPending === undefined
+                !pendingRequiresDeferredBinding
                   ? undefined
-                  : currentBoundDeferredOperation(deferredPending);
+                  : currentBoundDeferredOperation(deferredPending!);
               // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
               // recoverable failure state, and the reconstructed terminal all
               // accept exactly one ordinary textual entry event, so delivered
@@ -8212,6 +8223,7 @@ export function createXStatePlaybookRuntime<
             if (
               event !== undefined &&
               deferredPending !== undefined &&
+              pendingRequiresDeferredBinding &&
               deferredOperation === undefined &&
               hasGovernedPlayerStates &&
               deferredReconciliationOperationId === undefined

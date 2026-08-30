@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../src/xstate-runtime.js';
 
 import type {
   CaptainCallOptions,
@@ -19,6 +30,20 @@ import {
   reviewStateCountLabels,
   validateReviewOptions,
 } from './review.registry.js';
+import { createRepositoryEffectCapabilities } from '../code.playbook/bin/repository-effects.js';
+
+type RepositoryEffect =
+  | 'commit'
+  | 'commit-all'
+  | 'unchanged'
+  | 'worktree'
+  | 'multiple'
+  | 'rewritten'
+  | 'residual';
+
+type PlayerFixture = PlayerResult & {
+  readonly repositoryEffect?: RepositoryEffect;
+};
 
 interface PlayerCall {
   playerId: string;
@@ -41,17 +66,169 @@ function session(ports: PlaybookPorts): PlaybookSession {
   };
 }
 
-function portsFor(input: {
-  playerResults: PlayerResult[];
+interface HarnessInput {
+  playerResults: PlayerFixture[];
   judgeReplies: string[];
   playerCalls: PlayerCall[];
-}): PlaybookPorts {
+}
+
+const execFileAsync = promisify(execFile);
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
+async function git(repo: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+  return stdout.trim();
+}
+
+async function initRepository(): Promise<string> {
+  const repo = await mkdtemp(join(tmpdir(), 'review-authority-'));
+  tempDirs.push(repo);
+  await git(repo, 'init', '--quiet');
+  await git(repo, 'config', 'user.name', 'REVIEW Authority Test');
+  await git(repo, 'config', 'user.email', 'review@example.invalid');
+  await writeFile(join(repo, 'base.txt'), 'base\n', 'utf8');
+  await git(repo, 'add', '--all');
+  await git(repo, 'commit', '--quiet', '-m', 'base');
+  return repo;
+}
+
+function effectLedgerService() {
+  let ledger = emptyPlaybookEffectLedger();
   return {
+    snapshot: () => ledger,
+    async writeAhead(_authority: unknown, commands: any[]) {
+      const boundaries = [...ledger.boundaries] as any[];
+      const logicalOperations = [...ledger.logicalOperations] as any[];
+      for (const command of commands) {
+        if (command.kind === 'start-boundaries') {
+          const attemptId = '10000000-0000-4000-8000-000000000001';
+          for (const seed of command.boundaries) {
+            boundaries.push({
+              sequence: boundaries.length + 1,
+              ...seed,
+              attemptId,
+              attemptNumber: 1,
+            });
+          }
+          continue;
+        }
+        if (command.kind === 'replace-boundaries') {
+          for (const replacement of command.replacements) {
+            const index = boundaries.findIndex(
+              (boundary) =>
+                boundary.boundaryId === replacement.expected.boundaryId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(boundaries[index]) !==
+                JSON.stringify(replacement.expected)
+            ) {
+              throw new Error('REVIEW test effect-ledger replacement is stale');
+            }
+            boundaries[index] = replacement.next;
+          }
+          continue;
+        }
+        if (command.kind === 'append-logical-operations') {
+          for (const operation of command.operations) {
+            logicalOperations.push({
+              sequence: logicalOperations.length + 1,
+              ...operation,
+            });
+          }
+          continue;
+        }
+        if (command.kind === 'replace-logical-operations') {
+          for (const replacement of command.replacements) {
+            const index = logicalOperations.findIndex(
+              (operation) =>
+                operation.operationId === replacement.expected.operationId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(logicalOperations[index]) !==
+                JSON.stringify(replacement.expected)
+            ) {
+              throw new Error(
+                'REVIEW test logical-operation replacement is stale',
+              );
+            }
+            logicalOperations[index] = replacement.next;
+          }
+          continue;
+        }
+        throw new Error(`unsupported REVIEW ledger command ${command.kind}`);
+      }
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries,
+        logicalOperations,
+      });
+      return ledger;
+    },
+  };
+}
+
+async function harness(input: HarnessInput) {
+  const repo = await initRepository();
+  const ledgerService = effectLedgerService();
+  const telemetry: Array<{ topic: string; payload: unknown }> = [];
+  const statuses: string[] = [];
+  const commitOids: string[] = [];
+  let effectIndex = 0;
+  const applyRepositoryEffect = async (
+    effect: RepositoryEffect,
+  ): Promise<void> => {
+    effectIndex += 1;
+    if (effect === 'unchanged') return;
+    if (effect === 'worktree') {
+      await writeFile(join(repo, `effect-${effectIndex}.txt`), 'changed\n');
+      return;
+    }
+    if (effect === 'rewritten') {
+      const tree = await git(repo, 'rev-parse', 'HEAD^{tree}');
+      const oid = await git(repo, 'commit-tree', tree, '-m', 'foreign root');
+      await git(repo, 'reset', '--hard', '--quiet', oid);
+      return;
+    }
+    const commit = async (message: string): Promise<void> => {
+      await git(repo, 'commit', '--quiet', '--allow-empty', '-m', message);
+      commitOids.push(await git(repo, 'rev-parse', 'HEAD'));
+    };
+    if (effect === 'multiple') {
+      await commit(`review ${effectIndex}.1`);
+      await commit(`review ${effectIndex}.2`);
+      return;
+    }
+    if (effect === 'commit-all') {
+      await git(repo, 'add', '--all');
+      await git(repo, 'commit', '--quiet', '-m', `review ${effectIndex}`);
+      commitOids.push(await git(repo, 'rev-parse', 'HEAD'));
+      return;
+    }
+    await commit(`review ${effectIndex}`);
+    if (effect === 'residual') {
+      await writeFile(join(repo, `residual-${effectIndex}.txt`), 'residual\n');
+    }
+  };
+  const ports: PlaybookPorts = {
     async callPlayer(playerId, prompt, _signal, options) {
       input.playerCalls.push({ playerId, prompt, options });
       const result = input.playerResults.shift();
       if (result === undefined) throw new Error('unexpected player call');
-      return result;
+      const { repositoryEffect = 'unchanged', ...playerResult } = result;
+      await applyRepositoryEffect(repositoryEffect);
+      return playerResult;
     },
     async callCaptain(
       _prompt: string,
@@ -68,15 +245,62 @@ function portsFor(input: {
     async callPlaybook(): Promise<PlaybookCallStart> {
       throw new Error('REVIEW must not call another playbook');
     },
-    async emitStatus() {},
-    async emitTelemetry() {},
+    async emitStatus(message) {
+      statuses.push(message);
+    },
+    async emitTelemetry(event) {
+      telemetry.push(event);
+    },
   };
+  const capabilities = await createRepositoryEffectCapabilities({
+    cwd: repo,
+    catalog: {
+      review: {
+        id: 'review',
+        artifactSchema: 3,
+        requiredRoleIds: ['coder', 'reviewer'],
+        concurrentRoleSets: [],
+      },
+    },
+    sessionId: '20000000-0000-4000-8000-000000000001',
+    sessionLease: {
+      sessionId: '20000000-0000-4000-8000-000000000001',
+      ownerToken: '30000000-0000-4000-8000-000000000001',
+      assertOwner: async () => undefined,
+    },
+    createWriteAhead: () => ledgerService,
+  });
+  return {
+    ports,
+    telemetry,
+    statuses,
+    commitOids,
+    effectLedger: ledgerService,
+    hostCapabilities: capabilities.review,
+  };
+}
+
+type ReviewHarness = Awaited<ReturnType<typeof harness>>;
+
+function linkedRuntime(host: ReviewHarness, options: unknown = {}) {
+  return createPlaybookRuntime({
+    configuredOptions: options,
+    hostCapabilities: host.hostCapabilities,
+  });
+}
+
+function acceptedOutcomes(host: ReviewHarness): unknown[] {
+  return host.telemetry
+    .filter(({ topic }) => topic === 'playbook.trace')
+    .map(({ payload }) => payload as { type?: string; payload?: unknown })
+    .filter(({ type }) => type === 'outcome.accepted')
+    .map(({ payload }) => payload);
 }
 
 describe('linked REVIEW runtime', () => {
   it('carries both players verbatim through a commit-fix round', async () => {
     const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
+    const host = await harness({
       playerCalls,
       playerResults: [
         {
@@ -88,6 +312,7 @@ describe('linked REVIEW runtime', () => {
           status: 'ok',
           finalText: 'Accepted; fixed in abc123.\nTests: focused pass.',
           resumeToken: 'coder-1',
+          repositoryEffect: 'commit',
         },
         {
           status: 'ok',
@@ -101,8 +326,8 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(session(ports));
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
 
     const result = await runtime.handleBossInput({
       text: 'Review the feature.\nRun result: focused suite passed.',
@@ -153,13 +378,37 @@ describe('linked REVIEW runtime', () => {
     expect(playerCalls[2].prompt).toContain(
       'For any rebuttal, accept or challenge it.',
     );
+    expect(acceptedOutcomes(host)).toEqual([
+      {
+        source: 'reviewInitial',
+        target: 'addressFindings',
+        acceptedOutcome: 'hasFindings',
+      },
+      {
+        source: 'addressFindings',
+        target: 'reviewAfterCommit',
+        acceptedOutcome: 'committed',
+      },
+      {
+        source: 'reviewAfterCommit',
+        target: 'done',
+        acceptedOutcome: 'noFindings',
+      },
+    ]);
+    expect(host.statuses).toEqual(
+      expect.arrayContaining([
+        '→ hasFindings',
+        '→ committed',
+        '→ noFindings',
+      ]),
+    );
 
     await runtime.dispose();
   });
 
   it('adjudicates an all-rejected round without inventing a commit', async () => {
     const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
+    const host = await harness({
       playerCalls,
       playerResults: [
         {
@@ -186,8 +435,8 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(session(ports));
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
 
     const result = await runtime.handleBossInput({
       text: 'Review the latest contract commit.',
@@ -230,9 +479,128 @@ describe('linked REVIEW runtime', () => {
     expect(playerCalls[2].prompt).not.toContain(
       'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
     );
+    expect(acceptedOutcomes(host)).toEqual([
+      {
+        source: 'reviewInitial',
+        target: 'addressFindings',
+        acceptedOutcome: 'hasFindings',
+      },
+      {
+        source: 'addressFindings',
+        target: 'reviewAfterRebuttal',
+        acceptedOutcome: 'rejectedAll',
+      },
+      {
+        source: 'reviewAfterRebuttal',
+        target: 'done',
+        acceptedOutcome: 'noFindings',
+      },
+    ]);
 
     await runtime.dispose();
   });
+
+  it('keeps a Reviewer outcome unresolved after any repository change', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const host = await harness({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-1',
+          repositoryEffect: 'commit',
+        },
+      ],
+      judgeReplies: ['{"guard":"noFindings"}'],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Review the latest commit.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(playerCalls).toHaveLength(1);
+    expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt)
+      .toMatchObject({ classification: 'concurrent-or-foreign-change' });
+    expect(acceptedOutcomes(host)).toEqual([]);
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['committed', 'unchanged', 'unchanged'],
+    ['rejectedAll', 'commit', 'one-descendant-commit'],
+    ['committed', 'residual', 'observation-ambiguous'],
+  ] as const)(
+    'parks Coder %s under %s evidence without replay',
+    async (guard, repositoryEffect, classification) => {
+      const playerCalls: PlayerCall[] = [];
+      const host = await harness({
+        playerCalls,
+        playerResults: [
+          {
+            status: 'ok',
+            finalText: '1. The contract is incomplete.',
+            resumeToken: 'reviewer-1',
+          },
+          {
+            status: 'ok',
+            finalText:
+              guard === 'committed'
+                ? 'Accepted and committed.'
+                : 'Rejected every finding with evidence.',
+            resumeToken: 'coder-1',
+            repositoryEffect,
+          },
+        ],
+        judgeReplies: [
+          '{"guard":"hasFindings"}',
+          JSON.stringify({ guard }),
+        ],
+      });
+      const runtime = linkedRuntime(host);
+      await runtime.init(session(host.ports));
+
+      const result = await runtime.handleBossInput({
+        text: 'Review the latest contract commit.',
+        signal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        outcome: 'failed',
+        state: { stateId: 'failed' },
+      });
+      expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+        'reviewer',
+        'coder',
+      ]);
+      expect(host.effectLedger.snapshot().boundaries[1]?.physicalReceipt)
+        .toMatchObject({ classification });
+      expect(acceptedOutcomes(host)).toEqual([
+        {
+          source: 'reviewInitial',
+          target: 'addressFindings',
+          acceptedOutcome: 'hasFindings',
+        },
+      ]);
+      expect(host.statuses).not.toContain(`→ ${guard}`);
+      expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+        'reconcile:unresolved-effect',
+        'abandon:unresolved-effect',
+      ]);
+      await runtime.dispose();
+    },
+  );
 
   it.each([
     {
@@ -250,13 +618,14 @@ describe('linked REVIEW runtime', () => {
         },
       ],
       judgeReplies: [
-        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"guard":"needsBossReply"}',
         '{"type":"BOSS_REPLY"}',
         '{"guard":"noFindings"}',
       ],
       resumedCall: 1,
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
+      deferred: false,
     },
     {
       origin: 'addressFindings',
@@ -270,11 +639,13 @@ describe('linked REVIEW runtime', () => {
           status: 'ok' as const,
           finalText: 'Which release target should govern?',
           resumeToken: 'coder-question',
+          repositoryEffect: 'worktree' as const,
         },
         {
           status: 'ok' as const,
           finalText: 'Fixed and committed.',
           resumeToken: 'coder-answer',
+          repositoryEffect: 'commit-all' as const,
         },
         {
           status: 'ok' as const,
@@ -284,7 +655,7 @@ describe('linked REVIEW runtime', () => {
       ],
       judgeReplies: [
         '{"guard":"hasFindings"}',
-        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"guard":"needsBossReply"}',
         '{"type":"BOSS_REPLY"}',
         '{"guard":"committed"}',
         '{"guard":"noFindings"}',
@@ -292,6 +663,7 @@ describe('linked REVIEW runtime', () => {
       resumedCall: 2,
       resumedPlayer: 'coder',
       resumedToken: 'coder-question',
+      deferred: true,
     },
     {
       origin: 'reviewAfterCommit',
@@ -305,6 +677,7 @@ describe('linked REVIEW runtime', () => {
           status: 'ok' as const,
           finalText: 'Fixed and committed.',
           resumeToken: 'coder-commit',
+          repositoryEffect: 'commit' as const,
         },
         {
           status: 'ok' as const,
@@ -320,13 +693,14 @@ describe('linked REVIEW runtime', () => {
       judgeReplies: [
         '{"guard":"hasFindings"}',
         '{"guard":"committed"}',
-        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"guard":"needsBossReply"}',
         '{"type":"BOSS_REPLY"}',
         '{"guard":"noFindings"}',
       ],
       resumedCall: 3,
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
+      deferred: false,
     },
     {
       origin: 'reviewAfterRebuttal',
@@ -355,23 +729,24 @@ describe('linked REVIEW runtime', () => {
       judgeReplies: [
         '{"guard":"hasFindings"}',
         '{"guard":"rejectedAll"}',
-        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"guard":"needsBossReply"}',
         '{"type":"BOSS_REPLY"}',
         '{"guard":"noFindings"}',
       ],
       resumedCall: 3,
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
+      deferred: false,
     },
   ])('resumes $origin after a Boss answer', async (scenario) => {
     const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
+    const host = await harness({
       playerCalls,
       playerResults: [...scenario.playerResults],
       judgeReplies: [...scenario.judgeReplies],
     });
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(session(ports));
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
 
     const parked = await runtime.handleBossInput({
       text: 'Review the release commit.',
@@ -379,6 +754,20 @@ describe('linked REVIEW runtime', () => {
     });
     expect(parked.outcome).toBe('quiescent');
     expect(parked.state.stateId).toBe('awaitBossReply');
+    const openOperation = host.effectLedger.snapshot().logicalOperations[0];
+    if (scenario.deferred) {
+      expect(openOperation).toMatchObject({
+        originalBaseline: { projection: {} },
+        checkpoint: {
+          projection: { 'effect-2.txt': expect.any(Object) },
+        },
+        pendingQuestion: {
+          question: 'Which release target should govern?',
+        },
+      });
+    } else {
+      expect(openOperation).toBeUndefined();
+    }
 
     const completed = await runtime.handleBossInput({
       text: 'Target version 6.0.0.',
@@ -394,13 +783,23 @@ describe('linked REVIEW runtime', () => {
     expect(resumed?.prompt).toContain(
       'Boss reply:\nTarget version 6.0.0.',
     );
+    if (scenario.deferred) {
+      expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
+        operationId: openOperation?.operationId,
+        originalBaseline: openOperation?.originalBaseline,
+        logicalReceipt: {
+          classification: 'one-descendant-commit',
+          commitOid: host.commitOids[0],
+        },
+      });
+    }
 
     await runtime.dispose();
   });
 
   it('abandons a pending question when Boss starts a fresh review', async () => {
     const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
+    const host = await harness({
       playerCalls,
       playerResults: [
         {
@@ -415,13 +814,13 @@ describe('linked REVIEW runtime', () => {
         },
       ],
       judgeReplies: [
-        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"guard":"needsBossReply"}',
         '{"type":"BOSS_INTERRUPT","targetId":"reviewInitial"}',
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(session(ports));
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
 
     await runtime.handleBossInput({
       text: 'Review the old release commit.',
@@ -443,7 +842,7 @@ describe('linked REVIEW runtime', () => {
 
   it('restarts a failed review with fresh caller context', async () => {
     const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
+    const host = await harness({
       playerCalls,
       playerResults: [
         { status: 'error', error: 'reviewer transport failed' },
@@ -459,8 +858,8 @@ describe('linked REVIEW runtime', () => {
       // would shift this queue and fail loudly on the missing guard.
       judgeReplies: ['{"guard":"noFindings"}'],
     });
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(session(ports));
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
 
     const failed = await runtime.handleBossInput({
       text: 'Review the old release commit.',
@@ -490,18 +889,33 @@ describe('linked REVIEW runtime', () => {
     });
   });
 
-  it('advertises the schema-2 local-role manifest', () => {
+  it('advertises the schema-3 local-role manifest', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const host = await harness({
+      playerCalls,
+      playerResults: [],
+      judgeReplies: [],
+    });
     expect(reviewPlaybookRegistryEntry).toMatchObject({
-      artifactSchema: 2,
+      artifactSchema: 3,
       runtimeProfile: {
         kind: 'shared-factory',
-        compat: { artifactSchema: 2, runtimeAbi: 1 },
+        compat: { artifactSchema: 3, runtimeAbi: 1 },
       },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [],
     });
     expect(reviewPlaybookRegistryEntry.runtimeProfile.compat).toBe(
       createPlaybookRuntime.compat,
+    );
+    expect(
+      reviewPlaybookRegistryEntry.createRuntime(
+        validateReviewOptions({}),
+        host.hostCapabilities,
+      ),
+    ).toBeDefined();
+    expect(() => linkedRuntime(host, { coderLlm: 'gpt-5.6' })).toThrow(
+      /runtime options\.coderLlm is not declared/,
     );
   });
 
@@ -510,14 +924,6 @@ describe('linked REVIEW runtime', () => {
     expect(() => validateReviewOptions({ extra: true })).toThrow(
       /review\.options\.extra/,
     );
-    expect(
-      reviewPlaybookRegistryEntry.createRuntime(
-        validateReviewOptions({}),
-      ),
-    ).toBeDefined();
-    expect(() =>
-      createPlaybookRuntime({ coderLlm: 'gpt-5.6' } as never),
-    ).toThrow(/runtime options\.coderLlm is not declared/);
   });
 
   it('quotes every line of relayed text without recursive substitution', () => {

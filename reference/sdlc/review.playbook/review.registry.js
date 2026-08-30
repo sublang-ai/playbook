@@ -48,7 +48,7 @@ export const reviewPlaybookRegistryEntry = {
     id: 'review',
     command: 'review',
     intent: 'review the latest commit until no material correctness or spec findings remain',
-    artifactSchema: 2,
+    artifactSchema: 3,
     runtimeProfile: Object.freeze({
         kind: 'shared-factory',
         compat: createPlaybookRuntime.compat,
@@ -57,8 +57,11 @@ export const reviewPlaybookRegistryEntry = {
     concurrentRoleSets: [],
     summaryPolicy: reviewSummaryPolicy,
     validateOptions: validateReviewOptions,
-    createRuntime(options) {
-        return createPlaybookRuntime(options);
+    createRuntime(options, hostCapabilities) {
+        return createPlaybookRuntime({
+            configuredOptions: options,
+            hostCapabilities,
+        });
     },
 };
 export default reviewPlaybookRegistryEntry;

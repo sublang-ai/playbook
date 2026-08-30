@@ -1442,6 +1442,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlayerCallOptions',
       'PlayerResult',
       'PlayerSessionStore',
+      'ReviewPlaybookHostCapabilities',
       'ReviewPlaybookOptions',
       '_internal',
       'default',
@@ -1753,6 +1754,8 @@ import type {
 } from '@sublang/playbook/runtime';
 import { codePlaybookRegistryEntry } from '@sublang/playbook/code/registry';
 import type { CodePlaybookHostCapabilities } from '@sublang/playbook/code/playbook';
+import { reviewPlaybookRegistryEntry } from '@sublang/playbook/review/registry';
+import type { ReviewPlaybookHostCapabilities } from '@sublang/playbook/review/playbook';
 
 interface Options { readonly mode: string }
 interface Capabilities {
@@ -1818,6 +1821,7 @@ void wrongV3;
 declare const configuredOptions: unknown;
 declare const hostCapabilities: PlaybookHostConstructionCapabilities;
 declare const codeHostCapabilities: CodePlaybookHostCapabilities;
+declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
@@ -1840,6 +1844,13 @@ const codeCapabilities: PlaybookHostConstructionCapabilities = codeHostCapabilit
 codePlaybookRegistryEntry.createRuntime({}, codeHostCapabilities);
 // @ts-expect-error CODE is schema 3 and requires current-host capabilities
 codePlaybookRegistryEntry.createRuntime({});
+const reviewSchema: 3 = reviewPlaybookRegistryEntry.artifactSchema;
+const reviewProfile: PlaybookCaptainRuntimeProfile<3> = reviewPlaybookRegistryEntry.runtimeProfile;
+const reviewEntry: PlaybookCaptainRegistryEntryV3 = reviewPlaybookRegistryEntry;
+const reviewCapabilities: PlaybookHostConstructionCapabilities = reviewHostCapabilities;
+reviewPlaybookRegistryEntry.createRuntime({}, reviewHostCapabilities);
+// @ts-expect-error REVIEW is schema 3 and requires current-host capabilities
+reviewPlaybookRegistryEntry.createRuntime({});
 void v2FactorySchema;
 void v3FactorySchema;
 void v2Profile;
@@ -1848,6 +1859,10 @@ void codeSchema;
 void codeProfile;
 void codeEntry;
 void codeCapabilities;
+void reviewSchema;
+void reviewProfile;
+void reviewEntry;
+void reviewCapabilities;
 void wrongProfile;
 `,
       );

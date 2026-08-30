@@ -1613,8 +1613,11 @@ function shellEffectHost(
     if (classification === 'unchanged') {
       return Object.freeze({ classification, baseline, after: baseline });
     }
-    commitSequence += 1;
-    const commitOid = commitSequence.toString(16).padStart(40, '0');
+    let commitOid: string;
+    do {
+      commitSequence += 1;
+      commitOid = commitSequence.toString(16).padStart(40, '0');
+    } while (commitOid === baseline.head);
     const after = testRepositoryObservation(commitOid);
     return Object.freeze({
       classification,
@@ -2624,7 +2627,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           if (prompt.includes('A new review begins')) {
             return {
               status: 'ok',
-              finalText: 'The review needs a release-target answer.',
+              finalText: REVIEW_QUESTION,
               resumeToken: 'source-review-token',
             };
           }
@@ -2634,7 +2637,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
         adjudicate: (prompt) =>
           prompt.includes('`directCommit`')
             ? { guard: 'directCommit' }
-            : { guard: 'needsBossReply', question: REVIEW_QUESTION },
+            : { guard: 'needsBossReply' },
         decide: retainedDecision,
         closing: () => 'The nested review is waiting on Boss.',
       },
@@ -2705,7 +2708,11 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           }
           throw new Error(`unexpected nested target player prompt: ${prompt}`);
         },
-        repositoryClassifications: ['one-descendant-commit'],
+        repositoryClassifications: [
+          'unchanged',
+          'one-descendant-commit',
+          'unchanged',
+        ],
         adjudicate: (prompt) => {
           if (prompt.includes('stale in the advanced world')) {
             return { guard: 'hasFindings' };
@@ -2828,11 +2835,14 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
             };
           }
           if (prompt.includes('A new review begins')) {
+            if (breakReview) {
+              throw new Error(
+                'the resumed review transport failed before adjudication',
+              );
+            }
             return {
               status: 'ok',
-              finalText: breakReview
-                ? 'The resumed review reached its adjudication boundary.'
-                : 'The review needs a release-target answer.',
+              finalText: REVIEW_QUESTION,
               resumeToken: 'source-review-token',
             };
           }
@@ -2843,9 +2853,10 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
           if (prompt.includes('`directCommit`')) {
             return { guard: 'directCommit' };
           }
-          return breakReview
-            ? { guard: 'undeclaredReviewOutcome' }
-            : { guard: 'needsBossReply', question: REVIEW_QUESTION };
+          if (breakReview) {
+            throw new Error('the failed Reviewer call must not be adjudicated');
+          }
+          return { guard: 'needsBossReply' };
         },
         decide: retainedDecision,
         closing: () => 'The REVIEW boundary was reported truthfully.',

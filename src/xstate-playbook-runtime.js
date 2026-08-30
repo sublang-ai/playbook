@@ -3097,7 +3097,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
             let governedOutput = governedSettlement?.status === 'resolved'
                 ? governedSettlement.output
                 : undefined;
-            if (source === 'runExclusive' && governedOutput?.guard === 'needsBossReply') {
+            const governedDisposition = governedOutput === undefined
+                ? undefined
+                : governedOutcomesForBoundary(completed)?.[governedOutput.guard]
+                    ?.repositoryDisposition;
+            if (source === 'runExclusive' && governedDisposition === 'deferred') {
                 if (value.deferredStatus !== 'bound' &&
                     value.deferredStatus !== 'unresolved') {
                     throw new TypeError(`${label} deferred settlement omitted its durable binding status`);
@@ -5626,6 +5630,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         let classifiedSnapshot;
                         let deferredPending;
                         let deferredOperation;
+                        let pendingRequiresDeferredBinding = false;
                         const trimmed = text.trim();
                         if (trimmed !== '') {
                             const snapshot = actor.getSnapshot();
@@ -5635,8 +5640,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             const snapshotContext = (snapshot
                                 .context ?? {});
                             deferredPending = pendingBossQuestionForState(normalizePlaybookSnapshot(snapshot), snapshotContext);
+                            pendingRequiresDeferredBinding =
+                                deferredPending !== undefined &&
+                                    outcomeAuthority?.governedPlayerStates[deferredPending.resumeStateId]?.needsBossReply?.repositoryDisposition === 'deferred';
                             deferredOperation =
-                                deferredPending === undefined
+                                !pendingRequiresDeferredBinding
                                     ? undefined
                                     : currentBoundDeferredOperation(deferredPending);
                             // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
@@ -5667,6 +5675,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         }
                         if (event !== undefined &&
                             deferredPending !== undefined &&
+                            pendingRequiresDeferredBinding &&
                             deferredOperation === undefined &&
                             hasGovernedPlayerStates &&
                             deferredReconciliationOperationId === undefined) {
