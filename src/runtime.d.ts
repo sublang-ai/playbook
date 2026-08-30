@@ -135,9 +135,9 @@ export interface PlaybookAdoptionContext {
     readonly sourceGenerationId: string;
     readonly targetChildSessionId?: string;
 }
-export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
+export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'outcome.accepted' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
 export interface PlaybookTraceEvent {
-    schemaVersion: 3;
+    schemaVersion: 4;
     sessionId: string;
     playbookId: string;
     rootSessionId: string;

@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
+import { createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, emptyPlaybookEffectLedger, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
 export const BOSS_REPLY_ERRORS = {
     missingQuestion: "needsBossReply outcome missing 'question' field",
@@ -1331,11 +1332,8 @@ function askerLabel(asker) {
     return asker.kind === 'captain' ? 'Captain' : asker.roleId;
 }
 function makeDefaultStatusesForState(roleStates) {
-    return (state, context, event) => {
+    return (state, context) => {
         const statuses = [];
-        const guard = settlingGuard(event);
-        if (guard !== undefined)
-            statuses.push({ message: `→ ${guard}` });
         const stateId = state.stateId;
         if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId)) {
             return statuses;
@@ -1833,6 +1831,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
     const statusesForState = spec.statusesForState ??
         makeDefaultStatusesForState(roleStates);
+    const usesDefaultStatuses = spec.statusesForState === undefined;
     const classificationStatus = spec.classificationStatus ??
         ((event) => event.type);
     const machineInput = spec.machineInput ?? ((options) => options);
@@ -1847,6 +1846,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
         const effectLedgerCapability = construction.effectLedger;
         const hasGovernedPlayerStates = outcomeAuthority !== undefined &&
             Object.keys(outcomeAuthority.governedPlayerStates).length > 0;
+        const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(artifactSchema, (source, acceptedOutcome) => {
+            const governedPlayerStates = outcomeAuthority?.governedPlayerStates;
+            if (governedPlayerStates === undefined ||
+                !Object.prototype.hasOwnProperty.call(governedPlayerStates, source)) {
+                return false;
+            }
+            const declarations = governedPlayerStates[source];
+            return (declarations !== undefined &&
+                Object.prototype.hasOwnProperty.call(declarations, acceptedOutcome));
+        });
         const repositoryCapability = hasGovernedPlayerStates
             ? repositoryCapabilityFromHostCapabilities(construction.hostCapabilities, label)
             : undefined;
@@ -2572,7 +2581,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             const currentSession = requireSession();
             const safePayload = snapshotJsonValue(payload, `trace ${type} payload`);
             return {
-                schemaVersion: 3,
+                schemaVersion: 4,
                 sessionId: currentSession.sessionId,
                 playbookId: currentSession.playbookId,
                 rootSessionId: currentSession.rootSessionId,
@@ -3974,9 +3983,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             return snapshotJsonValue(payload, 'FSM telemetry payload');
         }
-        function enqueueTransitionEmission(payload, state, statuses, position, aborts) {
+        function enqueueTransitionEmission(payload, state, acceptedOutcomes, statuses, position, aborts) {
             const currentSession = requireSession();
             const transitionTrace = createTraceEvent('fsm.transition', payload, position);
+            const acceptedOutcomeTraces = acceptedOutcomes.map((acceptedOutcome) => createTraceEvent('outcome.accepted', acceptedOutcome, position));
             const statusEmissions = statuses.map(({ message, data }) => ({
                 message,
                 data,
@@ -3996,6 +4006,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     topic: 'playbook.fsm.state',
                     payload,
                 });
+                for (const acceptedOutcome of acceptedOutcomeTraces) {
+                    await currentSession.ports.emitTelemetry({
+                        topic: 'playbook.trace',
+                        payload: acceptedOutcome,
+                    });
+                }
                 for (const status of statusEmissions) {
                     await currentSession.ports.emitTelemetry({
                         topic: 'playbook.trace',
@@ -4048,10 +4064,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
             if (!actor)
                 return;
             suppressInspectionEmissions = true;
+            acceptedOutcomeConsumer.reset();
             actor.stop();
         }
         function buildActor(ports, machineSnapshot) {
             priorState = undefined;
+            acceptedOutcomeConsumer.reset();
             const actors = {};
             if (declaredActors.has('player'))
                 actors.player = playerActor(ports);
@@ -4074,11 +4092,20 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     ? {}
                     : { snapshot: machineSnapshot }),
                 inspect: (inspectionEvent) => {
-                    if (inspectionEvent.type !== '@xstate.snapshot')
-                        return;
                     if (inspectionEvent.actorRef !== builtActor)
                         return;
                     if (suppressInspectionEmissions)
+                        return;
+                    if (inspectionEvent.type === '@xstate.action') {
+                        try {
+                            acceptedOutcomeConsumer.capture(inspectionEvent.action);
+                        }
+                        catch (error) {
+                            latchRuntimeError(error);
+                        }
+                        return;
+                    }
+                    if (inspectionEvent.type !== '@xstate.snapshot')
                         return;
                     const settlementAborts = consumeActorSettlementAborts(true);
                     try {
@@ -4087,8 +4114,15 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         if (state.stateId === undefined) {
                             throw new Error(`${label} root snapshot must expose exactly one playbook state id`);
                         }
-                        acceptReconstructedGovernedDelivery(state);
                         const previousState = priorState;
+                        acceptReconstructedGovernedDelivery(state);
+                        let acceptedOutcomes = [];
+                        try {
+                            acceptedOutcomes = acceptedOutcomeConsumer.confirm(previousState, state);
+                        }
+                        catch (error) {
+                            latchRuntimeError(error);
+                        }
                         if (state.stateId === 'failed') {
                             if (previousState?.stateId !== 'failed' ||
                                 activeGovernedBoundarySeen) {
@@ -4113,8 +4147,21 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             validateBoundQuestionProjection();
                         }
                         const payload = structuredStateTelemetryPayload(previousState, state, inspectionEvent.event, context);
-                        const statuses = statusesForState(state, context, inspectionEvent.event);
-                        const publish = () => enqueueTransitionEmission(payload, state, statuses, tracePositionForActiveTurn(), settlementAborts);
+                        const stateStatuses = statusesForState(state, context, inspectionEvent.event);
+                        const outcomeStatuses = usesDefaultStatuses
+                            ? artifactSchema === 2
+                                ? (() => {
+                                    const guard = settlingGuard(inspectionEvent.event);
+                                    return guard === undefined
+                                        ? []
+                                        : [{ message: `→ ${guard}` }];
+                                })()
+                                : acceptedOutcomes.map(({ acceptedOutcome }) => ({
+                                    message: `→ ${acceptedOutcome}`,
+                                }))
+                            : [];
+                        const statuses = [...outcomeStatuses, ...stateStatuses];
+                        const publish = () => enqueueTransitionEmission(payload, state, acceptedOutcomes, statuses, tracePositionForActiveTurn(), settlementAborts);
                         if (deferInspectionEmissions) {
                             deferredInspectionEmissions.push(publish);
                         }
@@ -4124,6 +4171,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         priorState = state;
                     }
                     catch (error) {
+                        acceptedOutcomeConsumer.reset();
                         latchRuntimeError(error, settlementAborts);
                     }
                 },

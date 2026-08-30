@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
+import { createAcceptedOutcomeConsumer, } from '../../../src/accepted-outcome.js';
 import { assertJsonSafe, assertPlaybookEffectLedger, assertPlaybookRuntimeSnapshot, combineAbortSignals, createNestedPlaybookBridge, detachPersistedMachineSnapshot, emptyPlaybookEffectLedger, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, validatePlayerResult, waitForPlaybookQuiescence, } from '../../../src/xstate-runtime.js';
 import decideMachine from './decide.fsm.js';
 function snapshotDecideRuntimeOptions(value) {
@@ -63,6 +64,11 @@ const ROLE_STATES = [
     { stateId: 'commitCoderProposal', role: 'coder', sourceItem: 'DECIDE-3' },
 ];
 const ROLE_STATE_IDS = new Set(ROLE_STATES.map((state) => state.stateId));
+const ACCEPTED_OUTCOME_DECLARATIONS = Object.freeze({
+    askCoderProposal: new Set(['proposed', 'needsBossReply']),
+    askReviewerProposal: new Set(['proposed', 'needsBossReply']),
+    commitCoderProposal: new Set(['committed', 'needsBossReply']),
+});
 const ROLE_IDS = ['coder', 'reviewer'];
 const ROLE_ID_SET = new Set(ROLE_IDS);
 const roleLabel = (roleId) => roleId === 'coder' ? 'Coder' : 'Reviewer';
@@ -580,12 +586,14 @@ function telemetryPayload(previousState, state, event, context, hiddenQuestionId
     assertJsonSafe(payload);
     return payload;
 }
-function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEffects) {
+function createDecidePlaybookRuntime(options, artifactSchema, automaticReplayPolicy, deferredEffects, stagedAcceptedOutcomeAction) {
     const fsmInput = snapshotDecideRuntimeOptions(options);
     const readEffectLedger = () => deferredEffects === undefined
         ? emptyPlaybookEffectLedger()
         : assertPlaybookEffectLedger(deferredEffects.readEffectLedger(), 'DECIDE current host effect ledger');
     let effectLedgerMirror = readEffectLedger();
+    const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(artifactSchema, (source, acceptedOutcome) => Object.prototype.hasOwnProperty.call(ACCEPTED_OUTCOME_DECLARATIONS, source) &&
+        ACCEPTED_OUTCOME_DECLARATIONS[source]?.has(acceptedOutcome) === true);
     let ports;
     let sessionIdentity;
     let actor;
@@ -877,11 +885,18 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
         return state.stateId === undefined ? {} : { stateId: state.stateId };
     };
     const enqueueTracedEmission = (type, payload, meta = {}, describedEmission, aborts) => {
-        const runtimePorts = requirePorts();
+        const trace = createTraceEvent(type, payload, meta);
+        return enqueue(async () => {
+            const runtimePorts = requirePorts();
+            await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
+            await describedEmission?.(runtimePorts);
+        }, aborts);
+    };
+    const createTraceEvent = (type, payload, meta = {}) => {
         const identity = requireSessionIdentity();
         const jsonPayload = snapshotJsonValue(payload, `trace ${type} payload`);
-        const trace = Object.freeze({
-            schemaVersion: 3,
+        return Object.freeze({
+            schemaVersion: 4,
             sessionId: identity.sessionId,
             playbookId: identity.playbookId,
             rootSessionId: identity.rootSessionId,
@@ -899,12 +914,25 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
             ...(meta.callId !== undefined ? { callId: meta.callId } : {}),
             payload: jsonPayload,
         });
-        return enqueue(async () => {
-            await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
-            await describedEmission?.(runtimePorts);
-        }, aborts);
     };
     const emitTrace = (type, payload, meta = {}, aborts) => enqueueTracedEmission(type, payload, meta, undefined, aborts);
+    const enqueueAcceptedOutcomeEmission = (acceptedOutcome, state, aborts) => {
+        const message = `→ ${acceptedOutcome.acceptedOutcome}`;
+        const acceptedTrace = createTraceEvent('outcome.accepted', acceptedOutcome, { turnId: currentTurnId });
+        const statusTrace = createTraceEvent('status.emitted', { stateId: acceptedOutcome.target, message, state }, { turnId: currentTurnId });
+        return enqueue(async () => {
+            const runtimePorts = requirePorts();
+            await runtimePorts.emitTelemetry({
+                topic: TRACE_TOPIC,
+                payload: acceptedTrace,
+            });
+            await runtimePorts.emitTelemetry({
+                topic: TRACE_TOPIC,
+                payload: statusTrace,
+            });
+            await runtimePorts.emitStatus(message);
+        }, aborts);
+    };
     const emitBoundaryStatus = async (message, state) => {
         const bossRelevantStateIds = state.activeStateIds.filter((stateId) => STATUS_STATE_IDS.has(stateId));
         await enqueueTracedEmission('status.emitted', {
@@ -1393,6 +1421,13 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
     });
     const providedMachine = decideMachine.provide({
         actors: { player, playbook: nestedBridge.actorLogic },
+        ...(stagedAcceptedOutcomeAction === undefined
+            ? {}
+            : {
+                actions: {
+                    clearBranchBossReplyContext: stagedAcceptedOutcomeAction,
+                },
+            }),
     });
     const consumeActorSettlementAborts = (forSnapshot = false) => {
         const aborts = actorSettlementAborts.shift() ?? actorSettlementErrorAborts;
@@ -1408,17 +1443,33 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
         return aborts;
     };
     const inspect = (event) => {
-        if (event.type !== '@xstate.snapshot')
-            return;
         if (actor === undefined || event.actorRef !== actor)
             return;
         if (suppressInspectionEmissions)
+            return;
+        if (event.type === '@xstate.action') {
+            try {
+                acceptedOutcomeConsumer.capture(event.action);
+            }
+            catch (error) {
+                latchInspectionError(error);
+            }
+            return;
+        }
+        if (event.type !== '@xstate.snapshot')
             return;
         const settlementAborts = consumeActorSettlementAborts(true);
         try {
             const snapshot = event.snapshot;
             const state = normalizePlaybookSnapshot(snapshot);
             const prior = previousState ?? state;
+            let acceptedOutcomes = [];
+            try {
+                acceptedOutcomes = acceptedOutcomeConsumer.confirm(previousState, state);
+            }
+            catch (error) {
+                latchInspectionError(error);
+            }
             const context = snapshot.context;
             const fsmPayload = telemetryPayload(prior, state, event.event, context, hiddenDeferredOperationId === undefined
                 ? undefined
@@ -1442,6 +1493,9 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
                 assertJsonSafe(tracePayload);
                 void enqueueTracedEmission('status.emitted', tracePayload, { turnId: currentTurnId }, (emissionPorts) => emissionPorts.emitStatus(message, data), settlementAborts).catch(() => undefined);
             };
+            for (const acceptedOutcome of acceptedOutcomes) {
+                void enqueueAcceptedOutcomeEmission(acceptedOutcome, state, settlementAborts).catch(() => undefined);
+            }
             for (const activeStateId of state.activeStateIds) {
                 if (priorIds.has(activeStateId) ||
                     !STATUS_STATE_IDS.has(activeStateId)) {
@@ -1468,11 +1522,13 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
             }
         }
         catch (error) {
+            acceptedOutcomeConsumer.reset();
             latchInspectionError(error, settlementAborts);
         }
     };
     const createRuntimeActor = (machineSnapshot) => {
         previousState = undefined;
+        acceptedOutcomeConsumer.reset();
         // DR-014 §1: a restore rehydrates the persisted machine snapshot;
         // XState derives context/value from it and ignores `input` then.
         actor = createActor(providedMachine, {
@@ -1505,6 +1561,7 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
         if (!actor)
             return;
         suppressInspectionEmissions = true;
+        acceptedOutcomeConsumer.reset();
         actor.stop();
     };
     const startActor = () => {
@@ -2427,16 +2484,20 @@ function createDecidePlaybookRuntime(options, automaticReplayPolicy, deferredEff
     };
 }
 const legacyAutomaticReplayPolicy = createAutomaticReplayPolicy(2);
-export const createPlaybookRuntime = (options) => createDecidePlaybookRuntime(options, legacyAutomaticReplayPolicy);
+export const createPlaybookRuntime = (options) => createDecidePlaybookRuntime(options, 2, legacyAutomaticReplayPolicy);
 function createStagedSchema3AutomaticReplayRuntime(options, evidence) {
-    return createDecidePlaybookRuntime(options, createAutomaticReplayPolicy(3, evidence));
+    return createDecidePlaybookRuntime(options, 3, createAutomaticReplayPolicy(3, evidence));
 }
 function createStagedSchema3DeferredRuntime(options, evidence) {
-    return createDecidePlaybookRuntime(options, createAutomaticReplayPolicy(3, evidence), evidence);
+    return createDecidePlaybookRuntime(options, 3, createAutomaticReplayPolicy(3, evidence), evidence);
+}
+function createStagedSchema3AcceptedOutcomeRuntime(options, evidence, acceptedOutcomeAction) {
+    return createDecidePlaybookRuntime(options, 3, createAutomaticReplayPolicy(3, evidence), undefined, acceptedOutcomeAction);
 }
 export const _internal = {
     createStagedSchema3AutomaticReplayRuntime,
     createStagedSchema3DeferredRuntime,
+    createStagedSchema3AcceptedOutcomeRuntime,
     composePlayerPrompt,
     requiredFieldsFor,
     extractJson,

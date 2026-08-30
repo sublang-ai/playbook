@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { assign, createActor, createMachine, fromPromise } from 'xstate';
+import {
+  assign,
+  createActor,
+  createMachine,
+  enqueueActions,
+  fromPromise,
+} from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  ACCEPTED_OUTCOME_ACTION_TYPE,
+  createAcceptedOutcomeConsumer,
+} from './accepted-outcome.js';
 import type {
   PlaybookEffectLedger,
   PlaybookEffectLedgerCommandBatch,
@@ -624,6 +634,107 @@ const repeatMachine = createMachine({
   },
 });
 
+const acceptedOutcomeParams = (task: string) => {
+  const marker = {
+    source: task === 'unconfirmed-source' ? 'other' : 'work',
+    target: task === 'mismatch' ? 'fallback' : 'accepted',
+    acceptedOutcome: task === 'undeclared' ? 'unknown' : 'complete',
+  };
+  return task === 'malformed' || task === 'malformed-then-valid'
+    ? { ...marker, extra: true }
+    : marker;
+};
+
+const acceptedOutcomeActions = enqueueActions<
+  { task: string },
+  { type: string },
+  undefined
+>(({ context, enqueue }) => {
+  const marker = (params: Record<string, unknown>) =>
+    enqueue({ type: ACCEPTED_OUTCOME_ACTION_TYPE, params });
+  const params = acceptedOutcomeParams(context.task);
+  marker(params);
+  if (context.task === 'malformed-then-valid') {
+    marker({
+      source: 'work',
+      target: 'accepted',
+      acceptedOutcome: 'complete',
+    });
+  } else if (context.task === 'duplicate') {
+    marker({ ...params, target: 'fallback', acceptedOutcome: 'alternate' });
+  }
+});
+
+const acceptedOutcomeMachine = createMachine({
+  id: 'accepted-outcome',
+  context: { task: '' },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-OUTCOME-1',
+          prompt: `Implement ${context.task}.`,
+          result: {
+            complete: 'The task is complete.',
+            alternate: 'The task took the alternate accepted arm.',
+          },
+        }),
+        onDone: [
+          {
+            guard: ({ context }) => context.task !== 'fallback',
+            target: 'accepted',
+            actions: acceptedOutcomeActions,
+          },
+          { target: 'fallback' },
+        ],
+        onError: 'fallback',
+      },
+    },
+    accepted: {
+      meta: stateMeta('accepted', 'The outcome was accepted.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    fallback: {
+      meta: stateMeta('fallback', 'The stricter guard rejected the outcome.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+  },
+});
+
 const semanticEvidenceMachine = createMachine({
   id: 'role-semantic-evidence',
   context: {
@@ -1026,6 +1137,21 @@ function repeatSchema3Spec(
     outcomeAuthority: repeatOutcomeAuthority,
     ...overrides,
   };
+}
+
+function acceptedOutcomeSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return repeatSchema3Spec({
+    label: 'ROLE-OUTCOME',
+    classifyBossText: async (text) => ({ type: 'START', task: text }),
+    outcomeAuthority: {
+      governedPlayerStates: {
+        work: {
+          complete: { fields: {}, repositoryDisposition: 'unchanged' },
+          alternate: { fields: {}, repositoryDisposition: 'unchanged' },
+        },
+      },
+    },
+  });
 }
 
 function retrySchema3Spec(
@@ -1643,6 +1769,634 @@ describe('DR-032 shared role runtime transition', () => {
         outcomeAuthority: { governedPlayerStates: {} },
       }),
     ).not.toThrow();
+  });
+
+  it('publishes confirmed schema-3 accepted outcomes before settlement', async () => {
+    const telemetry: unknown[] = [];
+    const statuses: string[] = [];
+    let releaseAcceptedOutcome!: () => void;
+    let observeAcceptedOutcome!: () => void;
+    const acceptedOutcomeBlocked = new Promise<void>((resolve) => {
+      releaseAcceptedOutcome = resolve;
+    });
+    const acceptedOutcomeObserved = new Promise<void>((resolve) => {
+      observeAcceptedOutcome = resolve;
+    });
+    const ports: PlaybookPorts = {
+      ...recordingPorts(async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+      })),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+      emitTelemetry: async (event) => {
+        telemetry.push(event);
+        const payload = event.payload as Record<string, unknown>;
+        if (
+          event.topic === 'playbook.trace' &&
+          payload.type === 'outcome.accepted'
+        ) {
+          observeAcceptedOutcome();
+          await acceptedOutcomeBlocked;
+        }
+      },
+    };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      acceptedOutcomeMachine,
+      acceptedOutcomeSchema3Spec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+    await runtime.init(session(ports));
+
+    let settled = false;
+    const turn = runtime.handleBossInput(bossTurn('accept')).then((result) => {
+      settled = true;
+      return result;
+    });
+    await acceptedOutcomeObserved;
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(statuses).not.toContain('→ complete');
+    releaseAcceptedOutcome();
+    await turn;
+
+    expect(statuses).toContain('→ complete');
+    const traces = telemetry
+      .map((event) => event as { topic: string; payload: Record<string, unknown> })
+      .filter(
+        ({ topic, payload }) =>
+          topic === 'playbook.trace' && payload.type === 'outcome.accepted',
+      );
+    expect(traces).toHaveLength(1);
+    expect(traces[0]?.payload).toMatchObject({
+      schemaVersion: 4,
+      payload: {
+        source: 'work',
+        target: 'accepted',
+        acceptedOutcome: 'complete',
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it('publishes no schema-3 outcome when a stricter guard selects fallback', async () => {
+    const telemetry: unknown[] = [];
+    const statuses: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recordingPorts(async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+      }), telemetry),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+    };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      acceptedOutcomeMachine,
+      acceptedOutcomeSchema3Spec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+    await runtime.init(session(ports));
+
+    await runtime.handleBossInput(bossTurn('fallback'));
+
+    expect(statuses).not.toContain('→ complete');
+    expect(
+      telemetry.some((event) => {
+        const candidate = event as {
+          topic?: string;
+          payload?: { type?: string };
+        };
+        return (
+          candidate.topic === 'playbook.trace' &&
+          candidate.payload?.type === 'outcome.accepted'
+        );
+      }),
+    ).toBe(false);
+    await runtime.dispose();
+  });
+
+  it('fails closed on invalid markers and clears them before a later snapshot', async () => {
+    for (const [task, diagnostic] of [
+      ['malformed', 'params must contain exactly'],
+      ['malformed-then-valid', 'params must contain exactly'],
+      ['undeclared', 'names undeclared outcome work.unknown'],
+      ['duplicate', 'source work was instrumented more than once'],
+    ] as const) {
+      const telemetry: unknown[] = [];
+      const statuses: string[] = [];
+      const ports: PlaybookPorts = {
+        ...recordingPorts(async () => ({
+          status: 'ok',
+          finalText: 'Implemented.',
+        }), telemetry),
+        emitStatus: async (message) => {
+          statuses.push(message);
+        },
+      };
+      const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+        acceptedOutcomeMachine,
+        acceptedOutcomeSchema3Spec(),
+      )({
+        configuredOptions: {},
+        hostCapabilities: emptyLedgerHostCapabilities(),
+      });
+      await runtime.init(session(ports));
+
+      await expect(runtime.handleBossInput(bossTurn(task))).rejects.toThrow(
+        diagnostic,
+      );
+      expect(statuses).not.toContain('→ complete');
+      expect(JSON.stringify(telemetry)).not.toContain('outcome.accepted');
+      await runtime.dispose();
+    }
+
+    const telemetry: unknown[] = [];
+    const statuses: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recordingPorts(async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+      }), telemetry),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+    };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      acceptedOutcomeMachine,
+      acceptedOutcomeSchema3Spec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+    await runtime.init(session(ports));
+
+    await expect(runtime.handleBossInput(bossTurn('mismatch'))).rejects.toThrow(
+      'target fallback was not confirmed by the public root snapshot',
+    );
+    expect(JSON.stringify(telemetry)).not.toContain('outcome.accepted');
+    const secondTurnStart = telemetry.length;
+    await runtime.handleBossInput(bossTurn('accept'));
+    const secondTurnTransitions = telemetry
+      .slice(secondTurnStart)
+      .filter(
+        (event) =>
+          (event as { topic?: string }).topic === 'playbook.fsm.state',
+      ) as Array<{ payload: { previousState?: { stateId?: string } } }>;
+    expect(secondTurnTransitions[0]?.payload.previousState?.stateId).toBe(
+      'accepted',
+    );
+    expect(
+      telemetry.filter((event) =>
+        JSON.stringify(event).includes('outcome.accepted'),
+      ),
+    ).toHaveLength(1);
+    expect(statuses.filter((status) => status === '→ complete')).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it('does not claim a schema-3 status when accepted trace delivery fails', async () => {
+    const statuses: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recordingPorts(async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+      })),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (event.topic === 'playbook.trace' && trace.type === 'outcome.accepted') {
+          throw new Error('accepted trace unavailable');
+        }
+      },
+    };
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      acceptedOutcomeMachine,
+      acceptedOutcomeSchema3Spec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+    await runtime.init(session(ports));
+
+    await expect(runtime.handleBossInput(bossTurn('accept'))).rejects.toThrow(
+      'accepted trace unavailable',
+    );
+    expect(statuses).not.toContain('→ complete');
+    await runtime.dispose();
+  });
+
+  it('rejects an initial-entry marker without a prior public root snapshot', async () => {
+    const telemetry: unknown[] = [];
+    const statuses: string[] = [];
+    const initialMarkerMachine = createMachine({
+      id: 'initial-accepted-outcome',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: stateMeta('ready', 'Waiting.'),
+          tags: ['playbook.parked'],
+          entry: {
+            type: ACCEPTED_OUTCOME_ACTION_TYPE,
+            params: {
+              source: 'work',
+              target: 'ready',
+              acceptedOutcome: 'complete',
+            },
+          },
+        },
+        work: {
+          meta: roleMeta('work', 'coder', 'Implement the task.'),
+          tags: ['playbook.busy'],
+          invoke: {
+            src: 'player',
+            input: {
+              stateId: 'work',
+              role: 'coder',
+              sourceItem: 'ROLE-OUTCOME-1',
+              prompt: 'Implement the task.',
+              result: {
+                complete: 'The task is complete.',
+                alternate: 'The task took the alternate accepted arm.',
+              },
+            },
+            onDone: 'ready',
+            onError: 'ready',
+          },
+        },
+      },
+    });
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      initialMarkerMachine,
+      acceptedOutcomeSchema3Spec(),
+    )({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+
+    await expect(
+      runtime.init(
+        session({
+          ...recordingPorts(async () => ({
+            status: 'ok',
+            finalText: 'unused',
+          }), telemetry),
+          emitStatus: async (message) => {
+            statuses.push(message);
+          },
+        }),
+      ),
+    ).rejects.toThrow('marker has no prior public root snapshot');
+    expect(JSON.stringify(telemetry)).not.toContain('outcome.accepted');
+    expect(statuses).not.toContain('→ complete');
+    await runtime.dispose();
+
+    const unconfirmedSourceMachine = createMachine({
+      id: 'unconfirmed-source-accepted-outcome',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: stateMeta('ready', 'Waiting.'),
+          tags: ['playbook.parked'],
+          on: {
+            START: {
+              target: 'accepted',
+              actions: {
+                type: ACCEPTED_OUTCOME_ACTION_TYPE,
+                params: {
+                  source: 'work',
+                  target: 'accepted',
+                  acceptedOutcome: 'complete',
+                },
+              },
+            },
+          },
+        },
+        accepted: {
+          meta: stateMeta('accepted', 'Accepted.'),
+          tags: ['playbook.parked'],
+        },
+        work: {
+          meta: roleMeta('work', 'coder', 'Implement the task.'),
+          tags: ['playbook.busy'],
+          invoke: {
+            src: 'player',
+            input: {
+              stateId: 'work',
+              role: 'coder',
+              sourceItem: 'ROLE-OUTCOME-1',
+              prompt: 'Implement the task.',
+              result: {
+                complete: 'The task is complete.',
+                alternate: 'The task took the alternate accepted arm.',
+              },
+            },
+            onDone: 'accepted',
+            onError: 'accepted',
+          },
+        },
+      },
+    });
+    const unconfirmedSourceRuntime = createXStatePlaybookRuntime<
+      EmptyOptions,
+      object
+    >(unconfirmedSourceMachine, acceptedOutcomeSchema3Spec())({
+      configuredOptions: {},
+      hostCapabilities: emptyLedgerHostCapabilities(),
+    });
+    const unconfirmedTelemetry: unknown[] = [];
+    await unconfirmedSourceRuntime.init(
+      session(
+        recordingPorts(
+          async () => ({ status: 'ok', finalText: 'unused' }),
+          unconfirmedTelemetry,
+        ),
+      ),
+    );
+    await expect(
+      unconfirmedSourceRuntime.handleBossInput(bossTurn('unconfirmed')),
+    ).rejects.toThrow(
+      'source work was not confirmed by the prior public root snapshot',
+    );
+    expect(JSON.stringify(unconfirmedTelemetry)).not.toContain(
+      'outcome.accepted',
+    );
+    await unconfirmedSourceRuntime.dispose();
+  });
+
+  it('retains schema-2 raw guard status without accepted-outcome traces', async () => {
+    const telemetry: unknown[] = [];
+    const statuses: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recordingPorts(async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+      }), telemetry),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+    };
+    const runtime = createXStatePlaybookRuntime(
+      acceptedOutcomeMachine,
+      repeatSpec({ label: 'ROLE-OUTCOME-LEGACY' }),
+    )({});
+    await runtime.init(session(ports));
+
+    await runtime.handleBossInput(bossTurn('accept'));
+
+    expect(statuses).toContain('→ complete');
+    expect(JSON.stringify(telemetry)).not.toContain('outcome.accepted');
+    await runtime.dispose();
+  });
+
+  it('confirms parallel markers in execution order and rejects duplicates', () => {
+    const marker = (
+      source: string,
+      target: string,
+      acceptedOutcome: string,
+    ) => ({
+      type: ACCEPTED_OUTCOME_ACTION_TYPE,
+      params: { source, target, acceptedOutcome },
+    });
+    const parallelMachine = createMachine({
+      id: 'parallel-accepted-outcomes',
+      type: 'parallel',
+      states: {
+        left: {
+          initial: 'waiting',
+          states: {
+            waiting: {
+              meta: stateMeta('leftWork', 'Left outcome pending.'),
+              on: {
+                ACCEPT: {
+                  target: 'done',
+                  actions: marker('leftWork', 'leftDone', 'leftComplete'),
+                },
+              },
+            },
+            done: {
+              meta: stateMeta('leftDone', 'Left outcome accepted.'),
+            },
+          },
+        },
+        right: {
+          initial: 'waiting',
+          states: {
+            waiting: {
+              meta: stateMeta('rightWork', 'Right outcome pending.'),
+              on: {
+                ACCEPT: {
+                  target: 'done',
+                  actions: marker('rightWork', 'rightDone', 'rightComplete'),
+                },
+              },
+            },
+            done: {
+              meta: stateMeta('rightDone', 'Right outcome accepted.'),
+            },
+          },
+        },
+      },
+    });
+    const consumer = createAcceptedOutcomeConsumer(
+      3,
+      (source, outcome) =>
+        (source === 'leftWork' && outcome === 'leftComplete') ||
+        (source === 'rightWork' && outcome === 'rightComplete'),
+    );
+    const confirmed: unknown[] = [];
+    let previousParallelState:
+      | ReturnType<typeof normalizePlaybookSnapshot>
+      | undefined;
+    let rootActor: ReturnType<typeof createActor>;
+    let inspectionError: unknown;
+    rootActor = createActor(parallelMachine, {
+      inspect: (event) => {
+        if (event.actorRef !== rootActor) return;
+        try {
+          if (event.type === '@xstate.action') {
+            consumer.capture(event.action);
+          } else if (event.type === '@xstate.snapshot') {
+            const state = normalizePlaybookSnapshot(event.snapshot);
+            confirmed.push(
+              ...consumer.confirm(previousParallelState ?? state, state),
+            );
+            previousParallelState = state;
+          }
+        } catch (error) {
+          inspectionError = error;
+        }
+      },
+    });
+    rootActor.start();
+    rootActor.send({ type: 'ACCEPT' });
+
+    expect(inspectionError).toBeUndefined();
+    expect(confirmed).toEqual([
+      {
+        source: 'leftWork',
+        target: 'leftDone',
+        acceptedOutcome: 'leftComplete',
+      },
+      {
+        source: 'rightWork',
+        target: 'rightDone',
+        acceptedOutcome: 'rightComplete',
+      },
+    ]);
+    rootActor.stop();
+
+    const duplicateMachine = createMachine({
+      id: 'duplicate-accepted-outcome',
+      initial: 'waiting',
+      states: {
+        waiting: {
+          meta: stateMeta('work', 'Outcome pending.'),
+          on: {
+            ACCEPT: {
+              target: 'done',
+              actions: [
+                marker('work', 'done', 'complete'),
+                marker('work', 'done', 'complete'),
+              ],
+            },
+          },
+        },
+        done: { meta: stateMeta('done', 'Outcome accepted.') },
+      },
+    });
+    const duplicateConsumer = createAcceptedOutcomeConsumer(
+      3,
+      (source, outcome) => source === 'work' && outcome === 'complete',
+    );
+    const duplicateConfirmed: unknown[] = [];
+    let previousDuplicateState:
+      | ReturnType<typeof normalizePlaybookSnapshot>
+      | undefined;
+    let duplicateActor: ReturnType<typeof createActor>;
+    let duplicateError: unknown;
+    duplicateActor = createActor(duplicateMachine, {
+      inspect: (event) => {
+        if (event.actorRef !== duplicateActor) return;
+        try {
+          if (event.type === '@xstate.action') {
+            duplicateConsumer.capture(event.action);
+          } else if (event.type === '@xstate.snapshot') {
+            const state = normalizePlaybookSnapshot(event.snapshot);
+            duplicateConfirmed.push(
+              ...duplicateConsumer.confirm(
+                previousDuplicateState ?? state,
+                state,
+              ),
+            );
+            previousDuplicateState = state;
+          }
+        } catch (error) {
+          duplicateError = error;
+        }
+      },
+    });
+    duplicateActor.start();
+    duplicateActor.send({ type: 'ACCEPT' });
+
+    expect(duplicateError).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          'source work was instrumented more than once',
+        ),
+      }),
+    );
+    expect(duplicateConfirmed).toEqual([]);
+    duplicateActor.stop();
+
+    const unconfirmedSourceConsumer = createAcceptedOutcomeConsumer(
+      3,
+      (source, outcome) => source === 'work' && outcome === 'complete',
+    );
+    unconfirmedSourceConsumer.capture(marker('work', 'done', 'complete'));
+    expect(() =>
+      unconfirmedSourceConsumer.confirm(
+        {
+          value: 'other',
+          activeStateIds: ['other'],
+          tags: [],
+          status: 'active',
+          quiescent: true,
+          stateId: 'other',
+        },
+        {
+          value: 'done',
+          activeStateIds: ['done'],
+          tags: [],
+          status: 'active',
+          quiescent: true,
+          stateId: 'done',
+        },
+      ),
+    ).toThrow('source work was not confirmed by the prior public root snapshot');
+
+    const initialEntryConsumer = createAcceptedOutcomeConsumer(
+      3,
+      (source, outcome) => source === 'work' && outcome === 'complete',
+    );
+    initialEntryConsumer.capture(marker('work', 'work', 'complete'));
+    expect(() =>
+      initialEntryConsumer.confirm(undefined, {
+        value: 'work',
+        activeStateIds: ['work'],
+        tags: [],
+        status: 'active',
+        quiescent: true,
+        stateId: 'work',
+      }),
+    ).toThrow('marker has no prior public root snapshot');
+
+    const poisonedConsumer = createAcceptedOutcomeConsumer(
+      3,
+      (source, outcome) => source === 'work' && outcome === 'complete',
+    );
+    expect(() =>
+      poisonedConsumer.capture({
+        type: ACCEPTED_OUTCOME_ACTION_TYPE,
+        params: {
+          source: 'work',
+          target: 'done',
+          acceptedOutcome: 'complete',
+          extra: true,
+        },
+      }),
+    ).toThrow('params must contain exactly');
+    expect(() =>
+      poisonedConsumer.capture(marker('work', 'done', 'complete')),
+    ).not.toThrow();
+    expect(
+      poisonedConsumer.confirm(
+        {
+          value: 'work',
+          activeStateIds: ['work'],
+          tags: [],
+          status: 'active',
+          quiescent: true,
+          stateId: 'work',
+        },
+        {
+          value: 'done',
+          activeStateIds: ['done'],
+          tags: [],
+          status: 'active',
+          quiescent: true,
+          stateId: 'done',
+        },
+      ),
+    ).toEqual([]);
   });
 
   it('keeps schema-3 configured options disjoint from live capabilities', async () => {
@@ -2929,7 +3683,7 @@ describe('DR-032 shared role runtime transition', () => {
       );
     expect(playerTraces).toHaveLength(2);
     for (const { payload } of playerTraces) {
-      expect(payload.schemaVersion).toBe(3);
+      expect(payload.schemaVersion).toBe(4);
       expect(payload.payload).toMatchObject({
         roleId: 'coder',
         playerId: 'dev.shared',

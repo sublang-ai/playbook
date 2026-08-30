@@ -3,7 +3,10 @@
 
 import { createHash } from 'node:crypto';
 
+import { enqueueActions } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
+
+import { ACCEPTED_OUTCOME_ACTION_TYPE } from '../../../src/accepted-outcome.js';
 
 import type {
   PlayerResult,
@@ -599,6 +602,75 @@ function judgeReply(prompt: string): string {
   throw new Error(`unexpected judge prompt: ${prompt}`);
 }
 
+interface StagedAcceptedOutcomeContext {
+  readonly pendingBossQuestions?: Readonly<Record<string, unknown>>;
+  readonly bossReplies?: Readonly<Record<string, unknown>>;
+  readonly stagedCoderResult?: unknown;
+  readonly stagedReviewerResult?: unknown;
+}
+
+function withoutStagedKey(
+  record: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): Readonly<Record<string, unknown>> | undefined {
+  if (record?.[key] === undefined) return record;
+  const next = { ...record };
+  delete next[key];
+  return Object.keys(next).length === 0 ? undefined : next;
+}
+
+const stagedAcceptedOutcomeAction = enqueueActions<
+  StagedAcceptedOutcomeContext,
+  { type: string },
+  { stateId: string }
+>(({ context, enqueue }, { stateId }) => {
+  const declared =
+    stateId === 'askCoderProposal'
+      ? {
+          target:
+            context.stagedReviewerResult === undefined
+              ? 'coderProposalComplete'
+              : 'commitCoderProposal',
+          acceptedOutcome: 'proposed',
+        }
+      : stateId === 'askReviewerProposal'
+        ? {
+            target:
+              context.stagedCoderResult === undefined
+                ? 'reviewerProposalComplete'
+                : 'commitCoderProposal',
+            acceptedOutcome: 'proposed',
+          }
+        : stateId === 'commitCoderProposal'
+          ? { target: 'reviewCommit', acceptedOutcome: 'committed' }
+          : undefined;
+  if (declared === undefined) {
+    throw new TypeError(`unknown staged accepted-outcome source ${stateId}`);
+  }
+  enqueue.assign({
+    pendingBossQuestions: ({ context: current }) =>
+      withoutStagedKey(current.pendingBossQuestions, stateId),
+    bossReplies: ({ context: current }) =>
+      withoutStagedKey(current.bossReplies, stateId),
+  });
+  enqueue({
+    type: ACCEPTED_OUTCOME_ACTION_TYPE,
+    params: {
+      source: stateId,
+      target: declared.target,
+      acceptedOutcome: declared.acceptedOutcome,
+    },
+  });
+});
+
+function createStagedAcceptedOutcomeDecideRuntime() {
+  return _internal.createStagedSchema3AcceptedOutcomeRuntime(
+    {},
+    { readEffectLedger: () => replayLedger([]) },
+    stagedAcceptedOutcomeAction,
+  );
+}
+
 interface ReviewBoundary {
   runtime: ReturnType<typeof createPlaybookRuntime>;
   request: PlaybookCallRequest;
@@ -846,7 +918,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     );
     expect(playerTraces).toHaveLength(6);
     for (const trace of playerTraces) {
-      expect(trace.schemaVersion).toBe(3);
+      expect(trace.schemaVersion).toBe(4);
       const payload = trace.payload as Record<string, unknown>;
       expect(payload.roleId).toMatch(/^(coder|reviewer)$/);
       expect(payload.playerId).toBe(
@@ -1239,6 +1311,171 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       ),
     ).toEqual(['askCoderProposal', 'askReviewerProposal']);
 
+    await runtime.dispose();
+  });
+});
+
+describe('DECIDE staged accepted-outcome consumer', () => {
+  it.each(['coder', 'reviewer'] as const)(
+    'publishes executed parallel outcomes when %s finishes first and drains them before settlement',
+    async (firstRole) => {
+      const secondRole = firstRole === 'coder' ? 'reviewer' : 'coder';
+      const telemetry: TelemetryRecord[] = [];
+      const statuses: string[] = [];
+      const acceptedObserved = deferred<void>();
+      const releaseAccepted = deferred<void>();
+      const coderProposal = deferred<PlayerResult>();
+      const reviewerProposal = deferred<PlayerResult>();
+      let coderCalls = 0;
+      let proposalCalls = 0;
+      let settled = false;
+      const ports = completePorts({
+        callPlayer: async (roleId) => {
+          if (roleId === 'reviewer') {
+            proposalCalls += 1;
+            return reviewerProposal.promise;
+          }
+          coderCalls += 1;
+          if (coderCalls === 1) {
+            proposalCalls += 1;
+            return coderProposal.promise;
+          }
+          return {
+            status: 'ok',
+            finalText: 'Committed proposal\nCommit: abc123',
+          };
+        },
+        callJudge: async (prompt) => judgeReply(prompt),
+        callPlaybook: async () => ({
+          state: 'suspended',
+          childSessionId: 'review-child',
+        }),
+        emitStatus: async (message) => {
+          statuses.push(message);
+        },
+        emitTelemetry: async (record) => {
+          telemetry.push(record);
+          if (
+            record.topic === 'playbook.trace' &&
+            (record.payload as { type?: string }).type === 'outcome.accepted' &&
+            !settled
+          ) {
+            acceptedObserved.resolve();
+            await releaseAccepted.promise;
+          }
+        },
+      });
+      const runtime = createStagedAcceptedOutcomeDecideRuntime();
+      await runtime.init(session(ports));
+
+      const running = runtime
+        .handleBossInput({ text: 'Choose the durable design.', signal: signal() })
+        .then((result) => {
+          settled = true;
+          return result;
+        });
+      await vi.waitFor(() => {
+        expect(proposalCalls).toBe(2);
+      });
+      const proposals = { coder: coderProposal, reviewer: reviewerProposal };
+      proposals[firstRole].resolve({
+        status: 'ok',
+        finalText: `${firstRole} proposal`,
+      });
+      await acceptedObserved.promise;
+      await Promise.resolve();
+
+      expect(settled).toBe(false);
+      expect(statuses.some((status) => status.startsWith('→ '))).toBe(false);
+      releaseAccepted.resolve();
+      proposals[secondRole].resolve({
+        status: 'ok',
+        finalText: `${secondRole} proposal`,
+      });
+      await expect(running).resolves.toMatchObject({ outcome: 'suspended' });
+
+      const acceptedTraces = playbookTraces(telemetry).filter(
+        ({ type }) => type === 'outcome.accepted',
+      );
+      expect(acceptedTraces).toHaveLength(3);
+      const proposalTrace = (roleId: 'coder' | 'reviewer', first: boolean) => ({
+        schemaVersion: 4,
+        payload: {
+          source:
+            roleId === 'coder' ? 'askCoderProposal' : 'askReviewerProposal',
+          target: first
+            ? roleId === 'coder'
+              ? 'coderProposalComplete'
+              : 'reviewerProposalComplete'
+            : 'commitCoderProposal',
+          acceptedOutcome: 'proposed',
+        },
+      });
+      expect(
+        acceptedTraces.map(({ schemaVersion, payload }) => ({
+          schemaVersion,
+          payload,
+        })),
+      ).toEqual([
+        proposalTrace(firstRole, true),
+        proposalTrace(secondRole, false),
+        {
+          schemaVersion: 4,
+          payload: {
+            source: 'commitCoderProposal',
+            target: 'reviewCommit',
+            acceptedOutcome: 'committed',
+          },
+        },
+      ]);
+      expect(statuses.filter((status) => status === '→ proposed')).toHaveLength(
+        2,
+      );
+      expect(statuses.filter((status) => status === '→ committed')).toHaveLength(
+        1,
+      );
+      await runtime.dispose();
+    },
+  );
+
+  it('publishes no accepted outcome when DECIDE selects its fallback arm', async () => {
+    const telemetry: TelemetryRecord[] = [];
+    const statuses: string[] = [];
+    const runtime = createStagedAcceptedOutcomeDecideRuntime();
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId) => ({
+            status: 'ok',
+            finalText: `${roleId} proposal`,
+          }),
+          callJudge: async () =>
+            JSON.stringify({ guard: 'needsBossReply', question: 42 }),
+          emitStatus: async (message) => {
+            statuses.push(message);
+          },
+          emitTelemetry: async (record) => {
+            telemetry.push(record);
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(
+      playbookTraces(telemetry).filter(
+        ({ type }) => type === 'outcome.accepted',
+      ),
+    ).toEqual([]);
+    expect(statuses.some((status) => status.startsWith('→ '))).toBe(false);
     await runtime.dispose();
   });
 });

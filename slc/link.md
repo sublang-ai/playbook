@@ -644,7 +644,7 @@ The runtime never speaks to LLMs directly and never touches host types beyond `P
 ## Playbook trace
 
 Every linked runtime shall emit a boundary-complete, ordered trace through `emitTelemetry` topic `playbook.trace`.
-Each payload shall carry `schemaVersion: 3`, the immutable session identity and
+Each payload shall carry `schemaVersion: 4`, the immutable session identity and
 causality, a contiguous one-based `sequence`, a Unix-millisecond `timestamp`, a
 trace `type`, event `payload`, and the runtime-local `turnId` / paired `callId`
 where applicable.
@@ -664,12 +664,13 @@ type PlaybookTraceType =
   | 'apply.started'
   | 'apply.finished'
   | 'fsm.transition'
+  | 'outcome.accepted'
   | 'status.emitted'
   | 'boss.input.settled'
   | 'session.disposed';
 
 interface PlaybookTraceEvent {
-  schemaVersion: 3;
+  schemaVersion: 4;
   sessionId: string;
   playbookId: string;
   rootSessionId: string;
@@ -695,8 +696,9 @@ The trace types are `session.started`, `boss.input.received`,
 `player.call.finished`, `captain.call.started`, `captain.call.finished`,
 `playbook.call.started`,
 `playbook.call.finished`, `apply.started`, `apply.finished`,
-`fsm.transition`, `status.emitted`,
+`fsm.transition`, `outcome.accepted`, `status.emitted`,
 `boss.input.settled`, and `session.disposed`.
+No trace event whose `schemaVersion` is below `4` is authority-bearing accepted-outcome evidence.
 Call pairs carry exact prompts and replies, normalized failures, actor and state
 identity, and their boundary-specific options.
 `apply.started` and `apply.finished` are the paired apply boundary of a
@@ -1621,8 +1623,8 @@ The `PlaybookRuntime` shall:
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
 Presence of linker-emitted `roleStates` selects the canonical factory-backed status profile.
 That profile shall emit the selected Boss event type
-before sending that event, exactly `→ <guard>` (with no payload-count or tally
-rider) when a settling actor output carries a guard, and
+before sending that event; for artifact schema `2`, exactly `→ <guard>` (with no payload-count or tally
+rider) when a settling actor output carries a guard; for artifact schema `3`, exactly `→ <acceptedOutcome>` only from a confirmed accepted-outcome marker; and
 `⤷ <Role>: <label>` only when the entered state appears in the linked module's `roleStates` metadata.
 It shall emit no raw state-id fallback for any other state.
 `roleStates` shall be a complete map of the FSM states
@@ -1633,6 +1635,11 @@ incomplete entry, a non-player state, or a role or label that differs from the F
 Artifact schema `1` and a missing compatibility declaration
 shall reject before interpretation because their legacy `player` values may
 encode bindings or aliases rather than canonical local roles.
+For artifact schema `3`, an accepted-outcome marker is a root-machine XState action with exact type `playbook.acceptedOutcome` and exact plain-data params `{ source, target, acceptedOutcome }` naming a declared governed outcome.
+The runtime shall observe that action only through the public root `@xstate.action` inspection event, retain it privately until the corresponding next public root `@xstate.snapshot` confirms `source` active in the prior snapshot and `target` active in the new snapshot, then emit one trace-schema-4 `outcome.accepted` event with those exact params before its canonical status and before public settlement; markers confirmed together shall retain their XState execution order.
+A valid unmarked transition, including an unexecuted guarded arm or rejected-guard fallback, shall settle normally with neither accepted-outcome evidence nor claimed-outcome status.
+An executed marker that is malformed, undeclared, or unconfirmed by those adjacent snapshots, or a batch that instruments one governed source more than once regardless of target or outcome, shall clear the entire pending marker batch and fail the current public boundary after retaining the ordinary transitioned state but before settlement, accepted-outcome evidence, or claimed-outcome status.
+Artifact schema `2` shall ignore accepted-outcome markers and retain the settling-output guard path during compatibility staging.
 For the default Captain runtime, an initial `ready` state and a terminal `done`
 state shall not emit human status. The terminal response is already visible
 Captain prose; a synthetic “entered done” message would present it twice.

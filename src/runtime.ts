@@ -202,12 +202,13 @@ export type PlaybookTraceType =
   | 'apply.started'
   | 'apply.finished'
   | 'fsm.transition'
+  | 'outcome.accepted'
   | 'status.emitted'
   | 'boss.input.settled'
   | 'session.disposed';
 
 export interface PlaybookTraceEvent {
-  schemaVersion: 3;
+  schemaVersion: 4;
   sessionId: string;
   playbookId: string;
   rootSessionId: string;

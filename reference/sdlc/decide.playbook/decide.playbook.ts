@@ -23,6 +23,11 @@ import { createActor, fromPromise } from 'xstate';
 import type { InspectionEvent, SnapshotFrom } from 'xstate';
 
 import {
+  createAcceptedOutcomeConsumer,
+  type AcceptedOutcomeReceipt,
+} from '../../../src/accepted-outcome.js';
+
+import {
   assertJsonSafe,
   assertPlaybookEffectLedger,
   assertPlaybookRuntimeSnapshot,
@@ -182,6 +187,14 @@ const ROLE_STATES = [
 const ROLE_STATE_IDS: ReadonlySet<string> = new Set(
   ROLE_STATES.map((state) => state.stateId),
 );
+
+const ACCEPTED_OUTCOME_DECLARATIONS: Readonly<
+  Record<string, ReadonlySet<string>>
+> = Object.freeze({
+  askCoderProposal: new Set(['proposed', 'needsBossReply']),
+  askReviewerProposal: new Set(['proposed', 'needsBossReply']),
+  commitCoderProposal: new Set(['committed', 'needsBossReply']),
+});
 
 const ROLE_IDS = ['coder', 'reviewer'] as const;
 const ROLE_ID_SET: ReadonlySet<string> = new Set(ROLE_IDS);
@@ -1028,8 +1041,10 @@ type StagedDecidePlaybookRuntime = DecidePlaybookRuntime & {
 
 function createDecidePlaybookRuntime(
   options: PlaybookRuntimeOptions,
+  artifactSchema: 2 | 3,
   automaticReplayPolicy: AutomaticReplayPolicy,
   deferredEffects?: Schema3DeferredEffectEvidence,
+  stagedAcceptedOutcomeAction?: unknown,
 ): DecidePlaybookRuntime {
   const fsmInput = snapshotDecideRuntimeOptions(options);
   const readEffectLedger = (): PlaybookEffectLedger =>
@@ -1040,6 +1055,15 @@ function createDecidePlaybookRuntime(
           'DECIDE current host effect ledger',
         );
   let effectLedgerMirror = readEffectLedger();
+  const acceptedOutcomeConsumer = createAcceptedOutcomeConsumer(
+    artifactSchema,
+    (source, acceptedOutcome) =>
+      Object.prototype.hasOwnProperty.call(
+        ACCEPTED_OUTCOME_DECLARATIONS,
+        source,
+      ) &&
+      ACCEPTED_OUTCOME_DECLARATIONS[source]?.has(acceptedOutcome) === true,
+  );
 
   type SessionIdentity = Readonly<PlaybookSession>;
 
@@ -1415,11 +1439,25 @@ function createDecidePlaybookRuntime(
     describedEmission?: (runtimePorts: PlaybookPorts) => Promise<void>,
     aborts?: AbortReasonClassifier,
   ): Promise<void> => {
-    const runtimePorts = requirePorts();
+    const trace = createTraceEvent(type, payload, meta);
+    return enqueue(
+      async () => {
+        const runtimePorts = requirePorts();
+        await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
+        await describedEmission?.(runtimePorts);
+      },
+      aborts,
+    );
+  };
+  const createTraceEvent = (
+    type: PlaybookTraceType,
+    payload: unknown,
+    meta: { turnId?: number; callId?: string } = {},
+  ): PlaybookTraceEvent => {
     const identity = requireSessionIdentity();
     const jsonPayload = snapshotJsonValue(payload, `trace ${type} payload`);
-    const trace: PlaybookTraceEvent = Object.freeze({
-      schemaVersion: 3,
+    return Object.freeze({
+      schemaVersion: 4,
       sessionId: identity.sessionId,
       playbookId: identity.playbookId,
       rootSessionId: identity.rootSessionId,
@@ -1437,13 +1475,6 @@ function createDecidePlaybookRuntime(
       ...(meta.callId !== undefined ? { callId: meta.callId } : {}),
       payload: jsonPayload,
     });
-    return enqueue(
-      async () => {
-        await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
-        await describedEmission?.(runtimePorts);
-      },
-      aborts,
-    );
   };
   const emitTrace = (
     type: PlaybookTraceType,
@@ -1451,6 +1482,38 @@ function createDecidePlaybookRuntime(
     meta: { turnId?: number; callId?: string } = {},
     aborts?: AbortReasonClassifier,
   ): Promise<void> => enqueueTracedEmission(type, payload, meta, undefined, aborts);
+  const enqueueAcceptedOutcomeEmission = (
+    acceptedOutcome: AcceptedOutcomeReceipt,
+    state: PlaybookState,
+    aborts?: AbortReasonClassifier,
+  ): Promise<void> => {
+    const message = `→ ${acceptedOutcome.acceptedOutcome}`;
+    const acceptedTrace = createTraceEvent(
+      'outcome.accepted',
+      acceptedOutcome,
+      { turnId: currentTurnId },
+    );
+    const statusTrace = createTraceEvent(
+      'status.emitted',
+      { stateId: acceptedOutcome.target, message, state },
+      { turnId: currentTurnId },
+    );
+    return enqueue(
+      async () => {
+        const runtimePorts = requirePorts();
+        await runtimePorts.emitTelemetry({
+          topic: TRACE_TOPIC,
+          payload: acceptedTrace,
+        });
+        await runtimePorts.emitTelemetry({
+          topic: TRACE_TOPIC,
+          payload: statusTrace,
+        });
+        await runtimePorts.emitStatus(message);
+      },
+      aborts,
+    );
+  };
   const emitBoundaryStatus = async (
     message: string,
     state: PlaybookState,
@@ -2151,6 +2214,13 @@ function createDecidePlaybookRuntime(
 
   const providedMachine = decideMachine.provide({
     actors: { player, playbook: nestedBridge.actorLogic },
+    ...(stagedAcceptedOutcomeAction === undefined
+      ? {}
+      : {
+          actions: {
+            clearBranchBossReplyContext: stagedAcceptedOutcomeAction,
+          } as never,
+        }),
   });
 
   const consumeActorSettlementAborts = (
@@ -2170,14 +2240,28 @@ function createDecidePlaybookRuntime(
   };
 
   const inspect = (event: InspectionEvent): void => {
-    if (event.type !== '@xstate.snapshot') return;
     if (actor === undefined || event.actorRef !== actor) return;
     if (suppressInspectionEmissions) return;
+    if (event.type === '@xstate.action') {
+      try {
+        acceptedOutcomeConsumer.capture(event.action);
+      } catch (error) {
+        latchInspectionError(error);
+      }
+      return;
+    }
+    if (event.type !== '@xstate.snapshot') return;
     const settlementAborts = consumeActorSettlementAborts(true);
     try {
       const snapshot = event.snapshot as SnapshotFrom<typeof decideMachine>;
       const state = normalizePlaybookSnapshot(snapshot);
       const prior = previousState ?? state;
+      let acceptedOutcomes: readonly AcceptedOutcomeReceipt[] = [];
+      try {
+        acceptedOutcomes = acceptedOutcomeConsumer.confirm(previousState, state);
+      } catch (error) {
+        latchInspectionError(error);
+      }
       const context = snapshot.context as unknown as Record<string, unknown>;
       const fsmPayload = telemetryPayload(
         prior,
@@ -2232,6 +2316,14 @@ function createDecidePlaybookRuntime(
         ).catch(() => undefined);
       };
 
+      for (const acceptedOutcome of acceptedOutcomes) {
+        void enqueueAcceptedOutcomeEmission(
+          acceptedOutcome,
+          state,
+          settlementAborts,
+        ).catch(() => undefined);
+      }
+
       for (const activeStateId of state.activeStateIds) {
         if (
           priorIds.has(activeStateId) ||
@@ -2274,12 +2366,14 @@ function createDecidePlaybookRuntime(
         );
       }
     } catch (error) {
+      acceptedOutcomeConsumer.reset();
       latchInspectionError(error, settlementAborts);
     }
   };
 
   const createRuntimeActor = (machineSnapshot?: JsonValue): void => {
     previousState = undefined;
+    acceptedOutcomeConsumer.reset();
     // DR-014 §1: a restore rehydrates the persisted machine snapshot;
     // XState derives context/value from it and ignores `input` then.
     actor = createActor(providedMachine, {
@@ -2315,6 +2409,7 @@ function createDecidePlaybookRuntime(
   const stopActor = (): void => {
     if (!actor) return;
     suppressInspectionEmissions = true;
+    acceptedOutcomeConsumer.reset();
     actor.stop();
   };
 
@@ -3400,7 +3495,7 @@ const legacyAutomaticReplayPolicy = createAutomaticReplayPolicy(2);
 export const createPlaybookRuntime: PlaybookRuntimeFactory<
   PlaybookRuntimeOptions
 > = (options) =>
-  createDecidePlaybookRuntime(options, legacyAutomaticReplayPolicy);
+  createDecidePlaybookRuntime(options, 2, legacyAutomaticReplayPolicy);
 
 function createStagedSchema3AutomaticReplayRuntime(
   options: PlaybookRuntimeOptions,
@@ -3408,6 +3503,7 @@ function createStagedSchema3AutomaticReplayRuntime(
 ): PlaybookRuntime {
   return createDecidePlaybookRuntime(
     options,
+    3,
     createAutomaticReplayPolicy(3, evidence),
   );
 }
@@ -3418,14 +3514,30 @@ function createStagedSchema3DeferredRuntime(
 ): StagedDecidePlaybookRuntime {
   return createDecidePlaybookRuntime(
     options,
+    3,
     createAutomaticReplayPolicy(3, evidence),
     evidence,
   ) as StagedDecidePlaybookRuntime;
 }
 
+function createStagedSchema3AcceptedOutcomeRuntime(
+  options: PlaybookRuntimeOptions,
+  evidence: Schema3AutomaticReplayEvidence,
+  acceptedOutcomeAction: unknown,
+): PlaybookRuntime {
+  return createDecidePlaybookRuntime(
+    options,
+    3,
+    createAutomaticReplayPolicy(3, evidence),
+    undefined,
+    acceptedOutcomeAction,
+  );
+}
+
 export const _internal = {
   createStagedSchema3AutomaticReplayRuntime,
   createStagedSchema3DeferredRuntime,
+  createStagedSchema3AcceptedOutcomeRuntime,
   composePlayerPrompt,
   requiredFieldsFor,
   extractJson,

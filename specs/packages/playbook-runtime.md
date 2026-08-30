@@ -29,7 +29,7 @@ When the judge returns no valid event and payload, the runtime shall report the 
 Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, while a Boss turn is in progress, the runtime shall surface the canonical human-readable status stream below without exposing judge JSON, raw state-id fallbacks, or the Boss text already visible at the prompt:
 
 - Before sending a selected Boss event, emit its bare type such as `START_CODE` as Captain speech.
-- Whenever a settling actor output carries a guard, emit exactly `→ <guard>` with no payload tally, rider, or leading whitespace.
+- For artifact schema `2`, whenever a settling actor output carries a guard, emit exactly `→ <guard>` with no payload tally, rider, or leading whitespace; for artifact schema `3`, emit that line only from the confirmed accepted-outcome evidence of [[playbook-runtime-81](#playbook-runtime-81)].
 - On entry to a state named by `roleStates`, emit `⤷ <Role>: <label>` from that metadata with no source-item or context rider.
 - On entry to a Boss-reply wait, emit the untruncated `<asker> asks: <question>` as Captain speech followed by `◆ awaiting Boss reply · <resumeStateId> · <asker> · <sourceItem>` with no question excerpt, rendering the Captain asker as `Captain` and a role asker by its local role id.
 - On entry to failure, emit `◆ workflow failed; awaiting Boss recovery.` with the compact normalized error as status data.
@@ -471,7 +471,7 @@ can debug fail-stop paths without losing the original stack.
 instance for downstream FSM consumers; normalization happens only
 at emission boundaries.
 
-Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <guard>` for every settling actor output carrying a guard, metadata-derived role entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
+Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <guard>` from a schema-2 settling output or exact `→ <acceptedOutcome>` from schema-3 confirmed evidence, metadata-derived role entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
 The canonical failure status shall carry `lastError` as compact `{ name, message }` data rather than a raw Error.
 The corresponding Boss-wait telemetry shall carry the selected pending question verbatim alongside the other transition fields so a non-tmux host can render it.
 
@@ -479,6 +479,14 @@ All trace, status, and state-telemetry emissions shall use one runtime-owned
 concurrency-one queue, be issued in order, each awaited before the next, and
 never dropped. Sequence allocation and enqueueing shall be atomic; every public
 runtime method shall drain the queue before resolving or rejecting.
+
+#### playbook-runtime-81
+
+Where an artifact supplies schema `3`, the shared and bespoke linked runtimes shall recognize only a root-machine XState action whose type is exactly `playbook.acceptedOutcome` and whose exact plain-data params are `{ source, target, acceptedOutcome }`, require `source` and `acceptedOutcome` to name a declared governed outcome of [[playbook-runtime-50](#playbook-runtime-50)], and retain it privately until the corresponding next public root snapshot confirms `source` in the prior snapshot and `target` in the new snapshot under [DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §6.
+Each confirmed marker shall produce one trace-schema-4 `outcome.accepted` event carrying those exact three fields per [[playbook-runtime-37](#playbook-runtime-37)] and, where the canonical status profile applies, one exact `→ <acceptedOutcome>` status per [[playbook-runtime-3](#playbook-runtime-3)]; markers confirmed together shall retain their XState execution order, and all such emissions shall drain before the public boundary settles.
+A valid unmarked transition, including an unexecuted guarded arm or rejected-guard fallback, shall settle normally without accepted-outcome evidence or claimed-outcome status.
+An executed marker that is malformed, undeclared, or unconfirmed by those adjacent snapshots, or a batch that instruments one governed source more than once regardless of target or outcome, shall clear that entire pending marker batch and fail the current public boundary after retaining the ordinary transitioned state but before public settlement, accepted-outcome evidence, or claimed-outcome status; the runtime shall use only public XState inspection events and root snapshots rather than underscore-prefixed inspection fields.
+Artifact schema `2` shall ignore the marker contract and retain its legacy settling-output guard status path until the schema cutover.
 
 #### playbook-runtime-57
 
@@ -510,7 +518,7 @@ The registry shall validate only the option slice the shell passes it and shall 
 Where a host initializes a linked playbook runtime with a
 `PlaybookSession`, the runtime shall emit telemetry topic
 `playbook.trace` carrying the immutable session and playbook ids and
-trace schema version `3` defined by [slc/link.md](../../slc/link.md#playbook-trace), retaining the session causality introduced by [DR-011](../decisions/011-composable-playbook-execution.md) §5 and replacing trace schema `2`'s overloaded player identity from [DR-010](../decisions/010-playbook-session-tracing-and-resume.md) §2.
+trace schema version `4` defined by [slc/link.md](../../slc/link.md#playbook-trace), retaining the session causality introduced by [DR-011](../decisions/011-composable-playbook-execution.md) §5, the trace-schema-3 player identity split from [DR-010](../decisions/010-playbook-session-tracing-and-resume.md) §2, and the accepted-outcome evidence of [[playbook-runtime-81](#playbook-runtime-81)].
 The trace sequence shall be contiguous and one-based for that session;
 Boss turns and player/Captain/judge calls shall receive one-based ids, and a
 call's started and finished events shall share its call id.
@@ -527,7 +535,8 @@ carries `status: 'aborted'`, nothing is latched, and the turn settles as
 an abort ([[playbook-runtime-13](#playbook-runtime-13)], [DR-036](../decisions/036-coherent-abort-settlement.md)).
 The runtime shall trace session start/disposal, exact Boss input and
 settlement, exact player, Captain, and judge prompts and results, normalized
-errors, every FSM transition, and every status emission.
+errors, every FSM transition, every confirmed accepted outcome, and every status emission.
+No trace event with schema version below `4` shall be accepted as authority-bearing accepted-outcome evidence.
 Where a runtime starts through retained-snapshot adoption, its trace shall begin with the ordinary `session.started` boundary under the fresh target causality and the adoption-lineage payload of [[playbook-runtime-65](#playbook-runtime-65)], rather than continue the source trace sequence or introduce a second session-start type.
 Each player-call trace pair shall carry the local `roleId` and, where the host supplied binding metadata, the resolved `playerId`; its start and finish shall retain the same values.
 Direct Captain calls shall use paired `captain.call.started` and
@@ -1033,7 +1042,7 @@ to the named state and `handleBossInput` returns (verifying [[playbook-runtime-1
 When the integration suite drives transition and status profiles, it shall fail unless every case in this matrix holds:
 
 - Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
-- A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <guard>` for every settling actor output carrying a guard with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
+- A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <guard>` for schema-2 settling output or exact `→ <acceptedOutcome>` for schema-3 confirmed evidence with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
 - A schema-2 factory-backed fixture with missing or incomplete `roleStates` rejects during construction even when a status override exists, before machine interpretation or a host call (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
 
 #### playbook-runtime-68
@@ -1082,6 +1091,11 @@ When the unresolved-effect control matrix drives live, restored, and retained-ad
 The matrix shall fail unless an unequal deferred-checkpoint reconciliation retains the unresolved operation and starts no player or judge, while exact checkpoint restoration consumes eligibility, republishes the identical stable question and bound wait, returns an ordinary nonterminal run result, and likewise starts no player, judge, or semantic-candidate delivery (verifying [[playbook-runtime-79](#playbook-runtime-79)] and [[playbook-runtime-73](#playbook-runtime-73)]).
 The matrix shall fail unless abandonment moves no actor state and returns one accepted control receipt whose run is exactly `{ outcome: 'unresolved-effect', state }`, whose state remains active, quiescent, and nonfinal, and whose run carries no state description, output, pending call, error, repository receipt, effect ledger, semantic evidence, or unresolved-effects projection; replaying its idempotency key shall return that receipt without another action boundary (verifying [[playbook-runtime-79](#playbook-runtime-79)] and [[playbook-runtime-52](#playbook-runtime-52)]).
 The public-contract matrix shall fail unless the SLC, authored runtime source, committed declaration, and packaged declaration all expose that exact state-only arm while preserving the distinct terminal, suspended, failure, abort, quiescent, and no-action shapes (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], and [[playbook-runtime-79](#playbook-runtime-79)]).
+
+#### playbook-runtime-82
+
+When the accepted-outcome integration matrix drives the shared flat runtime and the bespoke parallel DECIDE runtime with staged schema-3 markers, it shall fail unless an executed declared marker produces exactly one `outcome.accepted` trace and one canonical accepted-outcome status only after adjacent public root snapshots confirm its source and target, every such emission drains before settlement, and multiple simultaneously confirmed parallel markers retain their exact source, target, outcome, and execution order (verifying [[playbook-runtime-81](#playbook-runtime-81)]).
+The matrix shall fail unless a stricter guard's valid unmarked fallback settles without accepted evidence, an initial-entry marker with no prior root snapshot, an unconfirmed source or target, malformed or undeclared marker data, a malformed-then-valid action batch, and duplicate instrumentation fail the boundary without evidence, no stale marker can attach to a later snapshot, a rejected accepted-outcome trace sink emits no claimed status, and artifact schema `2` retains its raw settling-output guard status without publishing an accepted-outcome trace (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-81](#playbook-runtime-81)]).
 
 ### Host adapter
 
@@ -1334,7 +1348,7 @@ assignable to the shared types and would therefore pass while an artifact still 
 #### playbook-runtime-39
 
 
-Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `3`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish — a started-boundary sink that records and then rejects with a distinct error included: the pair finishes `error` with no host call begun and the public method rejects with the original sink error, while a sink that cancels the turn and rejects with the exact signal reason instead finishes the pair `aborted` with no host call and the turn settles as an abort (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `4`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish — a started-boundary sink that records and then rejects with a distinct error included: the pair finishes `error` with no host call begun and the public method rejects with the original sink error, while a sink that cancels the turn and rejects with the exact signal reason instead finishes the pair `aborted` with no host call and the turn settles as an abort (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
 When a maintained shared-factory runtime or DECIDE reaches a final state, the integration suite shall fail unless its terminal result carries that state's exact authored description and never a state-id or output-derived fallback (verifying [[playbook-runtime-41](#playbook-runtime-41)]).
 The suite shall fail unless every shell-hosted player-call pair retains both its semantic `roleId` and resolved `playerId`, while a standalone call retains its role without inventing a host player id; restoring under compatible changed model tuning shall also make the next composed prompt use the current `promptIdentity` rather than a value persisted in machine context (verifying [[playbook-runtime-15](#playbook-runtime-15)] and [[playbook-runtime-37](#playbook-runtime-37)]).
 The suite shall fail unless a standalone runtime without bindings starts each local role fresh, resumes and rotates that role's validated token in `roleResumeTokens`, clears an omitted token only on `ok`, preserves the prior token when `aborted` or `error` omits one, keeps different roles independent, preserves continuity across parked turns, and discards it on disposal; with bindings but no external store, two sequential roles mapped to one player id shall select and rotate one shared private token while the snapshot projects that token back to both local-role keys (verifying [[playbook-runtime-38](#playbook-runtime-38)] and [[playbook-runtime-45](#playbook-runtime-45)]).

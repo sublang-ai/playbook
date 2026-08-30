@@ -5080,7 +5080,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       await runtime.ports.emitTelemetry({
         topic: 'playbook.trace',
         payload: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           sessionId: runtime.session.sessionId,
           playbookId: runtime.session.playbookId,
           rootSessionId: runtime.session.rootSessionId,
@@ -5406,7 +5406,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
         await runtime.ports.emitTelemetry({
           topic: 'playbook.trace',
           payload: {
-            schemaVersion: 3,
+            schemaVersion: 4,
             sessionId: runtime.session.sessionId,
             playbookId: runtime.session.playbookId,
             rootSessionId: runtime.session.rootSessionId,

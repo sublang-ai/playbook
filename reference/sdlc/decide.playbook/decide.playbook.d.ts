@@ -117,9 +117,11 @@ type StagedDecidePlaybookRuntime = DecidePlaybookRuntime & {
 export declare const createPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
 declare function createStagedSchema3AutomaticReplayRuntime(options: PlaybookRuntimeOptions, evidence: Schema3AutomaticReplayEvidence): PlaybookRuntime;
 declare function createStagedSchema3DeferredRuntime(options: PlaybookRuntimeOptions, evidence: Schema3DeferredEffectEvidence): StagedDecidePlaybookRuntime;
+declare function createStagedSchema3AcceptedOutcomeRuntime(options: PlaybookRuntimeOptions, evidence: Schema3AutomaticReplayEvidence, acceptedOutcomeAction: unknown): PlaybookRuntime;
 export declare const _internal: {
     createStagedSchema3AutomaticReplayRuntime: typeof createStagedSchema3AutomaticReplayRuntime;
     createStagedSchema3DeferredRuntime: typeof createStagedSchema3DeferredRuntime;
+    createStagedSchema3AcceptedOutcomeRuntime: typeof createStagedSchema3AcceptedOutcomeRuntime;
     composePlayerPrompt: typeof composePlayerPrompt;
     requiredFieldsFor: typeof requiredFieldsFor;
     extractJson: typeof extractJson;

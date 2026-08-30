@@ -742,6 +742,9 @@ describe('packed tarball contents (RELEASE-18)', () => {
     for (const artifact of [
       'src/runtime.js',
       'src/runtime.d.ts',
+      'src/accepted-outcome.ts',
+      'src/accepted-outcome.js',
+      'src/accepted-outcome.d.ts',
       'src/xstate-runtime.js',
       'src/xstate-runtime.d.ts',
       'src/xstate-playbook-runtime.js',
