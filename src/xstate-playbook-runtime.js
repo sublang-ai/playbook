@@ -2259,6 +2259,57 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 retainedEffectReconciliationRequired ||
                 unresolvedSemanticBoundaryIds.size > 0);
         }
+        function unresolvedEffectEnvelopeIdentities() {
+            if (artifactSchema !== 3 || session === undefined)
+                return [];
+            const current = currentEffectLedger();
+            effectLedgerMirror = current;
+            refreshRetainedEffectReconciliation(current);
+            syncDeferredReconciliationOverlay();
+            refreshUnresolvedSemanticReconciliation(current);
+            if (!hasUnresolvedReconciliation())
+                return [];
+            const boundaryIds = new Set(unresolvedSemanticBoundaryIds);
+            const operationIds = new Set();
+            if (deferredReconciliationOperationId !== undefined) {
+                operationIds.add(deferredReconciliationOperationId);
+            }
+            if (retainedEffectReconciliationRequired) {
+                const checkpointLength = retainedEffectReconciliation?.checkpoint
+                    .boundaries.length ?? 0;
+                for (const boundary of current.boundaries.slice(checkpointLength)) {
+                    if (boundary.physicalReceipt?.classification === 'unchanged') {
+                        continue;
+                    }
+                    boundaryIds.add(boundary.boundaryId);
+                }
+            }
+            for (const boundaryId of [...boundaryIds]) {
+                const boundary = current.boundaries.find((candidate) => candidate.boundaryId === boundaryId);
+                if (boundary?.logicalOperationId !== undefined &&
+                    current.logicalOperations.some(({ operationId }) => operationId === boundary.logicalOperationId)) {
+                    operationIds.add(boundary.logicalOperationId);
+                    for (const memberId of current.logicalOperations.find(({ operationId }) => operationId === boundary.logicalOperationId).boundaryIds) {
+                        boundaryIds.delete(memberId);
+                    }
+                }
+            }
+            const ordered = [
+                ...[...boundaryIds].map((boundaryId) => ({
+                    order: current.boundaries.find((candidate) => candidate.boundaryId === boundaryId)?.sequence ?? Number.MAX_SAFE_INTEGER,
+                    value: { kind: 'boundary', boundaryId },
+                })),
+                ...[...operationIds].map((operationId) => {
+                    const operation = current.logicalOperations.find((candidate) => candidate.operationId === operationId);
+                    const firstBoundaryId = operation?.boundaryIds[0];
+                    return {
+                        order: current.boundaries.find(({ boundaryId }) => boundaryId === firstBoundaryId)?.sequence ?? Number.MAX_SAFE_INTEGER,
+                        value: { kind: 'logical-operation', operationId },
+                    };
+                }),
+            ].sort((left, right) => left.order - right.order);
+            return deepFreeze(snapshotJsonValue(ordered.map(({ value }) => value), `${label} unresolved effect envelope identities`));
+        }
         function closeAfterIndeterminateDeferredSettlement(operationId, cause) {
             try {
                 effectLedgerMirror = currentEffectLedger();
@@ -5476,6 +5527,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 return receipt;
             },
+            unresolvedEffectEnvelopes: unresolvedEffectEnvelopeIdentities,
             async handleBossInput({ text, signal, }) {
                 if (!actor || !savedPorts) {
                     throw new Error('createPlaybookRuntime.handleBossInput: init must be called first');

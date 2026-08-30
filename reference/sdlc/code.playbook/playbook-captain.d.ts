@@ -19,6 +19,16 @@ interface PlayerLedgerEntry {
 type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer Element)[] ? readonly DeepReadonly<Element>[] : T extends object ? {
     readonly [Key in keyof T]: DeepReadonly<T[Key]>;
 } : T;
+export interface PlaybookCaptainUnresolvedEffect {
+    readonly classification: 'one-descendant-commit' | 'multiple-commits' | 'rewritten-or-non-descendant' | 'worktree-only-change' | 'concurrent-or-foreign-change' | 'observation-ambiguous' | 'incomplete';
+    readonly baselineHead: string;
+    readonly afterHead?: string;
+    readonly commitOid?: string;
+}
+interface PlaybookCaptainUnresolvedEffectSettlementInput {
+    readonly rootPlaybookId: string;
+    readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+}
 type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, 'model' | 'effort'>>;
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface PlaybookCaptainDeps {
@@ -33,6 +43,10 @@ export interface PlaybookCaptainDeps {
         }[];
         readonly controller: CaptainControllerPort;
     }) => PlaybookRuntime;
+    unresolvedEffectSettlement?: {
+        begin(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+        complete(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+    };
 }
 /** Live, artifact-typed host facilities supplied outside configured options. */
 export interface PlaybookHostConstructionCapabilities {
@@ -189,6 +203,7 @@ export type PlaybookCaptainRetentionUpdate = {
 export interface PlaybookCaptainSettlement {
     readonly snapshot: PlaybookCaptainShellSnapshot;
     readonly retentionUpdates: readonly PlaybookCaptainRetentionUpdate[];
+    readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
@@ -197,6 +212,7 @@ export interface PlaybookCaptainShell extends Captain {
     exportSettlement(): PlaybookCaptainSettlement | undefined;
     restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>;
 }
+export declare function assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[];
 /** Validate, detach, and freeze one untrusted shell snapshot. */
 export declare function assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot;
 export declare function createPlaybookCaptainShell(options: unknown, deps?: PlaybookCaptainDeps): PlaybookCaptainShell;

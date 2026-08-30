@@ -531,6 +531,21 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     }
   });
 
+  it('keeps the unresolved-effect envelope seam optional and identity-only', () => {
+    const expected =
+      "unresolvedEffectEnvelopes?():readonly({readonlykind:'boundary';readonlyboundaryId:string}|{readonlykind:'logical-operation';readonlyoperationId:string})[];";
+    for (const source of [runtimeSource, runtimeDts, linkSpec]) {
+      const runtime = normalizeType(interfaceBody(source, 'PlaybookRuntime'));
+      const signature = runtime
+        .match(/unresolvedEffectEnvelopes\?\(\):readonly\([\s\S]*?\)\[\];/)?.[0]
+        .replace('readonly(|', 'readonly(');
+      expect(signature).toBe(expected);
+      expect(signature).not.toMatch(
+        /receipt|projection|repository|observation|evidence|authority/,
+      );
+    }
+  });
+
   // The linker contract is the source the artifacts are generated from, so a
   // rule that lives only in the shipped artifacts is a rule the next re-link
   // can undo. These assert the two clauses the ControlView privacy contract

@@ -35,6 +35,7 @@ import {
   emptyPlaybookEffectLedger,
 } from '../../../src/xstate-runtime.js';
 import {
+  assertPlaybookCaptainUnresolvedEffects,
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
@@ -43,6 +44,7 @@ import {
   type PlaybookCaptainRegistryEntryV3,
   type PlaybookCaptainRetainedGeneration,
   type PlaybookCaptainShellSnapshot,
+  type PlaybookCaptainUnresolvedEffect,
   type PlaybookHostConstructionCapabilities,
 } from './playbook-captain.js';
 import { codeSavedCountsLine } from './code.registry.js';
@@ -150,6 +152,7 @@ class FakeRuntime implements PlaybookRuntime {
   }[] = [];
   snapshot: PlaybookRuntimeSnapshot | undefined;
   retainedGenerationMetadata?: PlaybookRuntime['retainedGenerationMetadata'];
+  unresolvedEffectEnvelopes?: PlaybookRuntime['unresolvedEffectEnvelopes'];
   adopt?: PlaybookRuntime['adopt'];
   describe?: () => PlaybookControlView;
   apply?: PlaybookRuntime['apply'];
@@ -253,6 +256,320 @@ function unresolvedEffectResult(
   return {
     outcome: 'unresolved-effect',
     state: playbookState(stateId),
+  };
+}
+
+const UNRESOLVED_EFFECT_BASELINE_HEAD = 'a'.repeat(40);
+const UNRESOLVED_EFFECT_AFTER_HEAD = 'b'.repeat(40);
+const UNRESOLVED_EFFECT_BOUNDARY_ID =
+  '91000000-0000-4000-8000-000000000001';
+
+function unresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  return assertPlaybookEffectLedger({
+    schemaVersion: 1,
+    revision: 1,
+    boundaries: [
+      {
+        sequence: 1,
+        boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        attemptId: '92000000-0000-4000-8000-000000000002',
+        attemptNumber: 1,
+        playbookId,
+        runtimeSessionId,
+        turnId: 1,
+        callId: `${playbookId}:coder:unresolved`,
+        roleId: 'coder',
+        sourceStateId: 'working',
+        sourceOutcomeSchema: { committed: {} },
+        dispositions: ['one-descendant-commit'],
+        canonicalWorktree: {
+          worktree: baseline.worktree,
+          gitDir: baseline.gitDir,
+        },
+        baseline,
+        physicalReceipt: {
+          classification: 'observation-ambiguous',
+          baseline,
+        },
+        correctionBudget: { limit: 1, spent: false },
+      },
+    ],
+    logicalOperations: [],
+  });
+}
+
+function unresolvedEffectTestProjection(): readonly PlaybookCaptainUnresolvedEffect[] {
+  return [
+    {
+      classification: 'observation-ambiguous',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+  ];
+}
+
+function incompleteUnresolvedEffectTestProjection(): readonly PlaybookCaptainUnresolvedEffect[] {
+  return [
+    {
+      classification: 'incomplete',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+  ];
+}
+
+function orderedLogicalUnresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const changed = {
+    ...baseline,
+    head: UNRESOLVED_EFFECT_AFTER_HEAD,
+  };
+  const rewritten = {
+    ...baseline,
+    head: 'c'.repeat(40),
+  };
+  const operationId = '93000000-0000-4000-8000-000000000003';
+  const firstOperationBoundaryId =
+    '94000000-0000-4000-8000-000000000004';
+  const secondOperationBoundaryId =
+    '95000000-0000-4000-8000-000000000005';
+  const standaloneBoundaryId =
+    '96000000-0000-4000-8000-000000000006';
+  const commonBoundary = {
+    playbookId,
+    runtimeSessionId,
+    turnId: 1,
+    callId: `${playbookId}:coder:unresolved-chain`,
+    roleId: 'coder',
+    sourceStateId: 'working',
+    sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+    dispositions: ['deferred', 'one-descendant-commit'],
+    canonicalWorktree: {
+      worktree: baseline.worktree,
+      gitDir: baseline.gitDir,
+    },
+    baseline,
+    correctionBudget: { limit: 1, spent: false },
+  };
+  return {
+    ledger: assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [
+        {
+          ...commonBoundary,
+          sequence: 1,
+          boundaryId: standaloneBoundaryId,
+          attemptId: '97000000-0000-4000-8000-000000000007',
+          attemptNumber: 1,
+          after: rewritten,
+          physicalReceipt: {
+            classification: 'multiple-commits',
+            baseline,
+            after: rewritten,
+          },
+        },
+        {
+          ...commonBoundary,
+          sequence: 2,
+          boundaryId: firstOperationBoundaryId,
+          attemptId: '98000000-0000-4000-8000-000000000008',
+          attemptNumber: 1,
+          after: baseline,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline,
+            after: baseline,
+          },
+          logicalOperationId: operationId,
+        },
+        {
+          ...commonBoundary,
+          sequence: 3,
+          boundaryId: secondOperationBoundaryId,
+          attemptId: '99000000-0000-4000-8000-000000000009',
+          attemptNumber: 2,
+          after: changed,
+          physicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline,
+            after: changed,
+            commitOid: changed.head,
+          },
+          logicalOperationId: operationId,
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [firstOperationBoundaryId, secondOperationBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+          logicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline,
+            after: changed,
+            commitOid: changed.head,
+          },
+        },
+      ],
+    }),
+    references: [
+      { kind: 'logical-operation' as const, operationId },
+      { kind: 'boundary' as const, boundaryId: standaloneBoundaryId },
+      { kind: 'boundary' as const, boundaryId: secondOperationBoundaryId },
+      { kind: 'logical-operation' as const, operationId },
+    ],
+  };
+}
+
+function conservativeOpenLogicalUnresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const checkpoint = {
+    ...baseline,
+    projection: { 'pending.txt': 'pending' },
+    projectionDigest:
+      'sha256:5ac3dde381e027490b02ecd5dcffe9bb3edc07d7f852fb235021c121e3c17927',
+  };
+  const committedWithResidual = {
+    ...checkpoint,
+    head: UNRESOLVED_EFFECT_AFTER_HEAD,
+  };
+  const ambiguousAfter = {
+    ...baseline,
+    projection: { 'pending.txt': 'changed' },
+    projectionDigest:
+      'sha256:3bfc50b8d5bb2e93ee6ae79eccfab3649e1d42ef6679c07df2d49241e9712ae6',
+  };
+  const residualOperationId = 'a1000000-0000-4000-8000-000000000001';
+  const residualFirstId = 'a2000000-0000-4000-8000-000000000002';
+  const residualLatestId = 'a3000000-0000-4000-8000-000000000003';
+  const ambiguousOperationId = 'a4000000-0000-4000-8000-000000000004';
+  const ambiguousBoundaryId = 'a5000000-0000-4000-8000-000000000005';
+  const boundaryBase = {
+    playbookId,
+    runtimeSessionId,
+    turnId: 1,
+    callId: `${playbookId}:coder:open-logical`,
+    roleId: 'coder',
+    sourceStateId: 'working',
+    sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+    dispositions: ['deferred', 'one-descendant-commit'],
+    canonicalWorktree: {
+      worktree: baseline.worktree,
+      gitDir: baseline.gitDir,
+    },
+    correctionBudget: { limit: 1, spent: false },
+  };
+  return {
+    ledger: assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 5,
+      boundaries: [
+        {
+          ...boundaryBase,
+          sequence: 1,
+          boundaryId: residualFirstId,
+          attemptId: 'a6000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          baseline,
+          after: checkpoint,
+          physicalReceipt: {
+            classification: 'worktree-only-change',
+            baseline,
+            after: checkpoint,
+          },
+          logicalOperationId: residualOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 2,
+          boundaryId: residualLatestId,
+          attemptId: 'a7000000-0000-4000-8000-000000000007',
+          attemptNumber: 2,
+          baseline: checkpoint,
+          after: committedWithResidual,
+          physicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline: checkpoint,
+            after: committedWithResidual,
+            commitOid: committedWithResidual.head,
+          },
+          logicalOperationId: residualOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 3,
+          boundaryId: ambiguousBoundaryId,
+          attemptId: 'a8000000-0000-4000-8000-000000000008',
+          attemptNumber: 1,
+          baseline,
+          after: ambiguousAfter,
+          physicalReceipt: {
+            classification: 'observation-ambiguous',
+            baseline,
+            after: ambiguousAfter,
+          },
+          logicalOperationId: ambiguousOperationId,
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId: residualOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [residualFirstId, residualLatestId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+        {
+          sequence: 2,
+          operationId: ambiguousOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [ambiguousBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+      ],
+    }),
+    references: [
+      { kind: 'logical-operation' as const, operationId: residualOperationId },
+      { kind: 'logical-operation' as const, operationId: ambiguousOperationId },
+    ],
   };
 }
 
@@ -796,6 +1113,7 @@ function makeShell(
     playerAgents?: Readonly<Record<string, TestSessionAgent>>;
     loadModule?: (specifier: string) => Promise<unknown>;
     hostCapabilities?: PlaybookCaptainDeps['hostCapabilities'];
+    unresolvedEffectSettlement?: PlaybookCaptainDeps['unresolvedEffectSettlement'];
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
@@ -879,6 +1197,11 @@ function makeShell(
             hostCapabilities: opts.hostCapabilities,
           }
         : {}),
+      ...(opts.unresolvedEffectSettlement
+        ? {
+            unresolvedEffectSettlement: opts.unresolvedEffectSettlement,
+          }
+        : {}),
       ...(opts.createCaptainRuntime
         ? { createCaptainRuntime: opts.createCaptainRuntime }
         : {}),
@@ -899,6 +1222,143 @@ function captainJson(value: unknown): CaptainRunResult {
     finalText: JSON.stringify(value),
   };
 }
+
+describe('Captain unresolved-effect settlement evidence', () => {
+  it('validates, detaches, freezes, and preserves the ordered bounded shape', () => {
+    const source = [
+      {
+        classification: 'incomplete',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ];
+
+    const evidence = assertPlaybookCaptainUnresolvedEffects(source);
+
+    expect(evidence).toEqual(source);
+    expect(Object.isFrozen(evidence)).toBe(true);
+    expect(evidence.every((entry) => Object.isFrozen(entry))).toBe(true);
+    source[0]!.baselineHead = 'c'.repeat(40);
+    expect(evidence[0]?.baselineHead).toBe(UNRESOLVED_EFFECT_BASELINE_HEAD);
+    expect(Object.keys(evidence[2]!)).toEqual([
+      'classification',
+      'baselineHead',
+      'afterHead',
+      'commitOid',
+    ]);
+  });
+
+  it.each([
+    {
+      classification: 'one-descendant-commit',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'multiple-commits',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'rewritten-or-non-descendant',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'worktree-only-change',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+    {
+      classification: 'concurrent-or-foreign-change',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'observation-ambiguous',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+    {
+      classification: 'incomplete',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+  ] satisfies readonly PlaybookCaptainUnresolvedEffect[])(
+    'accepts the exact HEAD and commit-OID shape for $classification',
+    (candidate) => {
+      expect(assertPlaybookCaptainUnresolvedEffects([candidate])).toEqual([
+        candidate,
+      ]);
+    },
+  );
+
+  it('accepts canonical 64-character Git OIDs', () => {
+    const candidate = {
+      classification: 'observation-ambiguous' as const,
+      baselineHead: 'a'.repeat(64),
+      afterHead: 'b'.repeat(64),
+    };
+    expect(assertPlaybookCaptainUnresolvedEffects([candidate])).toEqual([
+      candidate,
+    ]);
+  });
+
+  it.each([
+    [{ classification: 'unchanged', baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD }],
+    [{ classification: 'incomplete', baselineHead: 'not-an-oid' }],
+    [{ classification: 'incomplete', baselineHead: 'A'.repeat(40) }],
+    [{ classification: 'incomplete', baselineHead: 'a'.repeat(63) }],
+    [
+      {
+        classification: 'multiple-commits',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: 'c'.repeat(40),
+      },
+    ],
+    [
+      {
+        classification: 'worktree-only-change',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        commitOid: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'incomplete',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        internalBoundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+      },
+    ],
+  ])('rejects a malformed bounded projection %#', (candidate) => {
+    expect(() => assertPlaybookCaptainUnresolvedEffects(candidate)).toThrow();
+  });
+});
 
 // CAPTAIN-19/20/21: the acting turn's result-phase closing-reply call is the
 // turn's only summary, and the shell supplies its outcome report.
@@ -2316,12 +2776,42 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
   });
 
   it('exposes an unresolved-effect root without claiming final completion', async () => {
-    const registry = fakeCodeEntry(async () => quiescentResult('editing'));
-    const createRuntime = registry.entry.createRuntime;
+    const rootSessionId = '21000000-0000-4000-8000-000000000001';
+    let authoritativeLedger = unresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const order: string[] = [];
+    const registry = promoteToSchema3(
+      fakeCodeEntry(
+        async (runtime) => {
+          runtime.snapshot = runtimeSnapshot(
+            'code',
+            playbookState('editing'),
+            { turn: 1, effectLedger: authoritativeLedger },
+          );
+          return quiescentResult('editing');
+        },
+        async () => {
+          order.push('dispose');
+        },
+      ),
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
     const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
     const unresolved = unresolvedEffectResult();
-    registry.entry.createRuntime = (options) => {
-      const runtime = createRuntime(options) as FakeRuntime;
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(
+        options,
+        hostCapabilities,
+      ) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+        },
+      ];
       runtime.describe = () => ({
         state: unresolved.state,
         pendingQuestions: [],
@@ -2337,12 +2827,36 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         ],
       });
       runtime.apply = async (input) => {
+        order.push('apply');
         applied.push(input);
         return { disposition: 'executed', run: unresolved };
       };
       return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilitiesBase = fakeHostCapabilities(
+      registry.entry,
+      'unresolved-root-lease',
+    );
+    const snapshotLedger = vi.fn(() => authoritativeLedger);
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilitiesBase,
+      effectLedger: {
+        snapshot: snapshotLedger,
+        writeAhead: async () => authoritativeLedger,
+      },
     };
-    const shell = makeShell(registry);
+    const begin = vi.fn(async () => {
+      order.push('begin');
+    });
+    const complete = vi.fn(async () => {
+      order.push('complete');
+    });
+    let ledgerReadsAtPresentation: number | undefined;
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+      unresolvedEffectSettlement: { begin, complete },
+    });
     const session = stubSession();
 
     await shell.init!(session.session);
@@ -2350,15 +2864,23 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       turn('/code begin the edit'),
       stubContext().context,
     );
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
     const abandonment = stubContext([
       captainJson({
         action: 'runtime',
         actionId: 'abandon:unresolved-effect',
       }),
-      {
-        status: 'ok',
-        turnId: 2,
-        finalText: 'The unresolved attempt has no authored completion.',
+      () => {
+        order.push('present');
+        ledgerReadsAtPresentation = snapshotLedger.mock.calls.length;
+        authoritativeLedger = emptyPlaybookEffectLedger();
+        return {
+          status: 'ok',
+          turnId: 2,
+          finalText: 'The unresolved attempt has no authored completion.',
+        };
       },
     ]);
     await shell.handleBossTurn(
@@ -2374,7 +2896,25 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     });
     expect(unresolved).not.toHaveProperty('stateDescription');
     expect(unresolved).not.toHaveProperty('output');
-    expect(registry.runtimes[0]?.disposeCount).toBe(0);
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(order).toEqual(['apply', 'begin', 'dispose', 'complete', 'present']);
+    expect(ledgerReadsAtPresentation).toBeGreaterThan(0);
+    expect(snapshotLedger).toHaveBeenCalledTimes(ledgerReadsAtPresentation!);
+    const expectedSettlement = {
+      rootPlaybookId: 'code',
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    };
+    expect(begin).toHaveBeenCalledWith(expectedSettlement);
+    expect(complete).toHaveBeenCalledWith(expectedSettlement);
+    const exported = shell.exportSettlement();
+    expect(exported).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    });
+    expect(snapshotLedger).toHaveBeenCalledTimes(
+      ledgerReadsAtPresentation! + 1,
+    );
     const publicEvidence = JSON.stringify({
       statuses: session.statuses,
       summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
@@ -2386,6 +2926,464 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 
     await shell.dispose?.();
   });
+
+  it('exports the restored unresolved-effect projection after a safe no-action turn', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000011';
+    const authoritativeLedger = unresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        const state = playbookState('effectReconciliationRequired');
+        runtime.snapshot = runtimeSnapshot('code', state, {
+          turn: 1,
+          effectLedger: authoritativeLedger,
+        });
+        return { outcome: 'quiescent', state };
+      }),
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        },
+      ];
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'unresolved-restore-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      },
+    };
+    const source = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+    await source.init!(stubSession().session);
+    await source.handleBossTurn(
+      turn('/code preserve unresolved evidence'),
+      stubContext().context,
+    );
+    const snapshot = source.exportSnapshot();
+    expect(snapshot).toBeDefined();
+    expect(source.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
+
+    const target = makeShell(registry, {
+      restoredSession: true,
+      hostCapabilities: { code: capabilities },
+    });
+    const restoredHost = stubSession();
+    await target.restore(restoredHost.session, snapshot!);
+
+    expect(restoredHost.statuses).toEqual([]);
+    expect(restoredHost.telemetry).toEqual([]);
+    expect(target.exportSettlement()).toBeUndefined();
+    const restoredTurn = stubContext([
+      captainJson({ action: 'respond', text: 'The episode remains parked.' }),
+    ]);
+    await target.handleBossTurn(
+      turn('leave the parked episode untouched', 2),
+      restoredTurn.context,
+    );
+
+    expect(registry.runtimes[1]?.inputs).toEqual([]);
+    expect(registry.runtimes[1]?.apply).toBeUndefined();
+    expect(capabilities.repository.observe).not.toHaveBeenCalled();
+    expect(capabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
+    expect(target.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
+
+    await target.dispose?.();
+    await source.dispose?.();
+  });
+
+  it('exports an empty unresolved-effect list at an ordinary safe settlement', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000021';
+    const ledger = emptyPlaybookEffectLedger();
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('editing'),
+          { turn: 1, effectLedger: ledger },
+        );
+        return quiescentResult('editing');
+      }),
+    );
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'resolved-root-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code begin ordinary work'), stubContext().context);
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([]);
+    await shell.dispose?.();
+  });
+
+  it.each([
+    [
+      'unsupported identity kind',
+      [{ kind: 'receipt', boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID }],
+    ],
+    [
+      'evidence-bearing identity',
+      [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+          classification: 'incomplete',
+        },
+      ],
+    ],
+    ['blank identity', [{ kind: 'boundary', boundaryId: '   ' }]],
+    [
+      'absent boundary',
+      [{ kind: 'boundary', boundaryId: '70000000-0000-4000-8000-000000000099' }],
+    ],
+    [
+      'absent logical operation',
+      [
+        {
+          kind: 'logical-operation',
+          operationId: '70000000-0000-4000-8000-000000000098',
+        },
+      ],
+    ],
+  ])('withholds settlement for an %s', async (_label, identities) => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000025';
+    const ledger = unresolvedEffectTestLedger('code', rootSessionId);
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('effectReconciliationRequired'),
+          { turn: 1, effectLedger: ledger },
+        );
+        return quiescentResult('effectReconciliationRequired');
+      }),
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => identities as never;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'malformed-unresolved-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell
+      .handleBossTurn(
+        turn('/code reject malformed unresolved identities'),
+        stubContext().context,
+      )
+      .catch(() => {});
+
+    expect(shell.exportSettlement()).toBeUndefined();
+    expect(capabilities.repository.observe).not.toHaveBeenCalled();
+    await shell.dispose?.();
+  });
+
+  it('orders unresolved effects by ledger sequence and projects a deferred chain once', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000031';
+    const { ledger, references } = orderedLogicalUnresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('effectReconciliationRequired'),
+          { turn: 1, effectLedger: ledger },
+        );
+        return quiescentResult('effectReconciliationRequired');
+      }),
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => references;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'ordered-unresolved-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(
+      turn('/code preserve ordered evidence'),
+      stubContext().context,
+    );
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
+      {
+        classification: 'multiple-commits',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: 'c'.repeat(40),
+      },
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ]);
+    await shell.dispose?.();
+  });
+
+  it('fails open logical-operation evidence closed against its original baseline', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000032';
+    const { ledger, references } =
+      conservativeOpenLogicalUnresolvedEffectTestLedger(
+        'code',
+        rootSessionId,
+      );
+    const registry = promoteToSchema3(
+      fakeCodeEntry(async (runtime) => {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('effectReconciliationRequired'),
+          { turn: 1, effectLedger: ledger },
+        );
+        return quiescentResult('effectReconciliationRequired');
+      }),
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => references;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'conservative-open-logical-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(
+      turn('/code preserve cumulative uncertainty'),
+      stubContext().context,
+    );
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ]);
+    await shell.dispose?.();
+  });
+
+  it.each(['capability', 'begin', 'dispose', 'complete'] as const)(
+    'keeps unresolved-effect abandonment failed when host %s fails',
+    async (failurePoint) => {
+      const rootSessionId = '21000000-0000-4000-8000-000000000041';
+      const ledger = unresolvedEffectTestLedger('code', rootSessionId);
+      const failureMessage =
+        failurePoint === 'capability'
+          ? 'requires durable host settlement'
+          : `durable ${failurePoint} failed`;
+      const order: string[] = [];
+      const registry = promoteToSchema3(
+        fakeCodeEntry(
+          async (runtime) => {
+            runtime.snapshot = runtimeSnapshot(
+              'code',
+              playbookState('effectReconciliationRequired'),
+              { turn: 1, effectLedger: ledger },
+            );
+            return quiescentResult('effectReconciliationRequired');
+          },
+          async () => {
+            order.push('dispose');
+            if (failurePoint === 'dispose') {
+              throw new Error(failureMessage);
+            }
+          },
+        ),
+      );
+      const createRuntime = registry.entry.createRuntime as unknown as
+        PlaybookCaptainRegistryEntryV3['createRuntime'];
+      const unresolved = unresolvedEffectResult();
+      registry.entry.createRuntime = ((options, hostCapabilities) => {
+        const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+        runtime.unresolvedEffectEnvelopes = () => [
+          {
+            kind: 'boundary',
+            boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+          },
+        ];
+        runtime.describe = () => ({
+          state: unresolved.state,
+          pendingQuestions: [],
+          actions: [
+            {
+              id: 'abandon:unresolved-effect',
+              label: 'Abandon unresolved workflow attempt',
+            },
+          ],
+        });
+        runtime.apply = async () => {
+          order.push('apply');
+          return { disposition: 'executed', run: unresolved };
+        };
+        return runtime;
+      }) as typeof registry.entry.createRuntime;
+      const capabilityBase = fakeHostCapabilities(
+        registry.entry,
+        `unresolved-${failurePoint}-lease`,
+      );
+      const capabilities: PlaybookHostConstructionCapabilities = {
+        ...capabilityBase,
+        effectLedger: {
+          snapshot: vi.fn(() => ledger),
+          writeAhead: vi.fn(async () => ledger),
+        },
+      };
+      const begin = vi.fn(async () => {
+        order.push('begin');
+        if (failurePoint === 'begin') {
+          throw new Error(failureMessage);
+        }
+      });
+      const complete = vi.fn(async () => {
+        order.push('complete');
+        if (failurePoint === 'complete') {
+          throw new Error(failureMessage);
+        }
+      });
+      const shell = makeShell(registry, {
+        sessionIds: [rootSessionId],
+        hostCapabilities: { code: capabilities },
+        ...(failurePoint === 'capability'
+          ? {}
+          : { unresolvedEffectSettlement: { begin, complete } }),
+      });
+      await shell.init!(stubSession().session);
+      await shell.handleBossTurn(
+        turn('/code preserve unresolved evidence'),
+        stubContext().context,
+      );
+      const abandonment = stubContext([
+        captainJson({
+          action: 'runtime',
+          actionId: 'abandon:unresolved-effect',
+        }),
+        () => {
+          order.push('present');
+          return {
+            status: 'ok',
+            turnId: 2,
+            finalText: 'The host settlement failed safely.',
+          };
+        },
+      ]);
+
+      await shell.handleBossTurn(
+        turn('abandon the unresolved attempt', 2),
+        abandonment.context,
+      );
+
+      const report = turnSummaryCalls(abandonment).at(-1)?.prompt ?? '';
+      expect(report).toContain('Settlement status: failed');
+      expect(report).toContain('Runtime action receipt: failed');
+      expect(report).toContain(failureMessage);
+      expect(report).not.toContain(
+        'Applied "abandon:unresolved-effect"',
+      );
+      expect(order).toEqual(
+        failurePoint === 'capability'
+          ? ['apply', 'present']
+          : failurePoint === 'begin'
+          ? ['apply', 'begin', 'present']
+          : failurePoint === 'dispose'
+            ? ['apply', 'begin', 'dispose', 'present']
+            : ['apply', 'begin', 'dispose', 'complete', 'present'],
+      );
+      expect(registry.runtimes[0]?.disposeCount).toBe(
+        failurePoint === 'capability' || failurePoint === 'begin' ? 0 : 1,
+      );
+      expect(complete).toHaveBeenCalledTimes(
+        failurePoint === 'complete' ? 1 : 0,
+      );
+      expect(shell.exportSettlement()).toBeUndefined();
+
+      await shell.dispose?.();
+    },
+  );
 
   it('dismiss emits shell status and later dispatch constructs a replacement', async () => {
     const registry = fakeCodeEntry();
@@ -4754,6 +5752,7 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
   });
 
   it('does not translate an unresolved-effect child or resume its parent', async () => {
+    const order: string[] = [];
     let childStart:
       | Awaited<ReturnType<PlaybookPorts['callPlaybook']>>
       | undefined;
@@ -4777,22 +5776,43 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
           childSessionId: childStart.childSessionId,
         });
       },
-      undefined,
+      async () => {
+        order.push('parent.dispose');
+      },
       undefined,
       async () => {
         throw new Error('unresolved-effect child must not resume its parent');
       },
     );
     const unresolved = unresolvedEffectResult('documentationEffectUnknown');
-    const docs = fakePlaybookEntry(
-      'docs',
-      'docs',
-      async () => unresolved,
+    const docs = promoteToSchema3(
+      fakePlaybookEntry(
+        'docs',
+        'docs',
+        async () => unresolved,
+        async () => {
+          order.push('child.dispose');
+        },
+      ),
     );
-    const createDocsRuntime = docs.entry.createRuntime;
+    const authoritativeLedger = unresolvedEffectTestLedger(
+      'docs',
+      CHILD_ID,
+    );
+    const createDocsRuntime = docs.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
     const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
-    docs.entry.createRuntime = (options) => {
-      const runtime = createDocsRuntime(options) as FakeRuntime;
+    docs.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createDocsRuntime(
+        options,
+        hostCapabilities,
+      ) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        },
+      ];
       runtime.describe = () => ({
         state: unresolved.state,
         pendingQuestions: [],
@@ -4808,13 +5828,33 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
         ],
       });
       runtime.apply = async (input) => {
+        order.push('apply');
         applied.push(input);
         return { disposition: 'executed', run: unresolved };
       };
       return runtime;
+    }) as typeof docs.entry.createRuntime;
+    const docsCapabilityBase = fakeHostCapabilities(
+      docs.entry,
+      'unresolved-child-lease',
+    );
+    const docsCapabilities: PlaybookHostConstructionCapabilities = {
+      ...docsCapabilityBase,
+      effectLedger: {
+        snapshot: () => authoritativeLedger,
+        writeAhead: async () => authoritativeLedger,
+      },
     };
+    const begin = vi.fn(async () => {
+      order.push('begin');
+    });
+    const complete = vi.fn(async () => {
+      order.push('complete');
+    });
     const shell = makeShell([code, docs], {
       sessionIds: [ROOT_ID, CHILD_ID],
+      hostCapabilities: { docs: docsCapabilities },
+      unresolvedEffectSettlement: { begin, complete },
     });
     const session = stubSession();
 
@@ -4828,10 +5868,13 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
         action: 'runtime',
         actionId: 'abandon:unresolved-effect',
       }),
-      {
-        status: 'ok',
-        turnId: 2,
-        finalText: 'The unresolved child has no authored completion.',
+      () => {
+        order.push('present');
+        return {
+          status: 'ok',
+          turnId: 2,
+          finalText: 'The unresolved child has no authored completion.',
+        };
       },
     ]);
     await shell.handleBossTurn(
@@ -4846,8 +5889,27 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     expect(applied).toHaveLength(1);
     expect(applied[0]?.actionId).toBe('abandon:unresolved-effect');
     expect(code.runtimes[0]?.resumes).toEqual([]);
-    expect(code.runtimes[0]?.disposeCount).toBe(0);
-    expect(docs.runtimes[0]?.disposeCount).toBe(0);
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(docs.runtimes[0]?.disposeCount).toBe(1);
+    expect(order).toEqual([
+      'apply',
+      'begin',
+      'child.dispose',
+      'parent.dispose',
+      'complete',
+      'present',
+    ]);
+    const expectedSettlement = {
+      rootPlaybookId: 'code',
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    };
+    expect(begin).toHaveBeenCalledWith(expectedSettlement);
+    expect(complete).toHaveBeenCalledWith(expectedSettlement);
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    });
     const publicEvidence = JSON.stringify({
       statuses: session.statuses,
       summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
@@ -8630,6 +9692,12 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
           checkpoint: snapshot.effectLedger,
         },
       };
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+        },
+      ];
     });
     enableGenerationRetention(review);
     const capabilityBase = fakeHostCapabilities(
@@ -8673,6 +9741,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     );
     expect(resumed.replies[0]).not.toContain('may duplicate external effects');
     expect(shell.exportSettlement()).toMatchObject({
+      unresolvedEffects: incompleteUnresolvedEffectTestProjection(),
       snapshot: {
         mode: 'engaged.parked',
         effectLedger: authoritativeLedger,
@@ -9173,6 +10242,12 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
                   },
                 ],
         });
+        runtime.unresolvedEffectEnvelopes = () => [
+          {
+            kind: 'boundary',
+            boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+          },
+        ];
         runtime.apply = async ({ actionId }) => {
           expect(actionId).toBe('reconcile:unresolved-effect');
           applyCalls += 1;

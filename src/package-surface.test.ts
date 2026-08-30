@@ -1155,6 +1155,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'validateCodeOptions',
     ],
     './playbook-captain': [
+      'assertPlaybookCaptainUnresolvedEffects',
       'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
@@ -1406,7 +1407,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainSettlement',
       'PlaybookCaptainShell',
       'PlaybookCaptainShellSnapshot',
+      'PlaybookCaptainUnresolvedEffect',
       'PlaybookHostConstructionCapabilities',
+      'assertPlaybookCaptainUnresolvedEffects',
       'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
@@ -1638,6 +1641,31 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     );
     expect(unresolvedEffect).not.toMatch(
       /stateDescription|output|pendingCall|error|effectLedger|receipt|unresolvedEffects|semanticCandidate/,
+    );
+  });
+
+  it('publishes exact bounded unresolved-effect Captain settlements', () => {
+    const declaration = declarationSourceOf('./playbook-captain');
+    const evidence = declaration.match(
+      /export interface PlaybookCaptainUnresolvedEffect\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(evidence).toBeDefined();
+    expect(evidence!.replace(/\s+/g, '')).toBe(
+      "readonlyclassification:'one-descendant-commit'|'multiple-commits'|'rewritten-or-non-descendant'|'worktree-only-change'|'concurrent-or-foreign-change'|'observation-ambiguous'|'incomplete';readonlybaselineHead:string;readonlyafterHead?:string;readonlycommitOid?:string;",
+    );
+    expect(evidence).not.toMatch(
+      /path|projection|digest|boundary|operation|call|session|player|semantic|budget|prose/i,
+    );
+
+    const settlement = declaration.match(
+      /export interface PlaybookCaptainSettlement\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(settlement).toBeDefined();
+    expect(settlement).toMatch(
+      /readonly unresolvedEffects:\s*readonly PlaybookCaptainUnresolvedEffect\[\];/,
+    );
+    expect(declaration).toMatch(
+      /export declare function assertPlaybookCaptainUnresolvedEffects\(value: unknown[^)]*\): readonly PlaybookCaptainUnresolvedEffect\[\];/,
     );
   });
 

@@ -226,10 +226,44 @@ export async function runPlaybookCli(options = {}) {
       selectedRecord = validateCaptainSessionRecord(
         await store.read(interactiveArgs.sessionId),
       );
-      if (selectedRecord.state !== 'settled') {
+      const needsAbandonmentRecovery =
+        (selectedRecord.state === 'uncertain' &&
+          Object.hasOwn(selectedRecord.uncertain, 'abandonment')) ||
+        (selectedRecord.state === 'settled' &&
+          Object.hasOwn(selectedRecord, 'settledAbandonment'));
+      if (selectedRecord.state !== 'settled' && !needsAbandonmentRecovery) {
         throw new Error(
           `Captain session ${JSON.stringify(interactiveArgs.sessionId)} has an uncertain turn; recover it with playbook run before reopening interactively`,
         );
+      }
+      if (needsAbandonmentRecovery) {
+        const recoveryLease = await store.acquire(interactiveArgs.sessionId);
+        let recoveryError;
+        try {
+          selectedRecord = validateCaptainSessionRecord(
+            await recoveryLease.recoverUnresolvedEffectAbandonment(),
+          );
+        } catch (error) {
+          recoveryError = error;
+        }
+        try {
+          await recoveryLease.release();
+        } catch (error) {
+          if (recoveryError !== undefined) {
+            throw aggregateOperationalFailures(
+              recoveryError,
+              error,
+              'Captain session abandonment recovery failed and its lease could not be released',
+            );
+          }
+          throw error;
+        }
+        if (recoveryError !== undefined) throw recoveryError;
+        if (selectedRecord.state !== 'settled') {
+          throw new Error(
+            `Captain session ${JSON.stringify(interactiveArgs.sessionId)} abandonment recovery did not settle its turn`,
+          );
+        }
       }
     } catch (error) {
       stderr.write(`playbook: ${errorMessage(error)}\n`);

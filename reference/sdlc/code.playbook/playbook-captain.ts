@@ -74,6 +74,25 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
       ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
       : T;
 
+export interface PlaybookCaptainUnresolvedEffect {
+  readonly classification:
+    | 'one-descendant-commit'
+    | 'multiple-commits'
+    | 'rewritten-or-non-descendant'
+    | 'worktree-only-change'
+    | 'concurrent-or-foreign-change'
+    | 'observation-ambiguous'
+    | 'incomplete';
+  readonly baselineHead: string;
+  readonly afterHead?: string;
+  readonly commitOid?: string;
+}
+
+interface PlaybookCaptainUnresolvedEffectSettlementInput {
+  readonly rootPlaybookId: string;
+  readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+}
+
 type SnapshotAgentEnvelope = DeepReadonly<
   Omit<SessionAgent, 'model' | 'effort'>
 >;
@@ -94,6 +113,10 @@ export interface PlaybookCaptainDeps {
     }[];
     readonly controller: CaptainControllerPort;
   }) => PlaybookRuntime;
+  unresolvedEffectSettlement?: {
+    begin(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+    complete(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+  };
 }
 
 /** Live, artifact-typed host facilities supplied outside configured options. */
@@ -314,6 +337,7 @@ export type PlaybookCaptainRetentionUpdate =
 export interface PlaybookCaptainSettlement {
   readonly snapshot: PlaybookCaptainShellSnapshot;
   readonly retentionUpdates: readonly PlaybookCaptainRetentionUpdate[];
+  readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
 /** tmux and headless front ends share this one durable Captain shell API. */
@@ -456,7 +480,12 @@ async function classifySettingsCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
-type DisposalReason = 'dismiss' | 'final' | 'dispose' | 'failure';
+type DisposalReason =
+  | 'dismiss'
+  | 'final'
+  | 'dispose'
+  | 'failure'
+  | 'unresolved-effect';
 
 interface ControlLedger {
   activePlaybookId?: string;
@@ -621,6 +650,8 @@ interface ActiveTurn {
   outcomePending?: boolean;
   /** Whether this turn already has a closing journal outcome. */
   outcomeRecorded: boolean;
+  /** Canonical host evidence frozen before the controller result phase. */
+  unresolvedEffects?: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
 function parseRegisteredCommand(
@@ -1428,6 +1459,93 @@ const SNAPSHOT_JOURNAL_KINDS = new Set([
   'action',
   'outcome',
 ] as const);
+const UNRESOLVED_EFFECT_CLASSIFICATIONS = new Set<
+  PlaybookCaptainUnresolvedEffect['classification']
+>([
+  'one-descendant-commit',
+  'multiple-commits',
+  'rewritten-or-non-descendant',
+  'worktree-only-change',
+  'concurrent-or-foreign-change',
+  'observation-ambiguous',
+  'incomplete',
+]);
+const GIT_OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+export function assertPlaybookCaptainUnresolvedEffects(
+  value: unknown,
+): readonly PlaybookCaptainUnresolvedEffect[] {
+  const detached = snapshotJsonValue(
+    value,
+    'Captain unresolved effects',
+  );
+  if (!Array.isArray(detached)) {
+    throw new TypeError('Captain unresolved effects must be an array');
+  }
+  for (const [index, raw] of detached.entries()) {
+    const path = `Captain unresolved effects[${index}]`;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new TypeError(`${path} must be an object`);
+    }
+    const entry = raw as Record<string, JsonValue>;
+    const allowed = new Set([
+      'classification',
+      'baselineHead',
+      'afterHead',
+      'commitOid',
+    ]);
+    const unknown = Object.keys(entry).find((key) => !allowed.has(key));
+    if (unknown !== undefined) {
+      throw new TypeError(`${path} has unknown field ${JSON.stringify(unknown)}`);
+    }
+    if (
+      typeof entry.classification !== 'string' ||
+      !UNRESOLVED_EFFECT_CLASSIFICATIONS.has(
+        entry.classification as PlaybookCaptainUnresolvedEffect['classification'],
+      )
+    ) {
+      throw new TypeError(`${path}.classification is not supported`);
+    }
+    if (
+      typeof entry.baselineHead !== 'string' ||
+      !GIT_OID_PATTERN.test(entry.baselineHead)
+    ) {
+      throw new TypeError(`${path}.baselineHead must be a Git OID`);
+    }
+    if (
+      entry.afterHead !== undefined &&
+      (typeof entry.afterHead !== 'string' ||
+        !GIT_OID_PATTERN.test(entry.afterHead))
+    ) {
+      throw new TypeError(`${path}.afterHead must be a Git OID`);
+    }
+    if (
+      entry.classification !== 'observation-ambiguous' &&
+      entry.classification !== 'incomplete' &&
+      entry.afterHead === undefined
+    ) {
+      throw new TypeError(
+        `${path}.afterHead is required for ${entry.classification}`,
+      );
+    }
+    if (entry.classification === 'one-descendant-commit') {
+      if (
+        typeof entry.commitOid !== 'string' ||
+        !GIT_OID_PATTERN.test(entry.commitOid) ||
+        entry.commitOid !== entry.afterHead
+      ) {
+        throw new TypeError(
+          `${path}.commitOid must equal afterHead for one-descendant-commit`,
+        );
+      }
+    } else if (entry.commitOid !== undefined) {
+      throw new TypeError(
+        `${path}.commitOid is permitted only for one-descendant-commit`,
+      );
+    }
+  }
+  return detached as unknown as readonly PlaybookCaptainUnresolvedEffect[];
+}
 
 function snapshotRecord(
   value: JsonValue | undefined,
@@ -2780,6 +2898,7 @@ export function createPlaybookCaptainShell(
   const createCaptainRuntime: NonNullable<
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
+  const unresolvedEffectSettlement = deps.unresolvedEffectSettlement;
   let pendingHostCapabilities = deps.hostCapabilities;
   let currentEffectLedger = () => emptyPlaybookEffectLedger();
   // The returned shell must not retain the caller's aggregate dependency
@@ -2940,6 +3059,10 @@ export function createPlaybookCaptainShell(
   let retainedGenerationInstallationInProgress = false;
   let retainedGenerationInstallationClosed = false;
   let retentionSettlementReady = false;
+  let abandonmentSettlementUnsafe = false;
+  let settledTurnUnresolvedEffects:
+    | readonly PlaybookCaptainUnresolvedEffect[]
+    | undefined;
   // DR-029: a run that lands in the runtime's own failure state
   // is an outcome the report must name. `processFrameResult` records it here
   // and the settling selection folds it into its facts, so the grounding the
@@ -2950,6 +3073,303 @@ export function createPlaybookCaptainShell(
   const leafFrame = (): EngagementFrame | undefined => frames.at(-1);
   const frameLabel = (frame: EngagementFrame): string =>
     `/${frame.enablement.command}`;
+
+  type UnresolvedEnvelopeReference =
+    | { readonly kind: 'boundary'; readonly boundaryId: string }
+    | { readonly kind: 'logical-operation'; readonly operationId: string };
+
+  const capturedUnresolvedEnvelopeReferences = (
+    frame: EngagementFrame,
+  ): readonly UnresolvedEnvelopeReference[] => {
+    let advertisesUnresolved = false;
+    try {
+      advertisesUnresolved =
+        frame.runtime
+          .describe?.()
+          .actions.some(
+            ({ id }) =>
+              id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+              id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
+          ) === true;
+    } catch {
+      advertisesUnresolved = true;
+    }
+    if (typeof frame.runtime.unresolvedEffectEnvelopes !== 'function') {
+      if (frame.enablement.artifactSchema === 3 && advertisesUnresolved) {
+        throw new Error(
+          `${frameLabel(frame)} unresolved-effect runtime exposes no envelope identities`,
+        );
+      }
+      return [];
+    }
+    const detached = snapshotJsonValue(
+      frame.runtime.unresolvedEffectEnvelopes(),
+      `${frameLabel(frame)} unresolved effect envelope identities`,
+    );
+    if (!Array.isArray(detached)) {
+      throw new TypeError(
+        `${frameLabel(frame)} unresolved effect envelope identities must be an array`,
+      );
+    }
+    return detached.map((raw, index) => {
+      const path = `${frameLabel(frame)} unresolved effect envelope identities[${index}]`;
+      const record = snapshotRecord(raw, path);
+      if (record.kind === 'boundary') {
+        rejectSnapshotKeys(record, ['kind', 'boundaryId'], path);
+        return {
+          kind: 'boundary' as const,
+          boundaryId: snapshotString(record.boundaryId, `${path}.boundaryId`),
+        };
+      }
+      if (record.kind === 'logical-operation') {
+        rejectSnapshotKeys(record, ['kind', 'operationId'], path);
+        return {
+          kind: 'logical-operation' as const,
+          operationId: snapshotString(record.operationId, `${path}.operationId`),
+        };
+      }
+      throw new TypeError(`${path}.kind is not supported`);
+    });
+  };
+
+  const unresolvedEffectFromReceipt = (
+    receipt: NonNullable<
+      PlaybookEffectLedger['boundaries'][number]['physicalReceipt']
+    >,
+    baselineHead = receipt.baseline.head,
+  ): PlaybookCaptainUnresolvedEffect | undefined => {
+    if (receipt.classification === 'unchanged') return undefined;
+    return {
+      classification: receipt.classification,
+      baselineHead,
+      ...(receipt.after === undefined ? {} : { afterHead: receipt.after.head }),
+      ...(receipt.commitOid === undefined ? {} : { commitOid: receipt.commitOid }),
+    };
+  };
+
+  const cumulativeOpenLogicalEffect = (
+    operation: PlaybookEffectLedger['logicalOperations'][number],
+    boundaries: readonly PlaybookEffectLedger['boundaries'][number][],
+  ): PlaybookCaptainUnresolvedEffect | undefined => {
+    const original = operation.originalBaseline;
+    const latest = boundaries.at(-1)!;
+    const after = latest.after ?? operation.checkpoint;
+    const receipt = latest.physicalReceipt;
+    if (receipt === undefined) {
+      return {
+        classification: 'incomplete',
+        baselineHead: original.head,
+        ...(after === undefined ? {} : { afterHead: after.head }),
+      };
+    }
+    if (after === undefined) {
+      return unresolvedEffectFromReceipt(receipt, original.head);
+    }
+
+    // An open deferred chain has no authoritative cumulative receipt. Reuse
+    // physical ancestry only while every preceding checkpoint is one of the
+    // same-HEAD dispositions that can lawfully keep a deferred operation
+    // open. Any other history is bounded but not cumulatively attributable.
+    const checkpointChainIsSafe = boundaries
+      .slice(0, -1)
+      .every(
+        (boundary) =>
+          boundary.after?.head === original.head &&
+          (boundary.physicalReceipt?.classification === 'unchanged' ||
+            boundary.physicalReceipt?.classification ===
+              'worktree-only-change'),
+      );
+    if (!checkpointChainIsSafe || latest.baseline.head !== original.head) {
+      return {
+        classification: 'observation-ambiguous',
+        baselineHead: original.head,
+        afterHead: after.head,
+      };
+    }
+
+    if (
+      receipt.classification !== 'unchanged' &&
+      receipt.classification !== 'worktree-only-change' &&
+      receipt.classification !== 'one-descendant-commit'
+    ) {
+      return unresolvedEffectFromReceipt(receipt, original.head);
+    }
+
+    const sameProjection = isDeepStrictEqual(
+      original.projection,
+      after.projection,
+    );
+    if (after.head === original.head) {
+      if (
+        receipt.classification !== 'unchanged' &&
+        receipt.classification !== 'worktree-only-change'
+      ) {
+        return {
+          classification: 'observation-ambiguous',
+          baselineHead: original.head,
+          afterHead: after.head,
+        };
+      }
+      if (sameProjection) return undefined;
+      const preservesOriginal = Object.entries(original.projection).every(
+        ([path, entry]) =>
+          Object.hasOwn(after.projection, path) &&
+          isDeepStrictEqual(entry, after.projection[path]),
+      );
+      return {
+        classification: preservesOriginal
+          ? 'worktree-only-change'
+          : 'observation-ambiguous',
+        baselineHead: original.head,
+        afterHead: after.head,
+      };
+    }
+
+    if (
+      receipt.classification === 'one-descendant-commit' &&
+      sameProjection
+    ) {
+      return {
+        classification: 'one-descendant-commit',
+        baselineHead: original.head,
+        afterHead: after.head,
+        commitOid: after.head,
+      };
+    }
+    return {
+      classification: 'observation-ambiguous',
+      baselineHead: original.head,
+      afterHead: after.head,
+    };
+  };
+
+  const projectUnresolvedEffects = (
+    ledger: PlaybookEffectLedger,
+    references: readonly UnresolvedEnvelopeReference[],
+  ): readonly PlaybookCaptainUnresolvedEffect[] => {
+    const pendingReferences = [...references];
+    const projected: Array<{
+      readonly order: number;
+      readonly effect: PlaybookCaptainUnresolvedEffect;
+    }> = [];
+    const seenBoundaries = new Set<string>();
+    const seenOperations = new Set<string>();
+    for (let index = 0; index < pendingReferences.length; index += 1) {
+      const reference = pendingReferences[index]!;
+      if (reference.kind === 'boundary') {
+        if (seenBoundaries.has(reference.boundaryId)) continue;
+        seenBoundaries.add(reference.boundaryId);
+        const boundary = ledger.boundaries.find(
+          ({ boundaryId }) => boundaryId === reference.boundaryId,
+        );
+        if (boundary === undefined) {
+          throw new Error(
+            `unresolved effect boundary ${JSON.stringify(reference.boundaryId)} is absent from the authoritative ledger`,
+          );
+        }
+        if (boundary.logicalOperationId !== undefined) {
+          if (!seenOperations.has(boundary.logicalOperationId)) {
+            pendingReferences.push({
+              kind: 'logical-operation',
+              operationId: boundary.logicalOperationId,
+            });
+          }
+          continue;
+        }
+        const effect =
+          boundary.physicalReceipt === undefined
+            ? {
+                classification: 'incomplete' as const,
+                baselineHead: boundary.baseline.head,
+                ...(boundary.after === undefined
+                  ? {}
+                  : { afterHead: boundary.after.head }),
+              }
+            : unresolvedEffectFromReceipt(boundary.physicalReceipt);
+        if (effect !== undefined) {
+          projected.push({ order: boundary.sequence, effect });
+        }
+        continue;
+      }
+
+      if (seenOperations.has(reference.operationId)) continue;
+      seenOperations.add(reference.operationId);
+      const operation = ledger.logicalOperations.find(
+        ({ operationId }) => operationId === reference.operationId,
+      );
+      if (operation === undefined) {
+        throw new Error(
+          `unresolved logical operation ${JSON.stringify(reference.operationId)} is absent from the authoritative ledger`,
+        );
+      }
+      const boundaries = operation.boundaryIds.map((boundaryId) => {
+        const boundary = ledger.boundaries.find(
+          (candidate) => candidate.boundaryId === boundaryId,
+        );
+        if (boundary === undefined) {
+          throw new Error(
+            `unresolved logical operation ${JSON.stringify(reference.operationId)} names an absent boundary`,
+          );
+        }
+        seenBoundaries.add(boundaryId);
+        return boundary;
+      });
+      let effect: PlaybookCaptainUnresolvedEffect | undefined;
+      if (operation.logicalReceipt !== undefined) {
+        effect = unresolvedEffectFromReceipt(
+          operation.logicalReceipt,
+          operation.originalBaseline.head,
+        );
+      } else {
+        effect = cumulativeOpenLogicalEffect(operation, boundaries);
+      }
+      if (effect !== undefined) {
+        projected.push({ order: boundaries[0]!.sequence, effect });
+      }
+    }
+    return assertPlaybookCaptainUnresolvedEffects(
+      projected
+        .sort((left, right) => left.order - right.order)
+        .map(({ effect }) => effect),
+    );
+  };
+
+  const currentUnresolvedEffects =
+    (): readonly PlaybookCaptainUnresolvedEffect[] => {
+      const ledger = assertPlaybookEffectLedger(currentEffectLedger());
+      const references: UnresolvedEnvelopeReference[] = [];
+      for (const frame of frames) {
+        references.push(...capturedUnresolvedEnvelopeReferences(frame));
+      }
+      if (retainedEffectReconciliation !== undefined) {
+        for (const boundary of ledger.boundaries.slice(
+          retainedEffectReconciliation.checkpoint.boundaries.length,
+        )) {
+          if (boundary.physicalReceipt?.classification === 'unchanged') {
+            continue;
+          }
+          references.push(
+            boundary.logicalOperationId === undefined
+              ? { kind: 'boundary', boundaryId: boundary.boundaryId }
+              : {
+                  kind: 'logical-operation',
+                  operationId: boundary.logicalOperationId,
+                },
+          );
+        }
+      }
+      return projectUnresolvedEffects(ledger, references);
+    };
+
+  const freezeTurnUnresolvedEffects =
+    (): readonly PlaybookCaptainUnresolvedEffect[] => {
+      const turn = activeTurn;
+      if (turn?.unresolvedEffects !== undefined) return turn.unresolvedEffects;
+      const frozen = currentUnresolvedEffects();
+      if (turn !== undefined) turn.unresolvedEffects = frozen;
+      settledTurnUnresolvedEffects = frozen;
+      return frozen;
+    };
 
   const normalizeInstalledRetainedGenerations = (
     value: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>,
@@ -4584,6 +5004,53 @@ export function createPlaybookCaptainShell(
     if (failures.length > 1) {
       throw new AggregateError(failures, 'playbook stack disposal failed');
     }
+  };
+
+  /**
+   * DR-040 task 11: abandonment is a host settlement, not an authored FSM
+   * result.  Freeze the bounded evidence while the complete stack and its
+   * runtime-owned envelope identities still exist, durably fence recovery,
+   * dispose leaf-to-root without resuming a parent, then publish the matching
+   * root clear and evidence as one durable completion before the controller
+   * may return an executed receipt to its result phase.
+   */
+  const settleUnresolvedEffectAbandonment = async (
+    unresolvedLeaf: EngagementFrame,
+  ): Promise<void> => {
+    if (leafFrame() !== unresolvedLeaf) {
+      throw new Error(
+        'unresolved-effect abandonment requires the active leaf',
+      );
+    }
+    const root = rootFrame();
+    if (root === undefined) {
+      throw new Error(
+        'unresolved-effect abandonment requires an active root',
+      );
+    }
+    const unresolvedEffects = freezeTurnUnresolvedEffects();
+    if (unresolvedEffects.length === 0) {
+      throw new Error(
+        'unresolved-effect abandonment requires nonempty effect evidence',
+      );
+    }
+    if (unresolvedEffectSettlement === undefined) {
+      throw new Error(
+        'unresolved-effect abandonment requires durable host settlement',
+      );
+    }
+    const rootPlaybookId = root.entry.id;
+    const settlement = Object.freeze({
+      rootPlaybookId,
+      unresolvedEffects,
+    });
+    await runEffect(() => unresolvedEffectSettlement.begin(settlement));
+    await runEffect(() => disposeStack('unresolved-effect'));
+    pendingRetentionUpdates.set(rootPlaybookId, {
+      kind: 'clear',
+      rootPlaybookId,
+    });
+    await runEffect(() => unresolvedEffectSettlement.complete(settlement));
   };
 
   const callResultFor = (
@@ -6305,7 +6772,9 @@ export function createPlaybookCaptainShell(
     const turn = activeTurn;
     runFailureFacts = [];
     try {
-      return await executeSelection(selection, signal);
+      const settlement = await executeSelection(selection, signal);
+      freezeTurnUnresolvedEffects();
+      return settlement;
     } catch (error) {
       if (turn?.presentationError === error) throw error;
       const aborted = signal.aborted || activeContext?.signal.aborted === true;
@@ -6379,7 +6848,7 @@ export function createPlaybookCaptainShell(
       };
       turn.settled = true;
       lastSettlementStatus = 'failed';
-      return {
+      const settlement: SettlementEvidence = {
         status: 'failed',
         facts: [...turn.settlementFacts],
         ...(turn.report.receipt === undefined
@@ -6387,6 +6856,8 @@ export function createPlaybookCaptainShell(
           : { receipt: turn.report.receipt }),
         ...(summary === undefined ? {} : { leafStateSummary: summary }),
       };
+      freezeTurnUnresolvedEffects();
+      return settlement;
     } finally {
       runFailureFacts = undefined;
     }
@@ -6800,9 +7271,53 @@ export function createPlaybookCaptainShell(
           }
         : {}),
     };
+    const unresolvedAbandonment =
+      receipt.disposition === 'executed' &&
+      actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID;
     if (receipt.disposition === 'executed') {
-      facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
+      if (
+        unresolvedAbandonment &&
+        receipt.run?.outcome !== 'unresolved-effect'
+      ) {
+        throw new Error(
+          'unresolved-effect abandonment returned no unresolved-effect result',
+        );
+      }
       const establishedSummary = leafStateSummary();
+      if (unresolvedAbandonment) {
+        try {
+          await settleUnresolvedEffectAbandonment(leaf);
+        } catch (error) {
+          abandonmentSettlementUnsafe = true;
+          const normalized = normalizeErrorCompact(error) ?? {
+            name: 'Error',
+            message: String(error),
+          };
+          // The runtime action was accepted, but its distinct host-level
+          // settlement did not complete.  Do not expose an `executed` control
+          // receipt until both disposal and durable publication have
+          // succeeded.
+          turn.report = {
+            ...outcome.report,
+            facts: [...facts],
+            bossFacts: facts.map((fact) =>
+              fact
+                .split(`"${actionId}"`)
+                .join(`"${compactEvidence(actionLabel)}"`),
+            ),
+            status: 'failed',
+            receipt: {
+              disposition: 'failed',
+              error: normalized,
+            },
+            ...(establishedSummary === undefined
+              ? {}
+              : { leafStateSummary: establishedSummary }),
+          };
+          throw error;
+        }
+      }
+      facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
       // Execution is now proven. Preserve that receipt and the counts already
       // collected before processing the returned run, because disposal,
       // telemetry, or parent resumption can still fail afterward.
@@ -6821,6 +7336,7 @@ export function createPlaybookCaptainShell(
           : { leafStateSummary: establishedSummary }),
       };
       if (
+        !unresolvedAbandonment &&
         receipt.run !== undefined &&
         retainedEffectReconciliation === undefined
       ) {
@@ -7532,9 +8048,18 @@ export function createPlaybookCaptainShell(
   };
 
   const exportSettlement = (): PlaybookCaptainSettlement | undefined => {
-    if (!retentionSettlementReady) return undefined;
+    if (!retentionSettlementReady || abandonmentSettlementUnsafe) {
+      return undefined;
+    }
     const snapshot = exportShellSnapshot();
     if (snapshot === undefined) return undefined;
+    let unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+    try {
+      unresolvedEffects =
+        settledTurnUnresolvedEffects ?? currentUnresolvedEffects();
+    } catch {
+      return undefined;
+    }
     const updates = new Map(pendingRetentionUpdates);
     for (const rootPlaybookId of retainedGenerationRootClears) {
       updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
@@ -7576,6 +8101,7 @@ export function createPlaybookCaptainShell(
         retentionUpdates: [...updates.values()].sort((left, right) =>
           left.rootPlaybookId.localeCompare(right.rootPlaybookId),
         ),
+        unresolvedEffects,
       },
       'Captain settlement',
     ) as unknown as PlaybookCaptainSettlement;
@@ -7996,7 +8522,9 @@ export function createPlaybookCaptainShell(
       // Empty or whitespace-only input allocates no call, session, or
       // telemetry (CAPTAIN-7).
       retentionSettlementReady = false;
+      abandonmentSettlementUnsafe = false;
       if (turn.prompt.trim().length === 0) return;
+      settledTurnUnresolvedEffects = undefined;
       retainedGenerationInstallationClosed = true;
       for (const update of pendingRetentionUpdates.values()) {
         applyRetentionUpdateToCatalog(update);

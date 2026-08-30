@@ -184,6 +184,7 @@ function preEffectSessionRecord(
   };
   record.schemaVersion = schemaVersion;
   delete record.effectLedger;
+  delete record.unresolvedEffects;
   record.snapshot.schemaVersion = 3;
   delete record.snapshot.effectLedger;
   downgradeRuntime(record.snapshot.captain.runtime);
@@ -3425,6 +3426,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     const checkpointRecord = await lease.settle({
       attemptId: secondId,
+      unresolvedEffects: [],
       snapshot: {
         ...settled.snapshot,
         effectLedger: mirror,
@@ -3557,6 +3559,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     ]);
     const checkpointRecord = await lease.settle({
       attemptId: secondId,
+      unresolvedEffects: [],
       snapshot: { ...settled.snapshot, effectLedger: mirror },
     });
     await lease.beginTurn({

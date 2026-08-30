@@ -174,6 +174,14 @@ function effectObservation(head = 'a'.repeat(40)) {
   };
 }
 
+function unresolvedWorktreeEffect() {
+  return {
+    classification: 'worktree-only-change',
+    baselineHead: 'a'.repeat(40),
+    afterHead: 'b'.repeat(40),
+  };
+}
+
 function effectAuthority(
   execution = schema3ExecutionProjection(),
   ownerToken = tokenO,
@@ -282,6 +290,18 @@ function shellSnapshot(
       ? {}
       : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
     mode: 'chat',
+  };
+}
+
+function abandonmentSnapshot(
+  execution = executionProjection(),
+  turn = 1,
+  token = `captain-token-${turn}`,
+) {
+  return {
+    ...shellSnapshot(execution, turn, token),
+    lastAction: 'runtime',
+    lastSettlementStatus: 'ok',
   };
 }
 
@@ -659,6 +679,7 @@ function settledRecord(overrides: Record<string, unknown> = {}) {
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
     effectLedger: effectLedger(),
+    unresolvedEffects: [],
     retainedGenerations: {},
     ...overrides,
   };
@@ -726,7 +747,11 @@ function legacyRecord(
   value: Record<string, any>,
   schemaVersion: 3 | 4 = 3,
 ) {
-  const { effectLedger: _effectLedger, ...record } = value;
+  const {
+    effectLedger: _effectLedger,
+    unresolvedEffects: _unresolvedEffects,
+    ...record
+  } = value;
   return {
     ...record,
     schemaVersion,
@@ -762,6 +787,7 @@ function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
     effectLedger: effectLedger(),
+    unresolvedEffects: [],
     retainedGenerations: {},
     uncertain: {
       baseUpdatedAt: null,
@@ -949,6 +975,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const settled = await nextLease.settle({
       attemptId: attempt3,
       snapshot: shellSnapshot(execution, 1),
+      unresolvedEffects: [],
     });
     expect(settled.schemaVersion).toBe(5);
     expect(settled.retainedGenerations).toEqual({});
@@ -1316,6 +1343,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lease.settle({
         attemptId: attempt2,
         snapshot: engagedSnapshot(execution),
+        unresolvedEffects: [],
       }),
     ).rejects.toThrow(/snapshot effect ledger differs from its durable ledger/);
 
@@ -1325,6 +1353,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const settled = await lease.settle({
       attemptId: attempt2,
       snapshot: mirrored,
+      unresolvedEffects: [],
     });
     expect(settled.effectLedger).toEqual(repeated);
     expect(settled.snapshot.effectLedger).toEqual(repeated);
@@ -1345,6 +1374,418 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         }),
       ),
     ).toThrow(/effect ledger differs from its structural schema authority/);
+    await lease.release();
+  });
+
+  it('persists abandonment disposal and crash-recovers its exact settlement (PBCLI-71/72)', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = retentionSchema3ExecutionProjection();
+    const unresolvedEffects = [unresolvedWorktreeEffect()];
+    const parked = engagedSnapshot(execution);
+    const retainedGenerations = {
+      code: {
+        effectLedger: effectLedger(),
+        frames: parked.frames,
+      },
+    };
+    const abandonment = { rootPlaybookId: 'code', unresolvedEffects };
+
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: parked,
+        unresolvedEffects,
+        retainedGenerations,
+      }),
+    );
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    await lease.beginTurn({
+      input: 'abandon unresolved effects',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const started = await lease.beginUnresolvedEffectAbandonment(abandonment);
+    expect(started).toMatchObject({
+      state: 'uncertain',
+      retainedGenerations,
+      uncertain: {
+        abandonment: {
+          phase: 'started',
+          rootPlaybookId: 'code',
+          unresolvedEffects,
+        },
+      },
+    });
+    await expect(
+      lease.beginRetry({
+        expectedAttemptId: attempt1,
+        nextAttemptId: attempt2,
+      }),
+    ).rejects.toThrow(/abandonment must recover before retry/);
+    const startedBytes = await readFile(
+      join(sessionsDir, `${sessionId}.json`),
+      'utf8',
+    );
+    await expect(
+      lease.discard({ attemptId: attempt1 }),
+    ).rejects.toThrow(/abandonment must recover before discard/);
+    expect(
+      await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
+    ).toBe(startedBytes);
+    await expect(
+      lease.settle({
+        attemptId: attempt1,
+        snapshot: abandonmentSnapshot(execution, 1),
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      }),
+    ).rejects.toThrow(/has not completed disposal/);
+
+    const disposed = await lease.completeUnresolvedEffectAbandonment(
+      abandonment,
+    );
+    expect(disposed).toMatchObject({
+      unresolvedEffects,
+      retainedGenerations: {},
+      uncertain: { abandonment: { phase: 'disposed' } },
+    });
+    const settled = await lease.settle({
+      attemptId: attempt1,
+      snapshot: abandonmentSnapshot(execution, 1),
+      unresolvedEffects,
+      retentionUpdates: [
+        { kind: 'clear', rootPlaybookId: 'code' },
+        { kind: 'clear', rootPlaybookId: 'review' },
+      ],
+    });
+    expect(settled).toMatchObject({
+      state: 'settled',
+      snapshot: { mode: 'chat' },
+      unresolvedEffects,
+      retainedGenerations: {},
+      settledAbandonment: {
+        phase: 'final',
+        attemptId: attempt1,
+        rootPlaybookId: 'code',
+        unresolvedEffects,
+      },
+    });
+    const nextTurn = await lease.beginTurn({
+      input: 'preserve prior abandonment provenance',
+      attemptId: attempt3,
+      attemptedExecutionProjection: execution,
+    });
+    expect(nextTurn).toMatchObject({
+      state: 'uncertain',
+      settledAbandonment: settled.settledAbandonment,
+    });
+    expect(await lease.discard({ attemptId: attempt3 })).toEqual(settled);
+    await lease.release();
+
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        sessionId: secondSessionId,
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: parked,
+        unresolvedEffects,
+        retainedGenerations,
+      }),
+    );
+    const crashed = await fixedStore(
+      sessionsDir,
+      tokenN,
+    ).acquire(secondSessionId);
+    await crashed.beginTurn({
+      input: 'crash during abandonment',
+      attemptId: attempt2,
+      attemptedExecutionProjection: execution,
+    });
+    await crashed.beginUnresolvedEffectAbandonment(abandonment);
+    await crashed.release();
+
+    const recoveredLease = await fixedStore(
+      sessionsDir,
+      tokenR,
+    ).acquire(secondSessionId);
+    const recovered = await recoveredLease.recoverUnresolvedEffectAbandonment();
+    expect(recovered).toMatchObject({
+      state: 'settled',
+      snapshot: {
+        mode: 'chat',
+        lastAction: 'runtime',
+        lastSettlementStatus: 'ok',
+      },
+      unresolvedEffects,
+      retainedGenerations: {},
+      settledAbandonment: {
+        phase: 'recovered',
+        attemptId: attempt2,
+        rootPlaybookId: 'code',
+        unresolvedEffects,
+      },
+    });
+    expect(
+      await recoveredLease.recoverUnresolvedEffectAbandonment(),
+    ).toEqual(recovered);
+
+    const exactLateSettlement = await recoveredLease.settle({
+      attemptId: attempt2,
+      snapshot: abandonmentSnapshot(execution, 1),
+      unresolvedEffects,
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+    });
+    expect(exactLateSettlement).toMatchObject({
+      state: 'settled',
+      snapshot: { mode: 'chat', sequences: { turn: 1 } },
+      unresolvedEffects,
+      retainedGenerations: {},
+    });
+    expect(exactLateSettlement).toMatchObject({
+      settledAbandonment: {
+        phase: 'final',
+        attemptId: attempt2,
+        rootPlaybookId: 'code',
+        unresolvedEffects,
+      },
+    });
+    expect(
+      await recoveredLease.settle({
+        attemptId: attempt2,
+        snapshot: abandonmentSnapshot(execution, 1),
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      }),
+    ).toEqual(exactLateSettlement);
+    await expect(
+      recoveredLease.settle({
+        attemptId: attempt3,
+        snapshot: abandonmentSnapshot(execution, 1),
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      }),
+    ).rejects.toThrow(/attempt differs from its durable marker/);
+    await expect(
+      recoveredLease.settle({
+        attemptId: attempt2,
+        snapshot: abandonmentSnapshot(execution, 1),
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'review' }],
+      }),
+    ).rejects.toThrow(/must clear its durable root/);
+    await expect(
+      recoveredLease.settle({
+        attemptId: attempt2,
+        snapshot: abandonmentSnapshot(execution, 2),
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      }),
+    ).rejects.toThrow(/differs from its finalized durable record/);
+    await recoveredLease.release();
+  });
+
+  it('re-synchronizes every published abandonment phase before acknowledging replay', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = schema3ExecutionProjection();
+    const unresolvedEffects = [unresolvedWorktreeEffect()];
+    const parked = engagedSnapshot(execution);
+    const retainedGenerations = {
+      code: {
+        effectLedger: effectLedger(),
+        frames: parked.frames,
+      },
+    };
+    const abandonment = { rootPlaybookId: 'code', unresolvedEffects };
+    let directorySyncFailures = 0;
+    const storeOptions = {
+      createTempId: () => tempId,
+      fsOps: {
+        async open(path: string, flags: string | number, mode?: number) {
+          const handle = await open(path, flags as any, mode);
+          if (path !== sessionsDir || flags !== 'r') return handle;
+          return {
+            async sync() {
+              if (directorySyncFailures > 0) {
+                directorySyncFailures -= 1;
+                throw new Error('synthetic abandonment directory sync failure');
+              }
+              await handle.sync();
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    };
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: parked,
+        unresolvedEffects,
+        retainedGenerations,
+      }),
+    );
+    const lease = await fixedStore(
+      sessionsDir,
+      tokenO,
+      storeOptions,
+    ).acquire(sessionId);
+    await lease.beginTurn({
+      input: 'publish every abandonment phase',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+
+    directorySyncFailures = 1;
+    await expect(
+      lease.beginUnresolvedEffectAbandonment(abandonment),
+    ).rejects.toThrow(/synthetic abandonment directory sync failure/);
+    expect(await lease.read()).toMatchObject({
+      state: 'uncertain',
+      uncertain: { abandonment: { phase: 'started' } },
+    });
+    await lease.beginUnresolvedEffectAbandonment(abandonment);
+
+    directorySyncFailures = 1;
+    await expect(
+      lease.completeUnresolvedEffectAbandonment(abandonment),
+    ).rejects.toThrow(/synthetic abandonment directory sync failure/);
+    expect(await lease.read()).toMatchObject({
+      state: 'uncertain',
+      unresolvedEffects,
+      retainedGenerations: {},
+      uncertain: { abandonment: { phase: 'disposed' } },
+    });
+    await expect(
+      lease.settle({
+        attemptId: attempt1,
+        snapshot: {
+          ...abandonmentSnapshot(execution, 1),
+          lastSettlementStatus: 'failed',
+        },
+        unresolvedEffects,
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      }),
+    ).rejects.toThrow(/successful host-disposal snapshot/);
+    expect((await lease.read()).state).toBe('uncertain');
+    await lease.completeUnresolvedEffectAbandonment(abandonment);
+
+    const finalInput = {
+      attemptId: attempt1,
+      snapshot: abandonmentSnapshot(execution, 1),
+      unresolvedEffects,
+      retentionUpdates: [{ kind: 'clear' as const, rootPlaybookId: 'code' }],
+    };
+    directorySyncFailures = 1;
+    await expect(lease.settle(finalInput)).rejects.toThrow(
+      /synthetic abandonment directory sync failure/,
+    );
+    const publishedFinal = await lease.read();
+    expect(publishedFinal).toMatchObject({
+      state: 'settled',
+      settledAbandonment: { phase: 'final', attemptId: attempt1 },
+    });
+    expect(await lease.settle(finalInput)).toEqual(publishedFinal);
+    await lease.release();
+
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        sessionId: secondSessionId,
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: parked,
+        unresolvedEffects,
+        retainedGenerations,
+      }),
+    );
+    const crashed = await fixedStore(
+      sessionsDir,
+      tokenN,
+      storeOptions,
+    ).acquire(secondSessionId);
+    await crashed.beginTurn({
+      input: 'crash before host disposal',
+      attemptId: attempt2,
+      attemptedExecutionProjection: execution,
+    });
+    await crashed.beginUnresolvedEffectAbandonment(abandonment);
+    await crashed.release();
+
+    const successor = await fixedStore(
+      sessionsDir,
+      tokenR,
+      storeOptions,
+    ).acquire(secondSessionId);
+    directorySyncFailures = 1;
+    await expect(
+      successor.recoverUnresolvedEffectAbandonment(),
+    ).rejects.toThrow(/synthetic abandonment directory sync failure/);
+    const publishedRecovery = await successor.read();
+    expect(publishedRecovery).toMatchObject({
+      state: 'settled',
+      settledAbandonment: { phase: 'recovered', attemptId: attempt2 },
+    });
+    expect(
+      await successor.recoverUnresolvedEffectAbandonment(),
+    ).toEqual(publishedRecovery);
+    await successor.release();
+  });
+
+  it('keeps the uncertain boundary when abandonment begin cannot publish', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = schema3ExecutionProjection();
+    const unresolvedEffects = [unresolvedWorktreeEffect()];
+    const parked = engagedSnapshot(execution);
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    let failAbandonmentBegin = false;
+    const store = fixedStore(sessionsDir, tokenO, {
+      fsOps: {
+        async rename(from: string, to: string) {
+          if (failAbandonmentBegin && to === recordPath) {
+            throw new Error('synthetic abandonment begin publication failure');
+          }
+          return rename(from, to);
+        },
+      },
+    });
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: parked,
+        unresolvedEffects,
+        retainedGenerations: {
+          code: { effectLedger: effectLedger(), frames: parked.frames },
+        },
+      }),
+    );
+    const lease = await store.acquire(sessionId);
+    await lease.beginTurn({
+      input: 'fail abandonment begin publication',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const uncertainBytes = await readFile(recordPath, 'utf8');
+    failAbandonmentBegin = true;
+    await expect(
+      lease.beginUnresolvedEffectAbandonment({
+        rootPlaybookId: 'code',
+        unresolvedEffects,
+      }),
+    ).rejects.toThrow(/synthetic abandonment begin publication failure/);
+    expect(await readFile(recordPath, 'utf8')).toBe(uncertainBytes);
+    expect(await lease.read()).toMatchObject({
+      state: 'uncertain',
+      unresolvedEffects,
+    });
+    expect((await lease.read()).uncertain).not.toHaveProperty('abandonment');
+    failAbandonmentBegin = false;
     await lease.release();
   });
 
@@ -1420,7 +1861,67 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it('rejects settled effect recovery without a retained generation', async () => {
+  it('recovers a settled abandoned boundary without changing its frozen list', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = schema3ExecutionProjection();
+    const started = startedEffectLedger();
+    const unresolvedEffects = [
+      {
+        classification: 'incomplete',
+        baselineHead: 'a'.repeat(40),
+      },
+    ];
+    await writeRecordFixture(
+      sessionsDir,
+      settledRecord({
+        structuralProjection: projectCaptainSessionStructure(execution),
+        lastAppliedExecutionProjection: execution,
+        snapshot: { ...shellSnapshot(execution), effectLedger: started },
+        effectLedger: started,
+        unresolvedEffects,
+      }),
+    );
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const expected = started.boundaries[0];
+    const after = effectObservation();
+
+    const completed = await lease.writeEffectLedger(
+      effectAuthority(execution),
+      [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            {
+              expected,
+              next: {
+                ...expected,
+                after,
+                physicalReceipt: {
+                  classification: 'unchanged',
+                  baseline: expected.baseline,
+                  after,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    );
+    expect(completed.boundaries[0]).toHaveProperty(
+      'physicalReceipt.classification',
+      'unchanged',
+    );
+    expect(await lease.read()).toMatchObject({
+      state: 'settled',
+      unresolvedEffects,
+      retainedGenerations: {},
+      effectLedger: completed,
+      snapshot: { effectLedger: completed },
+    });
+    await lease.release();
+  });
+
+  it('rejects settled effect recovery without retained or unresolved work', async () => {
     const { sessionsDir } = await fixtureDir();
     const execution = schema3ExecutionProjection();
     const started = startedEffectLedger();
@@ -1880,6 +2381,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const firstSettled = await firstLease.settle({
       attemptId: attempt1,
       snapshot: shellSnapshot(initialExecution, 1),
+      unresolvedEffects: [],
       retentionUpdates: [
         {
           kind: 'retain',
@@ -1989,6 +2491,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const settled = await lease.settle({
       attemptId: attempt2,
       snapshot: shellSnapshot(execution, 1),
+      unresolvedEffects: [],
       retentionUpdates: [],
     });
     expect(settled).toMatchObject({
@@ -2016,6 +2519,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const first = await lease.settle({
       attemptId: attempt1,
       snapshot: shellSnapshot(execution, 1),
+      unresolvedEffects: [],
       retentionUpdates: [
         {
           kind: 'retain',
@@ -2046,6 +2550,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const replaced = await lease.settle({
       attemptId: attempt2,
       snapshot: shellSnapshot(execution, 2),
+      unresolvedEffects: [],
       retentionUpdates: [
         {
           kind: 'retain',
@@ -2067,6 +2572,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const cleared = await lease.settle({
       attemptId: attempt3,
       snapshot: shellSnapshot(execution, 3),
+      unresolvedEffects: [],
       retentionUpdates: [
         { kind: 'clear', rootPlaybookId: 'code' },
       ],
@@ -2751,17 +3257,30 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect((await reopened.latest()).sessionId).toBe(targetId);
   });
 
-  it('moves the authoritative ledger with retained checkpoints without rewriting the generation', async () => {
+  it('moves retained ledger checkpoints without moving settlement evidence', async () => {
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(70);
     const targetId = adoptionSessionId(71);
     const execution = retentionSchema3ExecutionProjection();
     const authoritativeLedger = startedEffectLedger();
+    const unresolvedEffects = [
+      {
+        classification: 'incomplete',
+        baselineHead: 'a'.repeat(40),
+      },
+    ];
     const generation = retainedCodeGeneration();
     const generationBytes = JSON.stringify(generation);
     const sourceSnapshot = {
       ...shellSnapshot(execution, 1, 'source-with-ledger'),
       effectLedger: authoritativeLedger,
+      lastAction: 'runtime',
+    };
+    const settledAbandonment = {
+      phase: 'final',
+      attemptId: attempt3,
+      rootPlaybookId: 'review',
+      unresolvedEffects,
     };
     const source = settledRecord({
       sessionId: sourceId,
@@ -2771,7 +3290,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lastAppliedExecutionProjection: execution,
       snapshot: sourceSnapshot,
       effectLedger: authoritativeLedger,
+      unresolvedEffects,
       retainedGenerations: { code: generation },
+      settledAbandonment,
     });
     const target = freshAdoptionTargetRecord({
       id: targetId,
@@ -2793,14 +3314,18 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       sessionId: sourceId,
       effectLedger: authoritativeLedger,
       snapshot: { effectLedger: authoritativeLedger },
+      unresolvedEffects,
       retainedGenerations: {},
+      settledAbandonment,
     });
     expect(targetAfter).toMatchObject({
       sessionId: targetId,
       effectLedger: authoritativeLedger,
       snapshot: { effectLedger: authoritativeLedger },
+      unresolvedEffects: [],
       retainedGenerations: { code: generation },
     });
+    expect(targetAfter).not.toHaveProperty('settledAbandonment');
     expect(JSON.stringify(targetAfter.retainedGenerations.code)).toBe(
       generationBytes,
     );
@@ -3441,6 +3966,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lease.settle({
         attemptId: attempt1,
         snapshot: shellSnapshot(execution, 1),
+        unresolvedEffects: [],
         retentionUpdates: [
           { kind: 'clear', rootPlaybookId: 'unknown' },
         ],
@@ -3469,6 +3995,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         lease.settle({
           attemptId: attempt1,
           snapshot: shellSnapshot(execution, 1),
+          unresolvedEffects: [],
           retentionUpdates,
         }),
       ).rejects.toThrow();
@@ -3545,7 +4072,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       attemptedExecutionProjection: executionProjection(),
     });
     await expect(
-      lease.settle({ attemptId: attempt2, snapshot: { marker: 'wrong' } }),
+      lease.settle({
+        attemptId: attempt2,
+        snapshot: { marker: 'wrong' },
+        unresolvedEffects: [],
+      }),
     ).rejects.toThrow(/attempt id changed/);
     expect((await store.read(sessionId)).state).toBe('uncertain');
 
@@ -3558,7 +4089,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     );
     await expect(lease.assertOwner()).rejects.toThrow(/different token/);
     await expect(
-      lease.settle({ attemptId: attempt1, snapshot: { marker: 'blocked' } }),
+      lease.settle({
+        attemptId: attempt1,
+        snapshot: { marker: 'blocked' },
+        unresolvedEffects: [],
+      }),
     ).rejects.toThrow(/different token/);
     await expect(lease.release()).rejects.toThrow(/different token/);
     expect((await store.read(sessionId)).state).toBe('uncertain');
@@ -3633,6 +4168,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await firstLease.settle({
       attemptId: attempt1,
       snapshot: shellSnapshot(execution, 1, 'settled'),
+      unresolvedEffects: [],
       retentionUpdates: [
         {
           kind: 'retain',
@@ -3668,6 +4204,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lease.settle({
         attemptId: attempt2,
         snapshot: shellSnapshot(execution, 2, 'replacement'),
+        unresolvedEffects: [],
         retentionUpdates: [
           {
             kind: 'retain',
@@ -3764,6 +4301,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.settle({
       attemptId: attempt1,
       snapshot: shellSnapshot(execution, 1, 'first settled'),
+      unresolvedEffects: [],
       retentionUpdates: [
         {
           kind: 'retain',
@@ -3782,6 +4320,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       lease.settle({
         attemptId: attempt2,
         snapshot: shellSnapshot(execution, 2, 'replacement settled'),
+        unresolvedEffects: [],
         retentionUpdates: [
           {
             kind: 'retain',
@@ -3826,6 +4365,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       await lease.settle({
         attemptId: attempt,
         snapshot: shellSnapshot(executionProjection(), 1, id),
+        unresolvedEffects: [],
       });
       await lease.release();
     }
@@ -4002,6 +4542,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.settle({
       attemptId: attempt1,
       snapshot: shellSnapshot(executionProjection(), 1, 'settled'),
+      unresolvedEffects: [],
     });
     await lease.release();
     const recordPath = join(second.sessionsDir, `${sessionId}.json`);

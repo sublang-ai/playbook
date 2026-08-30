@@ -4749,6 +4749,12 @@ describe('parked-session snapshot over the shared factory', () => {
       ],
     });
     expect(target.describe?.()).not.toHaveProperty('stateDescription');
+    expect(target.unresolvedEffectEnvelopes?.()).toEqual([
+      {
+        kind: 'boundary',
+        boundaryId: currentLedger.boundaries[0]!.boundaryId,
+      },
+    ]);
     await expect(target.handleBossInput(turn('must stay parked'))).resolves
       .toMatchObject({ outcome: 'no-action', state: { stateId: 'ready' } });
     await expect(
@@ -4837,6 +4843,7 @@ describe('parked-session snapshot over the shared factory', () => {
       stateDescription: 'ready state',
       pendingQuestions: [],
     });
+    expect(readopted.unresolvedEffectEnvelopes?.()).toEqual([]);
     const reconciled = readopted.exportSnapshot?.();
     expect(reconciled).toMatchObject({
       effectLedger: currentLedger,
@@ -4869,6 +4876,12 @@ describe('parked-session snapshot over the shared factory', () => {
     );
 
     expect(adopted.describe?.()).not.toHaveProperty('stateDescription');
+    expect(adopted.unresolvedEffectEnvelopes?.()).toEqual([
+      {
+        kind: 'boundary',
+        boundaryId: currentLedger.boundaries[0]!.boundaryId,
+      },
+    ]);
     expect(adopted.exportSnapshot?.()).toMatchObject({
       effectLedger: currentLedger,
       retainedEffectReconciliation: {

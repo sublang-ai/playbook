@@ -189,6 +189,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
           exportSnapshot: () => snapshot,
           exportSettlement: () => ({
             snapshot,
+            unresolvedEffects: [],
             retentionUpdates: [
               {
                 kind: 'retain',
@@ -959,7 +960,11 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
         shell: {
           async installRetainedGenerations() {},
           exportSnapshot: () => snapshot,
-          exportSettlement: () => ({ snapshot, retentionUpdates: [] }),
+          exportSettlement: () => ({
+            snapshot,
+            unresolvedEffects: [],
+            retentionUpdates: [],
+          }),
         },
         snapshot,
       }),
@@ -1577,6 +1582,7 @@ async function seedRetainedSettled(
   await lease.settle({
     attemptId,
     snapshot,
+    unresolvedEffects: [],
     retentionUpdates: [
       {
         kind: 'retain',

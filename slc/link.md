@@ -55,6 +55,10 @@ interface PlaybookRuntime {
     result: PlaybookCallResult;
     signal: AbortSignal;
   }): Promise<PlaybookRunResult>;
+  unresolvedEffectEnvelopes?(): readonly (
+    | { readonly kind: 'boundary'; readonly boundaryId: string }
+    | { readonly kind: 'logical-operation'; readonly operationId: string }
+  )[];
   dispose(): Promise<void>;
 }
 
@@ -1883,6 +1887,12 @@ type PlaybookControlReceipt =
 // Optional PlaybookRuntime members — both or neither:
 describe?(): PlaybookControlView;
 apply?(input: { actionId: string; key: string; signal: AbortSignal }): Promise<PlaybookControlReceipt>;
+
+// Independent optional host-only unresolved-envelope identity seam:
+unresolvedEffectEnvelopes?(): readonly (
+  | { readonly kind: 'boundary'; readonly boundaryId: string }
+  | { readonly kind: 'logical-operation'; readonly operationId: string }
+)[];
 ```
 
 `describe()` shall be side-effect free — it emits no trace, status, or
@@ -1902,6 +1912,16 @@ runtime publishes the meaning rather than leaving the host to substitute the
 identifier for it. A state whose source declares no description carries no
 `stateDescription`: an id is never promoted into a description, so a host is
 never handed an identifier dressed as meaning.
+
+At that same safe control-capture point, a schema-3 runtime that retains
+effect-possible outcome-unresolved work may expose
+`unresolvedEffectEnvelopes()` so its host can project the authoritative effect
+ledger. The method shall return only exact nonblank durable boundary or
+logical-operation identities in envelope order, shall return an empty list
+when no unresolved envelope remains, and shall expose no receipt, repository
+observation, semantic evidence, prose, or live authority. It is side-effect
+free on the same terms as `describe()`, and no returned identity or bounded
+repository evidence shall enter `PlaybookRunResult`.
 
 The view's `context` is an explicit projection the linked runtime **authors**,
 never an allow-by-default serialization of the FSM context (PBRT-52).

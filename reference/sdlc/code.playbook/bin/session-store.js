@@ -32,7 +32,10 @@ import {
   isPlaybookEffectLedgerMonotonicExtension,
   snapshotJsonValue,
 } from '../../../../src/xstate-runtime.js';
-import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
+import {
+  assertPlaybookCaptainShellSnapshot,
+  assertPlaybookCaptainUnresolvedEffects,
+} from '../playbook-captain.js';
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 5;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
@@ -64,9 +67,10 @@ const COMMON_RECORD_KEYS = [
   'lastAppliedExecutionProjection',
   'snapshot',
   'effectLedger',
+  'unresolvedEffects',
 ];
 const LEGACY_COMMON_RECORD_KEYS = COMMON_RECORD_KEYS.filter(
-  (key) => key !== 'effectLedger',
+  (key) => key !== 'effectLedger' && key !== 'unresolvedEffects',
 );
 const UNCERTAIN_KEYS = [
   'baseUpdatedAt',
@@ -75,6 +79,11 @@ const UNCERTAIN_KEYS = [
   'attemptNumber',
   'markedAt',
   'attemptedExecutionProjection',
+];
+const UNCERTAIN_ABANDONMENT_KEYS = [
+  'phase',
+  'rootPlaybookId',
+  'unresolvedEffects',
 ];
 const RELEASED_SCHEMA_2_COMMON_RECORD_KEYS = [
   'schemaVersion',
@@ -832,6 +841,7 @@ function createLease({
       lastAppliedExecutionProjection: applied,
       snapshot: initial.snapshot,
       effectLedger: emptyPlaybookEffectLedger(),
+      unresolvedEffects: [],
       retainedGenerations: {},
     });
   };
@@ -1112,7 +1122,9 @@ function createLease({
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
         effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
         uncertain: {
           baseUpdatedAt: prior.updatedAt,
           input,
@@ -1140,6 +1152,11 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         expectedAttemptId,
       );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment must recover before retry',
+        );
+      }
       if (!Number.isSafeInteger(prior.uncertain.attemptNumber + 1)) {
         throw new Error('Captain session attempt number cannot be incremented');
       }
@@ -1157,7 +1174,9 @@ function createLease({
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
         effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
           input: prior.uncertain.input,
@@ -1174,16 +1193,360 @@ function createLease({
       return record;
     });
 
-  const settle = ({ attemptId, snapshot, retentionUpdates = [] } = {}) =>
+  const requireAbandonmentSettlement = (
+    abandonment,
+    unresolvedEffects,
+    retentionUpdates,
+    snapshot,
+    retainedGenerations,
+  ) => {
+    if (
+      !isDeepStrictEqual(
+        abandonment.unresolvedEffects,
+        unresolvedEffects,
+      )
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement differs from its durable unresolved effects',
+      );
+    }
+    if (
+      !retentionUpdates.some(
+        (update) =>
+          update.kind === 'clear' &&
+          update.rootPlaybookId === abandonment.rootPlaybookId,
+      ) ||
+      retentionUpdates.some(
+        (update) =>
+          update.kind !== 'clear' ||
+          (update.rootPlaybookId !== abandonment.rootPlaybookId &&
+            Object.hasOwn(retainedGenerations, update.rootPlaybookId)),
+      )
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement must clear its durable root without changing another retained generation',
+      );
+    }
+    if (
+      snapshot.mode !== 'chat' ||
+      snapshot.lastAction !== 'runtime' ||
+      snapshot.lastSettlementStatus !== 'ok'
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement requires a successful host-disposal snapshot',
+      );
+    }
+  };
+
+  const unresolvedEffectAbandonmentInput = (value) => {
+    const input = requireRecord(
+      snapshotJsonValue(value, 'Captain unresolved-effect abandonment'),
+      'Captain unresolved-effect abandonment',
+    );
+    rejectUnknownOrMissingKeys(
+      input,
+      ['rootPlaybookId', 'unresolvedEffects'],
+      'Captain unresolved-effect abandonment',
+    );
+    const rootPlaybookId = requireCanonicalNonblank(
+      input.rootPlaybookId,
+      'Captain unresolved-effect abandonment.rootPlaybookId',
+    );
+    const unresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+      input.unresolvedEffects,
+    );
+    if (unresolvedEffects.length === 0) {
+      throw new Error(
+        'Captain unresolved-effect abandonment requires nonempty unresolved effects',
+      );
+    }
+    return { rootPlaybookId, unresolvedEffects };
+  };
+
+  const beginUnresolvedEffectAbandonment = (value) =>
     runExclusive(async () => {
-      assertUuid(attemptId, 'Captain session attempt id');
-      const updates = validateRetainedGenerationUpdates(retentionUpdates);
+      const input = unresolvedEffectAbandonmentInput(value);
       await assertOwnerUnchecked();
       const prior = await requireUncertainRecord(
         await readRecord(sessionId, { missing: 'undefined' }),
-        attemptId,
       );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        const existing = prior.uncertain.abandonment;
+        if (
+          existing.phase === 'started' &&
+          existing.rootPlaybookId === input.rootPlaybookId &&
+          isDeepStrictEqual(existing.unresolvedEffects, input.unresolvedEffects)
+        ) {
+          await assertOwnerUnchecked();
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+          return prior;
+        }
+        throw new Error(
+          'Captain session unresolved-effect abandonment is already in progress',
+        );
+      }
+      if (
+        prior.snapshot.mode !== 'engaged.parked' ||
+        prior.snapshot.frames[0]?.playbookId !== input.rootPlaybookId
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment root does not match its durable engagement',
+        );
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        uncertain: {
+          ...prior.uncertain,
+          abandonment: {
+            phase: 'started',
+            rootPlaybookId: input.rootPlaybookId,
+            unresolvedEffects: input.unresolvedEffects,
+          },
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const completeUnresolvedEffectAbandonment = (value) =>
+    runExclusive(async () => {
+      const input = unresolvedEffectAbandonmentInput(value);
+      await assertOwnerUnchecked();
+      const prior = await requireUncertainRecord(
+        await readRecord(sessionId, { missing: 'undefined' }),
+      );
+      const abandonment = prior.uncertain.abandonment;
+      if (
+        abandonment === undefined ||
+        abandonment.rootPlaybookId !== input.rootPlaybookId ||
+        !isDeepStrictEqual(
+          abandonment.unresolvedEffects,
+          input.unresolvedEffects,
+        )
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment completion differs from its durable start',
+        );
+      }
+      if (abandonment.phase === 'disposed') {
+        await assertOwnerUnchecked();
+        await syncRecordDirectory();
+        await assertOwnerUnchecked();
+        return prior;
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        unresolvedEffects: input.unresolvedEffects,
+        retainedGenerations: applyRetainedGenerationUpdates(
+          prior.retainedGenerations ?? {},
+          [{ kind: 'clear', rootPlaybookId: input.rootPlaybookId }],
+          prior.structuralProjection,
+        ),
+        uncertain: {
+          ...prior.uncertain,
+          abandonment: {
+            phase: 'disposed',
+            rootPlaybookId: input.rootPlaybookId,
+            unresolvedEffects: input.unresolvedEffects,
+          },
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const recoverUnresolvedEffectAbandonment = () =>
+    runExclusive(async () => {
+      await assertOwnerUnchecked();
+      const prior = await readRecord(sessionId, { missing: 'undefined' });
+      if (
+        prior === undefined ||
+        prior.state !== 'uncertain' ||
+        !Object.hasOwn(prior.uncertain, 'abandonment')
+      ) {
+        await assertOwnerUnchecked();
+        if (
+          prior?.state === 'settled' &&
+          Object.hasOwn(prior, 'settledAbandonment')
+        ) {
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+        }
+        return prior;
+      }
+      const abandonment = prior.uncertain.abandonment;
+      const {
+        frames: _frames,
+        retainedEffectReconciliation: _retainedEffectReconciliation,
+        pendingBossQuestions: _pendingBossQuestions,
+        lastError: _lastError,
+        ...snapshotCommon
+      } = prior.snapshot;
+      const snapshot = assertPlaybookCaptainShellSnapshot({
+        ...snapshotCommon,
+        effectLedger: prior.effectLedger,
+        mode: 'chat',
+        lastAction: 'runtime',
+        lastSettlementStatus: 'ok',
+      });
+      const retainedGenerations = applyRetainedGenerationUpdates(
+        prior.retainedGenerations ?? {},
+        [{ kind: 'clear', rootPlaybookId: abandonment.rootPlaybookId }],
+        prior.structuralProjection,
+      );
+      const timestamp = nextTimestamp(now(), prior.updatedAt);
+      const record = validateCaptainSessionRecord({
+        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        kind: CAPTAIN_SESSION_RECORD_KIND,
+        state: 'settled',
+        sessionId,
+        createdAt: prior.createdAt,
+        updatedAt: timestamp,
+        cwd: prior.cwd,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.uncertain.attemptedExecutionProjection,
+        snapshot,
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: abandonment.unresolvedEffects,
+        retainedGenerations,
+        settledAbandonment: {
+          phase: 'recovered',
+          attemptId: prior.uncertain.attemptId,
+          rootPlaybookId: abandonment.rootPlaybookId,
+          unresolvedEffects: abandonment.unresolvedEffects,
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const settle = ({
+    attemptId,
+    snapshot,
+    unresolvedEffects,
+    retentionUpdates = [],
+  } = {}) =>
+    runExclusive(async () => {
+      assertUuid(attemptId, 'Captain session attempt id');
+      const updates = validateRetainedGenerationUpdates(retentionUpdates);
+      const settledUnresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+        unresolvedEffects,
+      );
+      await assertOwnerUnchecked();
+      const current = await readRecord(sessionId, { missing: 'undefined' });
+      const settledAbandonment =
+        current?.state === 'settled' &&
+        Object.hasOwn(current, 'settledAbandonment')
+          ? current.settledAbandonment
+          : undefined;
+      const prior =
+        settledAbandonment === undefined
+          ? await requireUncertainRecord(current, attemptId)
+          : undefined;
+      if (
+        settledAbandonment !== undefined &&
+        settledAbandonment.attemptId !== attemptId
+      ) {
+        throw new Error(
+          'Captain session abandonment settlement attempt differs from its durable marker',
+        );
+      }
       const settledSnapshot = assertPlaybookCaptainShellSnapshot(snapshot);
+      if (settledAbandonment !== undefined) {
+        requireAbandonmentSettlement(
+          settledAbandonment,
+          settledUnresolvedEffects,
+          updates,
+          settledSnapshot,
+          current.retainedGenerations ?? {},
+        );
+        if (
+          !isDeepStrictEqual(
+            settledSnapshot.effectLedger,
+            current.effectLedger,
+          )
+        ) {
+          throw new Error(
+            'Captain session settlement snapshot effect ledger differs from its durable ledger',
+          );
+        }
+        const retainedGenerations = applyRetainedGenerationUpdates(
+          current.retainedGenerations ?? {},
+          updates,
+          current.structuralProjection,
+        );
+        const settlementIsExact =
+          isDeepStrictEqual(current.snapshot, settledSnapshot) &&
+          isDeepStrictEqual(
+            current.unresolvedEffects,
+            settledUnresolvedEffects,
+          ) &&
+          isDeepStrictEqual(
+            current.retainedGenerations ?? {},
+            retainedGenerations,
+          );
+        if (
+          settledAbandonment.phase === 'final' &&
+          settlementIsExact
+        ) {
+          await assertOwnerUnchecked();
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+          return current;
+        }
+        if (settledAbandonment.phase === 'final') {
+          throw new Error(
+            'Captain session abandonment settlement differs from its finalized durable record',
+          );
+        }
+        const record = validateCaptainSessionRecord({
+          schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+          kind: CAPTAIN_SESSION_RECORD_KIND,
+          state: 'settled',
+          sessionId,
+          createdAt: current.createdAt,
+          updatedAt: nextTimestamp(now(), current.updatedAt),
+          cwd: current.cwd,
+          structuralProjection: current.structuralProjection,
+          lastAppliedExecutionProjection:
+            current.lastAppliedExecutionProjection,
+          snapshot: settledSnapshot,
+          effectLedger: current.effectLedger,
+          unresolvedEffects: settledUnresolvedEffects,
+          retainedGenerations,
+          settledAbandonment: {
+            ...settledAbandonment,
+            phase: 'final',
+          },
+        });
+        await assertOwnerUnchecked();
+        await writeRecord(record, { noReplace: false });
+        await assertOwnerUnchecked();
+        return record;
+      }
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        const abandonment = prior.uncertain.abandonment;
+        if (abandonment.phase !== 'disposed') {
+          throw new Error(
+            'Captain session unresolved-effect abandonment has not completed disposal',
+          );
+        }
+        requireAbandonmentSettlement(
+          abandonment,
+          settledUnresolvedEffects,
+          updates,
+          settledSnapshot,
+          prior.retainedGenerations ?? {},
+        );
+      }
       if (!isDeepStrictEqual(settledSnapshot.effectLedger, prior.effectLedger)) {
         throw new Error(
           'Captain session settlement snapshot effect ledger differs from its durable ledger',
@@ -1203,11 +1566,24 @@ function createLease({
           prior.uncertain.attemptedExecutionProjection,
         snapshot: settledSnapshot,
         effectLedger: prior.effectLedger,
+        unresolvedEffects: settledUnresolvedEffects,
         retainedGenerations: applyRetainedGenerationUpdates(
           prior.retainedGenerations ?? {},
           updates,
           prior.structuralProjection,
         ),
+        ...(Object.hasOwn(prior.uncertain, 'abandonment')
+          ? {
+              settledAbandonment: {
+                phase: 'final',
+                attemptId: prior.uncertain.attemptId,
+                rootPlaybookId:
+                  prior.uncertain.abandonment.rootPlaybookId,
+                unresolvedEffects:
+                  prior.uncertain.abandonment.unresolvedEffects,
+              },
+            }
+          : {}),
       });
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: false });
@@ -1225,7 +1601,8 @@ function createLease({
       const settledRecovery =
         prior.state === 'settled' &&
         prior.snapshot.mode === 'chat' &&
-        Object.keys(prior.retainedGenerations ?? {}).length > 0;
+        (Object.keys(prior.retainedGenerations ?? {}).length > 0 ||
+          prior.unresolvedEffects.length > 0);
       if (prior.state !== 'uncertain' && !settledRecovery) {
         throw new Error(
           'Captain session effect-ledger write-ahead requires an uncertain turn or a settled chat recovery boundary',
@@ -1292,6 +1669,11 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         attemptId,
       );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment must recover before discard',
+        );
+      }
       if (!isDeepStrictEqual(prior.effectLedger, prior.snapshot.effectLedger)) {
         throw new Error(
           'Captain session uncertain effect ledger differs from its pre-turn checkpoint and cannot be discarded',
@@ -1318,7 +1700,9 @@ function createLease({
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
         effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
       });
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
@@ -1340,6 +1724,9 @@ function createLease({
     abandonFreshSettled,
     beginTurn,
     beginRetry,
+    beginUnresolvedEffectAbandonment,
+    completeUnresolvedEffectAbandonment,
+    recoverUnresolvedEffectAbandonment,
     writeEffectLedger,
     settle,
     discard,
@@ -1481,7 +1868,7 @@ function validateCanonicalCaptainSessionRecord(record) {
     record.state === 'uncertain'
       ? [...COMMON_RECORD_KEYS, 'uncertain']
       : COMMON_RECORD_KEYS,
-    ['retainedGenerations'],
+    ['retainedGenerations', 'settledAbandonment'],
     'Captain session record',
   );
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
@@ -1524,6 +1911,10 @@ function validateCanonicalCaptainSessionRecord(record) {
     record.effectLedger,
     'Captain session record effectLedger',
   );
+  const unresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+    record.unresolvedEffects,
+  );
+  void unresolvedEffects;
   assertEffectLedgerMatchesCatalog(effectLedger, structural.catalog);
   if (record.state === 'settled') {
     if (!isDeepStrictEqual(effectLedger, snapshot.effectLedger)) {
@@ -1562,9 +1953,10 @@ function validateCanonicalCaptainSessionRecord(record) {
       record.uncertain,
       'Captain session record uncertain',
     );
-    rejectUnknownOrMissingKeys(
+    exactOptionalKeys(
       uncertain,
       UNCERTAIN_KEYS,
+      ['abandonment'],
       'Captain session record uncertain',
     );
     if (uncertain.baseUpdatedAt !== null) {
@@ -1652,6 +2044,112 @@ function validateCanonicalCaptainSessionRecord(record) {
         'fresh Captain session record snapshot',
       );
     }
+    if (Object.hasOwn(uncertain, 'abandonment')) {
+      const abandonment = requireRecord(
+        uncertain.abandonment,
+        'Captain session record uncertain.abandonment',
+      );
+      rejectUnknownOrMissingKeys(
+        abandonment,
+        UNCERTAIN_ABANDONMENT_KEYS,
+        'Captain session record uncertain.abandonment',
+      );
+      if (abandonment.phase !== 'started' && abandonment.phase !== 'disposed') {
+        throw new Error(
+          'Captain session record uncertain.abandonment.phase must be "started" or "disposed"',
+        );
+      }
+      const rootPlaybookId = requireCanonicalNonblank(
+        abandonment.rootPlaybookId,
+        'Captain session record uncertain.abandonment.rootPlaybookId',
+      );
+      if (!Object.hasOwn(structural.catalog, rootPlaybookId)) {
+        throw new Error(
+          `Captain session unresolved-effect abandonment names unknown stored playbook ${JSON.stringify(rootPlaybookId)}`,
+        );
+      }
+      if (
+        snapshot.mode !== 'engaged.parked' ||
+        snapshot.frames[0]?.playbookId !== rootPlaybookId
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment root differs from its durable engagement',
+        );
+      }
+      const abandonmentEffects = assertPlaybookCaptainUnresolvedEffects(
+        abandonment.unresolvedEffects,
+      );
+      if (abandonmentEffects.length === 0) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment requires nonempty unresolved effects',
+        );
+      }
+      if (abandonment.phase === 'disposed') {
+        if (!isDeepStrictEqual(unresolvedEffects, abandonmentEffects)) {
+          throw new Error(
+            'Captain session disposed abandonment unresolved effects differ from the record settlement evidence',
+          );
+        }
+        if (Object.hasOwn(record.retainedGenerations ?? {}, rootPlaybookId)) {
+          throw new Error(
+            'Captain session disposed abandonment retained its cleared root generation',
+          );
+        }
+      }
+    }
+  }
+  if (Object.hasOwn(record, 'settledAbandonment')) {
+    const settledAbandonment = requireRecord(
+      record.settledAbandonment,
+      'Captain session record settledAbandonment',
+    );
+    rejectUnknownOrMissingKeys(
+      settledAbandonment,
+      ['phase', 'attemptId', 'rootPlaybookId', 'unresolvedEffects'],
+      'Captain session record settledAbandonment',
+    );
+    if (
+      settledAbandonment.phase !== 'recovered' &&
+      settledAbandonment.phase !== 'final'
+    ) {
+      throw new Error(
+        'Captain session record settledAbandonment.phase must be "recovered" or "final"',
+      );
+    }
+    assertUuid(
+      settledAbandonment.attemptId,
+      'Captain session record settledAbandonment.attemptId',
+    );
+    const rootPlaybookId = requireCanonicalNonblank(
+      settledAbandonment.rootPlaybookId,
+      'Captain session record settledAbandonment.rootPlaybookId',
+    );
+    if (!Object.hasOwn(structural.catalog, rootPlaybookId)) {
+      throw new Error(
+        `Captain session recovered unresolved-effect abandonment names unknown stored playbook ${JSON.stringify(rootPlaybookId)}`,
+      );
+    }
+    const settledEffects = assertPlaybookCaptainUnresolvedEffects(
+      settledAbandonment.unresolvedEffects,
+    );
+    if (
+      settledEffects.length === 0 ||
+      !isDeepStrictEqual(unresolvedEffects, settledEffects)
+    ) {
+      throw new Error(
+        'Captain session settled unresolved-effect abandonment must preserve its nonempty settlement evidence',
+      );
+    }
+    if (
+      snapshot.mode !== 'chat' ||
+      snapshot.lastAction !== 'runtime' ||
+      snapshot.lastSettlementStatus !== 'ok' ||
+      Object.hasOwn(record.retainedGenerations ?? {}, rootPlaybookId)
+    ) {
+      throw new Error(
+        'Captain session settled unresolved-effect abandonment must carry a successful host-disposal chat snapshot with its root generation cleared',
+      );
+    }
   }
 
   return record;
@@ -1688,6 +2186,7 @@ function migratePreEffectCaptainSessionRecord(record) {
     schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
     snapshot: migratePreEffectShellSnapshot(record.snapshot, effectLedger),
     effectLedger,
+    unresolvedEffects: [],
     ...(Object.hasOwn(record, 'retainedGenerations')
       ? {
           retainedGenerations: migratePreEffectRetainedGenerations(
@@ -3135,6 +3634,12 @@ function retainedGenerationsMember(record) {
     : {};
 }
 
+function settledAbandonmentMember(record) {
+  return Object.hasOwn(record, 'settledAbandonment')
+    ? { settledAbandonment: record.settledAbandonment }
+    : {};
+}
+
 function sortCaptainSessionRecords(records) {
   return [...records].sort((left, right) => {
     const byUpdated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
@@ -3243,7 +3748,11 @@ function settledRecordWithRetainedGenerations(
       ? record.snapshot
       : { ...record.snapshot, effectLedger },
     effectLedger,
+    unresolvedEffects: record.unresolvedEffects,
     retainedGenerations,
+    ...(Object.hasOwn(record, 'settledAbandonment')
+      ? { settledAbandonment: record.settledAbandonment }
+      : {}),
   });
 }
 
@@ -3606,7 +4115,10 @@ async function requireUncertainRecord(record, attemptId) {
   if (record.state !== 'uncertain') {
     throw new Error('Captain session has no uncertain turn');
   }
-  if (record.uncertain.attemptId !== attemptId) {
+  if (
+    attemptId !== undefined &&
+    record.uncertain.attemptId !== attemptId
+  ) {
     throw new Error('Captain session uncertain attempt id changed');
   }
   return record;

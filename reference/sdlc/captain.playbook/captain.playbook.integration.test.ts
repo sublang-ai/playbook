@@ -4985,7 +4985,8 @@ describe('Captain reply presentation and effect attribution by construction', ()
   it('passes exactly one named effect operation to each effect boundary', () => {
     // The operations CAPTAIN-35 names: the sub-runtime driven (either
     // entry point) or adopted, the engagement constructed, the stack
-    // disposed, the advertised action applied.
+    // disposed, the advertised action applied, or the unresolved-effect
+    // settlement durably begun or completed.
     const EFFECT_OPERATIONS = [
       'frame.runtime.handleBossInput',
       'parent.runtime.resumePlaybookCall',
@@ -4993,6 +4994,8 @@ describe('Captain reply presentation and effect attribution by construction', ()
       'leaf.runtime.apply!',
       'engage',
       'disposeStack',
+      'unresolvedEffectSettlement.begin',
+      'unresolvedEffectSettlement.complete',
     ];
     const operands: string[] = [];
     for (let index = shellSource.indexOf('runEffect(');

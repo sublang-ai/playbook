@@ -347,6 +347,19 @@ export interface PlaybookRuntime {
     adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot, context: PlaybookAdoptionContext): Promise<void>;
     readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
     describe?(): PlaybookControlView;
+    /**
+     * Host-only identities of the durable envelopes that still require
+     * unresolved-effect settlement. The host owns their bounded projection
+     * from its authoritative effect ledger; no repository evidence enters a
+     * runtime-owned run result.
+     */
+    unresolvedEffectEnvelopes?(): readonly ({
+        readonly kind: 'boundary';
+        readonly boundaryId: string;
+    } | {
+        readonly kind: 'logical-operation';
+        readonly operationId: string;
+    })[];
     apply?(input: {
         actionId: string;
         key: string;

@@ -167,7 +167,10 @@ export async function runPlaybookRun(options = {}) {
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
       throwIfAborted(options.signal);
-      const authoritative = await lease.read();
+      const authoritative =
+        typeof lease.recoverUnresolvedEffectAbandonment === 'function'
+          ? await lease.recoverUnresolvedEffectAbandonment()
+          : await lease.read();
       throwIfAborted(options.signal);
       if (authoritative === undefined) {
         throw new Error(
@@ -581,6 +584,7 @@ export async function runPlaybookRun(options = {}) {
     durableRecord = await lease.settle({
       attemptId: settled.uncertainRecord.uncertain.attemptId,
       snapshot: settled.snapshot,
+      unresolvedEffects: settled.unresolvedEffects,
       retentionUpdates: settled.retentionUpdates,
     });
   } catch (error) {
@@ -754,7 +758,7 @@ export async function driveHeadlessCaptainTurn({
     if (settlement === undefined) {
       throw new Error('Captain turn settled without an exportable session settlement');
     }
-    const { snapshot, retentionUpdates } = settlement;
+    const { snapshot, unresolvedEffects, retentionUpdates } = settlement;
     if (
       snapshot.captain?.sessionId === sessionId ||
       snapshot.issuedSessionIds?.includes(sessionId)
@@ -767,6 +771,7 @@ export async function driveHeadlessCaptainTurn({
       sessionId,
       reply: replies[0],
       snapshot,
+      unresolvedEffects,
       retentionUpdates,
       config: cloneJson(config),
       cwd,
@@ -996,6 +1001,12 @@ export async function createCaptainSessionHost({
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
     hostCapabilities,
+    unresolvedEffectSettlement: {
+      begin: (input) =>
+        sessionLease.beginUnresolvedEffectAbandonment(input),
+      complete: (input) =>
+        sessionLease.completeUnresolvedEffectAbandonment(input),
+    },
     ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
     ...(createCaptainSessionId
       ? { createSessionId: createCaptainSessionId }
