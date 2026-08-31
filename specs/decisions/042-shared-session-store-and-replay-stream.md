@@ -67,23 +67,16 @@ Where the CLI shell's explicit role binding supplies a player id, the Playbook w
 A checked-in cross-repository fixture pins the format, so both repositories read one file rather than two readings of one prose description.
 Fixture compatibility is semantic equality of parsed envelopes: JSON object member order and the fixture's source-checkout mode are not ABI data, while a fixture materialized as a live stream must satisfy the privacy boundary.
 
-### 4. Lease-bound appends that latch and stop
+### 4. Capability-scoped reads and lease-bound appends
 
-A lease-free stream read shall validate a fresh filesystem snapshot on every call and return the complete readable prefix or its requested incremental suffix with the last readable sequence of the whole prefix, or `0` when absent or empty; it shall report no durable sequence or incomplete state because another process's content synchronization and live latch are not observable.
-After the canonical store has acquired a valid exclusive session lease, the replay writer shall rescan and validate the complete retained prefix, seed both its last readable and last durable sequence from that prefix's final sequence or `0`, and begin with `incomplete: false`; a resumed writer continues one past that readable sequence even when its store previously followed the stream without a lease.
-If that replay-only initialization cannot validate the stream file boundary or complete prefix, the canonical lease shall remain usable while the replay writer enters the live status `{lastReadableSeq: null, lastDurableSeq: null, incomplete: true}`, performs no replay append or checkpoint, leaves the stream byte-identical, and preserves strict stream-read rejection rather than returning partial history.
-The two sequence fields are numeric after successful initialization and are null together only in that unavailable initialization state.
-Appending is offered only through the session lease, an unavailable writer suppresses it, and an initialized writer awaits appends in record order.
-When first publishing the stream pathname, the writer shall synchronize the containing directory before accepting the first append.
-Each completed append advances the last readable sequence but not the last durable sequence, and the writer shall synchronize accumulated completed lines as one content checkpoint after each successful private session-record settlement and before a normal lease release returns; only a successful checkpoint advances the last durable sequence to the last readable sequence.
-Repairing a torn final line is lawful only while holding the lease; a lease-free reader returns the complete newline-terminated prefix, mutates nothing, and leaves the file byte-identical.
-Record I/O shall not kill an agent turn, because a throwing observer poisons the record dispatcher, but silently truncated history shall not be presented as complete.
-When replay initialization, an append, or a checkpoint fails, the writer shall therefore retain or set the corresponding live incomplete state and stop appending for the remainder of the session, while neither failing nor undoing the agent turn, a successful private session-record settlement, or an otherwise valid lease release.
-After successful initialization, an append or checkpoint failure shall leave the numeric last durable sequence unchanged and keep the readable content a clean contiguous prefix.
-Where an append or content-checkpoint failure leaves complete visible lines beyond that durable sequence, the writer shall not roll them back; the live reader derives its last readable sequence from the actual complete prefix without repair.
-Every successful lease-bound stream read shall return the complete readable prefix or its requested incremental suffix together with the writer's numeric last readable sequence, last durable sequence, and incomplete state, so a latched read exposes all intact requested history while declaring that history incomplete rather than hiding it or presenting it as complete; a lease whose replay initialization failed shall retain strict read rejection and expose only its unavailable live status.
-A normal release shall return the final status after any applicable checkpoint attempt.
-The latch is live state and is not durable, so each newly acquired lease rescans the actual complete retained prefix; where it validates, the lease seeds both numeric sequence boundaries from it, reports no inherited latch, and resumes one past its last readable sequence, while an unchanged invalid stream independently produces the unavailable status again.
+A lease-free stream read shall pin one filesystem snapshot per call and report only the readable boundary it actually validates, because another process's content synchronization and live latch are not observable.
+Continuous monotonic following shall validate work proportional to the newly completed suffix without mixing file generations or treating a torn tail as validated; it shall neither mutate nor repair the stream.
+After the canonical store acquires a valid exclusive session lease, its replay writer shall independently rescan the retained prefix and establish live readable, durable, and incomplete state.
+Failure to initialize that replay-only writer shall disable replay without invalidating the canonical lease or weakening strict reads; failure of the underlying private-directory, ownership, or independently requested manifest-read boundary remains fail-closed.
+A successfully initialized, unlatched writer shall await lease-bound appends in order, synchronize the directory when first publishing the stream pathname, advance readability on completed appends, and advance durability only at batched content checkpoints after private session-record settlement and before normal release.
+Replay initialization, sanitization, append, publication, or checkpoint failure shall latch and stop replay for that lease without failing or undoing the agent turn, successful private settlement, or otherwise valid release; intact complete lines remain readable and are not rolled back, while the live status declares the incomplete history.
+Each CLI front end shall signal the first such incomplete transition with one bounded best-effort stderr warning per acquired writer lease, outside replay and presentation; the facade itself remains silent and exposes the live status to its caller.
+The latch is not durable, so each successor lease reconstructs state from the filesystem; a CLI front end warns anew if its successor lease encounters the persistent defect, and only a lease holder may repair a torn final line.
 
 ### 5. A `sessions` bootstrap locator
 
@@ -105,7 +98,6 @@ The key shall never enter a persisted structural or execution projection, and be
 ### 6. Preserved scope and deferrals
 
 - Lease acquisition and retirement are unchanged: per-session single writer, lease-free reads, and foreign-host leases never broken. This decision routes appends through that lease rather than altering it.
-- Replay-writer initialization failure is isolated only after the canonical store and lease have satisfied their existing private-directory and ownership boundary; failure of that underlying boundary or of an independently requested manifest read still fails closed, but manifest existence is not a prerequisite for replay isolation.
 - The public facade gains no explicit checkpoint operation: private session-record settlement and public lease release remain the two content-checkpoint boundaries, while separate readable and durable sequences keep intermediate status meaningful.
 - The agent-runtime client library needs no change; the tee rides its existing record-observer contract.
 - Stream retention and deletion are deferred: streams are unbounded in this first version, and retention rides the already-deferred session-deletion decision.
