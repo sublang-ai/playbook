@@ -24,7 +24,7 @@ The dependent host already writes the stream's content shape, but its current de
 ### 1. One shared home
 
 The sessions directory is the one home for canonical Playbook session manifests, replay streams, and host-owned sidecars, and the per-session `<sessionId>.json` record remains the only Playbook manifest and the basis for Playbook and facade listing.
-A host honoring this contract can list and read a canonical Playbook session and append and replay its stream; a host-only sidecar or stream does not create a listable Playbook session because manifest creation and the Playbook lifecycle remain private.
+A host honoring this contract can list and read a validated token-free summary of a canonical Playbook session and append and replay its stream; a host-only sidecar or stream does not create a listable Playbook session because manifest creation and the Playbook lifecycle remain private.
 Each host keeps its own additional sidecar files in that directory, and a host shall ignore files it does not own rather than adopt or delete them.
 
 ### 2. A narrow public facade
@@ -34,11 +34,13 @@ A deliberate facade module shall be published at a semver-stable subpath and sha
 | Subject | Surface |
 | --- | --- |
 | Module | the default sessions directory, a store opener accepting an explicit directory, and the records-stream version constant |
-| Store | its resolved directory, session listing, session-record reading, lease-free stream reading, and lease acquisition |
-| Lease | its session id and owner token, record appending, stream reading, stream status, and release |
+| Store | its resolved directory, validated token-free session-summary listing and reading, lease-free stream reading, and lease acquisition |
+| Session summary | exactly the validated manifest's numeric schema version, session id, settled-or-uncertain state, absolute working directory, and update timestamp; never its snapshot, continuation credentials, projections, ledger, recovery data, or retained generations |
+| Lease | its session id and owner token, record appending, stream reading, stream status, and release returning the final stream status |
 
 Validators, staging, publication, retirement, effect-ledger writing, and every turn-lifecycle operation — beginning a turn, settling, and discarding — shall stay unexported behind it.
 The published lease is therefore a narrower handle than the internal one, because exposing the turn lifecycle would freeze the whole session lifecycle as public contract.
+The facade shall validate a canonical manifest through the private reader and then return only a detached frozen session summary, so neither the credential-bearing manifest nor its evolving internal schema shape becomes reachable through the public capability.
 The facade and both front ends shall use the same private store implementation and validators, so an external consumer's validation is the CLI's own validation by construction rather than by resemblance; the front ends retain their richer private leases, and the facade is not their exclusive access path.
 A record below the current schema shall be rejected rather than migrated, consistent with this project's hard-cutover posture.
 
@@ -67,15 +69,17 @@ Fixture compatibility is semantic equality of parsed envelopes: JSON object memb
 
 ### 4. Lease-bound appends that latch and stop
 
-Appending is offered only through an acquired session lease, appends are awaited in record order, and a resumed lease continues one past the last complete sequence the stream retained.
+When a store instance first opens one session's replay stream and validates its complete retained prefix, that prefix's final sequence seeds both the last readable and last durable sequence, or both are `0` when the stream is absent or empty; a resumed lease continues one past that readable sequence.
+Appending is offered only through an acquired session lease, and appends are awaited in record order.
 When first publishing the stream pathname, the writer shall synchronize the containing directory before accepting the first append.
-Completed lines accumulate in order, and the writer shall synchronize them as one content checkpoint after each successful private session-record settlement and before a normal lease release returns; only that checkpoint advances the last durable sequence.
-Repairing a torn final line is lawful only while holding the lease; a lease-free reader mutates nothing and leaves the file byte-identical, and absent that store instance's live latch returns the newline-terminated prefix.
+Each completed append advances the last readable sequence but not the last durable sequence, and the writer shall synchronize accumulated completed lines as one content checkpoint after each successful private session-record settlement and before a normal lease release returns; only a successful checkpoint advances the last durable sequence to the last readable sequence.
+Repairing a torn final line is lawful only while holding the lease; a lease-free reader returns the complete newline-terminated prefix, mutates nothing, and leaves the file byte-identical.
 Record I/O shall not kill an agent turn, because a throwing observer poisons the record dispatcher, but silently truncated history shall not be presented as complete.
-When an append or checkpoint fails, the writer shall therefore latch the stream incomplete at the last durable sequence and stop appending for the remainder of the session, keeping its readable content a clean contiguous prefix, while neither failing nor undoing the agent turn, a successful private session-record settlement, or an otherwise valid lease release.
-Where an append or content-checkpoint failure leaves complete visible lines beyond that durable sequence, the writer shall not roll them back; a successor accepts whichever complete prefix the filesystem retained and resumes one past its last sequence.
-After latching, that store instance's stream reader returns records only through its reported last durable sequence and reports the incomplete condition, while leaving later complete bytes untouched, so an incremental reader can resume from that exact returned boundary.
-The latch is live state and is not durable, so a newly opened store scans the actual complete retained prefix, reports no inherited latch, and may reveal complete lines the latching instance withheld.
+When an append or checkpoint fails, the writer shall therefore set the live incomplete latch without advancing the last durable sequence and stop appending for the remainder of the session, keeping its readable content a clean contiguous prefix, while neither failing nor undoing the agent turn, a successful private session-record settlement, or an otherwise valid lease release.
+Where an append or content-checkpoint failure leaves complete visible lines beyond that durable sequence, the writer shall not roll them back; the live reader derives its last readable sequence from the actual complete prefix without repair.
+Every stream read shall return the complete readable prefix or its requested incremental suffix together with the stream's last readable sequence, last durable sequence, and incomplete state, and stream status shall report those same three values, so a latched read exposes all intact requested history while declaring that history incomplete rather than hiding it or presenting it as complete.
+A normal release shall return the final status after its checkpoint attempt, and a successor shall accept whichever complete prefix the filesystem retained and resume one past its last readable sequence.
+The latch is live state and is not durable, so a newly opened store seeds both sequence boundaries from that actual complete retained prefix and reports no inherited latch.
 
 ### 5. A `sessions` bootstrap locator
 
@@ -97,6 +101,7 @@ The key shall never enter a persisted structural or execution projection, and be
 ### 6. Preserved scope and deferrals
 
 - Lease acquisition and retirement are unchanged: per-session single writer, lease-free reads, and foreign-host leases never broken. This decision routes appends through that lease rather than altering it.
+- The public facade gains no explicit checkpoint operation: private session-record settlement and public lease release remain the two content-checkpoint boundaries, while separate readable and durable sequences keep intermediate status meaningful.
 - The agent-runtime client library needs no change; the tee rides its existing record-observer contract.
 - Stream retention and deletion are deferred: streams are unbounded in this first version, and retention rides the already-deferred session-deletion decision.
 - A durable incompleteness latch is deferred as a queued rider: the next session-record schema bump that happens for any independent reason shall carry a durable `recordsStream.incompleteAfterSeq` member, so the latch lands at zero marginal cost rather than spending a schema bump of its own. A genuinely cross-host proof additionally requires the dependent host to read this shared record, which is that repository's adoption work and is not decided here — our member alone is not the symmetric solution.
@@ -109,7 +114,7 @@ Every change above ships in one release, so the dependent host pins its floor to
 
 - One directory holds canonical Playbook manifests, shared streams, and host sidecars; the Playbook manifest governs Playbook listing and resumption, while sidecar-only sessions remain discoverable only by their owning host.
 - The published surface is deliberately smaller than the module behind it, so internals stay changeable while the facade carries the semver obligation.
-- The stream cannot leak a conversation credential even though it carries hidden prompts and tool I/O, because the projection is written token-free rather than filtered on read.
+- Neither public projection can leak a conversation credential: the stream is written token-free rather than filtered on read, and the session summary never exposes the credential-bearing manifest.
 - Incompleteness is a mutual blind spot, stated rather than smoothed over: each host latches only in its own live store or process, so a truncated stream is indistinguishable from a normally-ended one to any reader that did not observe the failing process. Under this decision that limit is ours; it is already the dependent host's limit toward us.
 - The frozen content ABI matches what the dependent host writes modulo immaterial JSON member order, while its privacy modes and strict reader remain explicit adoption work and the shared fixture prevents later content drift.
 - Freezing the format and surface makes both a release event: changing either is a recorded decision and a SemVer obligation, not a refactor.
