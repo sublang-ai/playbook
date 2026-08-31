@@ -37,14 +37,16 @@ import {
   assertPlaybookCaptainUnresolvedEffects,
 } from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 5;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
 const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 // The interrupted retention change emitted this required-member shape before
-// canonical writes returned to additive schema 3. Both pre-effect shapes are
-// projected in memory only far enough to validate malformed data before the
-// artifact-schema-3 cutover classifies them as nonresumable.
+// canonical writes returned to additive schema 3. Both pre-effect shapes and
+// the pre-unresolved-effects schema-5 shape are projected in memory only far
+// enough to validate malformed data before the effect-authority cutover
+// classifies them as nonresumable.
 const COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION = 4;
+const PRE_UNRESOLVED_EFFECTS_RECORD_SCHEMA_VERSION = 5;
 const CURRENT_ARTIFACT_SCHEMAS = new Set([3]);
 const PRE_EFFECT_ARTIFACT_SCHEMAS = new Set([2, 3]);
 export const SESSION_ID_PATTERN =
@@ -363,24 +365,37 @@ export function createCaptainSessionStore(options = {}) {
     );
   };
 
-  const selectAdoptionPredecessor = async (
+  const scanAdoptionPredecessor = async (
     target,
     { onLegacyRecord, onInvalidRecord } = {},
-  ) =>
-    sortCaptainSessionRecords(
-      (
-        await listRecords({
-          onLegacyRecord,
-          onInvalidRecord,
-          skipInvalidRecords: true,
-        })
-      ).filter(
+  ) => {
+    let orderingUnproved = false;
+    const observeSkipped = (observer) => async (record) => {
+      orderingUnproved = true;
+      await observer?.(record);
+    };
+    const records = await listRecords({
+      onLegacyRecord: observeSkipped(onLegacyRecord),
+      onInvalidRecord: observeSkipped(onInvalidRecord),
+      skipInvalidRecords: true,
+    });
+    const candidates = sortCaptainSessionRecords(
+      records.filter(
         (candidate) =>
           candidate.sessionId !== target.sessionId &&
           candidate.state === 'settled' &&
           candidate.cwd === target.cwd,
-      ),
-    )[0];
+        ),
+    );
+    // A skipped store-owned record cannot prove its place in the same-cwd
+    // predecessor order. Decline adoption rather than offering older work;
+    // the newest valid candidate still floors the intentional empty boundary.
+    return {
+      candidate: orderingUnproved ? undefined : candidates[0],
+      newestValidUpdatedAt: candidates[0]?.updatedAt,
+      orderingUnproved,
+    };
+  };
 
   const writeRecord = async (
     recordValue,
@@ -757,7 +772,7 @@ export function createCaptainSessionStore(options = {}) {
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
-        selectAdoptionPredecessor,
+        scanAdoptionPredecessor,
         acquireSession: acquire,
         readLeaseOwner,
         retireObservedLease,
@@ -801,7 +816,7 @@ function createLease({
   writeRecord,
   syncRecordDirectory,
   deleteRecord,
-  selectAdoptionPredecessor,
+  scanAdoptionPredecessor,
   acquireSession,
   readLeaseOwner,
   retireObservedLease,
@@ -880,6 +895,21 @@ function createLease({
       unresolvedEffects: [],
       retainedGenerations: {},
     });
+  };
+
+  const laterTimestamp = (left, right) =>
+    right !== undefined && Date.parse(right) > Date.parse(left) ? right : left;
+
+  const emptyFreshTargetAfter = (target, predecessorUpdatedAt) => {
+    if (predecessorUpdatedAt === undefined) return target;
+    return settledRecordWithRetainedGenerations(
+      target,
+      {},
+      nextTimestamp(
+        now(),
+        laterTimestamp(target.updatedAt, predecessorUpdatedAt),
+      ),
+    );
   };
 
   const publishEmptyFreshTarget = async (target) => {
@@ -965,10 +995,20 @@ function createLease({
           'invalid-record',
         ),
       };
-      const selected = await selectAdoptionPredecessor(
+      const initialScan = await scanAdoptionPredecessor(
         target,
         predecessorScanOptions,
       );
+      if (initialScan.orderingUnproved) {
+        const emptyTarget = emptyFreshTargetAfter(
+          target,
+          initialScan.newestValidUpdatedAt,
+        );
+        await publishEmptyFreshTarget(emptyTarget);
+        await assertOwnerUnchecked();
+        return emptyTarget;
+      }
+      const selected = initialScan.candidate;
       if (selected === undefined) {
         await publishEmptyFreshTarget(target);
         await assertOwnerUnchecked();
@@ -980,17 +1020,16 @@ function createLease({
         async (sourceLease) => {
           const source = await sourceLease.read();
           if (source === undefined) {
-            const current = await selectAdoptionPredecessor(
+            const currentScan = await scanAdoptionPredecessor(
               target,
               predecessorScanOptions,
             );
             return {
               kind: 'declined',
-              predecessorUpdatedAt:
-                current !== undefined &&
-                Date.parse(current.updatedAt) > Date.parse(selected.updatedAt)
-                  ? current.updatedAt
-                  : selected.updatedAt,
+              predecessorUpdatedAt: laterTimestamp(
+                selected.updatedAt,
+                currentScan.newestValidUpdatedAt,
+              ),
             };
           }
           await assertOwnerUnchecked();
@@ -1000,18 +1039,17 @@ function createLease({
           ) {
             throw new Error('Captain session adoption target changed');
           }
-          const current = await selectAdoptionPredecessor(
+          const currentScan = await scanAdoptionPredecessor(
             target,
             predecessorScanOptions,
           );
-          if (current?.sessionId !== source.sessionId) {
+          if (currentScan.candidate?.sessionId !== source.sessionId) {
             return {
               kind: 'declined',
-              predecessorUpdatedAt:
-                current !== undefined &&
-                Date.parse(current.updatedAt) > Date.parse(source.updatedAt)
-                  ? current.updatedAt
-                  : source.updatedAt,
+              predecessorUpdatedAt: laterTimestamp(
+                source.updatedAt,
+                currentScan.newestValidUpdatedAt,
+              ),
             };
           }
 
@@ -1123,15 +1161,9 @@ function createLease({
       ) {
         throw new Error('Captain session adoption target changed');
       }
-      const timestampFloor =
-        Date.parse(target.updatedAt) >
-        Date.parse(result.predecessorUpdatedAt)
-          ? target.updatedAt
-          : result.predecessorUpdatedAt;
-      const emptyTarget = settledRecordWithRetainedGenerations(
+      const emptyTarget = emptyFreshTargetAfter(
         target,
-        {},
-        nextTimestamp(now(), timestampFloor),
+        result.predecessorUpdatedAt,
       );
       await publishEmptyFreshTarget(emptyTarget);
       await assertOwnerUnchecked();
@@ -1967,7 +1999,7 @@ export function validateCaptainSessionRecord(value) {
     assertReleasedSchema2CaptainSessionRecord(record);
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
-      'Captain session record schema 2 has incompatible root-owned player identity; schema 5 is required',
+      'Captain session record schema 2 has incompatible root-owned player identity; schema 6 is required',
     );
   }
   if (
@@ -1984,16 +2016,33 @@ export function validateCaptainSessionRecord(value) {
     );
   }
   if (
-    record.schemaVersion === CAPTAIN_SESSION_RECORD_SCHEMA_VERSION &&
-    !Object.hasOwn(record, 'unresolvedEffects')
+    record.schemaVersion === PRE_UNRESOLVED_EFFECTS_RECORD_SCHEMA_VERSION
   ) {
+    const hasUnresolvedEffects = Object.hasOwn(record, 'unresolvedEffects');
+    if (
+      !hasUnresolvedEffects &&
+      (Object.hasOwn(record, 'settledAbandonment') ||
+        (typeof record.uncertain === 'object' &&
+          record.uncertain !== null &&
+          Object.hasOwn(record.uncertain, 'abandonment')))
+    ) {
+      throw new Error(
+        'Captain session record schema 5 pre-unresolved-effects shape has an unknown abandonment field',
+      );
+    }
     validateCanonicalCaptainSessionRecord(
-      { ...record, unresolvedEffects: [] },
-      PRE_EFFECT_ARTIFACT_SCHEMAS,
+      {
+        ...record,
+        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        ...(hasUnresolvedEffects ? {} : { unresolvedEffects: [] }),
+      },
+      hasUnresolvedEffects
+        ? CURRENT_ARTIFACT_SCHEMAS
+        : PRE_EFFECT_ARTIFACT_SCHEMAS,
     );
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
-      'Captain session record schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable',
+      'Captain session record schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
     );
   }
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {

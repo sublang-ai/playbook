@@ -670,7 +670,7 @@ function processError(code: string) {
 function settledRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: 'captain-session',
     state: 'settled',
     sessionId,
@@ -770,6 +770,7 @@ function legacyRecord(
 
 function preUnresolvedEffectsRecord(value: Record<string, any>) {
   const record = structuredClone(value);
+  record.schemaVersion = 5;
   delete record.unresolvedEffects;
   for (const projection of [
     record.structuralProjection,
@@ -793,7 +794,7 @@ function memberlessSchema3Record(overrides: Record<string, unknown> = {}) {
 function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: 'captain-session',
     state: 'uncertain',
     sessionId,
@@ -861,7 +862,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       snapshot: shellSnapshot(execution),
     });
     expect(settled).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       state: 'settled',
       createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.001Z',
@@ -950,7 +951,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
 
     const preUnresolvedEffects = preUnresolvedEffectsRecord(settledRecord());
     expect(() => validateCaptainSessionRecord(preUnresolvedEffects)).toThrow(
-      /schema 5 predates required unresolved-effect settlement evidence/,
+      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
     );
     const malformedPreUnresolvedEffects = structuredClone(
       preUnresolvedEffects,
@@ -958,6 +959,16 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     delete malformedPreUnresolvedEffects.effectLedger;
     expect(() =>
       validateCaptainSessionRecord(malformedPreUnresolvedEffects),
+    ).toThrow(/missing field "effectLedger"/);
+
+    const completeSchema5 = { ...settledRecord(), schemaVersion: 5 };
+    expect(() => validateCaptainSessionRecord(completeSchema5)).toThrow(
+      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
+    );
+    const malformedCompleteSchema5 = structuredClone(completeSchema5);
+    delete malformedCompleteSchema5.effectLedger;
+    expect(() =>
+      validateCaptainSessionRecord(malformedCompleteSchema5),
     ).toThrow(/missing field "effectLedger"/);
   });
 
@@ -2311,7 +2322,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       attemptedExecutionProjection: initialExecution,
     });
     expect(uncertain).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'uncertain',
       sessionId,
@@ -2442,7 +2453,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       retentionUpdates: [],
     });
     expect(settled).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       state: 'settled',
       sessionId,
       createdAt: '2026-08-11T21:00:00.000Z',
@@ -2530,7 +2541,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it.each(['member-less schema 5', 'explicitly empty'] as const)(
+  it.each(['member-less schema 6', 'explicitly empty'] as const)(
     'selects the newest settled same-cwd %s predecessor without older fallback',
     async (shape) => {
       const { sessionsDir } = await fixtureDir();
@@ -2539,7 +2550,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       const uncertainId = adoptionSessionId(3);
       const otherCwdId = adoptionSessionId(4);
       const targetId = adoptionSessionId(5);
-      const legacyId = adoptionSessionId(6);
       const older = retainedSettledRecord({
         id: olderId,
         updatedAt: '2026-08-11T21:00:00.040Z',
@@ -2549,7 +2559,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         retainedGenerations: {},
         updatedAt: '2026-08-11T21:00:00.040Z',
       });
-      if (shape === 'member-less schema 5') {
+      if (shape === 'member-less schema 6') {
         delete empty.retainedGenerations;
       }
       const uncertain = freshAdoptionTargetRecord({
@@ -2569,17 +2579,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       for (const record of [older, empty, uncertain, otherCwd]) {
         await writeRecordFixture(sessionsDir, record);
       }
-      const legacyPath = join(sessionsDir, `${legacyId}.json`);
-      await writeFile(
-        legacyPath,
-        `${JSON.stringify(
-          releasedSchema2Record({
-            sessionId: legacyId,
-            updatedAt: '2026-08-11T21:00:00.090Z',
-          }),
-        )}\n`,
-        { mode: 0o600 },
-      );
       const paths = [olderId, emptyId].map((id) =>
         join(sessionsDir, `${id}.json`),
       );
@@ -2589,13 +2588,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
 
       const store = sequencedStore(sessionsDir);
       const lease = await store.acquire(targetId);
-      const legacyRecords: unknown[] = [];
       const initialized = await lease.initializeSettledWithPredecessor({
         cwd: target.cwd,
         structuralProjection: target.structuralProjection,
         executionProjection: target.lastAppliedExecutionProjection,
         snapshot: target.snapshot,
-        onLegacyRecord: (record: unknown) => legacyRecords.push(record),
       });
       expect(initialized).toMatchObject({
         sessionId: targetId,
@@ -2604,13 +2601,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(
         Date.parse(empty.updatedAt),
       );
-      expect(legacyRecords).toEqual([
-        {
-          sessionId: legacyId,
-          path: legacyPath,
-          schemaVersion: 2,
-        },
-      ]);
       await lease.release();
 
       expect(
@@ -2716,7 +2706,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     },
   );
 
-  it.each(['disappeared', 'superseded'] as const)(
+  it.each(['disappeared', 'superseded', 'invalid'] as const)(
     'declines when the nominated predecessor is %s before authoritative read',
     async (race) => {
       const { sessionsDir } = await fixtureDir();
@@ -2743,6 +2733,12 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
             raced = true;
             if (race === 'disappeared') {
               await unlink(sourcePath);
+            } else if (race === 'invalid') {
+              await writeFile(
+                join(sessionsDir, `${newerId}.json`),
+                '{not-json\n',
+                { mode: 0o600 },
+              );
             } else {
               await writeRecordFixture(sessionsDir, newer);
             }
@@ -2751,6 +2747,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       });
       const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
       const lease = await store.acquire(targetId);
+      const invalidRecords: unknown[] = [];
 
       const initialized =
         await lease.initializeSettledWithPredecessor({
@@ -2759,6 +2756,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           executionProjection:
             targetTemplate.lastAppliedExecutionProjection,
           snapshot: targetTemplate.snapshot,
+          onInvalidRecord: (record: unknown) => invalidRecords.push(record),
         });
 
       expect(initialized.retainedGenerations).toEqual({});
@@ -2769,11 +2767,26 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         await expect(store.read(sourceId)).rejects.toThrow(/does not exist/);
       } else {
         expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
-        expect((await store.read(newerId)).retainedGenerations).not.toEqual(
-          {},
-        );
+        if (race === 'invalid') {
+          expect(invalidRecords).toEqual([
+            {
+              sessionId: newerId,
+              path: join(sessionsDir, `${newerId}.json`),
+              reason: expect.stringMatching(/not valid JSON/),
+            },
+          ]);
+          expect(
+            await readFile(join(sessionsDir, `${newerId}.json`), 'utf8'),
+          ).toBe('{not-json\n');
+        } else {
+          expect((await store.read(newerId)).retainedGenerations).not.toEqual(
+            {},
+          );
+        }
       }
-      expect((await store.latest()).sessionId).toBe(targetId);
+      if (race !== 'invalid') {
+        expect((await store.latest()).sessionId).toBe(targetId);
+      }
       await lease.release();
     },
   );
@@ -3039,13 +3052,22 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
   });
 
   it.each(['malformed', 'unknown schema', 'unsafe'] as const)(
-    'reports and skips a %s canonical record during fresh discovery',
+    'reports a %s canonical record and declines older adoption during fresh discovery',
     async (shape) => {
       const { sessionsDir } = await fixtureDir();
       const targetId = adoptionSessionId(7);
       const corruptId = adoptionSessionId(8);
+      const olderId = adoptionSessionId(9);
       const target = freshAdoptionTargetRecord({ id: targetId });
       const corruptPath = join(sessionsDir, `${corruptId}.json`);
+      const olderPath = await writeRecordFixture(
+        sessionsDir,
+        retainedSettledRecord({
+          id: olderId,
+          updatedAt: '2026-08-11T21:00:00.020Z',
+        }),
+      );
+      const olderBytes = await readFile(olderPath, 'utf8');
       await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
       if (shape === 'unsafe') {
         await writeRecordFixture(
@@ -3062,6 +3084,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           { mode: 0o600 },
         );
       }
+      const corruptBytes = await readFile(corruptPath, 'utf8');
       const store = sequencedStore(sessionsDir, 7);
       const lease = await store.acquire(targetId);
       const invalidRecords: any[] = [];
@@ -3090,7 +3113,15 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         },
       ]);
       expect(await store.read(targetId)).toEqual(initialized);
+      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(
+        Date.parse('2026-08-11T21:00:00.020Z'),
+      );
+      expect(await readFile(corruptPath, 'utf8')).toBe(corruptBytes);
+      expect(await readFile(olderPath, 'utf8')).toBe(olderBytes);
+      expect((await store.read(olderId)).retainedGenerations).not.toEqual({});
       await lease.release();
+      await unlink(corruptPath);
+      expect((await store.latest()).sessionId).toBe(targetId);
     },
   );
 
@@ -3098,6 +3129,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(10);
     const targetId = adoptionSessionId(11);
+    const olderId = adoptionSessionId(12);
     const sourceExecution = retentionExecutionProjection();
     const targetExecution = retentionExecutionProjection({
       playerId: 'replacement.coder',
@@ -3124,17 +3156,38 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const sourcePath = join(sessionsDir, `${sourceId}.json`);
     await writeFile(sourcePath, `${JSON.stringify(source)}\n`, { mode: 0o600 });
     await chmod(sourcePath, 0o600);
+    const sourceBytes = await readFile(sourcePath, 'utf8');
+    const olderPath = await writeRecordFixture(
+      sessionsDir,
+      retainedSettledRecord({
+        id: olderId,
+        updatedAt: '2026-08-11T21:00:00.005Z',
+      }),
+    );
+    const olderBytes = await readFile(olderPath, 'utf8');
 
     const store = sequencedStore(sessionsDir, 10);
     const lease = await store.acquire(targetId);
+    const legacyRecords: unknown[] = [];
     const targetAfter = await lease.initializeSettledWithPredecessor({
       cwd: target.cwd,
       structuralProjection: target.structuralProjection,
       executionProjection: target.lastAppliedExecutionProjection,
       snapshot: target.snapshot,
+      onLegacyRecord: (record: unknown) => legacyRecords.push(record),
     });
     expect(Object.isFrozen(targetAfter)).toBe(true);
     expect(targetAfter.retainedGenerations).toEqual({});
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: sourceId,
+        path: sourcePath,
+        schemaVersion: 4,
+      },
+    ]);
+    expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+    expect(await readFile(olderPath, 'utf8')).toBe(olderBytes);
+    expect((await store.read(olderId)).retainedGenerations).not.toEqual({});
     await expect(store.read(sourceId)).rejects.toThrow(
       /schema 4 predates the artifact-schema-3 effect-authority cutover/,
     );
@@ -4369,7 +4422,31 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       },
     ]);
     await expect(store.read(secondSessionId)).rejects.toThrow(
-      /schema 5 predates required unresolved-effect settlement evidence/,
+      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
+    );
+
+    await writeFile(
+      secondPath,
+      `${JSON.stringify({ ...wrongEmbeddedId, schemaVersion: 5 })}\n`,
+      'utf8',
+    );
+    legacyRecords.length = 0;
+    expect(
+      (
+        await store.latest({
+          onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+        })
+      ).sessionId,
+    ).toBe(sessionId);
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: secondSessionId,
+        path: secondPath,
+        schemaVersion: 5,
+      },
+    ]);
+    await expect(store.read(secondSessionId)).rejects.toThrow(
+      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
     );
 
     const malformedUnmigratable = legacyRecord(

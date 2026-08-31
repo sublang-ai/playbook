@@ -202,10 +202,12 @@ Runtime and complete shell snapshots are schema 4. Their role-resume
 projection remains role-local, while the composing shell persists the stable
 player ledger, every frame's exact role bindings, and the host's authoritative
 effect-ledger mirror. The bundled CLI wraps that shell state in Captain
-session-record schema 5. Do not restore an earlier snapshot or session record
-by guessing identity or effect evidence. This includes the transitional
-schema-5 record shape that predates required `unresolvedEffects`; explicit
-selection rejects it, while fresh discovery may only report and skip it. On a
+session-record schema 6. Do not restore an earlier snapshot or session record
+by guessing identity or effect evidence. This includes both pre-release
+schema-5 record shapes; the earlier one predates required `unresolvedEffects`,
+and neither is a canonical schema-6 boundary. Explicit selection rejects them,
+while fresh discovery reports and skips them, publishes an empty target, and
+does not fall through to older retained work. On a
 compatible restore, rebuild
 `promptIdentity` from the current model selection (or adapter for an explicit
 provider-default selection) and rebuild live host capabilities under the

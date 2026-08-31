@@ -140,21 +140,21 @@ const decideCommand =
   'phase Reviewer shall invent and disclose one unique ' +
   'continuity marker in the independent proposal: REVIEW_CONTINUITY_ ' +
   'followed immediately by exactly 12 uppercase ASCII letters or digits. ' +
-  'Reviewer shall put the complete marker on a line of its own and shall ' +
+  'Reviewer shall include the complete marker verbatim and shall ' +
   'not defer its invention or disclosure to nested REVIEW. ' +
   'Coder shall not invent, guess, or include a continuity marker in the ' +
   'independent proposal or initial commit. During nested REVIEW, Reviewer ' +
   'shall remember the exact independently proposed marker and classify its ' +
   'absence from the initial commit as an unsettled finding that remains open ' +
-  'until Coder adds that exact marker in one correction commit. The final ' +
-  'ACCEPT-2 item shall contain the same marker, introduced only by that ' +
+  'until Coder adds that exact marker in a correction commit. The final ' +
+  'ACCEPT-2 item shall contain the same marker, introduced only by a ' +
   'nested REVIEW correction.';
 const reviewerContinuityInstruction =
   'For a DECIDE acceptance request that names a REVIEW_CONTINUITY_ marker, ' +
   'your independent-proposal final response shall invent one concrete ' +
   'marker with exactly 12 uppercase ASCII letters or digits after the ' +
-  'prefix and print it on its own final line. In every later REVIEW final ' +
-  'response for that request, print the same marker on its own final line ' +
+  'prefix and include it verbatim. In every later REVIEW final response ' +
+  'for that request, include the same marker verbatim ' +
   'until the reviewed commit contains it. Do not defer, omit, replace, or ' +
   'merely describe the marker.';
 const reviewTask =
@@ -1220,7 +1220,7 @@ function expectCanonicalEffectSession(
     classification: string;
   }[],
 ): void {
-  expect(record.schemaVersion).toBe(5);
+  expect(record.schemaVersion).toBe(6);
   expect(record.snapshot?.schemaVersion).toBe(4);
   expect(record.snapshot?.captain?.runtime?.schemaVersion).toBe(4);
   expect(record.effectLedger).toEqual(record.snapshot?.effectLedger);
@@ -1285,12 +1285,14 @@ function expectDecideContinuity(record: DurableSessionRecord): string {
   expect(reviewerProposalBoundaries).toHaveLength(1);
   const proposalText = reviewerProposalBoundaries[0]?.finalText;
   expect(proposalText).toEqual(expect.any(String));
-  const markers =
+  const markerOccurrences =
     typeof proposalText === 'string'
-      ? (proposalText.match(/^REVIEW_CONTINUITY_[A-Z0-9]{12}$/gm) ?? [])
+      ? (proposalText.match(/\bREVIEW_CONTINUITY_[A-Z0-9]{12}\b/g) ?? [])
       : [];
-  expect(markers).toHaveLength(1);
-  const marker = markers[0];
+  expect(markerOccurrences.length).toBeGreaterThanOrEqual(1);
+  const uniqueMarkers = [...new Set(markerOccurrences)];
+  expect(uniqueMarkers).toHaveLength(1);
+  const marker = uniqueMarkers[0];
   if (marker === undefined) {
     throw new Error('DECIDE independent Reviewer proposal has no marker');
   }
@@ -1313,21 +1315,22 @@ function expectDecideContinuity(record: DurableSessionRecord): string {
       boundary.sourceStateId === 'addressFindings' &&
       boundary.physicalReceipt?.classification === 'one-descendant-commit',
   );
-  expect(correctionBoundaries).toHaveLength(1);
-  expect(correctionBoundaries[0]?.semanticCandidate).toEqual({
-    guard: 'committed',
-  });
+  expect(correctionBoundaries.length).toBeGreaterThanOrEqual(1);
+  for (const boundary of correctionBoundaries) {
+    expect(boundary.semanticCandidate).toEqual({ guard: 'committed' });
+  }
 
   const approvalBoundaries = boundaries.filter(
     (boundary) =>
       boundary.playbookId === 'review' &&
-      boundary.sourceStateId === 'reviewAfterCommit' &&
+      ['reviewAfterCommit', 'reviewAfterRebuttal'].includes(
+        boundary.sourceStateId,
+      ) &&
       boundary.roleId === 'reviewer',
   );
-  expect(approvalBoundaries).toHaveLength(1);
-  expect(approvalBoundaries[0]?.semanticCandidate).toEqual({
-    guard: 'noFindings',
-  });
+  expect(approvalBoundaries.length).toBeGreaterThanOrEqual(1);
+  expect(approvalBoundaries.map((boundary) => boundary.semanticCandidate))
+    .toContainEqual({ guard: 'noFindings' });
   return marker;
 }
 

@@ -1534,7 +1534,7 @@ function legacyCaptainSessionReason(schemaVersion) {
     return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
   }
   if (schemaVersion === 5) {
-    return 'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable';
+    return 'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable';
   }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
 }

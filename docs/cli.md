@@ -313,16 +313,17 @@ reads no input and runs no model: it restores the exact prior settled boundary,
 or deletes a never-settled fresh session, while abandoning the attempted work.
 An interrupted interactive turn uses the same uncertain record and is
 recovered with these headless commands. Current sessions use Captain-session
-record schema 5. Records from the removed direct v6 runner and released record
+record schema 6. Records from the removed direct v6 runner and released record
 schema 2 have incompatible player identity; Playbook 9 record schema 3, the
-historical schema-4 retention shape, and the transitional schema-5 shape that
-lacks `unresolvedEffects` predate complete artifact-schema-3 effect authority
-and cannot prove whether governed work may replay. Explicit selection rejects
+historical schema-4 retention shape, and both pre-release schema-5 shapes
+predate the canonical schema-6 record boundary; the earlier schema-5 shape also
+lacks `unresolvedEffects` and cannot prove whether governed work may replay.
+Explicit selection rejects
 all of them before registry construction or governed work with the applicable
 cutover explanation. Implicit `--continue` reports and skips each fully
 validated nonresumable record with its session id, path, applicable reason, and
 an archive-or-remove remedy while leaving the file intact. Fresh-session
 discovery likewise leaves and reports nonresumable, malformed, unsafe, or
-unknown-schema files instead of allowing an unrelated record to block new
-work. Those invalid records still fail closed when explicitly selected or
+unknown-schema files, publishes an empty fresh boundary, and never falls
+through to older retained work. Those invalid records still fail closed when explicitly selected or
 encountered by `--continue`; no path converts or restores them.

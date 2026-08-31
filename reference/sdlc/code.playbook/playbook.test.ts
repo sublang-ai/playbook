@@ -2040,7 +2040,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     const structuralProjection = projectCaptainSessionStructure(execution);
     const effectLedger = emptyEffectLedger();
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,
@@ -2165,7 +2165,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     const structuralProjection = projectCaptainSessionStructure(execution);
     const effectLedger = emptyEffectLedger();
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,

@@ -54,6 +54,7 @@ const sessionIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const adapterSdks = ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'];
 let isolatedNpmCache;
+let tmuxSentinel;
 
 class SmokeFailure extends Error {}
 
@@ -80,6 +81,32 @@ function tail(text, characters = 4000) {
     : value.slice(value.length - characters);
 }
 
+function installTmuxSentinel(root) {
+  const bin = join(root, 'no-tmux-bin');
+  const marker = join(root, 'tmux-was-invoked');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, 'tmux'),
+    [
+      '#!/bin/sh',
+      ': > "$PLAYBOOK_SMOKE_TMUX_MARKER"',
+      'exit 97',
+      '',
+    ].join('\n'),
+    { mode: 0o700 },
+  );
+  tmuxSentinel = Object.freeze({ bin, marker });
+}
+
+function assertTmuxWasNotInvoked() {
+  if (tmuxSentinel !== undefined && existsSync(tmuxSentinel.marker)) {
+    fail(
+      'the release smoke invoked tmux',
+      'The gate-wide private PATH sentinel was executed.',
+    );
+  }
+}
+
 // A version manager's inherited prefix would send `npm install -g` to the
 // maintainer's real global root instead of this run's throwaway one.
 function smokeEnv(overrides = {}) {
@@ -89,13 +116,20 @@ function smokeEnv(overrides = {}) {
   if (isolatedNpmCache !== undefined) {
     env.npm_config_cache = isolatedNpmCache;
   }
+  if (tmuxSentinel !== undefined) {
+    const pathEntries = String(env.PATH ?? '').split(delimiter);
+    if (pathEntries[0] !== tmuxSentinel.bin) {
+      env.PATH = [tmuxSentinel.bin, env.PATH].filter(Boolean).join(delimiter);
+    }
+    env.PLAYBOOK_SMOKE_TMUX_MARKER = tmuxSentinel.marker;
+  }
   return env;
 }
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repoRoot,
-    env: options.env ?? smokeEnv(),
+    env: smokeEnv(options.env),
     encoding: 'utf8',
     maxBuffer,
     stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
@@ -988,6 +1022,7 @@ class EffectAdapter {
 
   async *run(prompt, options = {}) {
     if (this.agent === 'codex' && prompt.includes('EFFECT-SMOKE player:')) {
+      const resumeToken = recordCall('player', prompt, options);
       if (!['effect-resolved', 'effect-parked'].includes(processName)) {
         throw new Error('an unresolved-effect control replayed the player');
       }
@@ -999,7 +1034,6 @@ class EffectAdapter {
       writeFileSync(path, \`\${processName}\\n\`);
       runGit(['add', '--', filename]);
       runGit(['commit', '-m', \`Record \${processName} effect\`]);
-      const resumeToken = recordCall('player', prompt, options);
       const transportId =
         \`release-smoke-effect-transport-\${processName}-\${sequence}\`;
       yield createEvent(
@@ -1031,6 +1065,7 @@ class EffectAdapter {
     let kind;
     let result;
     let selected = null;
+    let recordedResumeToken;
     if (prompt.includes('Select exactly one action from the closed set')) {
       kind = 'selection';
       selected =
@@ -1053,6 +1088,7 @@ class EffectAdapter {
       result = closingReply;
     } else if (prompt.includes('This is hidden control work.')) {
       kind = 'judge';
+      recordedResumeToken = recordCall(kind, prompt, options, { selected });
       if (processName === 'effect-resolved') {
         result = JSON.stringify({ guard: 'complete' });
       } else if (processName === 'effect-parked') {
@@ -1064,7 +1100,8 @@ class EffectAdapter {
       throw new Error('effect smoke received an unexpected Captain prompt');
     }
 
-    const resumeToken = recordCall(kind, prompt, options, { selected });
+    const resumeToken =
+      recordedResumeToken ?? recordCall(kind, prompt, options, { selected });
     yield createEvent(
       'done',
       this.agent,
@@ -1333,6 +1370,7 @@ async function main() {
   const root = mkdtempSync(join(tmpdir(), 'playbook-release-smoke-'));
   isolatedNpmCache = join(root, 'npm-cache');
   mkdirSync(isolatedNpmCache, { recursive: true });
+  installTmuxSentinel(root);
   const state = {};
   const steps = [
     ['pack the publishable tarball', () => stepPack(root, state)],
@@ -1353,14 +1391,25 @@ async function main() {
     const label = `[${index + 1}/${steps.length}] ${title}`;
     const stepStartedAt = Date.now();
     process.stdout.write(`${label}\n`);
+    let lines = [];
+    let failure;
     try {
-      const lines = (await step()) ?? [];
+      lines = (await step()) ?? [];
+    } catch (error) {
+      failure = { error };
+    }
+    try {
+      assertTmuxWasNotInvoked();
+    } catch (error) {
+      failure = { error };
+    }
+    if (failure === undefined) {
       for (const line of lines) process.stdout.write(`    ${line}\n`);
       process.stdout.write(
         `    ok (${seconds(Date.now() - stepStartedAt)}s)\n\n`,
       );
-    } catch (error) {
-      failed = { label, error };
+    } else {
+      failed = { label, error: failure.error };
       process.stdout.write(
         `    FAILED (${seconds(Date.now() - stepStartedAt)}s)\n\n`,
       );
@@ -1574,29 +1623,14 @@ function stepHermetic(root, state) {
     }
   }
 
-  const sentinelBin = join(scenario, 'sentinel-bin');
-  const tmuxMarker = join(scenario, 'tmux-was-invoked');
-  mkdirSync(sentinelBin, { recursive: true });
-  writeFileSync(
-    join(sentinelBin, 'tmux'),
-    [
-      '#!/bin/sh',
-      ': > "$PLAYBOOK_SMOKE_TMUX_MARKER"',
-      'exit 97',
-      '',
-    ].join('\n'),
-    { mode: 0o700 },
-  );
   const env = smokeEnv({
     HOME: join(scenario, 'home'),
     XDG_CONFIG_HOME: join(scenario, 'xdg'),
     XDG_STATE_HOME: join(scenario, 'xdg-state'),
-    PATH: [sentinelBin, process.env.PATH].filter(Boolean).join(delimiter),
     ANTHROPIC_API_KEY: 'release-smoke-synthetic-readiness',
     OPENAI_API_KEY: 'release-smoke-synthetic-readiness',
     PLAYBOOK_SMOKE_CONFIG: configPath,
     PLAYBOOK_SMOKE_AGENT_LOG: join(scenario, 'agent-calls.ndjson'),
-    PLAYBOOK_SMOKE_TMUX_MARKER: tmuxMarker,
   });
   const processEnv = (name) => ({ ...env, PLAYBOOK_SMOKE_PROCESS: name });
   const driverPath = join(
@@ -1628,7 +1662,7 @@ function stepHermetic(root, state) {
     (player) => player.id,
   );
   if (
-    firstRecord.schemaVersion !== 5 ||
+    firstRecord.schemaVersion !== 6 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
@@ -1743,7 +1777,7 @@ function stepHermetic(root, state) {
   const finalPlayerIds = Object.keys(finalPlayers).sort();
   const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
   if (
-    finalRecord.schemaVersion !== 5 ||
+    finalRecord.schemaVersion !== 6 ||
     finalRecord.kind !== 'captain-session' ||
     finalRecord.sessionId !== firstEnvelope.sessionId ||
     finalRecord.state !== 'settled' ||
@@ -1813,12 +1847,6 @@ function stepHermetic(root, state) {
     .split('\n')
     .map((line) => JSON.parse(line));
   assertSmokeCalls(calls);
-  if (existsSync(tmuxMarker)) {
-    fail(
-      'the installed headless Captain invoked tmux',
-      'The private PATH sentinel was executed during a no-presenter turn.',
-    );
-  }
   const status = run('git', ['status', '--porcelain'], { cwd: repo });
   if (status.stdout.trim() !== '') {
     fail(
@@ -2106,7 +2134,7 @@ function stepEffectReconciliation(root, state) {
     label: 'resolved effect row',
   });
   if (
-    resolvedRecord.schemaVersion !== 5 ||
+    resolvedRecord.schemaVersion !== 6 ||
     resolvedRecord.state !== 'settled' ||
     resolvedRecord.snapshot?.mode !== 'chat' ||
     resolvedRecord.unresolvedEffects?.length !== 0
@@ -2176,7 +2204,7 @@ function stepEffectReconciliation(root, state) {
     'parked effect row',
   );
   if (
-    parkedRecord.schemaVersion !== 5 ||
+    parkedRecord.schemaVersion !== 6 ||
     parkedRecord.state !== 'settled' ||
     parkedRecord.snapshot?.mode !== 'engaged.parked' ||
     parkedRecord.snapshot?.frames?.at(-1)?.playbookId !== 'effect'
@@ -2250,7 +2278,7 @@ function stepEffectReconciliation(root, state) {
   );
   const abandonedRecord = sessionRecord(parkedEnvelope.sessionId);
   if (
-    abandonedRecord.schemaVersion !== 5 ||
+    abandonedRecord.schemaVersion !== 6 ||
     abandonedRecord.state !== 'settled' ||
     abandonedRecord.snapshot?.mode !== 'chat' ||
     (abandonedRecord.snapshot?.frames?.length ?? 0) !== 0 ||

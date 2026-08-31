@@ -207,6 +207,7 @@ function preEffectSessionRecord(
 
 function preUnresolvedEffectsSessionRecord(value: any) {
   const record = JSON.parse(JSON.stringify(value));
+  record.schemaVersion = 5;
   delete record.unresolvedEffects;
   for (const projection of [
     record.structuralProjection,
@@ -1469,7 +1470,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(explicit.inputs).toEqual([]);
     expect(explicitHosts).toBe(0);
     expect(explicit.stderr).toContain(
-      'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover',
+      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover',
     );
     expect(explicit.stderr).not.toContain(
       'missing field "unresolvedEffects"',
@@ -1486,7 +1487,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       `skipping legacy Captain session "${firstId}" at "${preCutoverPath}"`,
     );
     expect(fresh.stderr).toContain(
-      'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable',
+      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
     );
     expect(fresh.stderr).toContain(
       'move it outside the sessions directory or remove it',
@@ -1551,7 +1552,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const thirdId = '90000000-0000-4000-8000-000000000013';
   const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v5 record before stdout without semantic disposal', async () => {
+  it('persists a closed v6 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1610,7 +1611,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
