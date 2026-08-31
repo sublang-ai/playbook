@@ -1,4 +1,4 @@
-import { type PlaybookRuntime } from './review.playbook.js';
+import { type ReviewPlaybookHostCapabilities, type PlaybookRuntime } from './review.playbook.js';
 export interface PlaybookSummaryPolicy {
     stateCountLabels: Readonly<Record<string, string>>;
     copyPasteGuardNames: readonly string[];
@@ -12,11 +12,11 @@ export interface ReviewPlaybookRegistryEntry {
     id: 'review';
     command: 'review';
     intent: string;
-    artifactSchema: 2;
+    artifactSchema: 3;
     runtimeProfile: {
         readonly kind: 'shared-factory';
         readonly compat: {
-            readonly artifactSchema: 2;
+            readonly artifactSchema: 3;
             readonly runtimeAbi: number;
         };
     };
@@ -24,7 +24,7 @@ export interface ReviewPlaybookRegistryEntry {
     concurrentRoleSets: readonly [];
     summaryPolicy: PlaybookSummaryPolicy;
     validateOptions(optionSlice: unknown): ReviewOptions;
-    createRuntime(options: ReviewOptions): PlaybookRuntime;
+    createRuntime(options: ReviewOptions, hostCapabilities: ReviewPlaybookHostCapabilities): PlaybookRuntime;
 }
 export declare const reviewStateCountLabels: {
     readonly reviewInitial: "review round";

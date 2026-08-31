@@ -18,7 +18,9 @@ export function liveModels(): { claude: string; codex: string } {
   };
 }
 
-export function liveConfig(): string {
+export function liveConfig(
+  options: { readonly reviewerInstruction?: string } = {},
+): string {
   const { claude: claudeModel, codex: codexModel } = liveModels();
   // DR-021: agent settings are inline per captain and player; a config
   // carrying a `profiles` map is rejected by the launcher.
@@ -44,6 +46,9 @@ export function liveConfig(): string {
     '    adapter: codex',
     `    model: ${JSON.stringify(codexModel)}`,
     '    effort: xhigh',
+    ...(options.reviewerInstruction === undefined
+      ? []
+      : [`    instruction: ${JSON.stringify(options.reviewerInstruction)}`]),
     '    permissions:',
     '      mode: auto',
     "      writablePaths: ['.git']",

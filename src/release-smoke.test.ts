@@ -76,11 +76,41 @@ const calls = [
 }));
 
 describe('deterministic packed release lane smoke', () => {
+  it('records forbidden effect calls before the fixture rejects them', () => {
+    const source = _testing.installedEffectReconciliationDriverSource();
+    const playerRecordAt = source.indexOf(
+      "const resumeToken = recordCall('player'",
+    );
+    const playerRejectionAt = source.indexOf(
+      'an unresolved-effect control replayed the player',
+    );
+    const judgeRecordAt = source.indexOf(
+      'recordedResumeToken = recordCall(kind',
+    );
+    const judgeRejectionAt = source.indexOf(
+      'an unresolved-effect control started a judge',
+    );
+
+    expect(playerRecordAt).toBeGreaterThan(-1);
+    expect(playerRecordAt).toBeLessThan(playerRejectionAt);
+    expect(judgeRecordAt).toBeGreaterThan(-1);
+    expect(judgeRecordAt).toBeLessThan(judgeRejectionAt);
+  });
+
   it('constructs bundled runtimes with their current declared options', () => {
     const source = _testing.compiledRuntimeImportProbeSource();
 
-    expect(source).toContain('runtime: reviewFactory({})');
-    expect(source).toContain('runtime: decideFactory({})');
+    expect(source).toContain(
+      "runtime: codeFactory(construction('code', ['coder'], []))",
+    );
+    expect(source).toContain(
+      "runtime: reviewFactory(construction('review', ['coder', 'reviewer'], []))",
+    );
+    expect(source).toContain(
+      "construction('decide', ['coder', 'reviewer'], [['coder', 'reviewer']])",
+    );
+    expect(source).toContain('artifactSchema: 3');
+    expect(source).toContain('emptyPlaybookEffectLedger');
     expect(source).toContain("const adoptionMembers = ['adopt']");
     expect(source).toContain('absentMembers: adoptionMembers');
     expect(source).not.toContain('coderLlm');

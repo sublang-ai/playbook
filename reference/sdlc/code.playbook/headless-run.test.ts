@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   mkdir,
@@ -15,6 +16,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import {
   createEvent,
   type AgentAdapter,
@@ -25,7 +27,7 @@ import {
 } from '@sublang/cligent';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
 import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { captainMachine } from '../captain.playbook/captain.fsm.js';
 import type {
   PlaybookCallResult,
@@ -34,6 +36,7 @@ import type {
   PlaybookSession,
   PlaybookState,
 } from '../../../src/runtime.js';
+import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
 
 const { runPlaybookCli, runPlaybookCliEntry } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
@@ -44,8 +47,12 @@ const { installRetainedGenerationsForLaunch, parseRunArgs } = await import(
 const { createCaptainSessionStore } = await import(
   new URL('./bin/session-store.js', import.meta.url).href
 );
+const { createRepositoryEffectCapabilities } = await import(
+  new URL('./bin/repository-effects.js', import.meta.url).href
+);
 
 const tempDirs: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   FakeAdapter.calls = [];
@@ -147,7 +154,7 @@ function runtimeSnapshot(
 ): PlaybookRuntimeSnapshot {
   const state = activeState('playbook.parked');
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -161,7 +168,57 @@ function runtimeSnapshot(
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: emptyPlaybookEffectLedger(),
   };
+}
+
+function preEffectSessionRecord(
+  value: any,
+  schemaVersion: 3 | 4,
+  retainGenerations: boolean,
+) {
+  const record = JSON.parse(JSON.stringify(value));
+  const downgradeRuntime = (runtime: any) => {
+    runtime.schemaVersion = 3;
+    delete runtime.effectLedger;
+  };
+  record.schemaVersion = schemaVersion;
+  delete record.effectLedger;
+  delete record.unresolvedEffects;
+  record.snapshot.schemaVersion = 3;
+  delete record.snapshot.effectLedger;
+  downgradeRuntime(record.snapshot.captain.runtime);
+  for (const frame of record.snapshot.frames ?? []) {
+    downgradeRuntime(frame.runtime);
+  }
+  if (!retainGenerations) {
+    delete record.retainedGenerations;
+  } else {
+    for (const generation of Object.values(
+      record.retainedGenerations ?? {},
+    ) as any[]) {
+      for (const frame of generation.frames ?? []) {
+        downgradeRuntime(frame.runtime);
+      }
+    }
+  }
+  return record;
+}
+
+function preUnresolvedEffectsSessionRecord(value: any) {
+  const record = JSON.parse(JSON.stringify(value));
+  record.schemaVersion = 5;
+  delete record.unresolvedEffects;
+  for (const projection of [
+    record.structuralProjection,
+    record.lastAppliedExecutionProjection,
+    record.uncertain?.attemptedExecutionProjection,
+  ]) {
+    for (const item of Object.values(projection?.catalog ?? {}) as any[]) {
+      item.artifactSchema = 2;
+    }
+  }
+  return record;
 }
 
 function scriptedCaptainRuntime(
@@ -238,8 +295,8 @@ function nestedEntries(events: string[]) {
     id: 'code',
     command: 'code',
     intent: 'implement with review',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -298,8 +355,8 @@ function nestedEntries(events: string[]) {
     id: 'review',
     command: 'review',
     intent: 'review work',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -349,8 +406,8 @@ function retainedRootEntry(
     id: 'code',
     command: 'code',
     intent: 'retain a parked root',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -374,7 +431,7 @@ function retainedRootEntry(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -388,6 +445,7 @@ function retainedRootEntry(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
           } as PlaybookRuntimeSnapshot;
         },
         async handleBossInput({ text }) {
@@ -425,8 +483,8 @@ function nestedParkedEntries(
     id: 'code',
     command: 'code',
     intent: 'park on nested review',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -457,7 +515,7 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -471,6 +529,7 @@ function nestedParkedEntries(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
             ...(suspendedCall === undefined ? {} : { suspendedCall }),
           } as PlaybookRuntimeSnapshot;
         },
@@ -526,8 +585,8 @@ function nestedParkedEntries(
     id: 'review',
     command: 'review',
     intent: 'park then accept exact Boss reply',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -554,7 +613,7 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             playbookId: 'review',
             machine: { value: state.value, status: state.status },
             roleResumeTokens: {},
@@ -568,6 +627,7 @@ function nestedParkedEntries(
             },
             state,
             pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
           } as PlaybookRuntimeSnapshot;
         },
         async handleBossInput({ text }) {
@@ -603,6 +663,28 @@ async function writeConfig(contents: string) {
   return path;
 }
 
+async function initHeadlessTestRepository(prefix: string) {
+  const cwd = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(cwd);
+  await initializeHeadlessTestRepository(cwd);
+  return cwd;
+}
+
+async function initializeHeadlessTestRepository(cwd: string) {
+  await execFileAsync('git', ['init', '-q', cwd]);
+  await execFileAsync('git', ['-C', cwd, 'config', 'user.name', 'Playbook Test']);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.email',
+    'playbook-test@example.invalid',
+  ]);
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
+  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
+}
+
 function sharedConfig() {
   return [
     'captain: { adapter: claude, model: captain-model }',
@@ -626,6 +708,12 @@ async function headlessHarness(
   argv: string[],
   extra: Record<string, unknown> = {},
 ) {
+  const entryTransform =
+    (extra.entryTransform as
+      | ((entry: ReturnType<typeof nestedEntries>['code']) => unknown)
+      | undefined) ?? ((entry: unknown) => entry);
+  const runOptions = { ...extra };
+  delete runOptions.entryTransform;
   const events: string[] = [];
   const inputs: string[] = [];
   const entries = nestedEntries(events);
@@ -636,8 +724,8 @@ async function headlessHarness(
   const stdout = writer();
   const stderr = writer();
   const modules: Record<string, unknown> = {
-    'mod://code': { default: entries.code },
-    'mod://review': { default: entries.review },
+    'mod://code': { default: entryTransform(entries.code) },
+    'mod://review': { default: entryTransform(entries.review) },
   };
   const result = await runPlaybookCli({
     argv,
@@ -659,7 +747,7 @@ async function headlessHarness(
     spawn: () => {
       throw new Error('headless run must not spawn tmux-play');
     },
-    ...extra,
+    ...runOptions,
   });
   return {
     result,
@@ -746,6 +834,63 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       },
     });
     expect(out.result.config).not.toHaveProperty('presentation');
+  });
+
+  it('injects current-lease capabilities into schema-3 root and nested runtimes', async () => {
+    const constructed: Array<{
+      playbookId: string;
+      options: unknown;
+      capability: any;
+    }> = [];
+    let writerLease: any;
+    const out = await headlessHarness(['run', '/code implement it'], {
+      entryTransform: (entry: any) => ({
+        ...entry,
+        artifactSchema: 3,
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+        createRuntime(options: unknown, capability: unknown) {
+          constructed.push({ playbookId: entry.id, options, capability });
+          return entry.createRuntime(options);
+        },
+      }),
+      createEffectLedgerWriteAhead: (lease: unknown) => {
+        writerLease = lease;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
+      },
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    expect(constructed.map(({ playbookId }) => playbookId)).toEqual([
+      'code',
+      'review',
+    ]);
+    for (const construction of constructed) {
+      expect(construction.options).toEqual({});
+      expect(construction.capability.authority).toMatchObject({
+        playbookId: construction.playbookId,
+        artifactSchema: 3,
+        cwd: process.cwd(),
+        sessionId: out.result.sessionId,
+        leaseOwnerToken: writerLease.ownerToken,
+      });
+      expect(construction.capability.repository.identity).toBe(
+        construction.capability.authority.canonicalWorktree,
+      );
+      expect(construction.capability.effectLedger.writeAhead).toEqual(
+        expect.any(Function),
+      );
+    }
+    expect(JSON.stringify(out.result.config)).not.toContain(
+      writerLease.ownerToken,
+    );
+    expect(JSON.stringify(out.result.snapshot)).not.toContain(
+      writerLease.ownerToken,
+    );
+    expect(out.result.config).not.toHaveProperty('hostCapabilities');
   });
 
   it('runs configured REVIEW as a root through the same Captain', async () => {
@@ -960,11 +1105,12 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       createCaptainRuntime: () =>
         createXStatePlaybookRuntime(captainMachine, {
           label: 'CAPTAIN',
-          compat: { artifactSchema: 2, runtimeAbi: 999 },
+          compat: { artifactSchema: 3, runtimeAbi: 999 },
           snapshotOptions: () => ({}),
           machineInput: () => ({ enabledPlaybooks: [] }),
           roleStates: {},
-        })({}),
+          outcomeAuthority: { governedPlayerStates: {} },
+        })({} as never),
     });
     expect(captainSkew.result.code).toBe(1);
     expect(captainSkew.stdout).toBe('');
@@ -1292,6 +1438,63 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     await held.release();
   });
 
+  it('skips a pre-cutover record for fresh work and explains explicit selection', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-pre-cutover-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'first session'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const preCutoverPath = join(sessionsDir, `${firstId}.json`);
+    const canonical = JSON.parse(await readFile(preCutoverPath, 'utf8'));
+    const preCutoverBytes = `${JSON.stringify(
+      preUnresolvedEffectsSessionRecord(canonical),
+    )}\n`;
+    await writeFile(preCutoverPath, preCutoverBytes, 'utf8');
+
+    let explicitHosts = 0;
+    const explicit = await headlessHarness(
+      ['run', '--session', firstId, 'must not run'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          explicitHosts += 1;
+          throw new Error('must not construct a pre-cutover host');
+        },
+      },
+    );
+    expect(explicit.result.code).toBe(1);
+    expect(explicit.stdout).toBe('');
+    expect(explicit.inputs).toEqual([]);
+    expect(explicitHosts).toBe(0);
+    expect(explicit.stderr).toContain(
+      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover',
+    );
+    expect(explicit.stderr).not.toContain(
+      'missing field "unresolvedEffects"',
+    );
+
+    const fresh = await headlessHarness(['run', 'unrelated fresh work'], {
+      sessionsDir,
+      createLogicalSessionId: () => secondId,
+    });
+    expect(fresh.result.code).toBe(0);
+    expect(fresh.result.sessionId).toBe(secondId);
+    expect(fresh.inputs).toEqual(['unrelated fresh work']);
+    expect(fresh.stderr).toContain(
+      `skipping legacy Captain session "${firstId}" at "${preCutoverPath}"`,
+    );
+    expect(fresh.stderr).toContain(
+      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
+    );
+    expect(fresh.stderr).toContain(
+      'move it outside the sessions directory or remove it',
+    );
+    expect(await readFile(preCutoverPath, 'utf8')).toBe(preCutoverBytes);
+  });
+
   it('starts fresh when the predecessor root options no longer match', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-drift-state-'));
     tempDirs.push(stateRoot);
@@ -1349,7 +1552,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const thirdId = '90000000-0000-4000-8000-000000000013';
   const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v3 record before stdout without semantic disposal', async () => {
+  it('persists a closed v6 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1408,7 +1611,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
@@ -1427,7 +1630,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           code: { manifestCommand: 'code', command: 'code' },
         },
       },
-      snapshot: { schemaVersion: 3, mode: 'chat' },
+      snapshot: {
+        schemaVersion: 4,
+        mode: 'chat',
+        effectLedger: emptyPlaybookEffectLedger(),
+      },
+      effectLedger: emptyPlaybookEffectLedger(),
       retainedGenerations: {},
     });
     expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
@@ -1463,8 +1671,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
 
   it('restores an explicit session instead of init and preserves cwd and timestamps', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-continue-'));
-    const frozenCwd = await mkdtemp(join(tmpdir(), 'playbook-frozen-cwd-'));
-    tempDirs.push(stateRoot, frozenCwd);
+    const frozenCwd = await initHeadlessTestRepository(
+      'playbook-frozen-cwd-',
+    );
+    tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
     const lifecycle = { init: 0, restore: 0 };
     const seen: string[] = [];
@@ -1687,8 +1897,37 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       reviewInits: 0,
       reviewRestores: 0,
     };
-    const entries = nestedParkedEntries(events, lifecycle);
-    entries.review.validateOptions = () => ({ normalizedByRegistry: true });
+    const schema2Entries = nestedParkedEntries(events, lifecycle);
+    schema2Entries.review.validateOptions = () => ({
+      normalizedByRegistry: true,
+    });
+    const constructions: Array<{
+      playbookId: string;
+      options: unknown;
+      capability: any;
+    }> = [];
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+      createRuntime(options: unknown, capability: unknown) {
+        constructions.push({ playbookId: entry.id, options, capability });
+        return entry.createRuntime(options);
+      },
+    });
+    const entries = {
+      code: promoteEntry(schema2Entries.code),
+      review: promoteEntry(schema2Entries.review),
+    };
+    const writerLeases: any[] = [];
+    const createEffectLedgerWriteAhead = (lease: unknown) => {
+      writerLeases.push(lease);
+      const effectLedger = emptyPlaybookEffectLedger();
+      return {
+        snapshot: () => effectLedger,
+        writeAhead: async () => effectLedger,
+      };
+    };
     const captainRuntime = scriptedCaptainRuntime([], { action: 'deliver' });
     const loadModule = async (specifier: string) => ({
       default: specifier === 'mod://code' ? entries.code : entries.review,
@@ -1699,6 +1938,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       loadModule,
       createCaptainRuntime: captainRuntime,
       createLogicalSessionId: () => firstId,
+      createEffectLedgerWriteAhead,
     });
     expect(first.result.code).toBe(0);
     const parked = JSON.parse(
@@ -1732,6 +1972,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect(parked.structuralProjection.catalog.review.options).toEqual({});
     expect(lifecycle.childCalls).toBe(1);
+    const parkedProjection = JSON.stringify(parked);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+    ]) {
+      expect(parkedProjection).not.toContain(`"${key}"`);
+    }
+    expect(parked.effectLedger).toEqual(emptyPlaybookEffectLedger());
 
     const exactReply = '  exact review reply\nwith context\n';
     const second = await headlessHarness(
@@ -1741,6 +1989,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         loadModule,
         createCaptainRuntime: captainRuntime,
         readStdin: async () => exactReply,
+        cwd: '/must/not/replace/stored/schema-3/cwd',
+        createEffectLedgerWriteAhead,
       },
     );
     expect(second.result.code).toBe(0);
@@ -1759,11 +2009,42 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       reviewInits: 1,
       reviewRestores: 1,
     });
+    expect(writerLeases).toHaveLength(2);
+    expect(writerLeases[0].ownerToken).not.toBe(writerLeases[1].ownerToken);
+    expect(constructions.map(({ playbookId }) => playbookId)).toEqual([
+      'code',
+      'review',
+      'code',
+      'review',
+    ]);
+    for (const [index, construction] of constructions.entries()) {
+      const lease = writerLeases[index < 2 ? 0 : 1];
+      expect(construction.capability.authority).toMatchObject({
+        playbookId: construction.playbookId,
+        sessionId: firstId,
+        leaseOwnerToken: lease.ownerToken,
+        cwd: process.cwd(),
+      });
+      expect(construction.capability.authority.canonicalWorktree.worktree).toBe(
+        process.cwd(),
+      );
+    }
     expect(second.stderr).not.toContain('/review called by /code');
     const settled = JSON.parse(
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
+    const settledProjection = JSON.stringify(settled);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+    ]) {
+      expect(settledProjection).not.toContain(`"${key}"`);
+    }
+    for (const lease of writerLeases) {
+      expect(settledProjection).not.toContain(lease.ownerToken);
+    }
     expect(settled.snapshot.mode).toBe('chat');
+    expect(settled.effectLedger).toEqual(emptyPlaybookEffectLedger());
     expect(settled.retainedGenerations).toEqual({});
   });
 
@@ -2033,6 +2314,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         mkdir(path, { recursive: true }),
       ),
     );
+    await Promise.all(
+      [localCwd, foreignCwd, unmatchedCwd].map((path) =>
+        initializeHeadlessTestRepository(path),
+      ),
+    );
 
     const local = await headlessHarness(['run', 'local session'], {
       sessionsDir,
@@ -2100,7 +2386,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
   });
 
-  it('selects the newest valid same-cwd session by updatedAt for --continue', async () => {
+  it('selects the newest resumable same-cwd session and refuses pre-effect records', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-latest-'));
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
@@ -2135,24 +2421,18 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       })}\n`,
       { mode: 0o600 },
     );
-    const {
-      retainedGenerations: _retainedGenerations,
-      ...memberlessSchema3
-    } = settledRecord;
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify({
-        ...memberlessSchema3,
-        schemaVersion: 3,
+    const memberlessSchema3 = preEffectSessionRecord(
+      {
+        ...settledRecord,
         sessionId: fourthId,
-      })}\n`,
-      { mode: 0o600 },
+      },
+      3,
+      false,
     );
-    const memberlessInstalls: unknown[] = [];
-    const observeMemberlessInstall = async (options: any) => {
-      memberlessInstalls.push(options.retainedGenerations);
-      return installRetainedGenerationsForLaunch(options);
-    };
+    const memberlessSchema3Bytes = `${JSON.stringify(memberlessSchema3)}\n`;
+    await writeFile(memberlessSchema3Path, memberlessSchema3Bytes, {
+      mode: 0o600,
+    });
 
     let explicitLegacyHosts = 0;
     const explicitLegacy = await headlessHarness(
@@ -2178,80 +2458,112 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:02.000Z'),
-        installRetainedGenerationsForLaunch: observeMemberlessInstall,
       },
     );
     expect(continued.result.code).toBe(0);
-    expect(continued.result.sessionId).toBe(fourthId);
+    expect(continued.result.sessionId).toBe(secondId);
     expect(continued.inputs).toEqual(['latest reply']);
-    expect(memberlessInstalls).toEqual([{}]);
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
     );
     expect(continued.stderr).toContain(
       'schema 2 has incompatible player identity',
     );
-    expect(continued.stderr).not.toContain(
-      `skipping legacy Captain session "${fourthId}"`,
+    expect(continued.stderr).toContain(
+      `skipping legacy Captain session "${fourthId}" at "${memberlessSchema3Path}"`,
+    );
+    expect(continued.stderr).toContain(
+      'schema 3 predates the artifact-schema-3 effect-authority cutover and is not resumable',
     );
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
     );
-    const canonicalized = JSON.parse(
-      await readFile(memberlessSchema3Path, 'utf8'),
-    );
-    expect(canonicalized).toMatchObject({
-      schemaVersion: 3,
-      retainedGenerations: {},
-    });
-    const {
-      retainedGenerations: _canonicalRetainedGenerations,
-      ...memberlessAgain
-    } = canonicalized;
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify(memberlessAgain)}\n`,
-      'utf8',
+    expect(await readFile(memberlessSchema3Path, 'utf8')).toBe(
+      memberlessSchema3Bytes,
     );
 
-    const explicitCompatible = await headlessHarness(
-      ['run', '--session', fourthId, 'member-less reply'],
+    let explicitPreEffectHosts = 0;
+    const explicitPreEffect = await headlessHarness(
+      ['run', '--session', fourthId, 'must not run'],
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:03.000Z'),
-        installRetainedGenerationsForLaunch: observeMemberlessInstall,
+        createHostRuntime: async () => {
+          explicitPreEffectHosts += 1;
+          throw new Error('must not construct host for schema 3');
+        },
       },
     );
-    expect(explicitCompatible.result.code).toBe(0);
-    expect(explicitCompatible.result.sessionId).toBe(fourthId);
-    expect(explicitCompatible.inputs).toEqual(['member-less reply']);
-    expect(memberlessInstalls).toEqual([{}, {}]);
-    expect(explicitCompatible.stderr).not.toContain(
-      'no retained-generation state',
+    expect(explicitPreEffect.result.code).toBe(1);
+    expect(explicitPreEffect.stdout).toBe('');
+    expect(explicitPreEffect.inputs).toEqual([]);
+    expect(explicitPreEffectHosts).toBe(0);
+    expect(explicitPreEffect.stderr).toContain(
+      'schema 3 predates the artifact-schema-3 effect-authority cutover',
     );
 
-    const transientSchema4 = JSON.parse(
-      await readFile(memberlessSchema3Path, 'utf8'),
+    const transientSchema4 = preEffectSessionRecord(
+      { ...settledRecord, sessionId: fourthId },
+      4,
+      true,
     );
-    await writeFile(
-      memberlessSchema3Path,
-      `${JSON.stringify({ ...transientSchema4, schemaVersion: 4 })}\n`,
-      'utf8',
-    );
+    const transientSchema4Bytes = `${JSON.stringify(transientSchema4)}\n`;
+    await writeFile(memberlessSchema3Path, transientSchema4Bytes, 'utf8');
+    let explicitSchema4Hosts = 0;
     const continuedSchema4 = await headlessHarness(
-      ['run', '--session', fourthId, 'schema-4 reply'],
+      ['run', '--session', fourthId, 'must not run'],
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:04.000Z'),
+        createHostRuntime: async () => {
+          explicitSchema4Hosts += 1;
+          throw new Error('must not construct host for schema 4');
+        },
       },
     );
-    expect(continuedSchema4.result.code).toBe(0);
-    expect(continuedSchema4.result.sessionId).toBe(fourthId);
-    expect(continuedSchema4.inputs).toEqual(['schema-4 reply']);
-    expect(continuedSchema4.stderr).not.toContain('schema 4 is unsupported');
-    expect(
-      JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
-    ).toMatchObject({ schemaVersion: 3, retainedGenerations: {} });
+    expect(continuedSchema4.result.code).toBe(1);
+    expect(continuedSchema4.stdout).toBe('');
+    expect(continuedSchema4.inputs).toEqual([]);
+    expect(explicitSchema4Hosts).toBe(0);
+    expect(continuedSchema4.stderr).toContain(
+      'schema 4 predates the artifact-schema-3 effect-authority cutover',
+    );
+    expect(await readFile(memberlessSchema3Path, 'utf8')).toBe(
+      transientSchema4Bytes,
+    );
+
+    const malformedPreEffect = preEffectSessionRecord(
+      { ...settledRecord, sessionId: fourthId },
+      3,
+      false,
+    );
+    malformedPreEffect.snapshot.captain.runtime.schemaVersion = 2;
+    await writeFile(
+      memberlessSchema3Path,
+      `${JSON.stringify(malformedPreEffect)}\n`,
+      'utf8',
+    );
+    let malformedHosts = 0;
+    const malformed = await headlessHarness(
+      ['run', '--session', fourthId, 'must not run'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          malformedHosts += 1;
+          throw new Error('must not construct host for malformed schema 3');
+        },
+      },
+    );
+    expect(malformed.result.code).toBe(1);
+    expect(malformed.stdout).toBe('');
+    expect(malformed.inputs).toEqual([]);
+    expect(malformedHosts).toBe(0);
+    expect(malformed.stderr).toContain(
+      'runtime schema 2 cannot migrate to schema 4',
+    );
+    expect(malformed.stderr).not.toContain(
+      'predates the artifact-schema-3 effect-authority cutover',
+    );
   });
 
   it.each([
@@ -2278,7 +2590,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         delete runtime.roleResumeTokens;
       },
       diagnostic:
-        'runtime snapshot schemaVersion 1 has incompatible player identity',
+        'runtime snapshot schemaVersion 1 is not supported (expected 4)',
     },
     {
       name: 'runtime schema 2',
@@ -2289,7 +2601,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         delete runtime.roleResumeTokens;
       },
       diagnostic:
-        'runtime snapshot schemaVersion 2 has incompatible player identity',
+        'runtime snapshot schemaVersion 2 is not supported (expected 4)',
     },
   ])('rejects explicit released $name before host work', async ({
     mutate,
@@ -2523,8 +2835,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       id: 'code',
       command: 'code',
       intent: 'finish unsuccessfully on the first turn',
-      artifactSchema: 2 as const,
-      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+      artifactSchema: 3 as const,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
       requiredRoleIds: ['coder'],
       concurrentRoleSets: [] as const,
       validateOptions: (value: unknown) => value,
@@ -2798,6 +3110,591 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(settled).not.toHaveProperty('uncertain');
     expect(settled.lastAppliedExecutionProjection).toEqual(
       markerDuringTurn.uncertain.attemptedExecutionProjection,
+    );
+  });
+
+  it('replays only an all-unchanged multi-attempt suffix and rebases schema-3 frame mirrors', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-effect-retry-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-effect-retry-repo-',
+    );
+    const events: string[] = [];
+    const lifecycle = {
+      childCalls: 0,
+      parentResumes: 0,
+      codeInits: 0,
+      codeRestores: 0,
+      reviewInits: 0,
+      reviewRestores: 0,
+    };
+    const baseEntries = nestedParkedEntries(events, lifecycle);
+    const restoredFrameLedgers: Array<{
+      playbookId: string;
+      ledger: unknown;
+    }> = [];
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+      createRuntime(options: unknown, capability: any) {
+        const runtime = entry.createRuntime(options);
+        return {
+          ...runtime,
+          async restore(session: unknown, snapshot: any) {
+            restoredFrameLedgers.push({
+              playbookId: entry.id,
+              ledger: snapshot.effectLedger,
+            });
+            return runtime.restore(session, snapshot);
+          },
+          exportSnapshot() {
+            return {
+              ...runtime.exportSnapshot(),
+              effectLedger: capability.effectLedger.snapshot(),
+            };
+          },
+        };
+      },
+    });
+    const entries = {
+      code: promoteEntry(baseEntries.code),
+      review: promoteEntry(baseEntries.review),
+    };
+    const loadModule = async (specifier: string) => ({
+      default: specifier === 'mod://code' ? entries.code : entries.review,
+    });
+    const captainInputs: string[] = [];
+    const captainRuntime = scriptedCaptainRuntime(captainInputs, {
+      action: 'deliver',
+    });
+    const createCaptainSessionId = uuidSequence();
+    const first = await headlessHarness(['run', '/code inspect it'], {
+      sessionsDir,
+      loadModule,
+      createCaptainRuntime: captainRuntime,
+      createCaptainSessionId,
+      createLogicalSessionId: () => firstId,
+      cwd: repositoryCwd,
+    });
+    expect(first.result.code, first.stderr).toBe(0);
+    expect(first.result.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      frames: [
+        { playbookId: 'code' },
+        { playbookId: 'review' },
+      ],
+    });
+
+    const store = createCaptainSessionStore({ sessionsDir });
+    const lease = await store.acquire(firstId);
+    const settled = await lease.read();
+    const checkpoint = settled.snapshot.effectLedger;
+    await lease.beginTurn({
+      input: 'finish recovered review',
+      attemptId: secondId,
+      attemptedExecutionProjection:
+        settled.lastAppliedExecutionProjection,
+    });
+    let mirror = (await lease.read()).effectLedger;
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: settled.cwd,
+      catalog: settled.structuralProjection.catalog,
+      sessionId: firstId,
+      sessionLease: lease,
+      createWriteAhead: () => ({
+        snapshot: () => mirror,
+        async writeAhead(authority: unknown, commands: unknown[]) {
+          mirror = await lease.writeEffectLedger(authority, commands);
+          return mirror;
+        },
+      }),
+    });
+    const appendUnchanged = async (boundaryId: string, turnId: number) => {
+      await capabilities.code.repository.runExclusive({
+        effectBoundary: {
+          boundaryId,
+          runtimeSessionId:
+            '40000000-0000-4000-8000-000000000004',
+          turnId,
+          callId: `coder:${turnId}`,
+          roleId: 'coder',
+          sourceStateId: 'implementing',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+        operation: async () => undefined,
+      });
+    };
+    await appendUnchanged(
+      '30000000-0000-4000-8000-000000000003',
+      1,
+    );
+    await lease.beginRetry({
+      expectedAttemptId: secondId,
+      nextAttemptId: thirdId,
+    });
+    await appendUnchanged(
+      '30000000-0000-4000-8000-000000000005',
+      2,
+    );
+    const beforeRetry = await lease.read();
+    expect(beforeRetry.snapshot.effectLedger).toEqual(checkpoint);
+    expect(
+      beforeRetry.effectLedger.boundaries.map(
+        (boundary: any) => boundary.physicalReceipt.classification,
+      ),
+    ).toEqual(['unchanged', 'unchanged']);
+    expect(
+      beforeRetry.effectLedger.boundaries.map(
+        (boundary: any) => boundary.attemptNumber,
+      ),
+    ).toEqual([1, 2]);
+    await lease.release();
+
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainRuntime: captainRuntime,
+        createCaptainSessionId,
+        createAttemptId: () => fourthId,
+      },
+    );
+    expect(retried.result.code, retried.stderr).toBe(0);
+    expect(captainInputs).toEqual([
+      '/code inspect it',
+      'finish recovered review',
+    ]);
+    expect(restoredFrameLedgers).toEqual([
+      { playbookId: 'code', ledger: beforeRetry.effectLedger },
+      { playbookId: 'review', ledger: beforeRetry.effectLedger },
+    ]);
+    expect(retried.result.snapshot.captain.runtime.effectLedger).toEqual(
+      emptyPlaybookEffectLedger(),
+    );
+    expect(retried.result.record.effectLedger.boundaries).toHaveLength(2);
+    expect(retried.result.snapshot.effectLedger).toEqual(
+      retried.result.record.effectLedger,
+    );
+    for (const frame of retried.result.snapshot.frames ?? []) {
+      expect(frame.runtime.effectLedger).toEqual(
+        retried.result.record.effectLedger,
+      );
+    }
+  });
+
+  it('parks when any earlier attempt has a non-unchanged receipt before retry work', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-effect-park-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-effect-park-repo-',
+    );
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+    });
+    const first = await headlessHarness(['run', 'settle baseline'], {
+      sessionsDir,
+      entryTransform: promoteEntry,
+      createLogicalSessionId: () => firstId,
+      cwd: repositoryCwd,
+    });
+    expect(first.result.code, first.stderr).toBe(0);
+
+    const store = createCaptainSessionStore({ sessionsDir });
+    const lease = await store.acquire(firstId);
+    const settled = await lease.read();
+    await lease.beginTurn({
+      input: 'must remain parked',
+      attemptId: secondId,
+      attemptedExecutionProjection:
+        settled.lastAppliedExecutionProjection,
+    });
+    let mirror = (await lease.read()).effectLedger;
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: settled.cwd,
+      catalog: settled.structuralProjection.catalog,
+      sessionId: firstId,
+      sessionLease: lease,
+      createWriteAhead: () => ({
+        snapshot: () => mirror,
+        async writeAhead(authority: unknown, commands: unknown[]) {
+          mirror = await lease.writeEffectLedger(authority, commands);
+          return mirror;
+        },
+      }),
+    });
+    const ambiguousBoundaryId =
+      '30000000-0000-4000-8000-000000000013';
+    const baseline = await capabilities.code.repository.observe();
+    await capabilities.code.effectLedger.writeAhead([
+      {
+        kind: 'start-boundaries',
+        boundaries: [
+          {
+            boundaryId: ambiguousBoundaryId,
+            playbookId: 'code',
+            runtimeSessionId:
+              '40000000-0000-4000-8000-000000000014',
+            turnId: 1,
+            callId: 'coder:ambiguous',
+            roleId: 'coder',
+            sourceStateId: 'implementing',
+            sourceOutcomeSchema: { type: 'object' },
+            dispositions: ['unchanged'],
+            canonicalWorktree:
+              capabilities.code.authority.canonicalWorktree,
+            baseline,
+            correctionBudget: { limit: 1, spent: false },
+          },
+        ],
+      },
+    ]);
+    const started = capabilities.code.effectLedger
+      .snapshot()
+      .boundaries.at(-1);
+    await capabilities.code.effectLedger.writeAhead([
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          {
+            expected: started,
+            next: {
+              ...started,
+              physicalReceipt: {
+                classification: 'observation-ambiguous',
+                baseline,
+              },
+            },
+          },
+        ],
+      },
+    ]);
+    await lease.beginRetry({
+      expectedAttemptId: secondId,
+      nextAttemptId: thirdId,
+    });
+    await capabilities.code.repository.runExclusive({
+      effectBoundary: {
+        boundaryId: '30000000-0000-4000-8000-000000000015',
+        runtimeSessionId:
+          '40000000-0000-4000-8000-000000000016',
+        turnId: 2,
+        callId: 'coder:unchanged',
+        roleId: 'coder',
+        sourceStateId: 'implementing',
+        sourceOutcomeSchema: { type: 'object' },
+        dispositions: ['unchanged'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: async () => undefined,
+    });
+    const beforeRetry = await lease.read();
+    await lease.release();
+    const beforeBytes = await readFile(
+      join(sessionsDir, `${firstId}.json`),
+      'utf8',
+    );
+
+    const captainFactory = vi.fn(scriptedCaptainRuntime([]));
+    const hostFactory = vi.fn();
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        entryTransform: promoteEntry,
+        createAttemptId: () => fourthId,
+        createCaptainRuntime: captainFactory,
+        createHostRuntime: hostFactory,
+      },
+    );
+    expect(retried.result.code).toBe(1);
+    expect(retried.stdout).toBe('');
+    expect(retried.stderr).toContain(ambiguousBoundaryId);
+    expect(retried.stderr).toContain('observation-ambiguous');
+    expect(retried.stderr).toContain('remains parked for reconciliation');
+    expect(captainFactory).not.toHaveBeenCalled();
+    expect(hostFactory).not.toHaveBeenCalled();
+    expect(await readFile(join(sessionsDir, `${firstId}.json`), 'utf8')).toBe(
+      beforeBytes,
+    );
+    expect(await store.read(firstId)).toMatchObject({
+      state: 'uncertain',
+      uncertain: {
+        attemptId: beforeRetry.uncertain.attemptId,
+        attemptNumber: 2,
+      },
+    });
+  });
+
+  it('parks logical-only deferred progress without reusing the stored Boss turn', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-logical-park-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-logical-park-repo-',
+    );
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+    });
+    const first = await headlessHarness(['run', 'settle baseline'], {
+      sessionsDir,
+      entryTransform: promoteEntry,
+      createLogicalSessionId: () => firstId,
+      cwd: repositoryCwd,
+    });
+    expect(first.result.code, first.stderr).toBe(0);
+
+    const store = createCaptainSessionStore({ sessionsDir });
+    const lease = await store.acquire(firstId);
+    const settled = await lease.read();
+    await lease.beginTurn({
+      input: 'bind a question',
+      attemptId: secondId,
+      attemptedExecutionProjection:
+        settled.lastAppliedExecutionProjection,
+    });
+    let mirror = (await lease.read()).effectLedger;
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: settled.cwd,
+      catalog: settled.structuralProjection.catalog,
+      sessionId: firstId,
+      sessionLease: lease,
+      createWriteAhead: () => ({
+        snapshot: () => mirror,
+        async writeAhead(authority: unknown, commands: unknown[]) {
+          mirror = await lease.writeEffectLedger(authority, commands);
+          return mirror;
+        },
+      }),
+    });
+    const operationId = '50000000-0000-4000-8000-000000000021';
+    await capabilities.code.repository.runExclusive({
+      effectBoundary: {
+        boundaryId: '30000000-0000-4000-8000-000000000023',
+        runtimeSessionId:
+          '40000000-0000-4000-8000-000000000024',
+        turnId: 1,
+        callId: 'coder:question',
+        roleId: 'coder',
+        sourceStateId: 'implementing',
+        sourceOutcomeSchema: { type: 'object' },
+        dispositions: ['unchanged', 'deferred'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: async () => undefined,
+      completeEffectBoundary: async () => ({
+        finalText: 'May I continue?',
+        deferred: {
+          operationId,
+          pendingQuestion: {
+            questionId: 'question-1',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: 'May I continue?',
+          },
+          playerContinuation: 'coder-token',
+        },
+      }),
+    });
+    const checkpointRecord = await lease.settle({
+      attemptId: secondId,
+      unresolvedEffects: [],
+      snapshot: {
+        ...settled.snapshot,
+        effectLedger: mirror,
+      },
+    });
+    await lease.beginTurn({
+      input: 'yes, but from the wrong checkpoint',
+      attemptId: thirdId,
+      attemptedExecutionProjection:
+        checkpointRecord.lastAppliedExecutionProjection,
+    });
+    const expectedOperation = mirror.logicalOperations[0];
+    await capabilities.code.effectLedger.writeAhead([
+      {
+        kind: 'replace-logical-operations',
+        replacements: [
+          {
+            expected: expectedOperation,
+            next: {
+              ...expectedOperation,
+              checkpointRestorationEligible: true,
+            },
+          },
+        ],
+      },
+    ]);
+    const beforeRetry = await lease.read();
+    expect(beforeRetry.effectLedger.boundaries).toEqual(
+      beforeRetry.snapshot.effectLedger.boundaries,
+    );
+    expect(beforeRetry.effectLedger.logicalOperations).not.toEqual(
+      beforeRetry.snapshot.effectLedger.logicalOperations,
+    );
+    await lease.release();
+    const beforeBytes = await readFile(
+      join(sessionsDir, `${firstId}.json`),
+      'utf8',
+    );
+
+    const captainFactory = vi.fn(scriptedCaptainRuntime([]));
+    const hostFactory = vi.fn();
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        entryTransform: promoteEntry,
+        createAttemptId: () => fourthId,
+        createCaptainRuntime: captainFactory,
+        createHostRuntime: hostFactory,
+      },
+    );
+    expect(retried.result.code).toBe(1);
+    expect(retried.stdout).toBe('');
+    expect(retried.stderr).toContain('deferred logical-operation progress');
+    expect(retried.stderr).toContain('cannot replay the Boss turn');
+    expect(captainFactory).not.toHaveBeenCalled();
+    expect(hostFactory).not.toHaveBeenCalled();
+    expect(await readFile(join(sessionsDir, `${firstId}.json`), 'utf8')).toBe(
+      beforeBytes,
+    );
+  });
+
+  it('parks when recovery changes a boundary inside the restorable checkpoint', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-prefix-park-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-prefix-park-repo-',
+    );
+    const promoteEntry = (entry: any) => ({
+      ...entry,
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+    });
+    const first = await headlessHarness(['run', 'settle baseline'], {
+      sessionsDir,
+      entryTransform: promoteEntry,
+      createLogicalSessionId: () => firstId,
+      cwd: repositoryCwd,
+    });
+    expect(first.result.code, first.stderr).toBe(0);
+
+    const store = createCaptainSessionStore({ sessionsDir });
+    const lease = await store.acquire(firstId);
+    const settled = await lease.read();
+    await lease.beginTurn({
+      input: 'establish incomplete checkpoint',
+      attemptId: secondId,
+      attemptedExecutionProjection:
+        settled.lastAppliedExecutionProjection,
+    });
+    let mirror = (await lease.read()).effectLedger;
+    const capabilities = await createRepositoryEffectCapabilities({
+      cwd: settled.cwd,
+      catalog: settled.structuralProjection.catalog,
+      sessionId: firstId,
+      sessionLease: lease,
+      createWriteAhead: () => ({
+        snapshot: () => mirror,
+        async writeAhead(authority: unknown, commands: unknown[]) {
+          mirror = await lease.writeEffectLedger(authority, commands);
+          return mirror;
+        },
+      }),
+    });
+    const baseline = await capabilities.code.repository.observe();
+    await capabilities.code.effectLedger.writeAhead([
+      {
+        kind: 'start-boundaries',
+        boundaries: [
+          {
+            boundaryId: '30000000-0000-4000-8000-000000000033',
+            playbookId: 'code',
+            runtimeSessionId:
+              '40000000-0000-4000-8000-000000000034',
+            turnId: 1,
+            callId: 'coder:checkpoint',
+            roleId: 'coder',
+            sourceStateId: 'implementing',
+            sourceOutcomeSchema: { type: 'object' },
+            dispositions: ['unchanged'],
+            canonicalWorktree:
+              capabilities.code.authority.canonicalWorktree,
+            baseline,
+            correctionBudget: { limit: 1, spent: false },
+          },
+        ],
+      },
+    ]);
+    const checkpointRecord = await lease.settle({
+      attemptId: secondId,
+      unresolvedEffects: [],
+      snapshot: { ...settled.snapshot, effectLedger: mirror },
+    });
+    await lease.beginTurn({
+      input: 'must not replay changed checkpoint',
+      attemptId: thirdId,
+      attemptedExecutionProjection:
+        checkpointRecord.lastAppliedExecutionProjection,
+    });
+    const incomplete = mirror.boundaries[0];
+    await capabilities.code.effectLedger.writeAhead([
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          {
+            expected: incomplete,
+            next: {
+              ...incomplete,
+              after: baseline,
+              physicalReceipt: {
+                classification: 'unchanged',
+                baseline,
+                after: baseline,
+              },
+            },
+          },
+        ],
+      },
+    ]);
+    await lease.release();
+    const beforeBytes = await readFile(
+      join(sessionsDir, `${firstId}.json`),
+      'utf8',
+    );
+
+    const captainFactory = vi.fn(scriptedCaptainRuntime([]));
+    const hostFactory = vi.fn();
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        entryTransform: promoteEntry,
+        createAttemptId: () => fourthId,
+        createCaptainRuntime: captainFactory,
+        createHostRuntime: hostFactory,
+      },
+    );
+    expect(retried.result.code).toBe(1);
+    expect(retried.stdout).toBe('');
+    expect(retried.stderr).toContain('cannot restore a changed pre-turn boundary');
+    expect(captainFactory).not.toHaveBeenCalled();
+    expect(hostFactory).not.toHaveBeenCalled();
+    expect(await readFile(join(sessionsDir, `${firstId}.json`), 'utf8')).toBe(
+      beforeBytes,
     );
   });
 
@@ -3493,8 +4390,8 @@ const active = {
 };
 export default {
   id: 'fixture', command: 'fixture', intent: 'filesystem fixture',
-  artifactSchema: 2,
-  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+  artifactSchema: 3,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
   requiredRoleIds: [], validateOptions(value) { return value; },
   concurrentRoleSets: [],
   createRuntime() {

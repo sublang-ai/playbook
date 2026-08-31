@@ -3,12 +3,28 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { PlayerInput } from './code.fsm.js';
+import {
+  codingMachine,
+  type CodingContext,
+  type PlayerInput,
+} from './code.fsm.js';
+import { enumeratePlayerStates } from './code.fsm.introspect.js';
 import { _internal } from './code.playbook.js';
 
 const { composePlayerPrompt } = _internal;
 const promptIdentity = (roleId: string): string =>
   roleId === 'coder' ? 'GPT-5.6 Sol' : roleId;
+const RETIRED_COMMIT_RESPONSE_INSTRUCTION =
+  'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.';
+
+const ACTUAL_CONTEXT: CodingContext = {
+  runResults: 'tests passed',
+  callerInput: 'Implement the intent.',
+  coderOutput: 'Completed the preceding phase.',
+  latestCommit: 'abc123',
+  irNumber: '048',
+  irTask: 'Implement task 14.',
+};
 
 function firstInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
   return {
@@ -30,6 +46,16 @@ function firstInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
 }
 
 describe('CODE player prompt composition', () => {
+  it('omits the retired Commit-line response format from every phase', () => {
+    for (const state of enumeratePlayerStates(codingMachine)) {
+      const input = state.getInput(ACTUAL_CONTEXT);
+      expect(input.prompt).not.toContain(RETIRED_COMMIT_RESPONSE_INSTRUCTION);
+      expect(composePlayerPrompt(input, promptIdentity)).not.toContain(
+        RETIRED_COMMIT_RESPONSE_INSTRUCTION,
+      );
+    }
+  });
+
   it('keeps every line of relayed values inside Markdown quotes', () => {
     expect(composePlayerPrompt(firstInput(), promptIdentity)).toBe(
       [

@@ -26,16 +26,29 @@ import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedEffort } from '@sublang/cligent';
 import { KNOWN_PLAYER_ADAPTERS } from '@sublang/cligent/tmux-play';
 import {
+  assertPlaybookEffectLedger,
   assertPlaybookRuntimeSnapshot,
+  emptyPlaybookEffectLedger,
+  isPlaybookEffectLedgerMonotonicExtension,
   snapshotJsonValue,
 } from '../../../../src/xstate-runtime.js';
-import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
+import {
+  assertPlaybookCaptainShellSnapshot,
+  assertPlaybookCaptainUnresolvedEffects,
+} from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
-// The interrupted retention change emitted this compatible required-member
-// shape before canonical writes returned to additive schema 3.
+const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
+// The interrupted retention change emitted this required-member shape before
+// canonical writes returned to additive schema 3. Both pre-effect shapes and
+// the pre-unresolved-effects schema-5 shape are projected in memory only far
+// enough to validate malformed data before the effect-authority cutover
+// classifies them as nonresumable.
 const COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION = 4;
+const PRE_UNRESOLVED_EFFECTS_RECORD_SCHEMA_VERSION = 5;
+const CURRENT_ARTIFACT_SCHEMAS = new Set([3]);
+const PRE_EFFECT_ARTIFACT_SCHEMAS = new Set([2, 3]);
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION = 1;
@@ -58,7 +71,12 @@ const COMMON_RECORD_KEYS = [
   'structuralProjection',
   'lastAppliedExecutionProjection',
   'snapshot',
+  'effectLedger',
+  'unresolvedEffects',
 ];
+const LEGACY_COMMON_RECORD_KEYS = COMMON_RECORD_KEYS.filter(
+  (key) => key !== 'effectLedger' && key !== 'unresolvedEffects',
+);
 const UNCERTAIN_KEYS = [
   'baseUpdatedAt',
   'input',
@@ -66,6 +84,11 @@ const UNCERTAIN_KEYS = [
   'attemptNumber',
   'markedAt',
   'attemptedExecutionProjection',
+];
+const UNCERTAIN_ABANDONMENT_KEYS = [
+  'phase',
+  'rootPlaybookId',
+  'unresolvedEffects',
 ];
 const RELEASED_SCHEMA_2_COMMON_RECORD_KEYS = [
   'schemaVersion',
@@ -115,6 +138,15 @@ class CaptainSessionRecordSchemaError extends Error {
     this.name = 'CaptainSessionRecordSchemaError';
     this.schemaVersion = schemaVersion;
     this.cause = cause;
+  }
+}
+
+class CaptainSessionRecordNonresumableError extends
+  CaptainSessionRecordSchemaError {
+  constructor(schemaVersion, message, orderingBoundary, cause) {
+    super(schemaVersion, message, cause);
+    this.name = 'CaptainSessionRecordNonresumableError';
+    this.orderingBoundary = orderingBoundary;
   }
 }
 
@@ -214,13 +246,23 @@ export function createCaptainSessionStore(options = {}) {
         `Captain session ${JSON.stringify(sessionId)} at ` +
         `${JSON.stringify(path)}`;
       if (cause instanceof CaptainSessionRecordSchemaError) {
+        const nonresumable =
+          cause instanceof CaptainSessionRecordNonresumableError;
         if (
-          cause.schemaVersion === 2 &&
+          nonresumable &&
           value.sessionId !== sessionId
         ) {
           throw new Error(
             `Captain session file ${JSON.stringify(path)} contains record ` +
               JSON.stringify(value.sessionId),
+          );
+        }
+        if (nonresumable) {
+          throw new CaptainSessionRecordNonresumableError(
+            cause.schemaVersion,
+            `${context}: ${cause.message}`,
+            cause.orderingBoundary,
+            cause,
           );
         }
         throw new CaptainSessionRecordSchemaError(
@@ -244,13 +286,39 @@ export function createCaptainSessionStore(options = {}) {
 
   const read = (sessionId) => readRecord(sessionId);
 
-  const listRecords = async ({ onLegacyRecord } = {}) => {
+  const listRecords = async ({
+    onLegacyRecord,
+    onLegacyOrderingBoundary,
+    onInvalidRecord,
+    skipInvalidRecords = false,
+  } = {}) => {
     if (
       onLegacyRecord !== undefined &&
       typeof onLegacyRecord !== 'function'
     ) {
       throw new Error(
         'Captain session legacy-record observer must be a function',
+      );
+    }
+    if (
+      onLegacyOrderingBoundary !== undefined &&
+      typeof onLegacyOrderingBoundary !== 'function'
+    ) {
+      throw new Error(
+        'Captain session legacy ordering-boundary observer must be a function',
+      );
+    }
+    if (
+      onInvalidRecord !== undefined &&
+      typeof onInvalidRecord !== 'function'
+    ) {
+      throw new Error(
+        'Captain session invalid-record observer must be a function',
+      );
+    }
+    if (typeof skipInvalidRecords !== 'boolean') {
+      throw new Error(
+        'Captain session invalid-record skip option must be a boolean',
       );
     }
     let names;
@@ -273,15 +341,23 @@ export function createCaptainSessionStore(options = {}) {
       try {
         candidates.push(await readRecord(sessionId));
       } catch (error) {
-        if (
-          error instanceof CaptainSessionRecordSchemaError &&
-          error.schemaVersion === 2
-        ) {
+        if (error instanceof CaptainSessionRecordNonresumableError) {
+          await onLegacyOrderingBoundary?.(error.orderingBoundary);
           await onLegacyRecord?.(
             Object.freeze({
               sessionId,
               path: recordPathFor(sessionId),
               schemaVersion: error.schemaVersion,
+            }),
+          );
+          continue;
+        }
+        if (skipInvalidRecords) {
+          await onInvalidRecord?.(
+            Object.freeze({
+              sessionId,
+              path: recordPathFor(sessionId),
+              reason: errorMessage(error),
             }),
           );
           continue;
@@ -305,18 +381,59 @@ export function createCaptainSessionStore(options = {}) {
     );
   };
 
-  const selectAdoptionPredecessor = async (
+  const scanAdoptionPredecessor = async (
     target,
-    { onLegacyRecord } = {},
-  ) =>
-    sortCaptainSessionRecords(
-      (await listRecords({ onLegacyRecord })).filter(
+    { onLegacyRecord, onInvalidRecord } = {},
+  ) => {
+    let orderingUnproved = false;
+    const legacyOrderingBoundaries = [];
+    const observeInvalid = async (record) => {
+      orderingUnproved = true;
+      await onInvalidRecord?.(record);
+    };
+    const records = await listRecords({
+      onLegacyRecord,
+      onLegacyOrderingBoundary: (record) => {
+        legacyOrderingBoundaries.push(record);
+      },
+      onInvalidRecord: observeInvalid,
+      skipInvalidRecords: true,
+    });
+    const resumableCandidates = records.filter(
+      (candidate) =>
+        candidate.sessionId !== target.sessionId &&
+        candidate.state === 'settled' &&
+        candidate.cwd === target.cwd,
+    );
+    const resumableById = new Map(
+      resumableCandidates.map((candidate) => [candidate.sessionId, candidate]),
+    );
+    const orderedBoundaries = sortCaptainSessionRecords([
+      ...resumableCandidates,
+      ...legacyOrderingBoundaries.filter(
         (candidate) =>
           candidate.sessionId !== target.sessionId &&
           candidate.state === 'settled' &&
           candidate.cwd === target.cwd,
       ),
-    )[0];
+    ]);
+    const newestBoundary = orderedBoundaries[0];
+    const candidate =
+      orderingUnproved || newestBoundary === undefined
+        ? undefined
+        : resumableById.get(newestBoundary.sessionId);
+    const adoptionDeclined =
+      orderingUnproved ||
+      (newestBoundary !== undefined && candidate === undefined);
+    // A fully validated legacy record has a trustworthy place in the
+    // same-cwd predecessor order even though it cannot resume. Only a record
+    // whose contents cannot be validated leaves that order globally unproved.
+    return {
+      candidate,
+      newestBoundaryUpdatedAt: newestBoundary?.updatedAt,
+      adoptionDeclined,
+    };
+  };
 
   const writeRecord = async (
     recordValue,
@@ -691,8 +808,9 @@ export function createCaptainSessionStore(options = {}) {
         owner: stage.owner,
         readRecord,
         writeRecord,
+        syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
-        selectAdoptionPredecessor,
+        scanAdoptionPredecessor,
         acquireSession: acquire,
         readLeaseOwner,
         retireObservedLease,
@@ -734,8 +852,9 @@ function createLease({
   owner,
   readRecord,
   writeRecord,
+  syncRecordDirectory,
   deleteRecord,
-  selectAdoptionPredecessor,
+  scanAdoptionPredecessor,
   acquireSession,
   readLeaseOwner,
   retireObservedLease,
@@ -744,6 +863,7 @@ function createLease({
 }) {
   let released = false;
   let operationActive = false;
+  let indeterminateEffectLedgerWrite;
 
   const requireActive = () => {
     if (released) throw new Error('Captain session lease was already released');
@@ -809,8 +929,25 @@ function createLease({
       structuralProjection: initial.structuralProjection,
       lastAppliedExecutionProjection: applied,
       snapshot: initial.snapshot,
+      effectLedger: emptyPlaybookEffectLedger(),
+      unresolvedEffects: [],
       retainedGenerations: {},
     });
+  };
+
+  const laterTimestamp = (left, right) =>
+    right !== undefined && Date.parse(right) > Date.parse(left) ? right : left;
+
+  const emptyFreshTargetAfter = (target, predecessorUpdatedAt) => {
+    if (predecessorUpdatedAt === undefined) return target;
+    return settledRecordWithRetainedGenerations(
+      target,
+      {},
+      nextTimestamp(
+        now(),
+        laterTimestamp(target.updatedAt, predecessorUpdatedAt),
+      ),
+    );
   };
 
   const publishEmptyFreshTarget = async (target) => {
@@ -873,9 +1010,43 @@ function createLease({
           `Captain session ${JSON.stringify(sessionId)} already exists`,
         );
       }
-      const selected = await selectAdoptionPredecessor(target, {
-        onLegacyRecord: options.onLegacyRecord,
-      });
+      const reportedSkippedRecords = new Set();
+      const reportOnce = (observer, label) => {
+        if (observer === undefined) return undefined;
+        if (typeof observer !== 'function') {
+          throw new Error(`Captain session ${label} observer must be a function`);
+        }
+        return async (record) => {
+          const key = `${record.sessionId}\u0000${record.path}`;
+          if (reportedSkippedRecords.has(key)) return;
+          reportedSkippedRecords.add(key);
+          await observer(record);
+        };
+      };
+      const predecessorScanOptions = {
+        onLegacyRecord: reportOnce(
+          options.onLegacyRecord,
+          'legacy-record',
+        ),
+        onInvalidRecord: reportOnce(
+          options.onInvalidRecord,
+          'invalid-record',
+        ),
+      };
+      const initialScan = await scanAdoptionPredecessor(
+        target,
+        predecessorScanOptions,
+      );
+      if (initialScan.adoptionDeclined) {
+        const emptyTarget = emptyFreshTargetAfter(
+          target,
+          initialScan.newestBoundaryUpdatedAt,
+        );
+        await publishEmptyFreshTarget(emptyTarget);
+        await assertOwnerUnchecked();
+        return emptyTarget;
+      }
+      const selected = initialScan.candidate;
       if (selected === undefined) {
         await publishEmptyFreshTarget(target);
         await assertOwnerUnchecked();
@@ -887,14 +1058,16 @@ function createLease({
         async (sourceLease) => {
           const source = await sourceLease.read();
           if (source === undefined) {
-            const current = await selectAdoptionPredecessor(target);
+            const currentScan = await scanAdoptionPredecessor(
+              target,
+              predecessorScanOptions,
+            );
             return {
               kind: 'declined',
-              predecessorUpdatedAt:
-                current !== undefined &&
-                Date.parse(current.updatedAt) > Date.parse(selected.updatedAt)
-                  ? current.updatedAt
-                  : selected.updatedAt,
+              predecessorUpdatedAt: laterTimestamp(
+                selected.updatedAt,
+                currentScan.newestBoundaryUpdatedAt,
+              ),
             };
           }
           await assertOwnerUnchecked();
@@ -904,15 +1077,17 @@ function createLease({
           ) {
             throw new Error('Captain session adoption target changed');
           }
-          const current = await selectAdoptionPredecessor(target);
-          if (current?.sessionId !== source.sessionId) {
+          const currentScan = await scanAdoptionPredecessor(
+            target,
+            predecessorScanOptions,
+          );
+          if (currentScan.candidate?.sessionId !== source.sessionId) {
             return {
               kind: 'declined',
-              predecessorUpdatedAt:
-                current !== undefined &&
-                Date.parse(current.updatedAt) > Date.parse(source.updatedAt)
-                  ? current.updatedAt
-                  : source.updatedAt,
+              predecessorUpdatedAt: laterTimestamp(
+                source.updatedAt,
+                currentScan.newestBoundaryUpdatedAt,
+              ),
             };
           }
 
@@ -922,6 +1097,7 @@ function createLease({
               source.structuralProjection,
               target.structuralProjection,
               retainedGenerations,
+              source.effectLedger,
             );
           } catch {
             return {
@@ -949,6 +1125,7 @@ function createLease({
             target,
             retainedGenerations,
             nextTimestamp(now(), targetTimestampFloor),
+            source.effectLedger,
           );
 
           await sourceLease.assertOwner();
@@ -1022,15 +1199,9 @@ function createLease({
       ) {
         throw new Error('Captain session adoption target changed');
       }
-      const timestampFloor =
-        Date.parse(target.updatedAt) >
-        Date.parse(result.predecessorUpdatedAt)
-          ? target.updatedAt
-          : result.predecessorUpdatedAt;
-      const emptyTarget = settledRecordWithRetainedGenerations(
+      const emptyTarget = emptyFreshTargetAfter(
         target,
-        {},
-        nextTimestamp(now(), timestampFloor),
+        result.predecessorUpdatedAt,
       );
       await publishEmptyFreshTarget(emptyTarget);
       await assertOwnerUnchecked();
@@ -1086,7 +1257,10 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
         uncertain: {
           baseUpdatedAt: prior.updatedAt,
           input,
@@ -1114,6 +1288,11 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         expectedAttemptId,
       );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment must recover before retry',
+        );
+      }
       if (!Number.isSafeInteger(prior.uncertain.attemptNumber + 1)) {
         throw new Error('Captain session attempt number cannot be incremented');
       }
@@ -1130,7 +1309,10 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
           input: prior.uncertain.input,
@@ -1147,14 +1329,211 @@ function createLease({
       return record;
     });
 
-  const settle = ({ attemptId, snapshot, retentionUpdates = [] } = {}) =>
+  const requireAbandonmentSettlement = (
+    abandonment,
+    unresolvedEffects,
+    retentionUpdates,
+    snapshot,
+    retainedGenerations,
+  ) => {
+    if (
+      !isDeepStrictEqual(
+        abandonment.unresolvedEffects,
+        unresolvedEffects,
+      )
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement differs from its durable unresolved effects',
+      );
+    }
+    if (
+      !retentionUpdates.some(
+        (update) =>
+          update.kind === 'clear' &&
+          update.rootPlaybookId === abandonment.rootPlaybookId,
+      ) ||
+      retentionUpdates.some(
+        (update) =>
+          update.kind !== 'clear' ||
+          (update.rootPlaybookId !== abandonment.rootPlaybookId &&
+            Object.hasOwn(retainedGenerations, update.rootPlaybookId)),
+      )
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement must clear its durable root without changing another retained generation',
+      );
+    }
+    if (
+      snapshot.mode !== 'chat' ||
+      snapshot.lastAction !== 'runtime' ||
+      snapshot.lastSettlementStatus !== 'ok'
+    ) {
+      throw new Error(
+        'Captain session abandonment settlement requires a successful host-disposal snapshot',
+      );
+    }
+  };
+
+  const unresolvedEffectAbandonmentInput = (value) => {
+    const input = requireRecord(
+      snapshotJsonValue(value, 'Captain unresolved-effect abandonment'),
+      'Captain unresolved-effect abandonment',
+    );
+    rejectUnknownOrMissingKeys(
+      input,
+      ['rootPlaybookId', 'unresolvedEffects'],
+      'Captain unresolved-effect abandonment',
+    );
+    const rootPlaybookId = requireCanonicalNonblank(
+      input.rootPlaybookId,
+      'Captain unresolved-effect abandonment.rootPlaybookId',
+    );
+    const unresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+      input.unresolvedEffects,
+    );
+    if (unresolvedEffects.length === 0) {
+      throw new Error(
+        'Captain unresolved-effect abandonment requires nonempty unresolved effects',
+      );
+    }
+    return { rootPlaybookId, unresolvedEffects };
+  };
+
+  const beginUnresolvedEffectAbandonment = (value) =>
     runExclusive(async () => {
-      assertUuid(attemptId, 'Captain session attempt id');
-      const updates = validateRetainedGenerationUpdates(retentionUpdates);
+      const input = unresolvedEffectAbandonmentInput(value);
       await assertOwnerUnchecked();
       const prior = await requireUncertainRecord(
         await readRecord(sessionId, { missing: 'undefined' }),
-        attemptId,
+      );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        const existing = prior.uncertain.abandonment;
+        if (
+          existing.phase === 'started' &&
+          existing.rootPlaybookId === input.rootPlaybookId &&
+          isDeepStrictEqual(existing.unresolvedEffects, input.unresolvedEffects)
+        ) {
+          await assertOwnerUnchecked();
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+          return prior;
+        }
+        throw new Error(
+          'Captain session unresolved-effect abandonment is already in progress',
+        );
+      }
+      if (
+        prior.snapshot.mode !== 'engaged.parked' ||
+        prior.snapshot.frames[0]?.playbookId !== input.rootPlaybookId
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment root does not match its durable engagement',
+        );
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        uncertain: {
+          ...prior.uncertain,
+          abandonment: {
+            phase: 'started',
+            rootPlaybookId: input.rootPlaybookId,
+            unresolvedEffects: input.unresolvedEffects,
+          },
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const completeUnresolvedEffectAbandonment = (value) =>
+    runExclusive(async () => {
+      const input = unresolvedEffectAbandonmentInput(value);
+      await assertOwnerUnchecked();
+      const prior = await requireUncertainRecord(
+        await readRecord(sessionId, { missing: 'undefined' }),
+      );
+      const abandonment = prior.uncertain.abandonment;
+      if (
+        abandonment === undefined ||
+        abandonment.rootPlaybookId !== input.rootPlaybookId ||
+        !isDeepStrictEqual(
+          abandonment.unresolvedEffects,
+          input.unresolvedEffects,
+        )
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment completion differs from its durable start',
+        );
+      }
+      if (abandonment.phase === 'disposed') {
+        await assertOwnerUnchecked();
+        await syncRecordDirectory();
+        await assertOwnerUnchecked();
+        return prior;
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        unresolvedEffects: input.unresolvedEffects,
+        retainedGenerations: applyRetainedGenerationUpdates(
+          prior.retainedGenerations ?? {},
+          [{ kind: 'clear', rootPlaybookId: input.rootPlaybookId }],
+          prior.structuralProjection,
+        ),
+        uncertain: {
+          ...prior.uncertain,
+          abandonment: {
+            phase: 'disposed',
+            rootPlaybookId: input.rootPlaybookId,
+            unresolvedEffects: input.unresolvedEffects,
+          },
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const recoverUnresolvedEffectAbandonment = () =>
+    runExclusive(async () => {
+      await assertOwnerUnchecked();
+      const prior = await readRecord(sessionId, { missing: 'undefined' });
+      if (
+        prior === undefined ||
+        prior.state !== 'uncertain' ||
+        !Object.hasOwn(prior.uncertain, 'abandonment')
+      ) {
+        await assertOwnerUnchecked();
+        if (
+          prior?.state === 'settled' &&
+          Object.hasOwn(prior, 'settledAbandonment')
+        ) {
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+        }
+        return prior;
+      }
+      const abandonment = prior.uncertain.abandonment;
+      const {
+        frames: _frames,
+        retainedEffectReconciliation: _retainedEffectReconciliation,
+        pendingBossQuestions: _pendingBossQuestions,
+        lastError: _lastError,
+        ...snapshotCommon
+      } = prior.snapshot;
+      const snapshot = assertPlaybookCaptainShellSnapshot({
+        ...snapshotCommon,
+        effectLedger: prior.effectLedger,
+        mode: 'chat',
+        lastAction: 'runtime',
+        lastSettlementStatus: 'ok',
+      });
+      const retainedGenerations = applyRetainedGenerationUpdates(
+        prior.retainedGenerations ?? {},
+        [{ kind: 'clear', rootPlaybookId: abandonment.rootPlaybookId }],
+        prior.structuralProjection,
       );
       const timestamp = nextTimestamp(now(), prior.updatedAt);
       const record = validateCaptainSessionRecord({
@@ -1169,16 +1548,253 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.uncertain.attemptedExecutionProjection,
         snapshot,
-        retainedGenerations: applyRetainedGenerationUpdates(
-          prior.retainedGenerations ?? {},
-          updates,
-          prior.structuralProjection,
-        ),
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: abandonment.unresolvedEffects,
+        retainedGenerations,
+        settledAbandonment: {
+          phase: 'recovered',
+          attemptId: prior.uncertain.attemptId,
+          rootPlaybookId: abandonment.rootPlaybookId,
+          unresolvedEffects: abandonment.unresolvedEffects,
+        },
       });
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
       return record;
+    });
+
+  const settle = ({
+    attemptId,
+    snapshot,
+    unresolvedEffects,
+    retentionUpdates = [],
+  } = {}) =>
+    runExclusive(async () => {
+      assertUuid(attemptId, 'Captain session attempt id');
+      const updates = validateRetainedGenerationUpdates(retentionUpdates);
+      const settledUnresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+        unresolvedEffects,
+      );
+      await assertOwnerUnchecked();
+      const current = await readRecord(sessionId, { missing: 'undefined' });
+      const settledAbandonment =
+        current?.state === 'settled' &&
+        Object.hasOwn(current, 'settledAbandonment')
+          ? current.settledAbandonment
+          : undefined;
+      const prior =
+        settledAbandonment === undefined
+          ? await requireUncertainRecord(current, attemptId)
+          : undefined;
+      if (
+        settledAbandonment !== undefined &&
+        settledAbandonment.attemptId !== attemptId
+      ) {
+        throw new Error(
+          'Captain session abandonment settlement attempt differs from its durable marker',
+        );
+      }
+      const settledSnapshot = assertPlaybookCaptainShellSnapshot(snapshot);
+      if (settledAbandonment !== undefined) {
+        requireAbandonmentSettlement(
+          settledAbandonment,
+          settledUnresolvedEffects,
+          updates,
+          settledSnapshot,
+          current.retainedGenerations ?? {},
+        );
+        if (
+          !isDeepStrictEqual(
+            settledSnapshot.effectLedger,
+            current.effectLedger,
+          )
+        ) {
+          throw new Error(
+            'Captain session settlement snapshot effect ledger differs from its durable ledger',
+          );
+        }
+        const retainedGenerations = applyRetainedGenerationUpdates(
+          current.retainedGenerations ?? {},
+          updates,
+          current.structuralProjection,
+        );
+        const settlementIsExact =
+          isDeepStrictEqual(current.snapshot, settledSnapshot) &&
+          isDeepStrictEqual(
+            current.unresolvedEffects,
+            settledUnresolvedEffects,
+          ) &&
+          isDeepStrictEqual(
+            current.retainedGenerations ?? {},
+            retainedGenerations,
+          );
+        if (
+          settledAbandonment.phase === 'final' &&
+          settlementIsExact
+        ) {
+          await assertOwnerUnchecked();
+          await syncRecordDirectory();
+          await assertOwnerUnchecked();
+          return current;
+        }
+        if (settledAbandonment.phase === 'final') {
+          throw new Error(
+            'Captain session abandonment settlement differs from its finalized durable record',
+          );
+        }
+        const record = validateCaptainSessionRecord({
+          schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+          kind: CAPTAIN_SESSION_RECORD_KIND,
+          state: 'settled',
+          sessionId,
+          createdAt: current.createdAt,
+          updatedAt: nextTimestamp(now(), current.updatedAt),
+          cwd: current.cwd,
+          structuralProjection: current.structuralProjection,
+          lastAppliedExecutionProjection:
+            current.lastAppliedExecutionProjection,
+          snapshot: settledSnapshot,
+          effectLedger: current.effectLedger,
+          unresolvedEffects: settledUnresolvedEffects,
+          retainedGenerations,
+          settledAbandonment: {
+            ...settledAbandonment,
+            phase: 'final',
+          },
+        });
+        await assertOwnerUnchecked();
+        await writeRecord(record, { noReplace: false });
+        await assertOwnerUnchecked();
+        return record;
+      }
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        const abandonment = prior.uncertain.abandonment;
+        if (abandonment.phase !== 'disposed') {
+          throw new Error(
+            'Captain session unresolved-effect abandonment has not completed disposal',
+          );
+        }
+        requireAbandonmentSettlement(
+          abandonment,
+          settledUnresolvedEffects,
+          updates,
+          settledSnapshot,
+          prior.retainedGenerations ?? {},
+        );
+      }
+      if (!isDeepStrictEqual(settledSnapshot.effectLedger, prior.effectLedger)) {
+        throw new Error(
+          'Captain session settlement snapshot effect ledger differs from its durable ledger',
+        );
+      }
+      const timestamp = nextTimestamp(now(), prior.updatedAt);
+      const record = validateCaptainSessionRecord({
+        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        kind: CAPTAIN_SESSION_RECORD_KIND,
+        state: 'settled',
+        sessionId,
+        createdAt: prior.createdAt,
+        updatedAt: timestamp,
+        cwd: prior.cwd,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.uncertain.attemptedExecutionProjection,
+        snapshot: settledSnapshot,
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: settledUnresolvedEffects,
+        retainedGenerations: applyRetainedGenerationUpdates(
+          prior.retainedGenerations ?? {},
+          updates,
+          prior.structuralProjection,
+        ),
+        ...(Object.hasOwn(prior.uncertain, 'abandonment')
+          ? {
+              settledAbandonment: {
+                phase: 'final',
+                attemptId: prior.uncertain.attemptId,
+                rootPlaybookId:
+                  prior.uncertain.abandonment.rootPlaybookId,
+                unresolvedEffects:
+                  prior.uncertain.abandonment.unresolvedEffects,
+              },
+            }
+          : {}),
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const writeEffectLedger = (authorityValue, commandsValue) =>
+    runExclusive(async () => {
+      await assertOwnerUnchecked();
+      const prior = await readRecord(sessionId, { missing: 'undefined' });
+      if (prior === undefined) {
+        throw new Error('Captain session does not exist for effect-ledger write-ahead');
+      }
+      const settledRecovery =
+        prior.state === 'settled' &&
+        prior.snapshot.mode === 'chat' &&
+        (Object.keys(prior.retainedGenerations ?? {}).length > 0 ||
+          prior.unresolvedEffects.length > 0);
+      if (prior.state !== 'uncertain' && !settledRecovery) {
+        throw new Error(
+          'Captain session effect-ledger write-ahead requires an uncertain turn or a settled chat recovery boundary',
+        );
+      }
+      const authority = validateEffectLedgerAuthority(
+        authorityValue,
+        prior,
+        owner,
+      );
+      const commands = snapshotJsonValue(
+        commandsValue,
+        'effect-ledger write commands',
+      );
+      if (settledRecovery) assertSettledEffectRecoveryCommands(commands);
+      if (
+        indeterminateEffectLedgerWrite !== undefined &&
+        isDeepStrictEqual(commands, indeterminateEffectLedgerWrite.commands) &&
+        isDeepStrictEqual(
+          prior.effectLedger,
+          indeterminateEffectLedgerWrite.ledger,
+        )
+      ) {
+        await assertOwnerUnchecked();
+        await syncRecordDirectory();
+        await assertOwnerUnchecked();
+        indeterminateEffectLedgerWrite = undefined;
+        return prior.effectLedger;
+      }
+      indeterminateEffectLedgerWrite = undefined;
+      const nextLedger = applyEffectLedgerCommands(
+        prior.effectLedger,
+        authority,
+        prior.uncertain,
+        commands,
+      );
+      if (isDeepStrictEqual(nextLedger, prior.effectLedger)) {
+        await assertOwnerUnchecked();
+        return prior.effectLedger;
+      }
+      const record = validateCaptainSessionRecord({
+        ...prior,
+        effectLedger: nextLedger,
+        ...(settledRecovery
+          ? { snapshot: { ...prior.snapshot, effectLedger: nextLedger } }
+          : {}),
+      });
+      indeterminateEffectLedgerWrite = {
+        commands,
+        ledger: record.effectLedger,
+      };
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
+      await assertOwnerUnchecked();
+      indeterminateEffectLedgerWrite = undefined;
+      return record.effectLedger;
     });
 
   const discard = ({ attemptId } = {}) =>
@@ -1189,6 +1805,16 @@ function createLease({
         await readRecord(sessionId, { missing: 'undefined' }),
         attemptId,
       );
+      if (Object.hasOwn(prior.uncertain, 'abandonment')) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment must recover before discard',
+        );
+      }
+      if (!isDeepStrictEqual(prior.effectLedger, prior.snapshot.effectLedger)) {
+        throw new Error(
+          'Captain session uncertain effect ledger differs from its pre-turn checkpoint and cannot be discarded',
+        );
+      }
       await assertOwnerUnchecked();
       if (prior.uncertain.baseUpdatedAt === null) {
         await deleteRecord(sessionId);
@@ -1209,7 +1835,10 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        effectLedger: prior.effectLedger,
+        unresolvedEffects: prior.unresolvedEffects,
         ...retainedGenerationsMember(prior),
+        ...settledAbandonmentMember(prior),
       });
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
@@ -1231,6 +1860,10 @@ function createLease({
     abandonFreshSettled,
     beginTurn,
     beginRetry,
+    beginUnresolvedEffectAbandonment,
+    completeUnresolvedEffectAbandonment,
+    recoverUnresolvedEffectAbandonment,
+    writeEffectLedger,
     settle,
     discard,
     assertOwner,
@@ -1242,8 +1875,24 @@ export function validateCaptainSessionExecutionProjection(
   value,
   path = 'Captain session execution projection',
 ) {
+  return validateCaptainSessionExecutionProjectionWithSchemas(
+    value,
+    path,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function validateCaptainSessionExecutionProjectionWithSchemas(
+  value,
+  path,
+  artifactSchemas,
+) {
   const projection = requireRecord(snapshotJsonValue(value, path), path);
-  validateCaptainSessionProjection(projection, { path, structural: false });
+  validateCaptainSessionProjection(projection, {
+    path,
+    structural: false,
+    artifactSchemas,
+  });
   return projection;
 }
 
@@ -1251,13 +1900,40 @@ export function validateCaptainSessionStructuralProjection(
   value,
   path = 'Captain session structural projection',
 ) {
+  return validateCaptainSessionStructuralProjectionWithSchemas(
+    value,
+    path,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function validateCaptainSessionStructuralProjectionWithSchemas(
+  value,
+  path,
+  artifactSchemas,
+) {
   const projection = requireRecord(snapshotJsonValue(value, path), path);
-  validateCaptainSessionProjection(projection, { path, structural: true });
+  validateCaptainSessionProjection(projection, {
+    path,
+    structural: true,
+    artifactSchemas,
+  });
   return projection;
 }
 
 export function projectCaptainSessionStructure(value) {
-  const execution = validateCaptainSessionExecutionProjection(value);
+  return projectCaptainSessionStructureWithSchemas(
+    value,
+    CURRENT_ARTIFACT_SCHEMAS,
+  );
+}
+
+function projectCaptainSessionStructureWithSchemas(value, artifactSchemas) {
+  const execution = validateCaptainSessionExecutionProjectionWithSchemas(
+    value,
+    'Captain session execution projection',
+    artifactSchemas,
+  );
   const fixedAgent = (agent) => ({
     adapter: agent.adapter,
     ...(agent.instruction === undefined
@@ -1267,49 +1943,72 @@ export function projectCaptainSessionStructure(value) {
       ? {}
       : { permissions: agent.permissions }),
   });
-  return validateCaptainSessionStructuralProjection({
-    schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
-    captain: fixedAgent(execution.captain),
-    players: execution.players.map(({ id, ...agent }) => ({
-      id,
-      ...fixedAgent(agent),
-    })),
-    catalog: Object.fromEntries(
-      Object.entries(execution.catalog).map(([id, item]) => [
+  return validateCaptainSessionStructuralProjectionWithSchemas(
+    {
+      schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
+      captain: fixedAgent(execution.captain),
+      players: execution.players.map(({ id, ...agent }) => ({
         id,
-        {
-          id: item.id,
-          from: item.from,
-          manifestCommand: item.manifestCommand,
-          command: item.command,
-          intent: item.intent,
-          artifactSchema: item.artifactSchema,
-          requiredRoleIds: item.requiredRoleIds,
-          concurrentRoleSets: item.concurrentRoleSets,
-          roles: Object.fromEntries(
-            Object.entries(item.roles).map(([roleId, binding]) => [
-              roleId,
-              { playerId: binding.playerId },
-            ]),
-          ),
-          options: item.options,
-        },
-      ]),
-    ),
-  });
+        ...fixedAgent(agent),
+      })),
+      catalog: Object.fromEntries(
+        Object.entries(execution.catalog).map(([id, item]) => [
+          id,
+          {
+            id: item.id,
+            from: item.from,
+            manifestCommand: item.manifestCommand,
+            command: item.command,
+            intent: item.intent,
+            artifactSchema: item.artifactSchema,
+            requiredRoleIds: item.requiredRoleIds,
+            concurrentRoleSets: item.concurrentRoleSets,
+            roles: Object.fromEntries(
+              Object.entries(item.roles).map(([roleId, binding]) => [
+                roleId,
+                { playerId: binding.playerId },
+              ]),
+            ),
+            options: item.options,
+          },
+        ]),
+      ),
+    },
+    'Captain session structural projection',
+    artifactSchemas,
+  );
 }
 
 export function assertCaptainSessionExecutionCompatible(
   structuralProjection,
   executionProjection,
 ) {
-  const structural = validateCaptainSessionStructuralProjection(
+  return assertCaptainSessionExecutionCompatibleWithSchemas(
     structuralProjection,
-  );
-  const execution = validateCaptainSessionExecutionProjection(
     executionProjection,
+    CURRENT_ARTIFACT_SCHEMAS,
   );
-  const projected = projectCaptainSessionStructure(execution);
+}
+
+function assertCaptainSessionExecutionCompatibleWithSchemas(
+  structuralProjection,
+  executionProjection,
+  artifactSchemas,
+) {
+  const structural = validateCaptainSessionStructuralProjectionWithSchemas(
+    structuralProjection,
+    'Captain session structural projection',
+    artifactSchemas,
+  );
+  const execution = validateCaptainSessionExecutionProjectionWithSchemas(
+    executionProjection,
+    'Captain session execution projection',
+    artifactSchemas,
+  );
+  const projected = projectCaptainSessionStructureWithSchemas(
+    execution,
+    artifactSchemas,
+  );
   if (!isDeepStrictEqual(projected, structural)) {
     throw new Error(
       'Captain session execution projection does not reproduce the stored structural projection',
@@ -1334,39 +2033,101 @@ export function validateCaptainSessionRecord(value) {
     snapshotJsonValue(value, 'Captain session record'),
     'Captain session record',
   );
+  if (record.schemaVersion === 2) {
+    assertReleasedSchema2CaptainSessionRecord(record);
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      'Captain session record schema 2 has incompatible root-owned player identity; schema 6 is required',
+      captainSessionOrderingBoundary(record),
+    );
+  }
   if (
-    record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION &&
-    record.schemaVersion !== COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+    record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION ||
+    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
   ) {
-    if (record.schemaVersion === 2) {
-      assertReleasedSchema2CaptainSessionRecord(record);
-      throw new CaptainSessionRecordSchemaError(
-        record.schemaVersion,
-        'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
+    const projectedRecord = validateCanonicalCaptainSessionRecord(
+      projectPreEffectCaptainSessionRecordForValidation(record),
+      PRE_EFFECT_ARTIFACT_SCHEMAS,
+    );
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      `Captain session record schema ${record.schemaVersion} predates the artifact-schema-3 effect-authority cutover and is not resumable`,
+      captainSessionOrderingBoundary(projectedRecord),
+    );
+  }
+  if (
+    record.schemaVersion === PRE_UNRESOLVED_EFFECTS_RECORD_SCHEMA_VERSION
+  ) {
+    const hasUnresolvedEffects = Object.hasOwn(record, 'unresolvedEffects');
+    if (
+      !hasUnresolvedEffects &&
+      (Object.hasOwn(record, 'settledAbandonment') ||
+        (typeof record.uncertain === 'object' &&
+          record.uncertain !== null &&
+          Object.hasOwn(record.uncertain, 'abandonment')))
+    ) {
+      throw new Error(
+        'Captain session record schema 5 pre-unresolved-effects shape has an unknown abandonment field',
       );
     }
+    const projectedRecord = validateCanonicalCaptainSessionRecord(
+      {
+        ...record,
+        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        ...(hasUnresolvedEffects ? {} : { unresolvedEffects: [] }),
+      },
+      hasUnresolvedEffects
+        ? CURRENT_ARTIFACT_SCHEMAS
+        : PRE_EFFECT_ARTIFACT_SCHEMAS,
+    );
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      'Captain session record schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
+      captainSessionOrderingBoundary(projectedRecord),
+    );
+  }
+  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
     throw new CaptainSessionRecordSchemaError(
       record.schemaVersion,
       `Captain session record schema ${JSON.stringify(record.schemaVersion)} is not supported`,
     );
   }
+  return validateCanonicalCaptainSessionRecord(record);
+}
+
+function captainSessionOrderingBoundary(record) {
+  return Object.freeze({
+    sessionId: record.sessionId,
+    state: record.state,
+    cwd: record.cwd,
+    updatedAt: record.updatedAt,
+  });
+}
+
+function validateCanonicalCaptainSessionRecord(
+  record,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
+  record = requireRecord(
+    snapshotJsonValue(record, 'Captain session record'),
+    'Captain session record',
+  );
   if (record.state !== 'settled' && record.state !== 'uncertain') {
     throw new Error('Captain session record state is not supported');
   }
-  const recordKeys =
-    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
-      ? [...COMMON_RECORD_KEYS, 'retainedGenerations']
-      : COMMON_RECORD_KEYS;
   exactOptionalKeys(
     record,
     record.state === 'uncertain'
-      ? [...recordKeys, 'uncertain']
-      : recordKeys,
-    record.schemaVersion === CAPTAIN_SESSION_RECORD_SCHEMA_VERSION
-      ? ['retainedGenerations']
-      : [],
+      ? [...COMMON_RECORD_KEYS, 'uncertain']
+      : COMMON_RECORD_KEYS,
+    ['retainedGenerations', 'settledAbandonment'],
     'Captain session record',
   );
+  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
+    throw new Error(
+      `Captain session record schemaVersion must be ${CAPTAIN_SESSION_RECORD_SCHEMA_VERSION}`,
+    );
+  }
   if (record.kind !== CAPTAIN_SESSION_RECORD_KIND) {
     throw new Error('Captain session record kind is not supported');
   }
@@ -1387,19 +2148,51 @@ export function validateCaptainSessionRecord(value) {
   if (resolve(record.cwd) !== record.cwd) {
     throw new Error('Captain session record cwd must be normalized');
   }
-  const structural = validateCaptainSessionStructuralProjection(
+  const structural = validateCaptainSessionStructuralProjectionWithSchemas(
     record.structuralProjection,
     'Captain session record structuralProjection',
+    artifactSchemas,
   );
-  const lastApplied = assertCaptainSessionExecutionCompatible(
+  const lastApplied = assertCaptainSessionExecutionCompatibleWithSchemas(
     structural,
     record.lastAppliedExecutionProjection,
+    artifactSchemas,
   );
   void lastApplied;
   const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
-  assertSnapshotMatchesStructure(snapshot, structural);
+  assertSnapshotMatchesStructure(snapshot, structural, artifactSchemas);
+  const effectLedger = assertPlaybookEffectLedger(
+    record.effectLedger,
+    'Captain session record effectLedger',
+  );
+  const unresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
+    record.unresolvedEffects,
+  );
+  void unresolvedEffects;
+  assertEffectLedgerMatchesCatalog(effectLedger, structural.catalog);
+  if (record.state === 'settled') {
+    if (!isDeepStrictEqual(effectLedger, snapshot.effectLedger)) {
+      throw new Error(
+        'settled Captain session effect ledger differs from its shell snapshot mirror',
+      );
+    }
+  } else if (
+    !isPlaybookEffectLedgerMonotonicExtension(
+      snapshot.effectLedger,
+      effectLedger,
+    )
+  ) {
+    throw new Error(
+      'uncertain Captain session effect ledger is not a monotonic extension of its pre-turn shell snapshot mirror',
+    );
+  }
   if (Object.hasOwn(record, 'retainedGenerations')) {
-    validateRetainedGenerations(record.retainedGenerations, structural);
+    validateRetainedGenerations(
+      record.retainedGenerations,
+      structural,
+      effectLedger,
+      artifactSchemas,
+    );
   }
   if (
     snapshot.captain.sessionId === record.sessionId ||
@@ -1415,9 +2208,10 @@ export function validateCaptainSessionRecord(value) {
       record.uncertain,
       'Captain session record uncertain',
     );
-    rejectUnknownOrMissingKeys(
+    exactOptionalKeys(
       uncertain,
       UNCERTAIN_KEYS,
+      ['abandonment'],
       'Captain session record uncertain',
     );
     if (uncertain.baseUpdatedAt !== null) {
@@ -1446,6 +2240,41 @@ export function validateCaptainSessionRecord(value) {
     ) {
       throw new Error('Captain session attempt number must be a positive integer');
     }
+    const newBoundaries = effectLedger.boundaries.slice(
+      snapshot.effectLedger.boundaries.length,
+    );
+    const attemptIds = new Map();
+    const attemptNumbersById = new Map();
+    for (const boundary of newBoundaries) {
+      if (boundary.attemptNumber > uncertain.attemptNumber) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundary names a future uncertain attempt',
+        );
+      }
+      const priorId = attemptIds.get(boundary.attemptNumber);
+      if (priorId !== undefined && priorId !== boundary.attemptId) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundaries use inconsistent ids for one attempt number',
+        );
+      }
+      const priorNumber = attemptNumbersById.get(boundary.attemptId);
+      if (priorNumber !== undefined && priorNumber !== boundary.attemptNumber) {
+        throw new Error(
+          'Captain session post-checkpoint effect attempts reuse one id across attempt numbers',
+        );
+      }
+      attemptIds.set(boundary.attemptNumber, boundary.attemptId);
+      attemptNumbersById.set(boundary.attemptId, boundary.attemptNumber);
+      if (
+        boundary.attemptNumber === uncertain.attemptNumber
+          ? boundary.attemptId !== uncertain.attemptId
+          : boundary.attemptId === uncertain.attemptId
+      ) {
+        throw new Error(
+          'Captain session post-checkpoint effect boundary attempt identity conflicts with the current uncertain marker',
+        );
+      }
+    }
     const markedAt = canonicalTimestamp(
       uncertain.markedAt,
       'uncertain.markedAt',
@@ -1455,9 +2284,10 @@ export function validateCaptainSessionRecord(value) {
         'Captain session uncertain markedAt must equal updatedAt',
       );
     }
-    const attempted = assertCaptainSessionExecutionCompatible(
+    const attempted = assertCaptainSessionExecutionCompatibleWithSchemas(
       structural,
       uncertain.attemptedExecutionProjection,
+      artifactSchemas,
     );
     if (uncertain.baseUpdatedAt === null) {
       if (!isDeepStrictEqual(lastApplied, attempted)) {
@@ -1470,9 +2300,1017 @@ export function validateCaptainSessionRecord(value) {
         'fresh Captain session record snapshot',
       );
     }
+    if (Object.hasOwn(uncertain, 'abandonment')) {
+      const abandonment = requireRecord(
+        uncertain.abandonment,
+        'Captain session record uncertain.abandonment',
+      );
+      rejectUnknownOrMissingKeys(
+        abandonment,
+        UNCERTAIN_ABANDONMENT_KEYS,
+        'Captain session record uncertain.abandonment',
+      );
+      if (abandonment.phase !== 'started' && abandonment.phase !== 'disposed') {
+        throw new Error(
+          'Captain session record uncertain.abandonment.phase must be "started" or "disposed"',
+        );
+      }
+      const rootPlaybookId = requireCanonicalNonblank(
+        abandonment.rootPlaybookId,
+        'Captain session record uncertain.abandonment.rootPlaybookId',
+      );
+      if (!Object.hasOwn(structural.catalog, rootPlaybookId)) {
+        throw new Error(
+          `Captain session unresolved-effect abandonment names unknown stored playbook ${JSON.stringify(rootPlaybookId)}`,
+        );
+      }
+      if (
+        snapshot.mode !== 'engaged.parked' ||
+        snapshot.frames[0]?.playbookId !== rootPlaybookId
+      ) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment root differs from its durable engagement',
+        );
+      }
+      const abandonmentEffects = assertPlaybookCaptainUnresolvedEffects(
+        abandonment.unresolvedEffects,
+      );
+      if (abandonmentEffects.length === 0) {
+        throw new Error(
+          'Captain session unresolved-effect abandonment requires nonempty unresolved effects',
+        );
+      }
+      if (abandonment.phase === 'disposed') {
+        if (!isDeepStrictEqual(unresolvedEffects, abandonmentEffects)) {
+          throw new Error(
+            'Captain session disposed abandonment unresolved effects differ from the record settlement evidence',
+          );
+        }
+        if (Object.hasOwn(record.retainedGenerations ?? {}, rootPlaybookId)) {
+          throw new Error(
+            'Captain session disposed abandonment retained its cleared root generation',
+          );
+        }
+      }
+    }
+  }
+  if (Object.hasOwn(record, 'settledAbandonment')) {
+    const settledAbandonment = requireRecord(
+      record.settledAbandonment,
+      'Captain session record settledAbandonment',
+    );
+    rejectUnknownOrMissingKeys(
+      settledAbandonment,
+      ['phase', 'attemptId', 'rootPlaybookId', 'unresolvedEffects'],
+      'Captain session record settledAbandonment',
+    );
+    if (
+      settledAbandonment.phase !== 'recovered' &&
+      settledAbandonment.phase !== 'final'
+    ) {
+      throw new Error(
+        'Captain session record settledAbandonment.phase must be "recovered" or "final"',
+      );
+    }
+    assertUuid(
+      settledAbandonment.attemptId,
+      'Captain session record settledAbandonment.attemptId',
+    );
+    const rootPlaybookId = requireCanonicalNonblank(
+      settledAbandonment.rootPlaybookId,
+      'Captain session record settledAbandonment.rootPlaybookId',
+    );
+    if (!Object.hasOwn(structural.catalog, rootPlaybookId)) {
+      throw new Error(
+        `Captain session recovered unresolved-effect abandonment names unknown stored playbook ${JSON.stringify(rootPlaybookId)}`,
+      );
+    }
+    const settledEffects = assertPlaybookCaptainUnresolvedEffects(
+      settledAbandonment.unresolvedEffects,
+    );
+    if (
+      settledEffects.length === 0 ||
+      !isDeepStrictEqual(unresolvedEffects, settledEffects)
+    ) {
+      throw new Error(
+        'Captain session settled unresolved-effect abandonment must preserve its nonempty settlement evidence',
+      );
+    }
+    if (
+      snapshot.mode !== 'chat' ||
+      snapshot.lastAction !== 'runtime' ||
+      snapshot.lastSettlementStatus !== 'ok' ||
+      Object.hasOwn(record.retainedGenerations ?? {}, rootPlaybookId)
+    ) {
+      throw new Error(
+        'Captain session settled unresolved-effect abandonment must carry a successful host-disposal chat snapshot with its root generation cleared',
+      );
+    }
   }
 
   return record;
+}
+
+function projectPreEffectCaptainSessionRecordForValidation(record) {
+  if (record.state !== 'settled' && record.state !== 'uncertain') {
+    throw new Error('Captain session record state is not supported');
+  }
+  const recordKeys =
+    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+      ? [...LEGACY_COMMON_RECORD_KEYS, 'retainedGenerations']
+      : LEGACY_COMMON_RECORD_KEYS;
+  exactOptionalKeys(
+    record,
+    record.state === 'uncertain'
+      ? [...recordKeys, 'uncertain']
+      : recordKeys,
+    record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION
+      ? ['retainedGenerations']
+      : [],
+    'Captain session record',
+  );
+  validateCaptainSessionStructuralProjectionWithSchemas(
+    record.structuralProjection,
+    'Captain session record structuralProjection',
+    PRE_EFFECT_ARTIFACT_SCHEMAS,
+  );
+  const effectLedger = emptyPlaybookEffectLedger();
+  const migrated = {
+    ...record,
+    schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+    snapshot: migratePreEffectShellSnapshot(record.snapshot, effectLedger),
+    effectLedger,
+    unresolvedEffects: [],
+    ...(Object.hasOwn(record, 'retainedGenerations')
+      ? {
+          retainedGenerations: migratePreEffectRetainedGenerations(
+            record.retainedGenerations,
+          ),
+        }
+      : {}),
+  };
+  return migrated;
+}
+
+function migratePreEffectShellSnapshot(value, effectLedger) {
+  const snapshot = requireRecord(value, 'legacy Captain shell snapshot');
+  if (snapshot.schemaVersion !== 3) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `legacy Captain shell snapshot schema ${JSON.stringify(snapshot.schemaVersion)} cannot migrate to schema 4`,
+    );
+  }
+  if (Object.hasOwn(snapshot, 'effectLedger')) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      'legacy Captain shell snapshot must not contain an effect ledger',
+    );
+  }
+  const captain = requireRecord(
+    snapshot.captain,
+    'legacy Captain shell snapshot.captain',
+  );
+  const frames =
+    snapshot.frames === undefined
+      ? undefined
+      : Array.isArray(snapshot.frames)
+        ? snapshot.frames.map((frame, index) => {
+            const captured = requireRecord(
+              frame,
+              `legacy Captain shell snapshot.frames[${index}]`,
+            );
+            return {
+              ...captured,
+              runtime: migratePreEffectRuntimeSnapshot(
+                captured.runtime,
+                `legacy Captain shell snapshot.frames[${index}].runtime`,
+              ),
+            };
+          })
+        : snapshot.frames;
+  return {
+    ...snapshot,
+    schemaVersion: 4,
+    captain: {
+      ...captain,
+      runtime: migratePreEffectRuntimeSnapshot(
+        captain.runtime,
+        'legacy Captain shell snapshot.captain.runtime',
+      ),
+    },
+    effectLedger,
+    ...(frames === undefined ? {} : { frames }),
+  };
+}
+
+function migratePreEffectRuntimeSnapshot(value, path) {
+  const snapshot = requireRecord(value, path);
+  if (snapshot.schemaVersion !== 3) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `${path} schema ${JSON.stringify(snapshot.schemaVersion)} cannot migrate to schema 4`,
+    );
+  }
+  if (Object.hasOwn(snapshot, 'effectLedger')) {
+    throw new CaptainSessionRecordSchemaError(
+      snapshot.schemaVersion,
+      `${path} must not contain an effect ledger`,
+    );
+  }
+  return {
+    ...snapshot,
+    schemaVersion: 4,
+    effectLedger: emptyPlaybookEffectLedger(),
+  };
+}
+
+function migratePreEffectRetainedGenerations(value) {
+  const retained = requireRecord(
+    value,
+    'legacy Captain session retainedGenerations',
+  );
+  return Object.fromEntries(
+    Object.entries(retained).map(([rootPlaybookId, rawGeneration]) => {
+      const path =
+        'legacy Captain session retainedGenerations' +
+        `[${JSON.stringify(rootPlaybookId)}]`;
+      const generation = requireRecord(rawGeneration, path);
+      if (
+        Object.hasOwn(generation, 'effectLedger') ||
+        Object.hasOwn(generation, 'retainedEffectReconciliation')
+      ) {
+        throw new Error(
+          `${path} must not contain pre-migration effect evidence`,
+        );
+      }
+      if (!Array.isArray(generation.frames)) {
+        return [
+          rootPlaybookId,
+          { ...generation, effectLedger: emptyPlaybookEffectLedger() },
+        ];
+      }
+      return [
+        rootPlaybookId,
+        {
+          ...generation,
+          effectLedger: emptyPlaybookEffectLedger(),
+          frames: generation.frames.map((rawFrame, index) => {
+            const frame = requireRecord(rawFrame, `${path}.frames[${index}]`);
+            return {
+              ...frame,
+              runtime: migratePreEffectRuntimeSnapshot(
+                frame.runtime,
+                `${path}.frames[${index}].runtime`,
+              ),
+            };
+          }),
+        },
+      ];
+    }),
+  );
+}
+
+const EFFECT_AUTHORITY_KEYS = [
+  'playbookId',
+  'artifactSchema',
+  'cwd',
+  'sessionId',
+  'leaseOwnerToken',
+  'canonicalWorktree',
+  'requiredRoleIds',
+  'concurrentRoleSets',
+];
+const EFFECT_BOUNDARY_START_KEYS = [
+  'boundaryId',
+  'playbookId',
+  'runtimeSessionId',
+  'turnId',
+  'callId',
+  'roleId',
+  'sourceStateId',
+  'sourceOutcomeSchema',
+  'dispositions',
+  'canonicalWorktree',
+  'baseline',
+  'correctionBudget',
+];
+const EFFECT_BOUNDARY_IDENTITY_KEYS = [
+  'sequence',
+  'boundaryId',
+  'attemptId',
+  'attemptNumber',
+  'playbookId',
+  'runtimeSessionId',
+  'turnId',
+  'callId',
+  'roleId',
+  'sourceStateId',
+  'sourceOutcomeSchema',
+  'dispositions',
+  'canonicalWorktree',
+  'baseline',
+];
+const EFFECT_BOUNDARY_OPTIONAL_KEYS = [
+  'after',
+  'physicalReceipt',
+  'finalText',
+  'semanticCandidate',
+  'initialSemanticCandidate',
+  'cohortId',
+  'logicalOperationId',
+];
+const EFFECT_LOGICAL_START_KEYS = [
+  'operationId',
+  'playbookId',
+  'runtimeSessionId',
+  'boundaryIds',
+  'originalBaseline',
+  'checkpointRestorationEligible',
+];
+const EFFECT_LOGICAL_OPTIONAL_KEYS = [
+  'checkpoint',
+  'pendingQuestion',
+  'playerContinuation',
+  'logicalReceipt',
+];
+
+function assertEffectLedgerMatchesCatalog(ledger, catalog) {
+  const cohorts = new Map();
+  for (const boundary of ledger.boundaries) {
+    const entry = catalog[boundary.playbookId];
+    if (
+      entry?.artifactSchema !== 3 ||
+      !entry.requiredRoleIds.includes(boundary.roleId)
+    ) {
+      throw new Error(
+        `Captain session effect boundary ${JSON.stringify(boundary.boundaryId)} does not match its stored schema-3 catalog role`,
+      );
+    }
+    if (boundary.cohortId === undefined) continue;
+    const members = cohorts.get(boundary.cohortId) ?? [];
+    members.push(boundary);
+    cohorts.set(boundary.cohortId, members);
+  }
+  for (const [cohortId, members] of cohorts) {
+    const entry = catalog[members[0].playbookId];
+    const roles = members.map((boundary) => boundary.roleId);
+    if (
+      !members.every(
+        (boundary) => boundary.playbookId === members[0].playbookId,
+      ) ||
+      !entry.concurrentRoleSets.some((candidate) =>
+        isDeepStrictEqual(candidate, roles),
+      )
+    ) {
+      throw new Error(
+        `Captain session effect cohort ${JSON.stringify(cohortId)} is not one stored declared concurrent role set`,
+      );
+    }
+  }
+}
+
+function validateEffectLedgerAuthority(value, record, owner) {
+  const authority = requireRecord(
+    snapshotJsonValue(value, 'effect-ledger write authority'),
+    'effect-ledger write authority',
+  );
+  rejectUnknownOrMissingKeys(
+    authority,
+    EFFECT_AUTHORITY_KEYS,
+    'effect-ledger write authority',
+  );
+  const identity = requireRecord(
+    authority.canonicalWorktree,
+    'effect-ledger write authority.canonicalWorktree',
+  );
+  rejectUnknownOrMissingKeys(
+    identity,
+    ['worktree', 'gitDir'],
+    'effect-ledger write authority.canonicalWorktree',
+  );
+  const entry = record.structuralProjection.catalog[authority.playbookId];
+  if (
+    authority.artifactSchema !== 3 ||
+    authority.sessionId !== record.sessionId ||
+    authority.sessionId !== owner.sessionId ||
+    authority.leaseOwnerToken !== owner.ownerToken ||
+    authority.cwd !== record.cwd ||
+    entry?.artifactSchema !== 3 ||
+    entry.id !== authority.playbookId ||
+    !isDeepStrictEqual(authority.requiredRoleIds, entry.requiredRoleIds) ||
+    !isDeepStrictEqual(
+      authority.concurrentRoleSets,
+      entry.concurrentRoleSets,
+    )
+  ) {
+    throw new Error(
+      'effect-ledger write authority does not match the current Captain session lease and stored schema-3 playbook',
+    );
+  }
+  for (const [key, path] of [
+    ['worktree', 'effect-ledger write authority canonical worktree'],
+    ['gitDir', 'effect-ledger write authority canonical Git directory'],
+  ]) {
+    if (
+      typeof identity[key] !== 'string' ||
+      !isAbsolute(identity[key]) ||
+      resolve(identity[key]) !== identity[key]
+    ) {
+      throw new Error(`${path} must be a normalized absolute path`);
+    }
+  }
+  return authority;
+}
+
+function applyEffectLedgerCommands(
+  ledgerValue,
+  authority,
+  uncertain,
+  commandsValue,
+) {
+  const previous = assertPlaybookEffectLedger(
+    ledgerValue,
+    'Captain session effect ledger',
+  );
+  const commands = requireNonemptyBatch(
+    snapshotJsonValue(commandsValue, 'effect-ledger write commands'),
+    'effect-ledger write commands',
+  );
+  let candidate = previous;
+  for (const [index, commandValue] of commands.entries()) {
+    candidate = applyEffectLedgerCommand(
+      candidate,
+      authority,
+      uncertain,
+      commandValue,
+      `effect-ledger write commands[${index}]`,
+    );
+  }
+  if (isDeepStrictEqual(candidate, previous)) return previous;
+  return validateNextEffectLedger(previous, {
+    ...candidate,
+    revision: previous.revision + 1,
+  });
+}
+
+function assertSettledEffectRecoveryCommands(commands) {
+  if (!Array.isArray(commands) || commands.length === 0) {
+    throw new Error(
+      'settled Captain session effect-ledger recovery requires boundary completion evidence',
+    );
+  }
+  for (const command of commands) {
+    if (
+      command === null ||
+      typeof command !== 'object' ||
+      Array.isArray(command) ||
+      command.kind !== 'replace-boundaries' ||
+      !Array.isArray(command.replacements) ||
+      command.replacements.length === 0
+    ) {
+      throw new Error(
+        'settled Captain session effect-ledger recovery may only complete existing physical boundaries',
+      );
+    }
+    for (const replacement of command.replacements) {
+      const expected = replacement?.expected;
+      const next = replacement?.next;
+      if (
+        expected === null ||
+        typeof expected !== 'object' ||
+        Array.isArray(expected) ||
+        next === null ||
+        typeof next !== 'object' ||
+        Array.isArray(next) ||
+        expected.physicalReceipt !== undefined ||
+        next.physicalReceipt === undefined
+      ) {
+        throw new Error(
+          'settled Captain session effect-ledger recovery requires one new physical receipt for each incomplete boundary',
+        );
+      }
+      const preserved = { ...next };
+      delete preserved.after;
+      delete preserved.physicalReceipt;
+      if (!isDeepStrictEqual(preserved, expected)) {
+        throw new Error(
+          'settled Captain session effect-ledger recovery cannot change boundary semantics or identity',
+        );
+      }
+    }
+  }
+}
+
+function applyEffectLedgerCommand(
+  ledger,
+  authority,
+  uncertain,
+  commandValue,
+  path,
+) {
+  const command = requireRecord(
+    commandValue,
+    path,
+  );
+  if (command.kind === 'start-boundaries') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'boundaries'],
+      path,
+    );
+    return startEffectBoundaries(ledger, authority, uncertain, command.boundaries);
+  }
+  if (command.kind === 'replace-boundaries') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'replacements'],
+      path,
+    );
+    return replaceEffectBoundaries(ledger, authority, command.replacements);
+  }
+  if (command.kind === 'append-logical-operations') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'operations'],
+      path,
+    );
+    return appendEffectLogicalOperations(
+      ledger,
+      authority,
+      command.operations,
+    );
+  }
+  if (command.kind === 'replace-logical-operations') {
+    rejectUnknownOrMissingKeys(
+      command,
+      ['kind', 'replacements'],
+      path,
+    );
+    return replaceEffectLogicalOperations(
+      ledger,
+      authority,
+      command.replacements,
+    );
+  }
+  throw new Error(
+    `${path}.kind ${JSON.stringify(command.kind)} is not supported`,
+  );
+}
+
+function requireNonemptyBatch(value, path) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${path} must be a nonempty array`);
+  }
+  return value;
+}
+
+function startEffectBoundaries(ledger, authority, uncertain, value) {
+  const inputs = requireNonemptyBatch(
+    value,
+    'effect-ledger start command boundaries',
+  ).map((raw, index) => {
+    const path = `effect-ledger start command boundaries[${index}]`;
+    const input = requireRecord(raw, path);
+    exactOptionalKeys(
+      input,
+      EFFECT_BOUNDARY_START_KEYS,
+      ['cohortId', 'logicalOperationId'],
+      path,
+    );
+    assertBoundaryAuthority(input, authority, path);
+    return input;
+  });
+  assertDistinctCommandIdentities(inputs, 'boundaryId', 'boundary start');
+  const existingById = new Map(
+    ledger.boundaries.map((boundary) => [boundary.boundaryId, boundary]),
+  );
+  const existing = inputs.map((input) => existingById.get(input.boundaryId));
+  if (existing.some((boundary) => boundary !== undefined)) {
+    if (
+      existing.every((boundary) => boundary !== undefined) &&
+      existing.every((boundary, index) => {
+        const payload = { ...boundary };
+        const sequence = payload.sequence;
+        delete payload.sequence;
+        delete payload.attemptId;
+        delete payload.attemptNumber;
+        return (
+          sequence === ledger.boundaries.length - inputs.length + index + 1 &&
+          isDeepStrictEqual(payload, inputs[index])
+        );
+      })
+    ) {
+      return ledger;
+    }
+    throw new Error(
+      'effect-ledger boundary start reuses an existing boundary id with different data',
+    );
+  }
+  const cohorts = new Map();
+  for (const input of inputs) {
+    if (input.cohortId === undefined) continue;
+    const members = cohorts.get(input.cohortId) ?? [];
+    members.push(input);
+    cohorts.set(input.cohortId, members);
+  }
+  for (const [cohortId, members] of cohorts) {
+    if (
+      members.length < 2 ||
+      !authority.concurrentRoleSets.some((roles) =>
+        isDeepStrictEqual(
+          roles,
+          members.map((boundary) => boundary.roleId),
+        ),
+      ) ||
+      ledger.boundaries.some((boundary) => boundary.cohortId === cohortId)
+    ) {
+      throw new Error(
+        `effect-ledger boundary cohort ${JSON.stringify(cohortId)} is not one new declared concurrent role set`,
+      );
+    }
+  }
+  let sequence = ledger.boundaries.at(-1)?.sequence ?? 0;
+  const additions = inputs.map((input) => ({
+    sequence: ++sequence,
+    boundaryId: input.boundaryId,
+    attemptId: uncertain.attemptId,
+    attemptNumber: uncertain.attemptNumber,
+    playbookId: input.playbookId,
+    runtimeSessionId: input.runtimeSessionId,
+    turnId: input.turnId,
+    callId: input.callId,
+    roleId: input.roleId,
+    sourceStateId: input.sourceStateId,
+    sourceOutcomeSchema: input.sourceOutcomeSchema,
+    dispositions: input.dispositions,
+    canonicalWorktree: input.canonicalWorktree,
+    baseline: input.baseline,
+    correctionBudget: input.correctionBudget,
+    ...(input.cohortId === undefined ? {} : { cohortId: input.cohortId }),
+    ...(input.logicalOperationId === undefined
+      ? {}
+      : { logicalOperationId: input.logicalOperationId }),
+  }));
+  return {
+    ...ledger,
+    boundaries: [...ledger.boundaries, ...additions],
+  };
+}
+
+function replaceEffectBoundaries(ledger, authority, value) {
+  const replacements = captureReplacements(
+    value,
+    'boundaryId',
+    'effect-ledger boundary replacement command',
+  );
+  const byId = new Map(
+    ledger.boundaries.map((boundary, index) => [
+      boundary.boundaryId,
+      { boundary, index },
+    ]),
+  );
+  let alreadyApplied = true;
+  const nextBoundaries = [...ledger.boundaries];
+  for (const [index, replacement] of replacements.entries()) {
+    const path = `effect-ledger boundary replacement command.replacements[${index}]`;
+    assertBoundaryCommandShape(replacement.expected, `${path}.expected`);
+    assertBoundaryCommandShape(replacement.next, `${path}.next`);
+    assertBoundaryAuthority(replacement.expected, authority, `${path}.expected`);
+    assertBoundaryAuthority(replacement.next, authority, `${path}.next`);
+    assertMonotonicBoundaryReplacement(
+      replacement.expected,
+      replacement.next,
+      path,
+    );
+    const current = byId.get(replacement.expected.boundaryId);
+    if (current === undefined) {
+      throw new Error(`${path} names an absent boundary`);
+    }
+    if (!isDeepStrictEqual(current.boundary, replacement.expected)) {
+      throw new Error(`${path}.expected does not match the durable boundary`);
+    }
+    if (isDeepStrictEqual(current.boundary, replacement.next)) continue;
+    alreadyApplied = false;
+    nextBoundaries[current.index] = replacement.next;
+  }
+  if (alreadyApplied) return ledger;
+  return {
+    ...ledger,
+    boundaries: nextBoundaries,
+  };
+}
+
+function appendEffectLogicalOperations(ledger, authority, value) {
+  const inputs = requireNonemptyBatch(
+    value,
+    'effect-ledger logical-operation append command operations',
+  ).map((raw, index) => {
+    const path = `effect-ledger logical-operation append command operations[${index}]`;
+    const input = requireRecord(raw, path);
+    exactOptionalKeys(
+      input,
+      EFFECT_LOGICAL_START_KEYS,
+      EFFECT_LOGICAL_OPTIONAL_KEYS,
+      path,
+    );
+    assertLogicalOperationAuthority(input, authority, path);
+    return input;
+  });
+  assertDistinctCommandIdentities(
+    inputs,
+    'operationId',
+    'logical-operation append',
+  );
+  const existingById = new Map(
+    ledger.logicalOperations.map((operation) => [
+      operation.operationId,
+      operation,
+    ]),
+  );
+  const existing = inputs.map((input) => existingById.get(input.operationId));
+  if (existing.some((operation) => operation !== undefined)) {
+    if (
+      existing.every((operation) => operation !== undefined) &&
+      existing.every((operation, index) => {
+        const { sequence, ...payload } = operation;
+        return (
+          sequence ===
+            ledger.logicalOperations.length - inputs.length + index + 1 &&
+          isDeepStrictEqual(payload, inputs[index])
+        );
+      })
+    ) {
+      return ledger;
+    }
+    throw new Error(
+      'effect-ledger logical-operation append reuses an existing operation id with different data',
+    );
+  }
+  let sequence = ledger.logicalOperations.at(-1)?.sequence ?? 0;
+  const additions = inputs.map((input) => ({ sequence: ++sequence, ...input }));
+  return {
+    ...ledger,
+    logicalOperations: [...ledger.logicalOperations, ...additions],
+  };
+}
+
+function replaceEffectLogicalOperations(ledger, authority, value) {
+  const replacements = captureReplacements(
+    value,
+    'operationId',
+    'effect-ledger logical-operation replacement command',
+  );
+  const byId = new Map(
+    ledger.logicalOperations.map((operation, index) => [
+      operation.operationId,
+      { operation, index },
+    ]),
+  );
+  let alreadyApplied = true;
+  const nextOperations = [...ledger.logicalOperations];
+  for (const [index, replacement] of replacements.entries()) {
+    const path = `effect-ledger logical-operation replacement command.replacements[${index}]`;
+    assertLogicalOperationCommandShape(
+      replacement.expected,
+      `${path}.expected`,
+    );
+    assertLogicalOperationCommandShape(replacement.next, `${path}.next`);
+    assertLogicalOperationAuthority(
+      replacement.expected,
+      authority,
+      `${path}.expected`,
+    );
+    assertLogicalOperationAuthority(
+      replacement.next,
+      authority,
+      `${path}.next`,
+    );
+    assertMonotonicLogicalReplacement(
+      replacement.expected,
+      replacement.next,
+      path,
+    );
+    const current = byId.get(replacement.expected.operationId);
+    if (current === undefined) {
+      throw new Error(`${path} names an absent logical operation`);
+    }
+    if (!isDeepStrictEqual(current.operation, replacement.expected)) {
+      throw new Error(`${path}.expected does not match the durable logical operation`);
+    }
+    if (isDeepStrictEqual(current.operation, replacement.next)) continue;
+    alreadyApplied = false;
+    nextOperations[current.index] = replacement.next;
+  }
+  if (alreadyApplied) return ledger;
+  return {
+    ...ledger,
+    logicalOperations: nextOperations,
+  };
+}
+
+function captureReplacements(value, identityKey, path) {
+  const replacements = requireNonemptyBatch(value, `${path}.replacements`).map(
+    (raw, index) => {
+      const replacementPath = `${path}.replacements[${index}]`;
+      const replacement = requireRecord(raw, replacementPath);
+      rejectUnknownOrMissingKeys(
+        replacement,
+        ['expected', 'next'],
+        replacementPath,
+      );
+      const expected = requireRecord(
+        replacement.expected,
+        `${replacementPath}.expected`,
+      );
+      const next = requireRecord(replacement.next, `${replacementPath}.next`);
+      if (expected[identityKey] !== next[identityKey]) {
+        throw new Error(
+          `${replacementPath} cannot change ${identityKey}`,
+        );
+      }
+      return { expected, next };
+    },
+  );
+  assertDistinctCommandIdentities(
+    replacements.map(({ expected }) => expected),
+    identityKey,
+    path,
+  );
+  return replacements;
+}
+
+function assertBoundaryAuthority(boundary, authority, path) {
+  if (
+    boundary.playbookId !== authority.playbookId ||
+    !isDeepStrictEqual(
+      boundary.canonicalWorktree,
+      authority.canonicalWorktree,
+    ) ||
+    !authority.requiredRoleIds.includes(boundary.roleId)
+  ) {
+    throw new Error(`${path} does not match its schema-3 host authority`);
+  }
+}
+
+function assertBoundaryCommandShape(boundary, path) {
+  exactOptionalKeys(
+    boundary,
+    [...EFFECT_BOUNDARY_IDENTITY_KEYS, 'correctionBudget'],
+    EFFECT_BOUNDARY_OPTIONAL_KEYS,
+    path,
+  );
+}
+
+function assertLogicalOperationAuthority(operation, authority, path) {
+  if (operation.playbookId !== authority.playbookId) {
+    throw new Error(`${path} does not match its schema-3 host authority`);
+  }
+}
+
+function assertLogicalOperationCommandShape(operation, path) {
+  exactOptionalKeys(
+    operation,
+    ['sequence', ...EFFECT_LOGICAL_START_KEYS],
+    EFFECT_LOGICAL_OPTIONAL_KEYS,
+    path,
+  );
+}
+
+function assertDistinctCommandIdentities(values, key, label) {
+  const identities = values.map((value) => value[key]);
+  if (new Set(identities).size !== identities.length) {
+    throw new Error(`effect-ledger ${label} contains duplicate ${key}`);
+  }
+}
+
+function assertMonotonicBoundaryReplacement(expected, next, path) {
+  for (const key of EFFECT_BOUNDARY_IDENTITY_KEYS) {
+    if (!isDeepStrictEqual(expected[key], next[key])) {
+      throw new Error(`${path}.next cannot change boundary field ${key}`);
+    }
+  }
+  for (const key of [
+    'after',
+    'physicalReceipt',
+    'finalText',
+    'initialSemanticCandidate',
+  ]) {
+    if (
+      expected[key] !== undefined &&
+      !isDeepStrictEqual(expected[key], next[key])
+    ) {
+      throw new Error(`${path}.next cannot remove or replace boundary field ${key}`);
+    }
+  }
+  if (
+    expected.cohortId !== next.cohortId
+  ) {
+    throw new Error(`${path}.next cannot change boundary field cohortId`);
+  }
+  if (
+    expected.logicalOperationId !== undefined &&
+    expected.logicalOperationId !== next.logicalOperationId
+  ) {
+    throw new Error(
+      `${path}.next cannot remove or replace boundary field logicalOperationId`,
+    );
+  }
+  const expectedBudget = requireRecord(
+    expected.correctionBudget,
+    `${path}.expected.correctionBudget`,
+  );
+  const nextBudget = requireRecord(
+    next.correctionBudget,
+    `${path}.next.correctionBudget`,
+  );
+  if (
+    expectedBudget.limit !== nextBudget.limit ||
+    (expectedBudget.spent === true && nextBudget.spent !== true)
+  ) {
+    throw new Error(`${path}.next cannot replenish its correction budget`);
+  }
+  const candidateChanged =
+    expected.semanticCandidate !== undefined &&
+    !isDeepStrictEqual(
+      expected.semanticCandidate,
+      next.semanticCandidate,
+    );
+  if (expected.semanticCandidate === undefined) {
+    if (next.initialSemanticCandidate !== undefined) {
+      throw new Error(
+        `${path}.next cannot add initialSemanticCandidate without replacing a prior candidate`,
+      );
+    }
+  } else if (!candidateChanged) {
+    if (
+      expected.initialSemanticCandidate === undefined &&
+      next.initialSemanticCandidate !== undefined
+    ) {
+      throw new Error(
+        `${path}.next cannot add initialSemanticCandidate without replacing semanticCandidate`,
+      );
+    }
+  } else if (
+    next.semanticCandidate === undefined ||
+    expected.initialSemanticCandidate !== undefined ||
+    expectedBudget.spent !== true ||
+    nextBudget.spent !== true ||
+    !isDeepStrictEqual(
+      next.initialSemanticCandidate,
+      expected.semanticCandidate,
+    )
+  ) {
+    throw new Error(
+      `${path}.next cannot replace semanticCandidate without its spent one-way correction provenance`,
+    );
+  }
+}
+
+function assertMonotonicLogicalReplacement(expected, next, path) {
+  for (const key of [
+    'sequence',
+    'operationId',
+    'playbookId',
+    'runtimeSessionId',
+    'originalBaseline',
+  ]) {
+    if (!isDeepStrictEqual(expected[key], next[key])) {
+      throw new Error(`${path}.next cannot change logical-operation field ${key}`);
+    }
+  }
+  if (
+    !Array.isArray(expected.boundaryIds) ||
+    !Array.isArray(next.boundaryIds) ||
+    expected.boundaryIds.some(
+      (boundaryId, index) => next.boundaryIds[index] !== boundaryId,
+    )
+  ) {
+    throw new Error(
+      `${path}.next boundaryIds must preserve the existing ordered prefix`,
+    );
+  }
+  if (
+    expected.logicalReceipt !== undefined &&
+    !isDeepStrictEqual(expected.logicalReceipt, next.logicalReceipt)
+  ) {
+    throw new Error(`${path}.next cannot remove or replace logicalReceipt`);
+  }
+}
+
+function validateNextEffectLedger(previous, candidate) {
+  if (!Number.isSafeInteger(previous.revision + 1)) {
+    throw new Error('Captain session effect-ledger revision cannot advance');
+  }
+  const next = assertPlaybookEffectLedger(
+    candidate,
+    'Captain session next effect ledger',
+  );
+  if (!isPlaybookEffectLedgerMonotonicExtension(previous, next)) {
+    throw new Error(
+      'Captain session next effect ledger is not a monotonic extension',
+    );
+  }
+  return next;
 }
 
 function assertReleasedSchema2CaptainSessionRecord(record) {
@@ -1595,7 +3433,7 @@ function assertTurnZeroSnapshot(snapshot, path) {
 
 function validateCaptainSessionProjection(
   projection,
-  { path, structural },
+  { path, structural, artifactSchemas },
 ) {
   rejectUnknownOrMissingKeys(
     projection,
@@ -1686,8 +3524,11 @@ function validateCaptainSessionProjection(
     if (typeof item.intent !== 'string') {
       throw new Error(`${itemPath}.intent must be a string`);
     }
-    if (item.artifactSchema !== 2 && item.artifactSchema !== 3) {
-      throw new Error(`${itemPath}.artifactSchema must be 2 or 3`);
+    if (!artifactSchemas.has(item.artifactSchema)) {
+      const expected = artifactSchemas === CURRENT_ARTIFACT_SCHEMAS
+        ? '3'
+        : '2 or 3';
+      throw new Error(`${itemPath}.artifactSchema must be ${expected}`);
     }
     if (
       item.options !== null &&
@@ -1913,7 +3754,11 @@ function referencedPlayerIds(catalog) {
   return ids;
 }
 
-function assertSnapshotMatchesStructure(snapshot, structural) {
+function assertSnapshotMatchesStructure(
+  snapshot,
+  structural,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
   if (!isDeepStrictEqual(snapshot.captain.agent, structural.captain)) {
     throw new Error(
       'Captain session snapshot Captain envelope differs from structuralProjection',
@@ -1958,6 +3803,16 @@ function assertSnapshotMatchesStructure(snapshot, structural) {
     if (!isDeepStrictEqual(frame.roleBindings, roleBindings)) {
       throw new Error(
         `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} role bindings differ from structuralProjection`,
+      );
+    }
+    const expectedLedger =
+      artifactSchemas === PRE_EFFECT_ARTIFACT_SCHEMAS &&
+      item.artifactSchema === 2
+        ? emptyPlaybookEffectLedger()
+        : snapshot.effectLedger;
+    if (!isDeepStrictEqual(frame.runtime.effectLedger, expectedLedger)) {
+      throw new Error(
+        `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger differs from its structural schema authority`,
       );
     }
   }
@@ -2034,6 +3889,12 @@ function retainedGenerationsMember(record) {
     : {};
 }
 
+function settledAbandonmentMember(record) {
+  return Object.hasOwn(record, 'settledAbandonment')
+    ? { settledAbandonment: record.settledAbandonment }
+    : {};
+}
+
 function sortCaptainSessionRecords(records) {
   return [...records].sort((left, right) => {
     const byUpdated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
@@ -2072,7 +3933,9 @@ function assertAdoptionTransferEnvelope(
   sourceStructural,
   targetStructural,
   retainedGenerations,
+  effectLedger,
 ) {
+  assertEffectLedgerMatchesCatalog(effectLedger, targetStructural.catalog);
   for (const [rootPlaybookId, generation] of Object.entries(
     retainedGenerations,
   )) {
@@ -2121,6 +3984,7 @@ function settledRecordWithRetainedGenerations(
   record,
   retainedGenerations,
   updatedAt,
+  effectLedger = record.effectLedger,
 ) {
   if (record.state !== 'settled') {
     throw new Error('Captain session adoption exchange requires settled records');
@@ -2135,12 +3999,24 @@ function settledRecordWithRetainedGenerations(
     cwd: record.cwd,
     structuralProjection: record.structuralProjection,
     lastAppliedExecutionProjection: record.lastAppliedExecutionProjection,
-    snapshot: record.snapshot,
+    snapshot: isDeepStrictEqual(record.snapshot.effectLedger, effectLedger)
+      ? record.snapshot
+      : { ...record.snapshot, effectLedger },
+    effectLedger,
+    unresolvedEffects: record.unresolvedEffects,
     retainedGenerations,
+    ...(Object.hasOwn(record, 'settledAbandonment')
+      ? { settledAbandonment: record.settledAbandonment }
+      : {}),
   });
 }
 
-function validateRetainedGenerations(value, structural) {
+function validateRetainedGenerations(
+  value,
+  structural,
+  authoritativeLedger,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
+) {
   const retained = requireRecord(
     value,
     'Captain session record retainedGenerations',
@@ -2158,10 +4034,52 @@ function validateRetainedGenerations(value, structural) {
     const generation = requireRecord(value, path);
     exactOptionalKeys(
       generation,
-      ['frames'],
-      ['rootStateDescription'],
+      ['effectLedger', 'frames'],
+      ['retainedEffectReconciliation', 'rootStateDescription'],
       path,
     );
+    const generationLedger = assertPlaybookEffectLedger(
+      generation.effectLedger,
+      `${path}.effectLedger`,
+    );
+    if (
+      generationLedger.boundaries.some(
+        ({ physicalReceipt }) => physicalReceipt === undefined,
+      )
+    ) {
+      throw new Error(
+        `${path}.effectLedger contains an incomplete physical boundary`,
+      );
+    }
+    assertEffectLedgerMatchesCatalog(generationLedger, structural.catalog);
+    if (
+      !isPlaybookEffectLedgerMonotonicExtension(
+        generationLedger,
+        authoritativeLedger,
+      )
+    ) {
+      throw new Error(
+        `${path}.effectLedger is not a monotonic checkpoint of the authoritative Captain session effect ledger`,
+      );
+    }
+    const generationReconciliation =
+      generation.retainedEffectReconciliation === undefined
+        ? undefined
+        : requireRecord(
+            generation.retainedEffectReconciliation,
+            `${path}.retainedEffectReconciliation`,
+          );
+    if (generationReconciliation !== undefined) {
+      rejectUnknownOrMissingKeys(
+        generationReconciliation,
+        ['sourceGenerationId'],
+        `${path}.retainedEffectReconciliation`,
+      );
+      assertUuid(
+        generationReconciliation.sourceGenerationId,
+        `${path}.retainedEffectReconciliation.sourceGenerationId`,
+      );
+    }
     if (generation.rootStateDescription !== undefined) {
       requireNonblank(
         generation.rootStateDescription,
@@ -2177,10 +4095,48 @@ function validateRetainedGenerations(value, structural) {
         index,
         rootPlaybookId,
         structural,
+        generationLedger,
+        authoritativeLedger,
         sessionIds,
         `${path}.frames[${index}]`,
+        artifactSchemas,
       ),
     );
+    const schema3Frames = frames.filter(
+      ({ playbookId }) =>
+        structural.catalog[playbookId].artifactSchema === 3,
+    );
+    const markedFrames = frames.filter(
+      ({ runtime }) =>
+        runtime.retainedEffectReconciliation !== undefined,
+    );
+    const markedCaptureLedger = markedFrames[0]?.runtime.effectLedger;
+    const sourceGenerationId =
+      generationReconciliation?.sourceGenerationId;
+    if (
+      markedCaptureLedger !== undefined &&
+      markedFrames.some(
+        ({ runtime }) =>
+          !isDeepStrictEqual(runtime.effectLedger, markedCaptureLedger),
+      )
+    ) {
+      throw new Error(
+        `${path} schema-3 frames differ from the marked generation capture mirror`,
+      );
+    }
+    if (
+      (sourceGenerationId === undefined && markedFrames.length !== 0) ||
+      (sourceGenerationId !== undefined &&
+        markedFrames.length !== schema3Frames.length) ||
+      (sourceGenerationId !== undefined &&
+        structural.catalog[frames[0].playbookId].artifactSchema === 3 &&
+        frames[0].runtime.retainedEffectReconciliation?.sourceSessionId !==
+          sourceGenerationId)
+    ) {
+      throw new Error(
+        `${path}.retainedEffectReconciliation is inconsistent with its schema-3 frame markers`,
+      );
+    }
     validateRetainedGenerationPath(frames, rootPlaybookId, path);
   }
   return retained;
@@ -2191,8 +4147,11 @@ function validateRetainedGenerationFrame(
   index,
   rootPlaybookId,
   structural,
+  generationLedger,
+  authoritativeLedger,
   sessionIds,
   path,
+  artifactSchemas = CURRENT_ARTIFACT_SCHEMAS,
 ) {
   const frame = requireRecord(value, path);
   exactOptionalKeys(
@@ -2257,6 +4216,37 @@ function validateRetainedGenerationFrame(
     throw new Error(`${path}.runtime is invalid: ${errorMessage(cause)}`, {
       cause,
     });
+  }
+  const runtimeReconciliation = runtime.retainedEffectReconciliation;
+  if (
+    artifactSchemas === PRE_EFFECT_ARTIFACT_SCHEMAS &&
+    catalogItem.artifactSchema === 2 &&
+    (!isDeepStrictEqual(runtime.effectLedger, emptyPlaybookEffectLedger()) ||
+      runtimeReconciliation !== undefined ||
+      runtime.retainedEffectSourceSessionId !== undefined)
+  ) {
+    throw new Error(
+      `${path}.runtime schema-2 effect state must be empty`,
+    );
+  } else if (
+    runtimeReconciliation === undefined &&
+    !isDeepStrictEqual(runtime.effectLedger, generationLedger)
+  ) {
+    throw new Error(
+      `${path}.runtime effect ledger differs from its retained-generation checkpoint`,
+    );
+  } else if (
+    runtimeReconciliation !== undefined &&
+    (!isDeepStrictEqual(runtimeReconciliation.checkpoint, generationLedger) ||
+      isDeepStrictEqual(runtime.effectLedger, generationLedger) ||
+      !isPlaybookEffectLedgerMonotonicExtension(
+        runtime.effectLedger,
+        authoritativeLedger,
+      ))
+  ) {
+    throw new Error(
+      `${path}.runtime retained-effect evidence differs from its generation checkpoint or capture-time authority`,
+    );
   }
   if (
     runtime.state.status !== 'active' ||
@@ -2386,7 +4376,10 @@ async function requireUncertainRecord(record, attemptId) {
   if (record.state !== 'uncertain') {
     throw new Error('Captain session has no uncertain turn');
   }
-  if (record.uncertain.attemptId !== attemptId) {
+  if (
+    attemptId !== undefined &&
+    record.uncertain.attemptId !== attemptId
+  ) {
     throw new Error('Captain session uncertain attempt id changed');
   }
   return record;

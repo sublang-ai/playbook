@@ -75,8 +75,8 @@ const fakeEntry = {
   id: 'code',
   command: 'code',
   intent: 'software development / SDLC coding workflow',
-  artifactSchema: 2 as const,
-  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+  artifactSchema: 3 as const,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [] as const,
   validateOptions: () => ({}),
@@ -399,7 +399,8 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     const { liveConfig } = await import(
       new URL('../../../acceptance/live-config.ts', import.meta.url).href
     );
-    const top = parseYaml(liveConfig());
+    const reviewerInstruction = 'Keep the acceptance marker continuous.';
+    const top = parseYaml(liveConfig({ reviewerInstruction }));
     const { config, playbooks } = await composeGenericConfig(
       top,
       (specifier: string) => import(specifier),
@@ -417,6 +418,11 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       'acceptance.dev.coder claude',
       'acceptance.dev.reviewer codex',
     ]);
+    expect(
+      config.players.find((player: any) =>
+        player.id === 'acceptance.dev.reviewer',
+      )?.instruction,
+    ).toBe(reviewerInstruction);
   });
 
   it('composes the selected DECIDE current-tuning overlay', async () => {
@@ -2032,8 +2038,9 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
     const execution = executionConfigFromPlan(baseline);
     const structuralProjection = projectCaptainSessionStructure(execution);
+    const effectLedger = emptyEffectLedger();
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 3,
+      schemaVersion: 6,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,
@@ -2043,6 +2050,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       structuralProjection,
       lastAppliedExecutionProjection: execution,
       snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger,
+      unresolvedEffects: [],
       retainedGenerations: {},
     });
     const uncertain = validateCaptainSessionRecord({
@@ -2125,6 +2134,173 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       'pane child rejected the raced uncertain record',
     );
   });
+
+  it('recovers selected abandonment phases before interactive planning and readiness', async () => {
+    const id = '90000000-0000-4000-8000-000000000065';
+    const attemptId = '90000000-0000-4000-8000-000000000066';
+    const frameSessionId = '80000000-0000-4000-8000-000000000065';
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    const selectedRegistry = {
+      ...fakeEntry,
+      requiredRoleIds: ['coder'],
+      validateOptions: (options: unknown) => options,
+    };
+    await writeUserConfig(
+      home,
+      [
+        'captain: { adapter: claude, model: baseline-captain }',
+        'players:',
+        '  dev.coder: { adapter: codex, model: baseline-player }',
+        'playbooks:',
+        '  code: { from: mod://code, roles: { coder: dev.coder } }',
+        '',
+      ].join('\n'),
+    );
+    const baseline = await loadLaunchPlan({
+      userConfigPath: configPath,
+      loadModule: loader({ 'mod://code': { default: selectedRegistry } }),
+    });
+    const execution = executionConfigFromPlan(baseline);
+    const structuralProjection = projectCaptainSessionStructure(execution);
+    const effectLedger = emptyEffectLedger();
+    const settled = validateCaptainSessionRecord({
+      schemaVersion: 6,
+      kind: 'captain-session',
+      state: 'settled',
+      sessionId: id,
+      createdAt: '2026-08-12T18:00:00.000Z',
+      updatedAt: '2026-08-12T18:00:00.001Z',
+      cwd: process.cwd(),
+      structuralProjection,
+      lastAppliedExecutionProjection: execution,
+      snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger,
+      unresolvedEffects: [],
+      retainedGenerations: {},
+    });
+    const unresolvedEffects = [
+      {
+        classification: 'worktree-only-change',
+        baselineHead: 'a'.repeat(40),
+        afterHead: 'a'.repeat(40),
+      },
+    ];
+    const frame = {
+      playbookId: 'code',
+      sessionId: frameSessionId,
+      rootSessionId: frameSessionId,
+      depth: 0,
+      options: execution.catalog.code.options,
+      roleBindings: { coder: 'dev.coder' },
+      runtime: {
+        ...settled.snapshot.captain.runtime,
+        playbookId: 'code',
+      },
+    };
+    const uncertain = validateCaptainSessionRecord({
+      ...settled,
+      state: 'uncertain',
+      updatedAt: '2026-08-12T18:00:00.002Z',
+      snapshot: {
+        ...settled.snapshot,
+        mode: 'engaged.parked',
+        issuedSessionIds: [
+          ...settled.snapshot.issuedSessionIds,
+          frameSessionId,
+        ],
+        frames: [frame],
+      },
+      unresolvedEffects,
+      uncertain: {
+        baseUpdatedAt: settled.updatedAt,
+        input: 'abandon unresolved work',
+        attemptId,
+        attemptNumber: 1,
+        markedAt: '2026-08-12T18:00:00.002Z',
+        attemptedExecutionProjection: execution,
+        abandonment: {
+          phase: 'started',
+          rootPlaybookId: 'code',
+          unresolvedEffects,
+        },
+      },
+    });
+    const recovered = validateCaptainSessionRecord({
+      ...settled,
+      updatedAt: '2026-08-12T18:00:00.003Z',
+      snapshot: {
+        ...settled.snapshot,
+        lastAction: 'runtime',
+        lastSettlementStatus: 'ok',
+      },
+      unresolvedEffects,
+      settledAbandonment: {
+        phase: 'recovered',
+        attemptId,
+        rootPlaybookId: 'code',
+        unresolvedEffects,
+      },
+    });
+    const events: string[] = [];
+    let selected = uncertain;
+    const sessionStore = {
+      async read() {
+        events.push('read');
+        return selected;
+      },
+      async acquire(acquiredId: string) {
+        expect(acquiredId).toBe(id);
+        events.push('acquire');
+        return {
+          async recoverUnresolvedEffectAbandonment() {
+            events.push('recover');
+            return recovered;
+          },
+          async release() {
+            events.push('release');
+          },
+        };
+      },
+    };
+
+    const result = await runPlaybookCli({
+      argv: ['--session', id],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      sessionStore,
+      probeAdapterSdk: async () => true,
+      launchManagedTmuxPlay: async () => {
+        events.push('launch');
+        throw new Error('stop after recovered planning');
+      },
+    });
+
+    expect(result).toEqual({ code: 1 });
+    expect(events).toEqual(['read', 'acquire', 'recover', 'release', 'launch']);
+
+    events.length = 0;
+    selected = recovered;
+    const settledResult = await runPlaybookCli({
+      argv: ['--session', id],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      sessionStore,
+      probeAdapterSdk: async () => true,
+      launchManagedTmuxPlay: async () => {
+        events.push('launch');
+        throw new Error('stop after settled-marker synchronization');
+      },
+    });
+    expect(settledResult).toEqual({ code: 1 });
+    expect(events).toEqual(['read', 'acquire', 'recover', 'release', 'launch']);
+  });
 });
 
 async function managedCliHarness(options: any) {
@@ -2189,11 +2365,11 @@ function selectedTurnZeroSnapshot(execution: any) {
     stateId: 'routing',
   };
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     captain: {
       sessionId: '80000000-0000-4000-8000-000000000058',
       runtime: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: 'captain',
         machine: { value: parked.value, status: parked.status },
         roleResumeTokens: {},
@@ -2207,6 +2383,7 @@ function selectedTurnZeroSnapshot(execution: any) {
         },
         state: parked,
         pendingBossQuestions: [],
+        effectLedger: emptyEffectLedger(),
       },
       agent: structural.captain,
       conversation: { kind: 'unopened' },
@@ -2218,6 +2395,16 @@ function selectedTurnZeroSnapshot(execution: any) {
     sequences: { turn: 0, journal: 0 },
     journal: [],
     mode: 'chat',
+    effectLedger: emptyEffectLedger(),
+  };
+}
+
+function emptyEffectLedger() {
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    boundaries: [],
+    logicalOperations: [],
   };
 }
 

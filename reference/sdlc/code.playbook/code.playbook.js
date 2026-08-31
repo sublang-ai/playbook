@@ -8,7 +8,7 @@
 //                callerInput; pending Coder questions retain BOSS_REPLY
 // Adjudication:  LLM judge per player state; coderOutput is carried verbatim
 // Nested call:   literal review target through the shared bridge
-// Compat:        artifact schema 2 / runtime ABI 1
+// Compat:        artifact schema 3 / runtime ABI 1
 import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { codingMachine, } from './code.fsm.js';
 const OPTION_KEYS = new Set(['runResults']);
@@ -89,7 +89,7 @@ const runtimeSpec = {
     // time — a literal, never the loading engine's RUNTIME_ABI self-report,
     // which would follow whatever engine loads the module and make the
     // factory's skew check compare that engine with itself.
-    compat: { artifactSchema: 2, runtimeAbi: 1 },
+    compat: { artifactSchema: 3, runtimeAbi: 1 },
     snapshotOptions: snapshotCodeOptions,
     entryEvent: {
         type: 'START_CODE',
@@ -107,6 +107,53 @@ const runtimeSpec = {
         runIrTask: {
             role: 'coder',
             label: 'Coder is implementing exactly one unfinished intent-record task.',
+        },
+    },
+    outcomeAuthority: {
+        governedPlayerStates: {
+            runFirstPhase: {
+                directCommit: {
+                    fields: {
+                        coderOutput: 'presentation',
+                        latestCommit: 'effect',
+                    },
+                    repositoryDisposition: 'one-descendant-commit',
+                },
+                irCommit: {
+                    fields: {
+                        coderOutput: 'presentation',
+                        latestCommit: 'effect',
+                        irNumber: 'semantic',
+                        irTask: 'semantic',
+                    },
+                    repositoryDisposition: 'one-descendant-commit',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'deferred',
+                },
+            },
+            runIrTask: {
+                moreTasks: {
+                    fields: {
+                        coderOutput: 'presentation',
+                        latestCommit: 'effect',
+                        irTask: 'semantic',
+                    },
+                    repositoryDisposition: 'one-descendant-commit',
+                },
+                finalTask: {
+                    fields: {
+                        coderOutput: 'presentation',
+                        latestCommit: 'effect',
+                    },
+                    repositoryDisposition: 'one-descendant-commit',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'deferred',
+                },
+            },
         },
     },
     composePlayerPrompt: (input, promptIdentity) => composePlayerPrompt(input, promptIdentity),

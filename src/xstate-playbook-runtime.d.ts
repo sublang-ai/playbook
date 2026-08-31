@@ -1,5 +1,5 @@
 import type { AnyStateMachine, EventObject, PromiseActorLogic } from 'xstate';
-import type { CaptainResult, JsonValue, PlaybookPorts, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, PlaybookPendingBossQuestion, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
@@ -52,9 +52,23 @@ export type JudgePurpose = 'boss-input-classification' | 'player-output-adjudica
  */
 export interface RuntimeBoundaryCalls {
     callPlayer(input: PlaybookPlayerInput, roleId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
+    /**
+     * Return the host-acknowledged adjudication performed while a governed
+     * repository claim was still held. The value is consumable once.
+     */
+    takeGovernedPlayerOutput?(result: PlayerResult): GovernedPlayerSettlement | undefined;
+    recordGovernedPlayerOutput?(result: PlayerResult, output: PlaybookActorOutput): void;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
     callCaptain?(input: PlaybookCaptainInput, prompt: string, signal: AbortSignal, callOptions?: XStateCaptainCallOptions): Promise<CaptainResult>;
 }
+/** Host-acknowledged outcome of one governed player reconciliation. */
+type GovernedPlayerSettlement = {
+    readonly status: 'resolved';
+    readonly output: PlaybookActorOutput;
+} | {
+    readonly status: 'unresolved';
+    readonly error: unknown;
+};
 /**
  * Presentation selection for one traced direct-Captain call
  * (slc/link.md §Captain adjudication). `'visible'` (the default) is the
@@ -95,6 +109,87 @@ export declare const BOSS_REPLY_ERRORS: {
     readonly missingQuestion: "needsBossReply outcome missing 'question' field";
     readonly unregisteredState: (stateId: string) => string;
 };
+interface XStateRepositoryOperationSettlement<T> {
+    readonly status: 'fulfilled';
+    readonly value: T;
+}
+interface XStateRepositoryOperationRejection {
+    readonly status: 'rejected';
+    readonly reason: unknown;
+}
+interface XStateRepositoryExclusiveCompletion<T> {
+    readonly boundary: PlaybookEffectBoundary;
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+    /** Physical receipt for an ordinary call; cumulative receipt for a chain. */
+    readonly outcomeReceipt: PlaybookRepositoryReceipt;
+}
+interface XStateDeferredBinding {
+    readonly operationId: string;
+    readonly pendingQuestion: PlaybookPendingBossQuestion;
+    readonly playerContinuation: JsonValue;
+}
+interface XStateRepositoryCompletionEvidence {
+    readonly finalText?: string;
+    readonly semanticCandidate?: JsonValue;
+    readonly deferred?: XStateDeferredBinding;
+    readonly unresolved?: true;
+}
+interface XStateRepositoryExclusiveResult<T> {
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+    readonly effectLedger: PlaybookEffectLedger;
+    readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface XStateRepositoryDeferredContinuationResult<T> {
+    readonly status: 'continued';
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+    readonly logicalReceipt?: PlaybookRepositoryReceipt;
+    readonly effectLedger: PlaybookEffectLedger;
+    readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface XStateRepositoryDeferredCheckpointMismatch {
+    readonly status: 'checkpoint-mismatch' | 'ineligible';
+    readonly effectLedger: PlaybookEffectLedger;
+}
+interface XStateRepositoryDeferredParked {
+    readonly status: 'parked';
+    readonly effectLedger: PlaybookEffectLedger;
+}
+interface XStateRepositoryDeferredRestoreResult {
+    readonly status: 'restored' | 'checkpoint-mismatch' | 'ineligible';
+    readonly effectLedger: PlaybookEffectLedger;
+}
+type XStateEffectBoundarySeed = Omit<PlaybookEffectBoundaryStart, 'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'>;
+export interface XStateRepositoryCapability {
+    runExclusive<T>(options: {
+        readonly signal: AbortSignal;
+        readonly effectBoundary: XStateEffectBoundarySeed;
+        readonly operation: (context: {
+            readonly baseline: PlaybookRepositoryReceipt['baseline'];
+            readonly identity: unknown;
+        }) => Promise<T>;
+        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
+    }): Promise<XStateRepositoryExclusiveResult<T>>;
+    runDeferred<T>(options: {
+        readonly mode: 'continue';
+        readonly signal: AbortSignal;
+        readonly operationId: string;
+        readonly effectBoundary: XStateEffectBoundarySeed;
+        readonly operation: (context: {
+            readonly baseline: PlaybookRepositoryReceipt['baseline'];
+            readonly identity: unknown;
+            readonly playerContinuation: JsonValue;
+        }) => Promise<T>;
+        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
+    }): Promise<XStateRepositoryDeferredContinuationResult<T> | XStateRepositoryDeferredCheckpointMismatch>;
+    runDeferred(options: {
+        readonly mode: 'park' | 'restore';
+        readonly signal: AbortSignal;
+        readonly operationId: string;
+    }): Promise<XStateRepositoryDeferredParked | XStateRepositoryDeferredRestoreResult>;
+}
 /** The runtime ABI this engine implements (DR-022). */
 export declare const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
@@ -130,11 +225,14 @@ export interface XStateOutcomeAuthoritySpec {
  */
 export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities extends object> {
     readonly configuredOptions: ConfiguredOptions;
-    readonly hostCapabilities: HostCapabilities;
+    readonly hostCapabilities: HostCapabilities & {
+        readonly repository: XStateRepositoryCapability;
+        readonly effectLedger: PlaybookEffectLedgerCapability;
+    };
 }
-export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = [HostCapabilities] extends [never] ? ConfiguredOptions : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
 /** Shared XState factory with its captured, validated artifact compatibility. */
-export type XStatePlaybookRuntimeFactory<Options = unknown, ArtifactSchema extends 2 | 3 = 2 | 3> = PlaybookRuntimeFactory<Options> & {
+export type XStatePlaybookRuntimeFactory<Options = unknown, ArtifactSchema extends 3 = 3> = PlaybookRuntimeFactory<Options> & {
     readonly compat: Readonly<{
         readonly artifactSchema: ArtifactSchema;
         readonly runtimeAbi: typeof RUNTIME_ABI;
@@ -267,28 +365,14 @@ interface XStatePlaybookRuntimeSpecBase<TOptions> {
     /** Working directory for `script` actors. Default: the validated options' string `cwd`, else the process working directory. */
     scriptCwd?: (options: TOptions) => string | undefined;
 }
-/**
- * Legacy schema-2-compatible shared-engine spec name. Its optional compat
- * member is retained for downstream source compatibility; construction still
- * rejects an absent or unsupported declaration before interpretation.
- */
 export interface XStatePlaybookRuntimeSpec<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
-    compat?: XStatePlaybookRuntimeCompat;
-    outcomeAuthority?: never;
-}
-/** Exact schema-2 shared-engine spec; its one-argument factory is intact. */
-export interface XStatePlaybookRuntimeSpecV2<TOptions> extends XStatePlaybookRuntimeSpec<TOptions> {
-    compat: XStatePlaybookRuntimeCompat & {
-        artifactSchema: 2;
-    };
-}
-/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
-export interface XStatePlaybookRuntimeSpecV3<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
     compat: XStatePlaybookRuntimeCompat & {
         artifactSchema: 3;
     };
     outcomeAuthority: XStateOutcomeAuthoritySpec;
 }
+/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
+export type XStatePlaybookRuntimeSpecV3<TOptions> = XStatePlaybookRuntimeSpec<TOptions>;
 /** Strip a single Markdown code fence that wraps the whole string. */
 export declare function stripCodeFence(text: string): string;
 export declare function extractJsonValue(text: string, start: number, repair: boolean): string | undefined;
@@ -348,6 +432,7 @@ interface PlayerBridgeSpec {
     composePlayerPrompt: (input: PlaybookPlayerInput) => string;
     adjudication: PlayerAdjudicationSpec;
     resumableStateIds: ReadonlySet<string>;
+    allowsCorrectiveReplay?: (result: PlayerResult) => boolean;
 }
 export declare function createPlayerBridge(spec: PlayerBridgeSpec, ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls, onControlPlaneError?: (error: unknown) => void): PromiseActorLogic<PlaybookActorOutput, PlaybookPlayerInput>;
 /**
@@ -381,6 +466,5 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * state key — so each snapshot exposes exactly one playbook state id.
  * Parallel-region FSMs keep their own linked runtimes.
  */
-export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): XStatePlaybookRuntimeFactory<TOptions, 2>;
 export declare function createXStatePlaybookRuntime<TOptions, THostCapabilities extends object>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpecV3<TOptions>): XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>, 3>;
 export {};

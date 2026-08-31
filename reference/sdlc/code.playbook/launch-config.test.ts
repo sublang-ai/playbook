@@ -24,7 +24,7 @@ function entry(
   requiredRoleIds: string[],
   command = id,
   concurrentRoleSets: string[][] = [],
-  artifactSchema = 2,
+  artifactSchema = 3,
   runtimeProfile: unknown = { kind: 'bespoke', artifactSchema },
 ) {
   return {
@@ -165,7 +165,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
           from: 'mod://code',
           manifestCommand: 'code',
           command: 'code',
-          artifactSchema: 2,
+          artifactSchema: 3,
           requiredRoleIds: ['coder', 'reviewer'],
           concurrentRoleSets: [],
           roles: {
@@ -310,7 +310,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(reads).toEqual(
       Object.fromEntries(consumed.map((key) => [key, 1])),
     );
-    expect(plan.catalog.code.artifactSchema).toBe(2);
+    expect(plan.catalog.code.artifactSchema).toBe(3);
   });
 
   it('rejects host capabilities from a stored structural projection', async () => {
@@ -1230,6 +1230,13 @@ describe('shared launch-config plan (PBCLI-47)', () => {
 
   it.each([
     ['artifact schema 1', { artifactSchema: 1 }],
+    [
+      'artifact schema 2',
+      {
+        artifactSchema: 2,
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+      },
+    ],
     ['artifact schema 4', { artifactSchema: 4 }],
     ['missing runtime profile', { runtimeProfile: undefined }],
     [
@@ -1237,20 +1244,20 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       {
         runtimeProfile: {
           kind: 'shared-factory',
-          compat: { artifactSchema: 3, runtimeAbi: 1 },
+          compat: { artifactSchema: 2, runtimeAbi: 1 },
         },
       },
     ],
     [
       'bespoke schema skew',
-      { runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } },
+      { runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } },
     ],
     [
       'malformed shared-factory compat',
       {
         runtimeProfile: {
           kind: 'shared-factory',
-          compat: { artifactSchema: 2, runtimeAbi: 1, extra: true },
+          compat: { artifactSchema: 3, runtimeAbi: 1, extra: true },
         },
       },
     ],
@@ -1259,7 +1266,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       {
         runtimeProfile: {
           kind: 'shared-factory',
-          compat: { artifactSchema: 2, runtimeAbi: 1.5 },
+          compat: { artifactSchema: 3, runtimeAbi: 1.5 },
         },
       },
     ],

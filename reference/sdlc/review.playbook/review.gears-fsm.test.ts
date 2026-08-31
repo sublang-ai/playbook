@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
+import { ACCEPTED_OUTCOME_ACTION_TYPE } from '../../../src/accepted-outcome.js';
 import {
   reviewMachine,
   type PlayerInput,
@@ -30,6 +31,7 @@ interface RawMachineConfig {
 interface RawTransition {
   guard?: unknown;
   target?: unknown;
+  actions?: unknown;
 }
 
 interface TransitionFixture {
@@ -248,6 +250,27 @@ function guardName(guard: unknown): string | undefined {
   return typeof type === 'string' ? type : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function acceptedOutcomeMarkers(
+  transition: RawTransition,
+): readonly unknown[] {
+  const actions =
+    transition.actions === undefined
+      ? []
+      : Array.isArray(transition.actions)
+        ? transition.actions
+        : [transition.actions];
+  return actions
+    .filter(
+      (action) =>
+        isRecord(action) && action.type === ACCEPTED_OUTCOME_ACTION_TYPE,
+    )
+    .map((action) => action.params);
+}
+
 describe('REVIEW GEARS to FSM compilation', () => {
   it('maps every REVIEW item once with its canonical role and exact prompt', () => {
     expect([...gears.keys()]).toEqual(expected.map(([, item]) => item));
@@ -317,6 +340,102 @@ describe('REVIEW GEARS to FSM compilation', () => {
           true,
         ]);
       });
+    }
+  });
+
+  it('marks all twelve governed outcomes with stable identities', () => {
+    const governed = [
+      {
+        stateId: 'reviewInitial',
+        expected: [
+          {
+            source: 'reviewInitial',
+            target: 'addressFindings',
+            acceptedOutcome: 'hasFindings',
+          },
+          {
+            source: 'reviewInitial',
+            target: 'done',
+            acceptedOutcome: 'noFindings',
+          },
+          {
+            source: 'reviewInitial',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+      {
+        stateId: 'addressFindings',
+        expected: [
+          {
+            source: 'addressFindings',
+            target: 'reviewAfterCommit',
+            acceptedOutcome: 'committed',
+          },
+          {
+            source: 'addressFindings',
+            target: 'reviewAfterRebuttal',
+            acceptedOutcome: 'rejectedAll',
+          },
+          {
+            source: 'addressFindings',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+      {
+        stateId: 'reviewAfterCommit',
+        expected: [
+          {
+            source: 'reviewAfterCommit',
+            target: 'addressFindings',
+            acceptedOutcome: 'hasFindings',
+          },
+          {
+            source: 'reviewAfterCommit',
+            target: 'done',
+            acceptedOutcome: 'noFindings',
+          },
+          {
+            source: 'reviewAfterCommit',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+      {
+        stateId: 'reviewAfterRebuttal',
+        expected: [
+          {
+            source: 'reviewAfterRebuttal',
+            target: 'addressFindings',
+            acceptedOutcome: 'hasFindings',
+          },
+          {
+            source: 'reviewAfterRebuttal',
+            target: 'done',
+            acceptedOutcome: 'noFindings',
+          },
+          {
+            source: 'reviewAfterRebuttal',
+            target: 'awaitBossReply',
+            acceptedOutcome: 'needsBossReply',
+          },
+        ],
+      },
+    ] as const;
+
+    for (const { stateId, expected } of governed) {
+      const onDone = states[stateId]?.invoke?.onDone;
+      expect(Array.isArray(onDone), stateId).toBe(true);
+      const arms = onDone as readonly RawTransition[];
+      expect(arms).toHaveLength(expected.length);
+      expect(
+        arms.map((arm) => acceptedOutcomeMarkers(arm)),
+        stateId,
+      ).toEqual(expected.map((marker) => [marker]));
     }
   });
 

@@ -1,8 +1,14 @@
-import { type PlayerInput, type PlayerOutput, type DecideEvent, type DecideInput, type PendingBossQuestion } from './decide.fsm.js';
+import { type PlayerInput, type DecideEvent, type DecideInput, type PendingBossQuestion } from './decide.fsm.js';
+import type { PlaybookHostConstructionCapabilities } from '../code.playbook/playbook-captain.js';
 import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlayerResult, PlayerSessionStore, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlAction, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType } from '@sublang/playbook/runtime';
 export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlayerResult, PlayerSessionStore, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlAction, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, };
 type RoleId = 'coder' | 'reviewer';
 export type PlaybookRuntimeOptions = DecideInput;
+export type DecidePlaybookHostCapabilities = PlaybookHostConstructionCapabilities;
+export interface DecidePlaybookRuntimeConstruction {
+    readonly configuredOptions: PlaybookRuntimeOptions;
+    readonly hostCapabilities: DecidePlaybookHostCapabilities;
+}
 type PromptIdentity = (roleId: RoleId) => string;
 declare function composePlayerPrompt(input: PlayerInput, promptIdentity: PromptIdentity): string;
 declare function requiredFieldsFor(description: string): string[];
@@ -14,8 +20,10 @@ declare function buildClassifierPrompt(text: string, ctx: {
 declare function parseClassification(raw: string, text: string, pendingQuestionIds?: readonly string[]): DecideEvent | {
     type: 'NO_ACTION';
 } | null;
-declare function buildAdjudicatorPrompt(input: PlayerInput, playerOutput: string): string;
-declare function parseAdjudication(raw: string, input: PlayerInput, finalText: string): PlayerOutput;
+declare function buildAdjudicatorPrompt(input: PlayerInput, playerOutput: string, correction?: {
+    readonly reply: string;
+    readonly error: string;
+}): string;
 declare function combineSignals(a: AbortSignal | undefined, b: AbortSignal | undefined): AbortSignal;
 declare function normalizeErrorCompact(err: unknown): {
     name: string;
@@ -28,7 +36,7 @@ declare function normalizeErrorFull(err: unknown): {
 } | undefined;
 declare function pendingQuestionsFromContext(context: Record<string, unknown>): PendingBossQuestion[];
 declare function pendingQuestionsForState(state: PlaybookState, context: Record<string, unknown>): PendingBossQuestion[];
-export declare const createPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
+export declare const createPlaybookRuntime: PlaybookRuntimeFactory<DecidePlaybookRuntimeConstruction>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     requiredFieldsFor: typeof requiredFieldsFor;
@@ -36,7 +44,6 @@ export declare const _internal: {
     buildClassifierPrompt: typeof buildClassifierPrompt;
     parseClassification: typeof parseClassification;
     buildAdjudicatorPrompt: typeof buildAdjudicatorPrompt;
-    parseAdjudication: typeof parseAdjudication;
     combineSignals: typeof combineSignals;
     pendingQuestionsFromContext: typeof pendingQuestionsFromContext;
     pendingQuestionsForState: typeof pendingQuestionsForState;

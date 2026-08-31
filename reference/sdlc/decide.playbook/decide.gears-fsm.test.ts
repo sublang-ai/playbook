@@ -198,7 +198,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     'reviewCommit',
     {
       guard: 'committed',
-      coderOutput: 'Committed proposal.\nCommit: abc123',
+      coderOutput: 'Committed proposal.',
       latestCommit: 'abc123',
     },
     'awaitBossReply',
@@ -367,23 +367,33 @@ describe('DECIDE GEARS to FSM compilation', () => {
     expect(gearsText).not.toContain('\n## Players\n');
   });
 
-  it('advertises its schema-2 roles and parallel constraint', () => {
+  it('advertises its schema-3 roles and parallel constraint', () => {
     expect(concurrentRoleSets).toEqual([['coder', 'reviewer']]);
     expect(decideRegistry).toMatchObject({
       id: 'decide',
       command: 'decide',
-      artifactSchema: 2,
-      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+      artifactSchema: 3,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [['coder', 'reviewer']],
     });
     expect(decideRegistry.concurrentRoleSets).toEqual(concurrentRoleSets);
     const options = validateDecideOptions(undefined);
     expect(options).toEqual({});
-    expect(typeof decideRegistry.createRuntime(options).init).toBe('function');
+    expect(decideRegistry.createRuntime).toHaveLength(2);
     expect(() => validateDecideOptions({ coderLlm: 'stale' })).toThrow(
       'captain.options.playbooks.decide.options.coderLlm',
     );
+  });
+
+  it('retires the Commit response marker from every authored prompt', () => {
+    const retired =
+      'Include exactly one final-response line beginning `Commit: `';
+    expect(sourceText).not.toContain(retired);
+    expect(gearsText).not.toContain(retired);
+    for (const { input } of invokedStates(states)) {
+      if ('prompt' in input) expect(input.prompt).not.toContain(retired);
+    }
   });
 
   it('maps exactly DECIDE-1 through DECIDE-4 to the declared actor topology', () => {

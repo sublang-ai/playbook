@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { createHash } from 'node:crypto';
 import {
   fromPromise,
   waitFor,
@@ -18,6 +19,12 @@ import type {
   PlaybookCallStart,
   PlaybookPendingBossQuestion,
   PlaybookPendingCall,
+  PlaybookEffectBoundary,
+  PlaybookEffectLedger,
+  PlaybookEffectLogicalOperation,
+  PlaybookRepositoryObservation,
+  PlaybookRepositoryDisposition,
+  PlaybookRepositoryReceipt,
   PlaybookRuntimeSnapshot,
   PlaybookSession,
   PlaybookState,
@@ -869,6 +876,1231 @@ const SNAPSHOT_SEQUENCE_KEYS = [
   'playbookCall',
 ] as const;
 
+const EFFECT_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const EFFECT_OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const EFFECT_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const EFFECT_DISPOSITIONS = new Set([
+  'unchanged',
+  'one-descendant-commit',
+  'deferred',
+]);
+const EFFECT_RECEIPT_CLASSIFICATIONS = new Set([
+  'unchanged',
+  'one-descendant-commit',
+  'multiple-commits',
+  'rewritten-or-non-descendant',
+  'worktree-only-change',
+  'concurrent-or-foreign-change',
+  'observation-ambiguous',
+]);
+
+function effectUuid(value: unknown, path: string): string {
+  const id = requireNonEmptyString(value, path);
+  if (!EFFECT_UUID_PATTERN.test(id)) {
+    throw new TypeError(`${path} must be a canonical UUID`);
+  }
+  return id;
+}
+
+function effectInteger(value: unknown, path: string, minimum = 0): number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+    throw new TypeError(`${path} must be an integer greater than or equal to ${minimum}`);
+  }
+  return value as number;
+}
+
+function jsonValuesEqual(left: JsonValue, right: JsonValue): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) => jsonValuesEqual(entry, right[index]!))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] &&
+          jsonValuesEqual(left[key] as JsonValue, right[key] as JsonValue),
+      )
+    );
+  }
+  return false;
+}
+
+function projectionText(
+  projection: PlaybookRepositoryObservation['projection'],
+): string {
+  return JSON.stringify(projection);
+}
+
+function projectionsEqual(
+  left: PlaybookRepositoryObservation,
+  right: PlaybookRepositoryObservation,
+): boolean {
+  return (
+    left.projectionDigest === right.projectionDigest &&
+    projectionText(left.projection) === projectionText(right.projection)
+  );
+}
+
+function projectionPreservesBaseline(
+  baseline: PlaybookRepositoryObservation,
+  after: PlaybookRepositoryObservation,
+): boolean {
+  return Object.entries(baseline.projection).every(
+    ([path, entry]) =>
+      own(after.projection, path) &&
+      JSON.stringify(entry) === JSON.stringify(after.projection[path]),
+  );
+}
+
+function effectObservation(
+  value: unknown,
+  path: string,
+): PlaybookRepositoryObservation {
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(
+    value,
+    ['worktree', 'gitDir', 'head', 'projection', 'projectionDigest'],
+    path,
+  );
+  requireNonEmptyString(value.worktree, `${path}.worktree`);
+  requireNonEmptyString(value.gitDir, `${path}.gitDir`);
+  const head = requireNonEmptyString(value.head, `${path}.head`);
+  if (!EFFECT_OID_PATTERN.test(head)) {
+    throw new TypeError(`${path}.head must be a canonical Git commit OID`);
+  }
+  if (!isRecord(value.projection)) {
+    throw new TypeError(`${path}.projection must be a path-keyed object`);
+  }
+  for (const key of Object.keys(value.projection)) {
+    if (key.length === 0) {
+      throw new TypeError(`${path}.projection must not contain an empty path`);
+    }
+  }
+  const projectionDigest = requireNonEmptyString(
+    value.projectionDigest,
+    `${path}.projectionDigest`,
+  );
+  if (!EFFECT_DIGEST_PATTERN.test(projectionDigest)) {
+    throw new TypeError(`${path}.projectionDigest must be a canonical SHA-256 identity`);
+  }
+  const expectedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(value.projection))
+    .digest('hex')}`;
+  if (projectionDigest !== expectedDigest) {
+    throw new TypeError(`${path}.projectionDigest does not match its projection`);
+  }
+  return value as unknown as PlaybookRepositoryObservation;
+}
+
+function assertObservationIdentity(
+  observation: PlaybookRepositoryObservation,
+  identity: { readonly worktree: string; readonly gitDir: string },
+  path: string,
+): void {
+  if (
+    observation.worktree !== identity.worktree ||
+    observation.gitDir !== identity.gitDir
+  ) {
+    throw new TypeError(`${path} does not match its canonical worktree identity`);
+  }
+}
+
+function effectReceipt(
+  value: unknown,
+  path: string,
+  expectedBaseline?: PlaybookRepositoryObservation,
+  expectedAfter?: PlaybookRepositoryObservation,
+  matchExpectedAfter = false,
+  dispositions?: readonly string[],
+): PlaybookRepositoryReceipt {
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(
+    value,
+    ['classification', 'baseline', 'after', 'commitOid'],
+    path,
+  );
+  if (
+    typeof value.classification !== 'string' ||
+    !EFFECT_RECEIPT_CLASSIFICATIONS.has(value.classification)
+  ) {
+    throw new TypeError(`${path}.classification is not supported`);
+  }
+  const classification = value.classification;
+  const baseline = effectObservation(value.baseline, `${path}.baseline`);
+  const after = own(value, 'after')
+    ? effectObservation(value.after, `${path}.after`)
+    : undefined;
+  assertObservationIdentity(after ?? baseline, baseline, `${path}.after`);
+  if (
+    expectedBaseline !== undefined &&
+    !jsonValuesEqual(
+      baseline as unknown as JsonValue,
+      expectedBaseline as unknown as JsonValue,
+    )
+  ) {
+    throw new TypeError(`${path}.baseline does not match its boundary baseline`);
+  }
+  if (matchExpectedAfter) {
+    if (
+      expectedAfter !== undefined &&
+      (after === undefined ||
+        !jsonValuesEqual(
+          after as unknown as JsonValue,
+          expectedAfter as unknown as JsonValue,
+        ))
+    ) {
+      throw new TypeError(`${path}.after does not match its expected observation`);
+    }
+    if (expectedAfter === undefined && after !== undefined) {
+      throw new TypeError(`${path}.after has no matching expected observation`);
+    }
+  }
+  if (classification !== 'observation-ambiguous' && after === undefined) {
+    throw new TypeError(`${path}.after is required for ${classification}`);
+  }
+  const commitOid = own(value, 'commitOid')
+    ? requireNonEmptyString(value.commitOid, `${path}.commitOid`)
+    : undefined;
+  if (classification === 'one-descendant-commit') {
+    if (
+      commitOid === undefined ||
+      !EFFECT_OID_PATTERN.test(commitOid) ||
+      after?.head !== commitOid
+    ) {
+      throw new TypeError(
+        `${path}.commitOid must equal the after HEAD for one-descendant-commit`,
+      );
+    }
+  } else if (commitOid !== undefined) {
+    throw new TypeError(
+      `${path}.commitOid is permitted only for one-descendant-commit`,
+    );
+  }
+  if (
+    classification === 'unchanged' &&
+    after !== undefined &&
+    !jsonValuesEqual(
+      baseline as unknown as JsonValue,
+      after as unknown as JsonValue,
+    )
+  ) {
+    throw new TypeError(`${path} classified unchanged observations that differ`);
+  }
+  if (
+    classification === 'one-descendant-commit' &&
+    after !== undefined &&
+    (baseline.head === after.head ||
+      !projectionsEqual(baseline, after))
+  ) {
+    throw new TypeError(
+      `${path} one-descendant-commit must change HEAD and preserve the projection`,
+    );
+  }
+  if (
+    classification === 'worktree-only-change' &&
+    after !== undefined &&
+    (baseline.head !== after.head ||
+      projectionsEqual(baseline, after) ||
+      !projectionPreservesBaseline(baseline, after))
+  ) {
+    throw new TypeError(
+      `${path} worktree-only-change must preserve HEAD and change the projection`,
+    );
+  }
+  if (
+    (classification === 'multiple-commits' ||
+      classification === 'rewritten-or-non-descendant') &&
+    after?.head === baseline.head
+  ) {
+    throw new TypeError(`${path} ${classification} must change HEAD`);
+  }
+  if (
+    (classification === 'one-descendant-commit' ||
+      classification === 'multiple-commits' ||
+      classification === 'rewritten-or-non-descendant' ||
+      classification === 'worktree-only-change') &&
+    !dispositions?.includes('one-descendant-commit')
+  ) {
+    throw new TypeError(
+      `${path}.classification is incompatible with its boundary dispositions`,
+    );
+  }
+  if (
+    classification === 'concurrent-or-foreign-change' &&
+    (!dispositions?.every((value) => value === 'unchanged') ||
+      (after !== undefined &&
+        baseline.head === after.head &&
+        projectionsEqual(baseline, after)))
+  ) {
+    throw new TypeError(
+      `${path}.classification is incompatible with its boundary dispositions`,
+    );
+  }
+  if (
+    classification === 'observation-ambiguous' &&
+    after !== undefined &&
+    baseline.head === after.head &&
+    projectionsEqual(baseline, after)
+  ) {
+    throw new TypeError(
+      `${path} observation-ambiguous requires an absent or changed after observation`,
+    );
+  }
+  return value as unknown as PlaybookRepositoryReceipt;
+}
+
+/** Authority for one governed delegated-player output field (DR-040 §1). */
+export type PlaybookSemanticFieldAuthority =
+  | 'presentation'
+  | 'semantic'
+  | 'effect'
+  | 'runtime';
+
+/** One already-validated state-local governed outcome declaration. */
+export interface PlaybookSemanticOutcomeSpec {
+  readonly fields: Readonly<Record<string, PlaybookSemanticFieldAuthority>>;
+  readonly repositoryDisposition: PlaybookRepositoryDisposition;
+}
+
+/** Evidence available when one governed semantic candidate is reconciled. */
+export interface PlaybookSemanticEvidenceInput {
+  readonly outcomes: Readonly<Record<string, PlaybookSemanticOutcomeSpec>>;
+  readonly semanticCandidate: unknown;
+  readonly finalText?: unknown;
+  readonly receipt?: unknown;
+  readonly runtimeFields?: unknown;
+}
+
+/** The exact detached actor output admitted to FSM delivery. */
+export type PlaybookReconciledSemanticOutput = Readonly<
+  Record<string, string>
+> & {
+  readonly guard: string;
+};
+
+/** Retained presentation and semantic evidence, kept separate from output. */
+export interface PlaybookRetainedSemanticEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate: Readonly<Record<string, string>> & {
+    readonly guard: string;
+  };
+}
+
+export type PlaybookSemanticReconciliationReason =
+  | 'missing-presentation-evidence'
+  | 'missing-repository-receipt'
+  | 'invalid-repository-receipt'
+  | 'repository-disposition-mismatch'
+  | 'missing-effect-evidence'
+  | 'missing-runtime-evidence'
+  | 'inconsistent-runtime-evidence';
+
+/** A fail-closed semantic/effect reconciliation decision. */
+export type PlaybookSemanticReconciliation =
+  | {
+      readonly status: 'resolved' | 'deferred';
+      readonly output: PlaybookReconciledSemanticOutput;
+      readonly evidence: PlaybookRetainedSemanticEvidence;
+    }
+  | {
+      readonly status: 'unresolved';
+      readonly reason: PlaybookSemanticReconciliationReason;
+      readonly evidence: PlaybookRetainedSemanticEvidence;
+    };
+
+/**
+ * A judge candidate is structurally invalid, rather than merely awaiting or
+ * conflicting with effect evidence. Callers use this distinction to spend at
+ * most one durable correction budget before asking another hidden judge.
+ */
+export class PlaybookSemanticCandidateStructureError extends TypeError {
+  constructor(message: string) {
+    super(`semantic candidate ${message}`);
+    this.name = 'PlaybookSemanticCandidateStructureError';
+  }
+}
+
+function semanticCandidateStructureError(message: string): never {
+  throw new PlaybookSemanticCandidateStructureError(message);
+}
+
+function snapshotSemanticCandidate(
+  value: unknown,
+  outcomes: Readonly<Record<string, PlaybookSemanticOutcomeSpec>>,
+): {
+  readonly candidate: Readonly<Record<string, string>> & {
+    readonly guard: string;
+  };
+  readonly outcome: PlaybookSemanticOutcomeSpec;
+} {
+  let detached: JsonValue;
+  try {
+    detached = snapshotJsonValue(value, 'semantic candidate');
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : '';
+    semanticCandidateStructureError(`must be detached plain JSON${detail}`);
+  }
+  if (!isRecord(detached)) {
+    semanticCandidateStructureError('must be an object');
+  }
+  const guard = detached.guard;
+  if (typeof guard !== 'string' || guard.length === 0) {
+    semanticCandidateStructureError('must contain a nonempty string guard');
+  }
+  if (!own(outcomes, guard)) {
+    semanticCandidateStructureError(
+      `guard ${JSON.stringify(guard)} is not declared`,
+    );
+  }
+  const outcome = outcomes[guard]!;
+  const semanticFields = Object.entries(outcome.fields)
+    .filter(([, authority]) => authority === 'semantic')
+    .map(([field]) => field);
+  const expected = new Set(['guard', ...semanticFields]);
+  const actual = Object.keys(detached);
+  const missing = [...expected].filter((field) => !actual.includes(field));
+  const extra = actual.filter((field) => !expected.has(field));
+  if (missing.length > 0 || extra.length > 0) {
+    semanticCandidateStructureError(
+      'must contain exactly its guard and semantic-owned fields' +
+        (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
+        (extra.length === 0 ? '' : `; extra or wrongly owned ${extra.join(', ')}`),
+    );
+  }
+  for (const field of semanticFields) {
+    if (typeof detached[field] !== 'string') {
+      semanticCandidateStructureError(
+        `field ${JSON.stringify(field)} must be a string`,
+      );
+    }
+  }
+  return {
+    candidate: detached as Readonly<Record<string, string>> & {
+      readonly guard: string;
+    },
+    outcome,
+  };
+}
+
+function retainedSemanticEvidence(
+  candidate: Readonly<Record<string, string>> & { readonly guard: string },
+  finalText: unknown,
+): PlaybookRetainedSemanticEvidence {
+  return Object.freeze({
+    semanticCandidate: candidate,
+    ...(typeof finalText === 'string' ? { finalText } : {}),
+  });
+}
+
+function unresolvedSemanticEvidence(
+  reason: PlaybookSemanticReconciliationReason,
+  evidence: PlaybookRetainedSemanticEvidence,
+): PlaybookSemanticReconciliation {
+  return Object.freeze({ status: 'unresolved', reason, evidence });
+}
+
+/**
+ * Reconcile one exact semantic candidate with host-owned effect evidence.
+ * Presentation prose remains opaque: it is retained verbatim and only its
+ * trimmed value is copied into linker-declared presentation fields. No
+ * repository fact is inferred from that prose or from the semantic candidate.
+ */
+export function reconcilePlaybookSemanticEvidence(
+  input: PlaybookSemanticEvidenceInput,
+): PlaybookSemanticReconciliation {
+  const { candidate, outcome } = snapshotSemanticCandidate(
+    input.semanticCandidate,
+    input.outcomes,
+  );
+  const evidence = retainedSemanticEvidence(candidate, input.finalText);
+  const finalText =
+    typeof input.finalText === 'string' ? input.finalText.trim() : undefined;
+  if (finalText === undefined || finalText.length === 0) {
+    return unresolvedSemanticEvidence('missing-presentation-evidence', evidence);
+  }
+
+  if (input.receipt === undefined) {
+    return unresolvedSemanticEvidence('missing-repository-receipt', evidence);
+  }
+  let receipt: PlaybookRepositoryReceipt;
+  try {
+    const detachedReceipt = snapshotJsonValue(
+      input.receipt,
+      'semantic reconciliation receipt',
+    );
+    receipt = effectReceipt(
+      detachedReceipt,
+      'semantic reconciliation receipt',
+      undefined,
+      undefined,
+      false,
+      Object.values(input.outcomes).map(
+        ({ repositoryDisposition }) => repositoryDisposition,
+      ),
+    );
+  } catch {
+    return unresolvedSemanticEvidence('invalid-repository-receipt', evidence);
+  }
+
+  const disposition = outcome.repositoryDisposition;
+  const dispositionMatches =
+    (disposition === 'unchanged' && receipt.classification === 'unchanged') ||
+    (disposition === 'one-descendant-commit' &&
+      receipt.classification === 'one-descendant-commit') ||
+    (disposition === 'deferred' &&
+      candidate.guard === 'needsBossReply' &&
+      Object.entries(input.outcomes).some(
+        ([guard, declared]) =>
+          guard !== candidate.guard &&
+          declared.repositoryDisposition === 'one-descendant-commit',
+      ) &&
+      (receipt.classification === 'unchanged' ||
+        receipt.classification === 'worktree-only-change') &&
+      receipt.after !== undefined &&
+      receipt.after.head === receipt.baseline.head);
+  if (!dispositionMatches) {
+    return unresolvedSemanticEvidence(
+      'repository-disposition-mismatch',
+      evidence,
+    );
+  }
+
+  let runtimeFields: Readonly<Record<string, JsonValue>> = Object.freeze({});
+  if (input.runtimeFields !== undefined) {
+    try {
+      const detached = snapshotJsonValue(
+        input.runtimeFields,
+        'semantic reconciliation runtime fields',
+      );
+      if (!isRecord(detached)) {
+        return unresolvedSemanticEvidence(
+          'inconsistent-runtime-evidence',
+          evidence,
+        );
+      }
+      runtimeFields = detached;
+    } catch {
+      return unresolvedSemanticEvidence(
+        'inconsistent-runtime-evidence',
+        evidence,
+      );
+    }
+  }
+  const declaredRuntimeFields = Object.entries(outcome.fields)
+    .filter(([, authority]) => authority === 'runtime')
+    .map(([field]) => field);
+  if (
+    Object.keys(runtimeFields).some(
+      (field) => !declaredRuntimeFields.includes(field),
+    )
+  ) {
+    return unresolvedSemanticEvidence('inconsistent-runtime-evidence', evidence);
+  }
+
+  const output: Record<string, string> = {};
+  defineEnumerableDataProperty(output, 'guard', candidate.guard);
+  for (const [field, authority] of Object.entries(outcome.fields)) {
+    let value: string | undefined;
+    if (authority === 'semantic') {
+      value = candidate[field];
+    } else if (authority === 'presentation') {
+      value = finalText;
+    } else if (authority === 'effect') {
+      value = field === 'latestCommit' ? receipt.commitOid : undefined;
+      if (value === undefined) {
+        return unresolvedSemanticEvidence('missing-effect-evidence', evidence);
+      }
+    } else {
+      const runtimeValue = runtimeFields[field];
+      if (runtimeValue === undefined) {
+        return unresolvedSemanticEvidence('missing-runtime-evidence', evidence);
+      }
+      if (typeof runtimeValue !== 'string') {
+        return unresolvedSemanticEvidence(
+          'inconsistent-runtime-evidence',
+          evidence,
+        );
+      }
+      value = runtimeValue;
+    }
+    defineEnumerableDataProperty(output, field, value);
+  }
+  const detachedOutput = snapshotJsonValue(
+    output,
+    'reconciled semantic output',
+  ) as PlaybookReconciledSemanticOutput;
+  return Object.freeze({
+    status: disposition === 'deferred' ? 'deferred' : 'resolved',
+    output: detachedOutput,
+    evidence,
+  });
+}
+
+function effectPendingQuestion(
+  value: unknown,
+  path: string,
+): PlaybookPendingBossQuestion {
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(value, ['questionId', 'asker', 'question', 'sourceItem'], path);
+  const questionId = requireNonEmptyString(
+    value.questionId,
+    `${path}.questionId`,
+  );
+  const question = requireNonEmptyString(value.question, `${path}.question`);
+  if (!isRecord(value.asker)) {
+    throw new TypeError(`${path}.asker must be an object`);
+  }
+  let asker: PlaybookPendingBossQuestion['asker'];
+  if (value.asker.kind === 'captain') {
+    rejectUnknownKeys(value.asker, ['kind'], `${path}.asker`);
+    asker = { kind: 'captain' };
+  } else if (value.asker.kind === 'role') {
+    rejectUnknownKeys(value.asker, ['kind', 'roleId'], `${path}.asker`);
+    asker = {
+      kind: 'role',
+      roleId: requireNonEmptyString(value.asker.roleId, `${path}.asker.roleId`),
+    };
+  } else {
+    throw new TypeError(`${path}.asker.kind must be "captain" or "role"`);
+  }
+  return Object.freeze({
+    questionId,
+    asker: Object.freeze(asker),
+    question,
+    ...(own(value, 'sourceItem')
+      ? {
+          sourceItem: requireNonEmptyString(
+            value.sourceItem,
+            `${path}.sourceItem`,
+          ),
+        }
+      : {}),
+  });
+}
+
+function effectBoundary(value: unknown, index: number): PlaybookEffectBoundary {
+  const path = `effect ledger boundaries[${index}]`;
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(
+    value,
+    [
+      'sequence',
+      'boundaryId',
+      'attemptId',
+      'attemptNumber',
+      'playbookId',
+      'runtimeSessionId',
+      'turnId',
+      'callId',
+      'roleId',
+      'sourceStateId',
+      'sourceOutcomeSchema',
+      'dispositions',
+      'canonicalWorktree',
+      'baseline',
+      'after',
+      'physicalReceipt',
+      'finalText',
+      'semanticCandidate',
+      'initialSemanticCandidate',
+      'correctionBudget',
+      'cohortId',
+      'logicalOperationId',
+    ],
+    path,
+  );
+  const sequence = effectInteger(value.sequence, `${path}.sequence`, 1);
+  if (sequence !== index + 1) {
+    throw new TypeError('effect ledger boundary sequence must be contiguous from one');
+  }
+  effectUuid(value.boundaryId, `${path}.boundaryId`);
+  effectUuid(value.attemptId, `${path}.attemptId`);
+  effectInteger(value.attemptNumber, `${path}.attemptNumber`, 1);
+  requireNonEmptyString(value.playbookId, `${path}.playbookId`);
+  effectUuid(value.runtimeSessionId, `${path}.runtimeSessionId`);
+  effectInteger(value.turnId, `${path}.turnId`, 1);
+  requireNonEmptyString(value.callId, `${path}.callId`);
+  requireNonEmptyString(value.roleId, `${path}.roleId`);
+  requireNonEmptyString(value.sourceStateId, `${path}.sourceStateId`);
+  if (!own(value, 'sourceOutcomeSchema')) {
+    throw new TypeError(`${path}.sourceOutcomeSchema is required`);
+  }
+  if (!Array.isArray(value.dispositions) || value.dispositions.length === 0) {
+    throw new TypeError(`${path}.dispositions must be a nonempty array`);
+  }
+  for (const [dispositionIndex, disposition] of value.dispositions.entries()) {
+    if (typeof disposition !== 'string' || !EFFECT_DISPOSITIONS.has(disposition)) {
+      throw new TypeError(
+        `${path}.dispositions[${dispositionIndex}] is not supported`,
+      );
+    }
+  }
+  if (new Set(value.dispositions).size !== value.dispositions.length) {
+    throw new TypeError(`${path}.dispositions must not contain duplicates`);
+  }
+  if (!isRecord(value.canonicalWorktree)) {
+    throw new TypeError(`${path}.canonicalWorktree must be an object`);
+  }
+  rejectUnknownKeys(
+    value.canonicalWorktree,
+    ['worktree', 'gitDir'],
+    `${path}.canonicalWorktree`,
+  );
+  const canonicalWorktree = {
+    worktree: requireNonEmptyString(
+      value.canonicalWorktree.worktree,
+      `${path}.canonicalWorktree.worktree`,
+    ),
+    gitDir: requireNonEmptyString(
+      value.canonicalWorktree.gitDir,
+      `${path}.canonicalWorktree.gitDir`,
+    ),
+  };
+  const baseline = effectObservation(value.baseline, `${path}.baseline`);
+  assertObservationIdentity(baseline, canonicalWorktree, `${path}.baseline`);
+  const after = own(value, 'after')
+    ? effectObservation(value.after, `${path}.after`)
+    : undefined;
+  if (after !== undefined) {
+    assertObservationIdentity(after, canonicalWorktree, `${path}.after`);
+  }
+  if (after !== undefined && !own(value, 'physicalReceipt')) {
+    throw new TypeError(`${path}.after requires an atomic physicalReceipt`);
+  }
+  if (own(value, 'physicalReceipt')) {
+    effectReceipt(
+      value.physicalReceipt,
+      `${path}.physicalReceipt`,
+      baseline,
+      after,
+      true,
+      value.dispositions as readonly string[],
+    );
+  }
+  if (own(value, 'finalText') && typeof value.finalText !== 'string') {
+    throw new TypeError(`${path}.finalText must be a string`);
+  }
+  if (own(value, 'initialSemanticCandidate')) {
+    if (
+      !own(value, 'semanticCandidate') ||
+      !isRecord(value.correctionBudget) ||
+      value.correctionBudget.spent !== true ||
+      jsonValuesEqual(
+        value.initialSemanticCandidate as JsonValue,
+        value.semanticCandidate as JsonValue,
+      )
+    ) {
+      throw new TypeError(
+        `${path}.initialSemanticCandidate requires a spent budget and a distinct current semanticCandidate`,
+      );
+    }
+  }
+  if (own(value, 'cohortId')) {
+    effectUuid(value.cohortId, `${path}.cohortId`);
+  }
+  if (!isRecord(value.correctionBudget)) {
+    throw new TypeError(`${path}.correctionBudget must be an object`);
+  }
+  rejectUnknownKeys(
+    value.correctionBudget,
+    ['limit', 'spent'],
+    `${path}.correctionBudget`,
+  );
+  if (
+    value.correctionBudget.limit !== 1 ||
+    typeof value.correctionBudget.spent !== 'boolean'
+  ) {
+    throw new TypeError(
+      `${path}.correctionBudget must contain exactly limit 1 and a boolean spent`,
+    );
+  }
+  if (own(value, 'logicalOperationId')) {
+    effectUuid(value.logicalOperationId, `${path}.logicalOperationId`);
+  }
+  return value as unknown as PlaybookEffectBoundary;
+}
+
+function effectLogicalOperation(
+  value: unknown,
+  index: number,
+  boundaryById: ReadonlyMap<string, PlaybookEffectBoundary>,
+): PlaybookEffectLogicalOperation {
+  const path = `effect ledger logicalOperations[${index}]`;
+  if (!isRecord(value)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(
+    value,
+    [
+      'sequence',
+      'operationId',
+      'playbookId',
+      'runtimeSessionId',
+      'boundaryIds',
+      'originalBaseline',
+      'checkpoint',
+      'pendingQuestion',
+      'playerContinuation',
+      'checkpointRestorationEligible',
+      'logicalReceipt',
+    ],
+    path,
+  );
+  const sequence = effectInteger(value.sequence, `${path}.sequence`, 1);
+  if (sequence !== index + 1) {
+    throw new TypeError(
+      'effect ledger logical-operation sequence must be contiguous from one',
+    );
+  }
+  const operationId = effectUuid(value.operationId, `${path}.operationId`);
+  const playbookId = requireNonEmptyString(value.playbookId, `${path}.playbookId`);
+  const runtimeSessionId = effectUuid(
+    value.runtimeSessionId,
+    `${path}.runtimeSessionId`,
+  );
+  if (!Array.isArray(value.boundaryIds) || value.boundaryIds.length === 0) {
+    throw new TypeError(`${path}.boundaryIds must be a nonempty array`);
+  }
+  const boundaries = value.boundaryIds.map((boundaryId, boundaryIndex) => {
+    const id = effectUuid(boundaryId, `${path}.boundaryIds[${boundaryIndex}]`);
+    const boundary = boundaryById.get(id);
+    if (boundary === undefined) {
+      throw new TypeError(`${path}.boundaryIds[${boundaryIndex}] is dangling`);
+    }
+    if (
+      boundary.playbookId !== playbookId ||
+      boundary.runtimeSessionId !== runtimeSessionId ||
+      boundary.logicalOperationId !== operationId
+    ) {
+      throw new TypeError(
+        `${path}.boundaryIds[${boundaryIndex}] does not belong to this logical operation`,
+      );
+    }
+    return boundary;
+  });
+  if (new Set(value.boundaryIds).size !== value.boundaryIds.length) {
+    throw new TypeError(`${path}.boundaryIds must not contain duplicates`);
+  }
+  if (
+    boundaries.some(
+      (boundary, boundaryIndex) =>
+        boundaryIndex > 0 &&
+        boundaries[boundaryIndex - 1]!.sequence >= boundary.sequence,
+    )
+  ) {
+    throw new TypeError(`${path}.boundaryIds must follow physical boundary order`);
+  }
+  const originalBaseline = effectObservation(
+    value.originalBaseline,
+    `${path}.originalBaseline`,
+  );
+  if (
+    !jsonValuesEqual(
+      originalBaseline as unknown as JsonValue,
+      boundaries[0]!.baseline as unknown as JsonValue,
+    )
+  ) {
+    throw new TypeError(`${path}.originalBaseline must equal its first boundary baseline`);
+  }
+  for (const [boundaryIndex, boundary] of boundaries.entries()) {
+    assertObservationIdentity(
+      boundary.baseline,
+      originalBaseline,
+      `${path}.boundaryIds[${boundaryIndex}] baseline`,
+    );
+    if (boundaryIndex === 0) continue;
+    const previous = boundaries[boundaryIndex - 1]!;
+    if (
+      previous.physicalReceipt === undefined ||
+      previous.after === undefined ||
+      !jsonValuesEqual(
+        boundary.baseline as unknown as JsonValue,
+        previous.after as unknown as JsonValue,
+      )
+    ) {
+      throw new TypeError(
+        `${path}.boundaryIds must form one completed checkpoint chain`,
+      );
+    }
+  }
+  const checkpoint = own(value, 'checkpoint')
+    ? effectObservation(value.checkpoint, `${path}.checkpoint`)
+    : undefined;
+  const latestAfter = boundaries.at(-1)!.after;
+  if (checkpoint !== undefined) {
+    assertObservationIdentity(
+      checkpoint,
+      originalBaseline,
+      `${path}.checkpoint`,
+    );
+    if (
+      latestAfter === undefined ||
+      !jsonValuesEqual(
+        checkpoint as unknown as JsonValue,
+        latestAfter as unknown as JsonValue,
+      )
+    ) {
+      throw new TypeError(`${path}.checkpoint must equal its latest boundary after`);
+    }
+  }
+  const pendingQuestion = own(value, 'pendingQuestion')
+    ? effectPendingQuestion(value.pendingQuestion, `${path}.pendingQuestion`)
+    : undefined;
+  const bindingCount = [
+    own(value, 'checkpoint'),
+    own(value, 'pendingQuestion'),
+    own(value, 'playerContinuation'),
+  ].filter(Boolean).length;
+  if (bindingCount !== 0 && bindingCount !== 3) {
+    throw new TypeError(
+      `${path} checkpoint, pendingQuestion, and playerContinuation must be all present or all absent`,
+    );
+  }
+  if (typeof value.checkpointRestorationEligible !== 'boolean') {
+    throw new TypeError(`${path}.checkpointRestorationEligible must be boolean`);
+  }
+  if (
+    value.checkpointRestorationEligible &&
+    (checkpoint === undefined ||
+      pendingQuestion === undefined ||
+      !own(value, 'playerContinuation'))
+  ) {
+    throw new TypeError(
+      `${path}.checkpointRestorationEligible requires checkpoint, pendingQuestion, and playerContinuation`,
+    );
+  }
+  if (own(value, 'logicalReceipt')) {
+    if (boundaries.some((boundary) => boundary.physicalReceipt === undefined)) {
+      throw new TypeError(
+        `${path}.logicalReceipt requires every physical boundary receipt`,
+      );
+    }
+    effectReceipt(
+      value.logicalReceipt,
+      `${path}.logicalReceipt`,
+      originalBaseline,
+      latestAfter,
+      true,
+      boundaries.at(-1)!.dispositions,
+    );
+  }
+  return value as unknown as PlaybookEffectLogicalOperation;
+}
+
+/** Return the canonical empty host-owned effect-ledger mirror. */
+export function emptyPlaybookEffectLedger(): PlaybookEffectLedger {
+  return Object.freeze({
+    schemaVersion: 1,
+    revision: 0,
+    boundaries: Object.freeze([]),
+    logicalOperations: Object.freeze([]),
+  });
+}
+
+/** Validate, detach, and recursively freeze one effect-ledger mirror. */
+export function assertPlaybookEffectLedger(
+  value: unknown,
+  path = 'effect ledger',
+): PlaybookEffectLedger {
+  const detached = snapshotJsonValue(value, path);
+  if (!isRecord(detached)) throw new TypeError(`${path} must be an object`);
+  rejectUnknownKeys(
+    detached,
+    ['schemaVersion', 'revision', 'boundaries', 'logicalOperations'],
+    path,
+  );
+  if (detached.schemaVersion !== 1) {
+    throw new TypeError(`${path}.schemaVersion must equal 1`);
+  }
+  const revision = effectInteger(detached.revision, `${path}.revision`);
+  if (!Array.isArray(detached.boundaries)) {
+    throw new TypeError(`${path}.boundaries must be an array`);
+  }
+  if (!Array.isArray(detached.logicalOperations)) {
+    throw new TypeError(`${path}.logicalOperations must be an array`);
+  }
+  const isEmpty =
+    detached.boundaries.length === 0 && detached.logicalOperations.length === 0;
+  if ((revision === 0) !== isEmpty) {
+    throw new TypeError(
+      `${path}.revision must be zero if and only if both ordered ledgers are empty`,
+    );
+  }
+  const boundaries = detached.boundaries.map(effectBoundary);
+  const boundaryById = new Map(
+    boundaries.map((boundary) => [boundary.boundaryId, boundary] as const),
+  );
+  if (boundaryById.size !== boundaries.length) {
+    throw new TypeError(`${path}.boundaries must not reuse a boundaryId`);
+  }
+  const cohorts = new Map<string, PlaybookEffectBoundary[]>();
+  for (const boundary of boundaries) {
+    if (boundary.cohortId === undefined) continue;
+    const members = cohorts.get(boundary.cohortId) ?? [];
+    members.push(boundary);
+    cohorts.set(boundary.cohortId, members);
+  }
+  for (const [cohortId, members] of cohorts) {
+    const first = members[0]!;
+    const commonKeys = [
+      'attemptId',
+      'attemptNumber',
+      'playbookId',
+      'runtimeSessionId',
+      'turnId',
+      'canonicalWorktree',
+      'baseline',
+    ] as const;
+    if (
+      members.length < 2 ||
+      members.some(
+        (boundary, index) =>
+          boundary.sequence !== first.sequence + index ||
+          !boundary.dispositions.every(
+            (disposition) => disposition === 'unchanged',
+          ) ||
+          !commonKeys.every((key) =>
+            jsonValuesEqual(
+              boundary[key] as JsonValue,
+              first[key] as JsonValue,
+            ),
+          ),
+      ) ||
+      new Set(members.map((boundary) => boundary.roleId)).size !==
+        members.length ||
+      new Set(
+        members.map((boundary) =>
+          boundary.physicalReceipt === undefined ? 'started' : 'complete',
+        ),
+      ).size !== 1 ||
+      (first.physicalReceipt !== undefined &&
+        members.some(
+          (boundary) =>
+            !jsonValuesEqual(
+              boundary.physicalReceipt as unknown as JsonValue,
+              first.physicalReceipt as unknown as JsonValue,
+            ) ||
+            !jsonValuesEqual(
+              boundary.after as unknown as JsonValue,
+              first.after as unknown as JsonValue,
+            ),
+        ))
+    ) {
+      throw new TypeError(
+        `effect ledger cohort ${JSON.stringify(cohortId)} is not one contiguous all-unchanged boundary group`,
+      );
+    }
+  }
+  const logicalOperations = detached.logicalOperations.map((operation, index) =>
+    effectLogicalOperation(operation, index, boundaryById),
+  );
+  const operationById = new Map(
+    logicalOperations.map(
+      (operation) => [operation.operationId, operation] as const,
+    ),
+  );
+  if (operationById.size !== logicalOperations.length) {
+    throw new TypeError(`${path}.logicalOperations must not reuse an operationId`);
+  }
+  for (const [index, operation] of logicalOperations.entries()) {
+    const firstBoundary = boundaryById.get(operation.boundaryIds[0]!)!;
+    if (
+      index > 0 &&
+      boundaryById.get(logicalOperations[index - 1]!.boundaryIds[0]!)!
+        .sequence >= firstBoundary.sequence
+    ) {
+      throw new TypeError(
+        `${path}.logicalOperations must follow their first physical boundary order`,
+      );
+    }
+  }
+  for (const boundary of boundaries) {
+    if (
+      boundary.logicalOperationId !== undefined &&
+      !operationById.has(boundary.logicalOperationId)
+    ) {
+      throw new TypeError(
+        `${path}.boundaries[${boundary.sequence - 1}].logicalOperationId is dangling`,
+      );
+    }
+    if (
+      boundary.logicalOperationId !== undefined &&
+      !operationById
+        .get(boundary.logicalOperationId)!
+        .boundaryIds.includes(boundary.boundaryId)
+    ) {
+      throw new TypeError(
+        `${path}.boundaries[${boundary.sequence - 1}].logicalOperationId has no reciprocal operation reference`,
+      );
+    }
+  }
+  return detached as unknown as PlaybookEffectLedger;
+}
+
+function optionalEvidenceExtends(
+  baseline: Record<string, unknown>,
+  current: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return keys.every(
+    (key) =>
+      !own(baseline, key) ||
+      (own(current, key) &&
+        jsonValuesEqual(
+          baseline[key] as JsonValue,
+          current[key] as JsonValue,
+        )),
+  );
+}
+
+/** Whether current preserves every durable fact in baseline and only extends it. */
+export function isPlaybookEffectLedgerMonotonicExtension(
+  baselineValue: unknown,
+  currentValue: unknown,
+): boolean {
+  let baseline: PlaybookEffectLedger;
+  let current: PlaybookEffectLedger;
+  try {
+    baseline = assertPlaybookEffectLedger(baselineValue, 'baseline effect ledger');
+    current = assertPlaybookEffectLedger(currentValue, 'current effect ledger');
+  } catch {
+    return false;
+  }
+  if (
+    current.revision < baseline.revision ||
+    current.boundaries.length < baseline.boundaries.length ||
+    current.logicalOperations.length < baseline.logicalOperations.length
+  ) {
+    return false;
+  }
+  if (
+    current.revision === baseline.revision &&
+    !jsonValuesEqual(
+      baseline as unknown as JsonValue,
+      current as unknown as JsonValue,
+    )
+  ) {
+    return false;
+  }
+  const boundaryStableKeys = [
+    'sequence',
+    'boundaryId',
+    'attemptId',
+    'attemptNumber',
+    'playbookId',
+    'runtimeSessionId',
+    'turnId',
+    'callId',
+    'roleId',
+    'sourceStateId',
+    'sourceOutcomeSchema',
+    'dispositions',
+    'canonicalWorktree',
+    'baseline',
+    'cohortId',
+  ] as const;
+  const boundaryEvidenceKeys = [
+    'after',
+    'physicalReceipt',
+    'finalText',
+    'initialSemanticCandidate',
+  ] as const;
+  for (const [index, prior] of baseline.boundaries.entries()) {
+    const next = current.boundaries[index]!;
+    if (
+      !boundaryStableKeys.every((key) =>
+        jsonValuesEqual(
+          prior[key] as JsonValue,
+          next[key] as JsonValue,
+        ),
+      ) ||
+      !optionalEvidenceExtends(
+        prior as unknown as Record<string, unknown>,
+        next as unknown as Record<string, unknown>,
+        boundaryEvidenceKeys,
+      ) ||
+      !semanticCandidateExtends(prior, next) ||
+      (prior.logicalOperationId !== undefined &&
+        prior.logicalOperationId !== next.logicalOperationId) ||
+      (prior.correctionBudget.spent && !next.correctionBudget.spent)
+    ) {
+      return false;
+    }
+  }
+  const operationStableKeys = [
+    'sequence',
+    'operationId',
+    'playbookId',
+    'runtimeSessionId',
+    'originalBaseline',
+  ] as const;
+  // The current deferred binding is replaceable across authored repeated
+  // questions; only a completed logical receipt becomes immutable evidence.
+  const operationEvidenceKeys = ['logicalReceipt'] as const;
+  for (const [index, prior] of baseline.logicalOperations.entries()) {
+    const next = current.logicalOperations[index]!;
+    if (
+      !operationStableKeys.every((key) =>
+        jsonValuesEqual(
+          prior[key] as JsonValue,
+          next[key] as JsonValue,
+        ),
+      ) ||
+      next.boundaryIds.length < prior.boundaryIds.length ||
+      !prior.boundaryIds.every(
+        (boundaryId, boundaryIndex) =>
+          boundaryId === next.boundaryIds[boundaryIndex],
+      ) ||
+      !optionalEvidenceExtends(
+        prior as unknown as Record<string, unknown>,
+        next as unknown as Record<string, unknown>,
+        operationEvidenceKeys,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function semanticCandidateExtends(
+  prior: PlaybookEffectBoundary,
+  next: PlaybookEffectBoundary,
+): boolean {
+  if (prior.semanticCandidate === undefined) {
+    return (
+      !prior.correctionBudget.spent ||
+      next.initialSemanticCandidate === undefined
+    );
+  }
+  if (
+    next.semanticCandidate !== undefined &&
+    jsonValuesEqual(prior.semanticCandidate, next.semanticCandidate)
+  ) {
+    return (
+      prior.initialSemanticCandidate !== undefined ||
+      next.initialSemanticCandidate === undefined
+    );
+  }
+  return (
+    prior.initialSemanticCandidate === undefined &&
+    next.correctionBudget.spent &&
+    next.initialSemanticCandidate !== undefined &&
+    jsonValuesEqual(
+      prior.semanticCandidate,
+      next.initialSemanticCandidate,
+    )
+  );
+}
+
 export interface PlaybookRuntimeSnapshotValidationOptions {
   /**
    * Opt in only when the restore path will prepare and confirm the suspended
@@ -888,7 +2120,15 @@ function snapshotSuspendedCall(
   }
   rejectUnknownKeys(
     captured,
-    ['callId', 'stateId', 'playbookId', 'text', 'childSessionId', 'turnId'],
+    [
+      'callId',
+      'stateId',
+      'playbookId',
+      'text',
+      'childSessionId',
+      'turnId',
+      'effectBoundaryPrefixSequence',
+    ],
     path,
   );
   const call: PlaybookSuspendedCall = {
@@ -913,13 +2153,22 @@ function snapshotSuspendedCall(
     }
     call.turnId = captured.turnId as number;
   }
+  if (own(captured, 'effectBoundaryPrefixSequence')) {
+    call.effectBoundaryPrefixSequence =
+      captured.effectBoundaryPrefixSequence === null
+        ? null
+        : effectInteger(
+            captured.effectBoundaryPrefixSequence,
+            `${path}.effectBoundaryPrefixSequence`,
+          );
+  }
   return Object.freeze(call);
 }
 
-// DR-014 §1 / DR-031 §5 / DR-032: validate and detach a host-supplied
-// schema-3 runtime snapshot before restore touches any state. A suspended
+// DR-014 §1 / DR-031 §5 / DR-032 / DR-040: validate and detach a host-supplied
+// schema-4 runtime snapshot before restore touches any state. A suspended
 // call is rejected unless the restore path explicitly promises to seed and
-// claim it; older schemas are rejected rather than guessing role identity.
+// claim it; older schemas are rejected by this public restore boundary.
 export function assertPlaybookRuntimeSnapshot(
   value: unknown,
   expectedPlaybookId: string,
@@ -950,14 +2199,9 @@ export function assertPlaybookRuntimeSnapshot(
     );
   }
   const allowSuspendedCall = capturedOptions.allowSuspendedCall ?? false;
-  if (snapshot.schemaVersion !== 3) {
-    if (snapshot.schemaVersion === 1 || snapshot.schemaVersion === 2) {
-      throw new TypeError(
-        `runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} has incompatible player identity; schema 3 is required`,
-      );
-    }
+  if (snapshot.schemaVersion !== 4) {
     throw new TypeError(
-      `runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
+      `runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 4)`,
     );
   }
   rejectUnknownKeys(
@@ -970,6 +2214,10 @@ export function assertPlaybookRuntimeSnapshot(
       'sequences',
       'state',
       'pendingBossQuestions',
+      'effectLedger',
+      'retainedEffectSourceSessionId',
+      'retainedEffectReconciliation',
+      'failedEffectAttempt',
       'suspendedCall',
     ],
     'runtime snapshot',
@@ -1130,6 +2378,133 @@ export function assertPlaybookRuntimeSnapshot(
       return Object.freeze(question);
     },
   );
+  const effectLedger = assertPlaybookEffectLedger(
+    snapshot.effectLedger,
+    'runtime snapshot effectLedger',
+  );
+  const retainedEffectSourceSessionId = own(
+    snapshot,
+    'retainedEffectSourceSessionId',
+  )
+    ? effectUuid(
+        snapshot.retainedEffectSourceSessionId,
+        'runtime snapshot retainedEffectSourceSessionId',
+      )
+    : undefined;
+  let retainedEffectReconciliation:
+    | PlaybookRuntimeSnapshot['retainedEffectReconciliation']
+    | undefined;
+  if (own(snapshot, 'retainedEffectReconciliation')) {
+    if (!isRecord(snapshot.retainedEffectReconciliation)) {
+      throw new TypeError(
+        'runtime snapshot retainedEffectReconciliation must be an object',
+      );
+    }
+    rejectUnknownKeys(
+      snapshot.retainedEffectReconciliation,
+      ['sourceSessionId', 'checkpoint'],
+      'runtime snapshot retainedEffectReconciliation',
+    );
+    const sourceSessionId = effectUuid(
+      snapshot.retainedEffectReconciliation.sourceSessionId,
+      'runtime snapshot retainedEffectReconciliation.sourceSessionId',
+    );
+    const checkpoint = assertPlaybookEffectLedger(
+      snapshot.retainedEffectReconciliation.checkpoint,
+      'runtime snapshot retainedEffectReconciliation.checkpoint',
+    );
+    if (
+      checkpoint.boundaries.some(
+        ({ physicalReceipt }) => physicalReceipt === undefined,
+      )
+    ) {
+      throw new TypeError(
+        'runtime snapshot retainedEffectReconciliation.checkpoint contains an incomplete physical boundary',
+      );
+    }
+    if (!isPlaybookEffectLedgerMonotonicExtension(checkpoint, effectLedger)) {
+      throw new TypeError(
+        'runtime snapshot retainedEffectReconciliation.checkpoint is not a monotonic prefix of effectLedger',
+      );
+    }
+    if (
+      retainedEffectSourceSessionId === undefined ||
+      retainedEffectSourceSessionId !== sourceSessionId
+    ) {
+      throw new TypeError(
+        'runtime snapshot retainedEffectReconciliation.sourceSessionId must equal retainedEffectSourceSessionId',
+      );
+    }
+    retainedEffectReconciliation = Object.freeze({
+      sourceSessionId,
+      checkpoint,
+    });
+  }
+  if (
+    typeof suspendedCall?.effectBoundaryPrefixSequence === 'number' &&
+    suspendedCall.effectBoundaryPrefixSequence >
+      (effectLedger.boundaries.at(-1)?.sequence ?? 0)
+  ) {
+    throw new TypeError(
+      'runtime snapshot suspendedCall.effectBoundaryPrefixSequence exceeds the effect ledger',
+    );
+  }
+  let failedEffectAttempt: PlaybookRuntimeSnapshot['failedEffectAttempt'];
+  if (own(snapshot, 'failedEffectAttempt')) {
+    if (state.stateId !== 'failed') {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt requires the failed state',
+      );
+    }
+    if (!isRecord(snapshot.failedEffectAttempt)) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt must be an object',
+      );
+    }
+    rejectUnknownKeys(
+      snapshot.failedEffectAttempt,
+      ['boundaryPrefix', 'attemptId'],
+      'runtime snapshot failedEffectAttempt',
+    );
+    const boundaryPrefix = effectInteger(
+      snapshot.failedEffectAttempt.boundaryPrefix,
+      'runtime snapshot failedEffectAttempt.boundaryPrefix',
+    );
+    const lastBoundarySequence = effectLedger.boundaries.at(-1)?.sequence ?? 0;
+    if (boundaryPrefix > lastBoundarySequence) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt.boundaryPrefix exceeds the effect ledger',
+      );
+    }
+    const attemptId =
+      snapshot.failedEffectAttempt.attemptId === null
+        ? null
+        : effectUuid(
+            snapshot.failedEffectAttempt.attemptId,
+            'runtime snapshot failedEffectAttempt.attemptId',
+          );
+    const causalBoundaries = effectLedger.boundaries.filter(
+      ({ sequence }) => sequence > boundaryPrefix,
+    );
+    if (attemptId === null && causalBoundaries.length !== 0) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt null attemptId requires an empty causal suffix',
+      );
+    }
+    if (
+      attemptId !== null &&
+      (causalBoundaries.length === 0 ||
+        causalBoundaries.some(
+          ({ attemptId: boundaryAttemptId }) =>
+            boundaryAttemptId !== attemptId,
+        ))
+    ) {
+      throw new TypeError(
+        'runtime snapshot failedEffectAttempt does not match its causal ledger suffix',
+      );
+    }
+    failedEffectAttempt = Object.freeze({ boundaryPrefix, attemptId });
+  }
   const fields = {
     playbookId,
     machine,
@@ -1137,9 +2512,19 @@ export function assertPlaybookRuntimeSnapshot(
     sequences: Object.freeze(sequences),
     state,
     pendingBossQuestions: Object.freeze(pendingBossQuestions),
+    effectLedger,
+    ...(retainedEffectSourceSessionId === undefined
+      ? {}
+      : { retainedEffectSourceSessionId }),
+    ...(retainedEffectReconciliation === undefined
+      ? {}
+      : { retainedEffectReconciliation }),
+    ...(failedEffectAttempt === undefined
+      ? {}
+      : { failedEffectAttempt }),
   };
   return Object.freeze({
-    schemaVersion: 3,
+    schemaVersion: 4,
     ...fields,
     ...(suspendedCall === undefined ? {} : { suspendedCall }),
   });

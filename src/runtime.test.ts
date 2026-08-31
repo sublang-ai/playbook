@@ -175,6 +175,7 @@ const TRACE_TYPES = [
   'fsm.transition',
   'judge.call.finished',
   'judge.call.started',
+  'outcome.accepted',
   'playbook.call.finished',
   'playbook.call.started',
   'player.call.finished',
@@ -361,6 +362,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       /interface PlaybookSuspendedCall extends PlaybookPendingCall/,
     );
     expect(interfaceProperties(runtimeDts, 'PlaybookSuspendedCall')).toEqual([
+      'effectBoundaryPrefixSequence?:number|null',
       'stateId:string',
       'text:string',
       'turnId?:number',
@@ -471,7 +473,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'payload:JsonValue',
       'playbookId:string',
       'rootSessionId:string',
-      'schemaVersion:3',
+      'schemaVersion:4',
       'sequence:number',
       'sessionId:string',
       'timestamp:number',
@@ -506,7 +508,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
   });
 
-  it('exposes stateDescription only on the terminal run-result variant', () => {
+  it('keeps unresolved-effect state-only and stateDescription terminal-only', () => {
     for (const source of [runtimeSource, runtimeDts, linkSpec]) {
       const result = typeAliasBody(source, 'PlaybookRunResult');
       const terminal = result.match(
@@ -516,6 +518,31 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       expect(terminal).toMatch(/stateDescription\?:\s*string;/);
       expect(result.replace(terminal!, '')).not.toMatch(
         /stateDescription\??:/,
+      );
+      const unresolvedEffect = result.match(
+        /\{[^{}]*outcome:\s*'unresolved-effect';[^{}]*\}/,
+      )?.[0];
+      expect(unresolvedEffect).toBeDefined();
+      expect(normalizeType(unresolvedEffect!)).toBe(
+        "{outcome:'unresolved-effect';state:PlaybookState}",
+      );
+      expect(unresolvedEffect).not.toMatch(
+        /stateDescription|output|pendingCall|error|effectLedger|receipt|unresolvedEffects|semanticCandidate/,
+      );
+    }
+  });
+
+  it('keeps the unresolved-effect envelope seam optional and identity-only', () => {
+    const expected =
+      "unresolvedEffectEnvelopes?():readonly({readonlykind:'boundary';readonlyboundaryId:string}|{readonlykind:'logical-operation';readonlyoperationId:string})[];";
+    for (const source of [runtimeSource, runtimeDts, linkSpec]) {
+      const runtime = normalizeType(interfaceBody(source, 'PlaybookRuntime'));
+      const signature = runtime
+        .match(/unresolvedEffectEnvelopes\?\(\):readonly\([\s\S]*?\)\[\];/)?.[0]
+        .replace('readonly(|', 'readonly(');
+      expect(signature).toBe(expected);
+      expect(signature).not.toMatch(
+        /receipt|projection|repository|observation|evidence|authority/,
       );
     }
   });

@@ -31,15 +31,25 @@ import type {
   PlaybookState,
 } from '../../../src/runtime.js';
 import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../src/xstate-runtime.js';
+import {
+  assertPlaybookCaptainUnresolvedEffects,
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
   type PlaybookCaptainFrameSnapshot,
-  type PlaybookCaptainRegistryEntryV2,
+  type PlaybookCaptainRegistryEntryV3,
   type PlaybookCaptainRetainedGeneration,
   type PlaybookCaptainShellSnapshot,
+  type PlaybookCaptainUnresolvedEffect,
+  type PlaybookHostConstructionCapabilities,
 } from './playbook-captain.js';
-import { codeSavedCountsLine } from './code.registry.js';
+import {
+  codePlaybookRegistryEntry,
+  codeSavedCountsLine,
+} from './code.registry.js';
 
 type CaptainCallOptions = Parameters<CaptainContext['callCaptain']>[1];
 
@@ -144,6 +154,7 @@ class FakeRuntime implements PlaybookRuntime {
   }[] = [];
   snapshot: PlaybookRuntimeSnapshot | undefined;
   retainedGenerationMetadata?: PlaybookRuntime['retainedGenerationMetadata'];
+  unresolvedEffectEnvelopes?: PlaybookRuntime['unresolvedEffectEnvelopes'];
   adopt?: PlaybookRuntime['adopt'];
   describe?: () => PlaybookControlView;
   apply?: PlaybookRuntime['apply'];
@@ -241,6 +252,329 @@ function quiescentResult(stateId = 'ready'): PlaybookRunResult {
   return { outcome: 'quiescent', state: playbookState(stateId) };
 }
 
+function unresolvedEffectResult(
+  stateId = 'effectReconciliationRequired',
+): PlaybookRunResult {
+  return {
+    outcome: 'unresolved-effect',
+    state: playbookState(stateId),
+  };
+}
+
+const UNRESOLVED_EFFECT_BASELINE_HEAD = 'a'.repeat(40);
+const UNRESOLVED_EFFECT_AFTER_HEAD = 'b'.repeat(40);
+const UNRESOLVED_EFFECT_BOUNDARY_ID =
+  '91000000-0000-4000-8000-000000000001';
+
+function unresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  return assertPlaybookEffectLedger({
+    schemaVersion: 1,
+    revision: 1,
+    boundaries: [
+      {
+        sequence: 1,
+        boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        attemptId: '92000000-0000-4000-8000-000000000002',
+        attemptNumber: 1,
+        playbookId,
+        runtimeSessionId,
+        turnId: 1,
+        callId: `${playbookId}:coder:unresolved`,
+        roleId: 'coder',
+        sourceStateId: 'working',
+        sourceOutcomeSchema: { committed: {} },
+        dispositions: ['one-descendant-commit'],
+        canonicalWorktree: {
+          worktree: baseline.worktree,
+          gitDir: baseline.gitDir,
+        },
+        baseline,
+        physicalReceipt: {
+          classification: 'observation-ambiguous',
+          baseline,
+        },
+        correctionBudget: { limit: 1, spent: false },
+      },
+    ],
+    logicalOperations: [],
+  });
+}
+
+function unresolvedEffectTestProjection(): readonly PlaybookCaptainUnresolvedEffect[] {
+  return [
+    {
+      classification: 'observation-ambiguous',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+  ];
+}
+
+function incompleteUnresolvedEffectTestProjection(): readonly PlaybookCaptainUnresolvedEffect[] {
+  return [
+    {
+      classification: 'incomplete',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+  ];
+}
+
+function orderedLogicalUnresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const changed = {
+    ...baseline,
+    head: UNRESOLVED_EFFECT_AFTER_HEAD,
+  };
+  const rewritten = {
+    ...baseline,
+    head: 'c'.repeat(40),
+  };
+  const operationId = '93000000-0000-4000-8000-000000000003';
+  const firstOperationBoundaryId =
+    '94000000-0000-4000-8000-000000000004';
+  const secondOperationBoundaryId =
+    '95000000-0000-4000-8000-000000000005';
+  const standaloneBoundaryId =
+    '96000000-0000-4000-8000-000000000006';
+  const commonBoundary = {
+    playbookId,
+    runtimeSessionId,
+    turnId: 1,
+    callId: `${playbookId}:coder:unresolved-chain`,
+    roleId: 'coder',
+    sourceStateId: 'working',
+    sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+    dispositions: ['deferred', 'one-descendant-commit'],
+    canonicalWorktree: {
+      worktree: baseline.worktree,
+      gitDir: baseline.gitDir,
+    },
+    baseline,
+    correctionBudget: { limit: 1, spent: false },
+  };
+  return {
+    ledger: assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [
+        {
+          ...commonBoundary,
+          sequence: 1,
+          boundaryId: standaloneBoundaryId,
+          attemptId: '97000000-0000-4000-8000-000000000007',
+          attemptNumber: 1,
+          after: rewritten,
+          physicalReceipt: {
+            classification: 'multiple-commits',
+            baseline,
+            after: rewritten,
+          },
+        },
+        {
+          ...commonBoundary,
+          sequence: 2,
+          boundaryId: firstOperationBoundaryId,
+          attemptId: '98000000-0000-4000-8000-000000000008',
+          attemptNumber: 1,
+          after: baseline,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline,
+            after: baseline,
+          },
+          logicalOperationId: operationId,
+        },
+        {
+          ...commonBoundary,
+          sequence: 3,
+          boundaryId: secondOperationBoundaryId,
+          attemptId: '99000000-0000-4000-8000-000000000009',
+          attemptNumber: 2,
+          after: changed,
+          physicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline,
+            after: changed,
+            commitOid: changed.head,
+          },
+          logicalOperationId: operationId,
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [firstOperationBoundaryId, secondOperationBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+          logicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline,
+            after: changed,
+            commitOid: changed.head,
+          },
+        },
+      ],
+    }),
+    references: [
+      { kind: 'logical-operation' as const, operationId },
+      { kind: 'boundary' as const, boundaryId: standaloneBoundaryId },
+      { kind: 'boundary' as const, boundaryId: secondOperationBoundaryId },
+      { kind: 'logical-operation' as const, operationId },
+    ],
+  };
+}
+
+function conservativeOpenLogicalUnresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const checkpoint = {
+    ...baseline,
+    projection: { 'pending.txt': 'pending' },
+    projectionDigest:
+      'sha256:5ac3dde381e027490b02ecd5dcffe9bb3edc07d7f852fb235021c121e3c17927',
+  };
+  const committedWithResidual = {
+    ...checkpoint,
+    head: UNRESOLVED_EFFECT_AFTER_HEAD,
+  };
+  const ambiguousAfter = {
+    ...baseline,
+    projection: { 'pending.txt': 'changed' },
+    projectionDigest:
+      'sha256:3bfc50b8d5bb2e93ee6ae79eccfab3649e1d42ef6679c07df2d49241e9712ae6',
+  };
+  const residualOperationId = 'a1000000-0000-4000-8000-000000000001';
+  const residualFirstId = 'a2000000-0000-4000-8000-000000000002';
+  const residualLatestId = 'a3000000-0000-4000-8000-000000000003';
+  const ambiguousOperationId = 'a4000000-0000-4000-8000-000000000004';
+  const ambiguousBoundaryId = 'a5000000-0000-4000-8000-000000000005';
+  const boundaryBase = {
+    playbookId,
+    runtimeSessionId,
+    turnId: 1,
+    callId: `${playbookId}:coder:open-logical`,
+    roleId: 'coder',
+    sourceStateId: 'working',
+    sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+    dispositions: ['deferred', 'one-descendant-commit'],
+    canonicalWorktree: {
+      worktree: baseline.worktree,
+      gitDir: baseline.gitDir,
+    },
+    correctionBudget: { limit: 1, spent: false },
+  };
+  return {
+    ledger: assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 5,
+      boundaries: [
+        {
+          ...boundaryBase,
+          sequence: 1,
+          boundaryId: residualFirstId,
+          attemptId: 'a6000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          baseline,
+          after: checkpoint,
+          physicalReceipt: {
+            classification: 'worktree-only-change',
+            baseline,
+            after: checkpoint,
+          },
+          logicalOperationId: residualOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 2,
+          boundaryId: residualLatestId,
+          attemptId: 'a7000000-0000-4000-8000-000000000007',
+          attemptNumber: 2,
+          baseline: checkpoint,
+          after: committedWithResidual,
+          physicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline: checkpoint,
+            after: committedWithResidual,
+            commitOid: committedWithResidual.head,
+          },
+          logicalOperationId: residualOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 3,
+          boundaryId: ambiguousBoundaryId,
+          attemptId: 'a8000000-0000-4000-8000-000000000008',
+          attemptNumber: 1,
+          baseline,
+          after: ambiguousAfter,
+          physicalReceipt: {
+            classification: 'observation-ambiguous',
+            baseline,
+            after: ambiguousAfter,
+          },
+          logicalOperationId: ambiguousOperationId,
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId: residualOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [residualFirstId, residualLatestId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+        {
+          sequence: 2,
+          operationId: ambiguousOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [ambiguousBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+      ],
+    }),
+    references: [
+      { kind: 'logical-operation' as const, operationId: residualOperationId },
+      { kind: 'logical-operation' as const, operationId: ambiguousOperationId },
+    ],
+  };
+}
+
 function terminalResult(
   stateId = 'done',
   output?: JsonValue,
@@ -280,11 +614,14 @@ function runtimeSnapshot(
     turn?: number;
     roleResumeTokens?: Readonly<Record<string, string>>;
     pendingBossQuestions?: PlaybookRuntimeSnapshot['pendingBossQuestions'];
+    effectLedger?: PlaybookRuntimeSnapshot['effectLedger'];
+    retainedEffectReconciliation?: PlaybookRuntimeSnapshot['retainedEffectReconciliation'];
+    retainedEffectSourceSessionId?: PlaybookRuntimeSnapshot['retainedEffectSourceSessionId'];
     suspendedCall?: NonNullable<PlaybookRuntimeSnapshot['suspendedCall']>;
   } = {},
 ): PlaybookRuntimeSnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: state.value, status: state.status },
     roleResumeTokens: options.roleResumeTokens ?? {},
@@ -298,6 +635,19 @@ function runtimeSnapshot(
     },
     state,
     pendingBossQuestions: options.pendingBossQuestions ?? [],
+    effectLedger: options.effectLedger ?? emptyPlaybookEffectLedger(),
+    ...(options.retainedEffectReconciliation === undefined
+      ? {}
+      : {
+          retainedEffectReconciliation:
+            options.retainedEffectReconciliation,
+        }),
+    ...(options.retainedEffectSourceSessionId === undefined
+      ? {}
+      : {
+          retainedEffectSourceSessionId:
+            options.retainedEffectSourceSessionId,
+        }),
     ...(options.suspendedCall === undefined
       ? {}
       : { suspendedCall: options.suspendedCall }),
@@ -338,6 +688,44 @@ function stateTelemetry(
           stateId === 'ready',
       }),
       ...extra,
+    },
+  };
+}
+
+function acceptedOutcomeTelemetry(
+  runtime: FakeRuntime,
+  input: {
+    readonly acceptedOutcome: string;
+    readonly sequence: number;
+    readonly turnId?: number;
+    readonly schemaVersion?: number;
+  },
+): { topic: string; payload: Record<string, unknown> } {
+  const session = runtime.session;
+  if (session === undefined) throw new Error('runtime session missing');
+  return {
+    topic: 'playbook.trace',
+    payload: {
+      schemaVersion: input.schemaVersion ?? 4,
+      sessionId: session.sessionId,
+      playbookId: session.playbookId,
+      rootSessionId: session.rootSessionId,
+      ...(session.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: session.parentSessionId }),
+      ...(session.parentCallId === undefined
+        ? {}
+        : { parentCallId: session.parentCallId }),
+      depth: session.depth,
+      sequence: input.sequence,
+      timestamp: 0,
+      type: 'outcome.accepted',
+      turnId: input.turnId ?? 1,
+      payload: {
+        source: 'working',
+        target: 'accepted',
+        acceptedOutcome: input.acceptedOutcome,
+      },
     },
   };
 }
@@ -495,33 +883,38 @@ function fakeCodeEntry(
   resumeHook?: ResumeHook,
   restoreHook?: RestoreHook,
 ): {
-  entry: PlaybookCaptainRegistryEntryV2;
+  entry: PlaybookCaptainRegistryEntryV3;
   validateOptions: ReturnType<typeof vi.fn>;
   createRuntime: ReturnType<typeof vi.fn>;
   runtimes: FakeRuntime[];
 } {
   const runtimes: FakeRuntime[] = [];
   const validateOptions = vi.fn((value: unknown) => value);
-  const createRuntime = vi.fn(() => {
-    const runtime = new FakeRuntime(
-      handleHook,
-      disposeHook,
-      initHook,
-      resumeHook,
-      restoreHook,
-    );
-    runtimes.push(runtime);
-    return runtime;
-  });
+  const createRuntime = vi.fn(
+    (
+      _configuredOptions: unknown,
+      _hostCapabilities: PlaybookHostConstructionCapabilities,
+    ) => {
+      const runtime = new FakeRuntime(
+        handleHook,
+        disposeHook,
+        initHook,
+        resumeHook,
+        restoreHook,
+      );
+      runtimes.push(runtime);
+      return runtime;
+    },
+  );
   return {
     entry: {
       id: 'code',
       command: 'code',
       intent: 'software development / SDLC coding workflow',
-      artifactSchema: 2,
+      artifactSchema: 3,
       runtimeProfile: {
         kind: 'shared-factory',
-        compat: { artifactSchema: 2, runtimeAbi: 1 },
+        compat: { artifactSchema: 3, runtimeAbi: 1 },
       },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [],
@@ -565,14 +958,51 @@ function fakePlaybookEntry(
   return registry;
 }
 
+function fakeHostCapabilities(
+  entry: PlaybookCaptainRegistryEntryV3,
+  leaseOwnerToken: string,
+): PlaybookHostConstructionCapabilities {
+  const effectLedger = emptyPlaybookEffectLedger();
+  const identity = Object.freeze({
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+  });
+  return Object.freeze({
+    authority: Object.freeze({
+      playbookId: entry.id,
+      artifactSchema: 3 as const,
+      cwd: '/current/worktree',
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      leaseOwnerToken,
+      canonicalWorktree: identity,
+      requiredRoleIds: Object.freeze([...entry.requiredRoleIds]),
+      concurrentRoleSets: Object.freeze(
+        entry.concurrentRoleSets.map((roles) => Object.freeze([...roles])),
+      ),
+    }),
+    repository: Object.freeze({
+      identity,
+      observe: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      acquire: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      runExclusive: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      runCohort: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      runDeferred: vi.fn(async () => ({ marker: leaseOwnerToken })),
+    }),
+    effectLedger: Object.freeze({
+      snapshot: vi.fn(() => effectLedger),
+      writeAhead: vi.fn(async () => effectLedger),
+    }),
+  });
+}
+
 function enableGenerationRetention(
   registry: ReturnType<typeof fakeCodeEntry>,
   unfinishedFinalStateIds: readonly string[] = [],
   adoptHook?: AdoptHook,
 ): void {
   const createRuntime = registry.entry.createRuntime;
-  registry.entry.createRuntime = (options) => {
-    const runtime = createRuntime(options) as FakeRuntime;
+  registry.entry.createRuntime = (options, hostCapabilities) => {
+    const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
     runtime.retainedGenerationMetadata = Object.freeze({
       unfinishedFinalStateIds: Object.freeze([...unfinishedFinalStateIds]),
     });
@@ -704,6 +1134,8 @@ function makeShell(
     >;
     playerAgents?: Readonly<Record<string, TestSessionAgent>>;
     loadModule?: (specifier: string) => Promise<unknown>;
+    hostCapabilities?: PlaybookCaptainDeps['hostCapabilities'];
+    unresolvedEffectSettlement?: PlaybookCaptainDeps['unresolvedEffectSettlement'];
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
@@ -746,6 +1178,16 @@ function makeShell(
       options: opts.playbookOptions?.[r.entry.id] ?? opts.options ?? {},
     };
   }
+  const hostCapabilities =
+    opts.hostCapabilities ??
+    Object.freeze(
+      Object.fromEntries(
+        list.map(({ entry }) => [
+          entry.id,
+          fakeHostCapabilities(entry, `default-${entry.id}-lease`),
+        ]),
+      ),
+    );
   let sessionSequence = 0;
   const sessionIds = opts.sessionIds;
   // CAPTAIN-16/26: the session Captain takes its own previously unissued id at
@@ -782,6 +1224,12 @@ function makeShell(
           `00000000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`
         );
       },
+      hostCapabilities,
+      ...(opts.unresolvedEffectSettlement
+        ? {
+            unresolvedEffectSettlement: opts.unresolvedEffectSettlement,
+          }
+        : {}),
       ...(opts.createCaptainRuntime
         ? { createCaptainRuntime: opts.createCaptainRuntime }
         : {}),
@@ -802,6 +1250,143 @@ function captainJson(value: unknown): CaptainRunResult {
     finalText: JSON.stringify(value),
   };
 }
+
+describe('Captain unresolved-effect settlement evidence', () => {
+  it('validates, detaches, freezes, and preserves the ordered bounded shape', () => {
+    const source = [
+      {
+        classification: 'incomplete',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ];
+
+    const evidence = assertPlaybookCaptainUnresolvedEffects(source);
+
+    expect(evidence).toEqual(source);
+    expect(Object.isFrozen(evidence)).toBe(true);
+    expect(evidence.every((entry) => Object.isFrozen(entry))).toBe(true);
+    source[0]!.baselineHead = 'c'.repeat(40);
+    expect(evidence[0]?.baselineHead).toBe(UNRESOLVED_EFFECT_BASELINE_HEAD);
+    expect(Object.keys(evidence[2]!)).toEqual([
+      'classification',
+      'baselineHead',
+      'afterHead',
+      'commitOid',
+    ]);
+  });
+
+  it.each([
+    {
+      classification: 'one-descendant-commit',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'multiple-commits',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'rewritten-or-non-descendant',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'worktree-only-change',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+    {
+      classification: 'concurrent-or-foreign-change',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+    {
+      classification: 'observation-ambiguous',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    },
+    {
+      classification: 'incomplete',
+      baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+    },
+  ] satisfies readonly PlaybookCaptainUnresolvedEffect[])(
+    'accepts the exact HEAD and commit-OID shape for $classification',
+    (candidate) => {
+      expect(assertPlaybookCaptainUnresolvedEffects([candidate])).toEqual([
+        candidate,
+      ]);
+    },
+  );
+
+  it('accepts canonical 64-character Git OIDs', () => {
+    const candidate = {
+      classification: 'observation-ambiguous' as const,
+      baselineHead: 'a'.repeat(64),
+      afterHead: 'b'.repeat(64),
+    };
+    expect(assertPlaybookCaptainUnresolvedEffects([candidate])).toEqual([
+      candidate,
+    ]);
+  });
+
+  it.each([
+    [{ classification: 'unchanged', baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD }],
+    [{ classification: 'incomplete', baselineHead: 'not-an-oid' }],
+    [{ classification: 'incomplete', baselineHead: 'A'.repeat(40) }],
+    [{ classification: 'incomplete', baselineHead: 'a'.repeat(63) }],
+    [
+      {
+        classification: 'multiple-commits',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: 'c'.repeat(40),
+      },
+    ],
+    [
+      {
+        classification: 'worktree-only-change',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        commitOid: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ],
+    [
+      {
+        classification: 'incomplete',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        internalBoundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+      },
+    ],
+  ])('rejects a malformed bounded projection %#', (candidate) => {
+    expect(() => assertPlaybookCaptainUnresolvedEffects(candidate)).toThrow();
+  });
+});
 
 // CAPTAIN-19/20/21: the acting turn's result-phase closing-reply call is the
 // turn's only summary, and the shell supplies its outcome report.
@@ -935,7 +1520,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
   it('rejects a registry without an implementation runtime profile', async () => {
     const registry = fakeCodeEntry();
     const { runtimeProfile: _runtimeProfile, ...entry } = registry.entry;
-    registry.entry = entry as unknown as PlaybookCaptainRegistryEntryV2;
+    registry.entry = entry as unknown as PlaybookCaptainRegistryEntryV3;
     const shell = makeShell(registry);
 
     await expect(shell.init!(stubSession().session)).rejects.toThrow(
@@ -949,14 +1534,14 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
   it.each([
     [
       'an extra profile field',
-      { kind: 'bespoke', artifactSchema: 2, extra: true },
+      { kind: 'bespoke', artifactSchema: 3, extra: true },
     ],
     [
       'an unsafe shared-factory ABI',
       {
         kind: 'shared-factory',
         compat: {
-          artifactSchema: 2,
+          artifactSchema: 3,
           runtimeAbi: Number.MAX_SAFE_INTEGER + 1,
         },
       },
@@ -965,7 +1550,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
       'a non-plain profile',
       Object.assign(Object.create({ inherited: true }), {
         kind: 'bespoke',
-        artifactSchema: 2,
+        artifactSchema: 3,
       }),
     ],
     [
@@ -973,7 +1558,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
       Object.defineProperty(
         { kind: 'bespoke' },
         'artifactSchema',
-        { value: 2 },
+        { value: 3 },
       ),
     ],
   ])('rejects a runtime profile with %s', async (_name, runtimeProfile) => {
@@ -981,7 +1566,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     registry.entry = {
       ...registry.entry,
       runtimeProfile,
-    } as unknown as PlaybookCaptainRegistryEntryV2;
+    } as unknown as PlaybookCaptainRegistryEntryV3;
     const shell = makeShell(registry);
 
     await expect(shell.init!(stubSession().session)).rejects.toThrow(
@@ -992,74 +1577,218 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['schema-3 manifest around a schema-2 shared factory', 3, 2],
-    ['schema-2 manifest around a schema-3 shared factory', 2, 3],
-  ] as const)(
-    'rejects %s before option validation or runtime construction',
-    async (_name, advertisedSchema, implementedSchema) => {
-      const registry = fakeCodeEntry();
-      registry.entry = {
-        ...registry.entry,
-        artifactSchema: advertisedSchema,
-        runtimeProfile: {
-          kind: 'shared-factory',
-          compat: { artifactSchema: implementedSchema, runtimeAbi: 1 },
-        },
-      } as unknown as PlaybookCaptainRegistryEntryV2;
-      const shell = makeShell(registry);
-
-      await expect(shell.init!(stubSession().session)).rejects.toThrow(
-        `advertises artifact schema ${advertisedSchema} but its shared factory implements schema ${implementedSchema}`,
-      );
-
-      expect(registry.validateOptions).not.toHaveBeenCalled();
-      expect(registry.createRuntime).not.toHaveBeenCalled();
-    },
-  );
-
-  it('rejects a disagreeing bespoke runtime profile before construction', async () => {
+  it('rejects a legacy schema-2 manifest before option validation or construction', async () => {
     const registry = fakeCodeEntry();
     registry.entry = {
       ...registry.entry,
-      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
-    } as unknown as PlaybookCaptainRegistryEntryV2;
+      artifactSchema: 2,
+      runtimeProfile: {
+        kind: 'shared-factory',
+        compat: { artifactSchema: 2, runtimeAbi: 1 },
+      },
+    } as unknown as PlaybookCaptainRegistryEntryV3;
     const shell = makeShell(registry);
 
     await expect(shell.init!(stubSession().session)).rejects.toThrow(
-      'advertises artifact schema 2 but its bespoke runtime implements schema 3',
+      /exposes no valid registry entry/,
     );
 
     expect(registry.validateOptions).not.toHaveBeenCalled();
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
 
-  it('accepts a schema-3 registry manifest but requires host construction capabilities', async () => {
+  it('rejects a schema-3 registry without current-host capabilities during init', async () => {
     const registry = fakeCodeEntry();
-    const createRuntime = vi.fn(
-      (_configuredOptions: unknown, _hostCapabilities: object) =>
-        new FakeRuntime(),
-    );
-    registry.entry = {
-      ...registry.entry,
-      artifactSchema: 3,
-      runtimeProfile: {
-        kind: 'shared-factory',
-        compat: { artifactSchema: 3, runtimeAbi: 1 },
-      },
-      createRuntime,
-    } as unknown as PlaybookCaptainRegistryEntryV2;
-    const shell = makeShell(registry);
-    const context = stubContext();
-    await shell.init!(stubSession().session);
-    (registry.entry as unknown as { artifactSchema: number }).artifactSchema = 2;
+    const shell = makeShell(registry, { hostCapabilities: {} });
 
-    await shell.handleBossTurn(turn('/code task'), context.context);
-
-    expect(turnSummaryCalls(context)[0]?.prompt).toContain(
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
       '/code schema-3 runtime requires current-host construction capabilities',
     );
-    expect(createRuntime).not.toHaveBeenCalled();
+
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects capabilities for playbooks outside the enabled schema-3 set', async () => {
+    const registry = fakeCodeEntry();
+    const extraEntry = fakePlaybookEntry('review', 'review').entry;
+    const shell = makeShell(registry, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(registry.entry, 'current-code'),
+        review: fakeHostCapabilities(extraEntry, 'unconfigured-review'),
+      },
+    });
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /must exactly cover schema-3 playbooks/,
+    );
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('injects exact current-host capabilities separately for schema-3 construction', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      const state = playbookState('ready');
+      runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+      return { outcome: 'quiescent', state };
+    });
+    const hostCapabilities = fakeHostCapabilities(
+      registry.entry,
+      'current-host-capability',
+    );
+    const shell = makeShell(registry, {
+      options: { mode: 'configured' },
+      hostCapabilities: { code: hostCapabilities },
+    });
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code task'), stubContext().context);
+
+    expect(registry.createRuntime).toHaveBeenCalledWith(
+      { mode: 'configured' },
+      hostCapabilities,
+    );
+    expect(JSON.stringify(shell.exportSnapshot())).not.toContain(
+      'current-host-capability',
+    );
+  });
+
+  it('rejects disagreeing current-host ledger mirrors before construction', async () => {
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    const codeCapability = fakeHostCapabilities(
+      code.entry,
+      'current-code-capability',
+    );
+    const reviewBase = fakeHostCapabilities(
+      review.entry,
+      'current-review-capability',
+    );
+    const observation = {
+      worktree: '/current/worktree',
+      gitDir: '/current/worktree/.git',
+      head: 'a'.repeat(40),
+      projection: {},
+      projectionDigest:
+        'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    };
+    const reviewLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '10000000-0000-4000-8000-000000000010',
+          attemptId: '10000000-0000-4000-8000-000000000011',
+          attemptNumber: 1,
+          playbookId: 'review',
+          runtimeSessionId: '10000000-0000-4000-8000-000000000012',
+          turnId: 1,
+          callId: 'review:coder:1',
+          roleId: review.entry.requiredRoleIds[0],
+          sourceStateId: 'reviewing',
+          sourceOutcomeSchema: { type: 'object' },
+          dispositions: ['unchanged'],
+          canonicalWorktree: {
+            worktree: observation.worktree,
+            gitDir: observation.gitDir,
+          },
+          baseline: observation,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+    const reviewCapability: PlaybookHostConstructionCapabilities = {
+      ...reviewBase,
+      effectLedger: {
+        snapshot: () => reviewLedger,
+        writeAhead: async () => reviewLedger,
+      },
+    };
+    const shell = makeShell([code, review], {
+      hostCapabilities: {
+        code: codeCapability,
+        review: reviewCapability,
+      },
+    });
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /capabilities disagree on their effect ledger/,
+    );
+    expect(code.createRuntime).not.toHaveBeenCalled();
+    expect(review.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects mismatched schema-3 capability authority before construction', async () => {
+    const registry = fakeCodeEntry();
+    const foreign = fakeHostCapabilities(
+      { ...registry.entry, id: 'review' } as PlaybookCaptainRegistryEntryV3,
+      'foreign-host-capability',
+    );
+    const shell = makeShell(registry, {
+      hostCapabilities: { code: foreign },
+    });
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      '/code schema-3 current-host capability authority does not match its imported artifact',
+    );
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed schema-3 capability structure and authority', async () => {
+    const mutations: Array<
+      (
+        capability: PlaybookHostConstructionCapabilities,
+      ) => PlaybookHostConstructionCapabilities
+    > = [
+      (capability) =>
+        ({
+          ...capability,
+          unknown: true,
+        }) as unknown as PlaybookHostConstructionCapabilities,
+      (capability) => ({
+        ...capability,
+        authority: { ...capability.authority, requiredRoleIds: [] },
+      }),
+      (capability) => ({
+        ...capability,
+        authority: {
+          ...capability.authority,
+          concurrentRoleSets: [['coder', 'coder']],
+        },
+      }),
+      (capability) => ({
+        ...capability,
+        repository: {
+          ...capability.repository,
+          identity: {
+            worktree: '/foreign/worktree',
+            gitDir: '/foreign/worktree/.git',
+          },
+        },
+      }),
+      (capability) =>
+        ({
+          ...capability,
+          repository: {
+            ...capability.repository,
+            runDeferred: undefined,
+          },
+        }) as unknown as PlaybookHostConstructionCapabilities,
+    ];
+
+    for (const mutate of mutations) {
+      const registry = fakeCodeEntry();
+      const malformed = mutate(
+        fakeHostCapabilities(registry.entry, 'malformed-authority'),
+      );
+      const shell = makeShell(registry, {
+        hostCapabilities: { code: malformed },
+      });
+
+      await expect(shell.init!(stubSession().session)).rejects.toThrow(
+        /current-host capability authority does not match/,
+      );
+      expect(registry.createRuntime).not.toHaveBeenCalled();
+    }
   });
 
   it('captures every imported registry member once before later use', async () => {
@@ -1098,7 +1827,13 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 
   it('dispatches /code text to a lazily constructed CODE runtime', async () => {
     const registry = fakeCodeEntry();
-    const shell = makeShell(registry);
+    const hostCapabilities = fakeHostCapabilities(
+      registry.entry,
+      'lazy-code-runtime-lease',
+    );
+    const shell = makeShell(registry, {
+      hostCapabilities: { code: hostCapabilities },
+    });
     const session = stubSession([
       { id: 'code-coder', adapter: 'claude' },
       { id: 'code-reviewer', adapter: 'codex' },
@@ -1112,7 +1847,10 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     );
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(registry.createRuntime).toHaveBeenCalledWith({});
+    expect(registry.createRuntime).toHaveBeenCalledWith(
+      {},
+      hostCapabilities,
+    );
     expect(registry.runtimes[0]?.initCount).toBe(1);
     expect(registry.runtimes[0]?.inputs).toEqual([
       {
@@ -2047,6 +2785,639 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       ),
     ).toBe(true);
   });
+
+  it('exposes an unresolved-effect root without claiming final completion', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000001';
+    let authoritativeLedger = unresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const order: string[] = [];
+    const registry = fakeCodeEntry(
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('editing'),
+          { turn: 1, effectLedger: authoritativeLedger },
+        );
+        return quiescentResult('editing');
+      },
+      async () => {
+        order.push('dispose');
+      },
+    );
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
+    const unresolved = unresolvedEffectResult();
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(
+        options,
+        hostCapabilities,
+      ) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+        },
+      ];
+      runtime.describe = () => ({
+        state: unresolved.state,
+        pendingQuestions: [],
+        actions: [
+          {
+            id: 'reconcile:unresolved-effect',
+            label: 'Retry unresolved effect reconciliation',
+          },
+          {
+            id: 'abandon:unresolved-effect',
+            label: 'Abandon unresolved workflow attempt',
+          },
+        ],
+      });
+      runtime.apply = async (input) => {
+        order.push('apply');
+        applied.push(input);
+        return { disposition: 'executed', run: unresolved };
+      };
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilitiesBase = fakeHostCapabilities(
+      registry.entry,
+      'unresolved-root-lease',
+    );
+    const snapshotLedger = vi.fn(() => authoritativeLedger);
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilitiesBase,
+      effectLedger: {
+        snapshot: snapshotLedger,
+        writeAhead: async () => authoritativeLedger,
+      },
+    };
+    const begin = vi.fn(async () => {
+      order.push('begin');
+    });
+    const complete = vi.fn(async () => {
+      order.push('complete');
+    });
+    let ledgerReadsAtPresentation: number | undefined;
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+      unresolvedEffectSettlement: { begin, complete },
+    });
+    const session = stubSession();
+    const parked = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code begin the edit'),
+      parked.context,
+    );
+    const possibleEffectLine =
+      `Possible repository effect; a change could not be excluded (observation-ambiguous); ` +
+      `baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD was not available.`;
+    expect(turnSummaryCalls(parked)[0]?.prompt).toContain(possibleEffectLine);
+    expect(parked.replies[0]).toContain(possibleEffectLine);
+    expect(parked.replies[0]).toContain(
+      'This evidence does not establish workflow completion or attribute any repository change or commit to this workflow.',
+    );
+    expect(parked.replies[0]).not.toContain('/current/worktree');
+    expect(parked.replies[0]).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
+    expect(applied).toEqual([]);
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
+    const abandonment = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'abandon:unresolved-effect',
+      }),
+      () => {
+        order.push('present');
+        ledgerReadsAtPresentation = snapshotLedger.mock.calls.length;
+        authoritativeLedger = emptyPlaybookEffectLedger();
+        return {
+          status: 'ok',
+          turnId: 2,
+          finalText: 'The unresolved attempt has no authored completion.',
+        };
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('abandon the unresolved attempt', 2),
+      abandonment.context,
+    );
+
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.actionId).toBe('abandon:unresolved-effect');
+    expect(unresolved).toEqual({
+      outcome: 'unresolved-effect',
+      state: playbookState('effectReconciliationRequired'),
+    });
+    expect(unresolved).not.toHaveProperty('stateDescription');
+    expect(unresolved).not.toHaveProperty('output');
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(order).toEqual(['apply', 'begin', 'dispose', 'complete', 'present']);
+    expect(ledgerReadsAtPresentation).toBeGreaterThan(0);
+    expect(snapshotLedger).toHaveBeenCalledTimes(ledgerReadsAtPresentation!);
+    const expectedSettlement = {
+      rootPlaybookId: 'code',
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    };
+    expect(begin).toHaveBeenCalledWith(expectedSettlement);
+    expect(complete).toHaveBeenCalledWith(expectedSettlement);
+    const exported = shell.exportSettlement();
+    expect(exported).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    });
+    expect(snapshotLedger).toHaveBeenCalledTimes(
+      ledgerReadsAtPresentation! + 1,
+    );
+    const publicEvidence = JSON.stringify({
+      statuses: session.statuses,
+      summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
+      replies: abandonment.replies,
+      telemetry: telemetryWithTopic(session, 'playbook.captain.fsm.state'),
+    });
+    expect(publicEvidence).toContain(possibleEffectLine);
+    expect(publicEvidence).not.toContain('/current/worktree');
+    expect(publicEvidence).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
+    expect(publicEvidence).not.toContain('/code completed');
+    expect(publicEvidence).not.toContain('◇ /code finished');
+    expect(publicEvidence).not.toContain('"event":"final"');
+
+    await shell.dispose?.();
+  });
+
+  it('exports the restored unresolved-effect projection after a safe no-action turn', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000011';
+    const authoritativeLedger = unresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const registry = fakeCodeEntry(async (runtime) => {
+      const state = playbookState('effectReconciliationRequired');
+      runtime.snapshot = runtimeSnapshot('code', state, {
+        turn: 1,
+        effectLedger: authoritativeLedger,
+      });
+      return { outcome: 'quiescent', state };
+    });
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        },
+      ];
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'unresolved-restore-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      },
+    };
+    const source = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+    await source.init!(stubSession().session);
+    await source.handleBossTurn(
+      turn('/code preserve unresolved evidence'),
+      stubContext().context,
+    );
+    const snapshot = source.exportSnapshot();
+    expect(snapshot).toBeDefined();
+    expect(source.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
+
+    const target = makeShell(registry, {
+      restoredSession: true,
+      hostCapabilities: { code: capabilities },
+    });
+    const restoredHost = stubSession();
+    await target.restore(restoredHost.session, snapshot!);
+
+    expect(restoredHost.statuses).toEqual([]);
+    expect(restoredHost.telemetry).toEqual([]);
+    expect(target.exportSettlement()).toBeUndefined();
+    const restoredTurn = stubContext([
+      captainJson({ action: 'respond', text: 'The episode remains parked.' }),
+    ]);
+    await target.handleBossTurn(
+      turn('leave the parked episode untouched', 2),
+      restoredTurn.context,
+    );
+
+    expect(registry.runtimes[1]?.inputs).toEqual([]);
+    expect(registry.runtimes[1]?.apply).toBeUndefined();
+    expect(capabilities.repository.observe).not.toHaveBeenCalled();
+    expect(capabilities.effectLedger.writeAhead).not.toHaveBeenCalled();
+    expect(target.exportSettlement()?.unresolvedEffects).toEqual(
+      unresolvedEffectTestProjection(),
+    );
+    expect(turnSummaryCalls(restoredTurn)).toHaveLength(0);
+    expect(restoredTurn.replies).toHaveLength(1);
+    expect(restoredTurn.replies[0]).toContain(
+      `Possible repository effect; a change could not be excluded (observation-ambiguous); ` +
+        `baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD was not available.`,
+    );
+    expect(restoredTurn.replies[0]).not.toContain('/current/worktree');
+    expect(restoredTurn.replies[0]).not.toContain(
+      UNRESOLVED_EFFECT_BOUNDARY_ID,
+    );
+
+    await target.dispose?.();
+    await source.dispose?.();
+  });
+
+  it('exports an empty unresolved-effect list at an ordinary safe settlement', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000021';
+    const ledger = emptyPlaybookEffectLedger();
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('editing'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('editing');
+    });
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'resolved-root-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code begin ordinary work'), stubContext().context);
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([]);
+    await shell.dispose?.();
+  });
+
+  it.each([
+    [
+      'unsupported identity kind',
+      [{ kind: 'receipt', boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID }],
+    ],
+    [
+      'evidence-bearing identity',
+      [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+          classification: 'incomplete',
+        },
+      ],
+    ],
+    ['blank identity', [{ kind: 'boundary', boundaryId: '   ' }]],
+    [
+      'absent boundary',
+      [{ kind: 'boundary', boundaryId: '70000000-0000-4000-8000-000000000099' }],
+    ],
+    [
+      'absent logical operation',
+      [
+        {
+          kind: 'logical-operation',
+          operationId: '70000000-0000-4000-8000-000000000098',
+        },
+      ],
+    ],
+  ])('withholds settlement for an %s', async (_label, identities) => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000025';
+    const ledger = unresolvedEffectTestLedger('code', rootSessionId);
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('effectReconciliationRequired'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('effectReconciliationRequired');
+    });
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => identities as never;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'malformed-unresolved-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell
+      .handleBossTurn(
+        turn('/code reject malformed unresolved identities'),
+        stubContext().context,
+      )
+      .catch(() => {});
+
+    expect(shell.exportSettlement()).toBeUndefined();
+    expect(capabilities.repository.observe).not.toHaveBeenCalled();
+    await shell.dispose?.();
+  });
+
+  it('orders unresolved effects by ledger sequence and projects a deferred chain once', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000031';
+    const { ledger, references } = orderedLogicalUnresolvedEffectTestLedger(
+      'code',
+      rootSessionId,
+    );
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('effectReconciliationRequired'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('effectReconciliationRequired');
+    });
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => references;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'ordered-unresolved-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    const context = stubContext();
+    await shell.handleBossTurn(
+      turn('/code preserve ordered evidence'),
+      context.context,
+    );
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
+      {
+        classification: 'multiple-commits',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: 'c'.repeat(40),
+      },
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+    ]);
+    const rendered = context.replies[0] ?? '';
+    expect(rendered).toContain(
+      `Observed repository change (multiple-commits); baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD ${'c'.repeat(40)}.`,
+    );
+    expect(rendered).toContain(
+      `Observed repository change (one-descendant-commit); baseline HEAD ${UNRESOLVED_EFFECT_BASELINE_HEAD}; after HEAD ${UNRESOLVED_EFFECT_AFTER_HEAD}; proven commit OID ${UNRESOLVED_EFFECT_AFTER_HEAD}.`,
+    );
+    expect(rendered).not.toContain('/current/worktree');
+    expect(rendered).not.toContain('projection');
+    expect(rendered).not.toContain(UNRESOLVED_EFFECT_BOUNDARY_ID);
+    await shell.dispose?.();
+  });
+
+  it('fails open logical-operation evidence closed against its original baseline', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000032';
+    const { ledger, references } =
+      conservativeOpenLogicalUnresolvedEffectTestLedger(
+        'code',
+        rootSessionId,
+      );
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('effectReconciliationRequired'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('effectReconciliationRequired');
+    });
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => references;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'conservative-open-logical-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(
+      turn('/code preserve cumulative uncertainty'),
+      stubContext().context,
+    );
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+      {
+        classification: 'observation-ambiguous',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ]);
+    await shell.dispose?.();
+  });
+
+  it.each(['capability', 'begin', 'dispose', 'complete'] as const)(
+    'keeps unresolved-effect abandonment failed when host %s fails',
+    async (failurePoint) => {
+      const rootSessionId = '21000000-0000-4000-8000-000000000041';
+      const ledger = unresolvedEffectTestLedger('code', rootSessionId);
+      const failureMessage =
+        failurePoint === 'capability'
+          ? 'requires durable host settlement'
+          : `durable ${failurePoint} failed`;
+      const order: string[] = [];
+      const registry = fakeCodeEntry(
+        async (runtime) => {
+          runtime.snapshot = runtimeSnapshot(
+            'code',
+            playbookState('effectReconciliationRequired'),
+            { turn: 1, effectLedger: ledger },
+          );
+          return quiescentResult('effectReconciliationRequired');
+        },
+        async () => {
+          order.push('dispose');
+          if (failurePoint === 'dispose') {
+            throw new Error(failureMessage);
+          }
+        },
+      );
+      const createRuntime = registry.entry.createRuntime as unknown as
+        PlaybookCaptainRegistryEntryV3['createRuntime'];
+      const unresolved = unresolvedEffectResult();
+      registry.entry.createRuntime = ((options, hostCapabilities) => {
+        const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+        runtime.unresolvedEffectEnvelopes = () => [
+          {
+            kind: 'boundary',
+            boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+          },
+        ];
+        runtime.describe = () => ({
+          state: unresolved.state,
+          pendingQuestions: [],
+          actions: [
+            {
+              id: 'abandon:unresolved-effect',
+              label: 'Abandon unresolved workflow attempt',
+            },
+          ],
+        });
+        runtime.apply = async () => {
+          order.push('apply');
+          return { disposition: 'executed', run: unresolved };
+        };
+        return runtime;
+      }) as typeof registry.entry.createRuntime;
+      const capabilityBase = fakeHostCapabilities(
+        registry.entry,
+        `unresolved-${failurePoint}-lease`,
+      );
+      const capabilities: PlaybookHostConstructionCapabilities = {
+        ...capabilityBase,
+        effectLedger: {
+          snapshot: vi.fn(() => ledger),
+          writeAhead: vi.fn(async () => ledger),
+        },
+      };
+      const begin = vi.fn(async () => {
+        order.push('begin');
+        if (failurePoint === 'begin') {
+          throw new Error(failureMessage);
+        }
+      });
+      const complete = vi.fn(async () => {
+        order.push('complete');
+        if (failurePoint === 'complete') {
+          throw new Error(failureMessage);
+        }
+      });
+      const shell = makeShell(registry, {
+        sessionIds: [rootSessionId],
+        hostCapabilities: { code: capabilities },
+        ...(failurePoint === 'capability'
+          ? {}
+          : { unresolvedEffectSettlement: { begin, complete } }),
+      });
+      await shell.init!(stubSession().session);
+      await shell.handleBossTurn(
+        turn('/code preserve unresolved evidence'),
+        stubContext().context,
+      );
+      const abandonment = stubContext([
+        captainJson({
+          action: 'runtime',
+          actionId: 'abandon:unresolved-effect',
+        }),
+        () => {
+          order.push('present');
+          return {
+            status: 'ok',
+            turnId: 2,
+            finalText: 'The host settlement failed safely.',
+          };
+        },
+      ]);
+
+      await shell.handleBossTurn(
+        turn('abandon the unresolved attempt', 2),
+        abandonment.context,
+      );
+
+      const report = turnSummaryCalls(abandonment).at(-1)?.prompt ?? '';
+      expect(report).toContain('Settlement status: failed');
+      expect(report).toContain('Runtime action receipt: failed');
+      expect(report).toContain(failureMessage);
+      expect(report).not.toContain(
+        'Applied "abandon:unresolved-effect"',
+      );
+      expect(order).toEqual(
+        failurePoint === 'capability'
+          ? ['apply', 'present']
+          : failurePoint === 'begin'
+          ? ['apply', 'begin', 'present']
+          : failurePoint === 'dispose'
+            ? ['apply', 'begin', 'dispose', 'present']
+            : ['apply', 'begin', 'dispose', 'complete', 'present'],
+      );
+      expect(registry.runtimes[0]?.disposeCount).toBe(
+        failurePoint === 'capability' || failurePoint === 'begin' ? 0 : 1,
+      );
+      expect(complete).toHaveBeenCalledTimes(
+        failurePoint === 'complete' ? 1 : 0,
+      );
+      expect(shell.exportSettlement()).toBeUndefined();
+
+      await shell.dispose?.();
+    },
+  );
 
   it('dismiss emits shell status and later dispatch constructs a replacement', async () => {
     const registry = fakeCodeEntry();
@@ -3201,8 +4572,9 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       // Every durable call is hidden (CAPTAIN-9).
       expect(summary.options?.visibility).toBe('hidden');
       expect(summary.prompt).toContain(
-        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
+        'No saved-counts line is supplied for this turn; append no saved-counts line.',
       );
+      expect(summary.prompt).not.toContain('Saved you');
       expect(summary.prompt).toContain('Progress counts: none');
       expect(summary.prompt).not.toContain('stackDepth');
     }
@@ -3229,7 +4601,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     ]);
   });
 
-  it('counts player replies as interruptions and registry-declared guards as copy-pastes', async () => {
+  it('counts accepted outcomes while ignoring raw player and judge replies', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.emitTelemetry(stateTelemetry('reviewBossCommitCode'));
@@ -3266,6 +4638,24 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       await runtime.ports.callJudge('review findings', runtimeTurn.signal);
       await runtime.ports.callJudge('review revision', runtimeTurn.signal);
       await runtime.ports.callJudge('review pass', runtimeTurn.signal);
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'hasFindings',
+          sequence: 1,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'changesMadeSpecs',
+          sequence: 2,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 3,
+        }),
+      );
     });
     const shell = makeShell(registry);
     const session = stubSession();
@@ -3284,7 +4674,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
     const summary = turnSummaryCalls(context)[0];
     expect(summary?.prompt).toContain(
-      'Saved you 2 interruptions and 3 copy-pastes across 3 rounds of reviews/rebuttals.',
+      'Saved you 3 interruptions and 3 copy-pastes across 3 rounds of reviews/rebuttals.',
     );
     expect(summary?.prompt).toContain(
       'Progress counts: 2 review rounds, 1 rebuttal',
@@ -3306,6 +4696,153 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'Do not mention counts for states the report does not name',
     );
     expect(summary?.prompt).toContain('Keep a natural chat-like tone');
+  });
+
+  it('derives schema-3 saved counts only from accepted outcomes', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry(
+        stateTelemetry('adjudicateChallenges'),
+      );
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'schema-3 player result',
+        runtimeTurn.signal,
+        false,
+      );
+      await runtime.ports.callJudge(
+        'schema-3 raw judge result',
+        runtimeTurn.signal,
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 1,
+          schemaVersion: 3,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 2,
+        }),
+      );
+      // Duplicate transport of one canonical trace cannot count twice.
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 2,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'not-summary-visible',
+          sequence: 3,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 4,
+          turnId: 0,
+        }),
+      );
+      const foreignCausality = acceptedOutcomeTelemetry(runtime, {
+        acceptedOutcome: 'accepted',
+        sequence: 5,
+      });
+      await runtime.ports.emitTelemetry({
+        ...foreignCausality,
+        payload: {
+          ...foreignCausality.payload,
+          parentSessionId: 'ca012407-ce0f-41a2-b226-c89b4aa24163',
+          parentCallId: 'foreign-call',
+        },
+      });
+    });
+    const shell = makeShell(registry, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          registry.entry,
+          'accepted-outcome-counts-lease',
+        ),
+      },
+    });
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ action: 'respond', text: 'No action yet.' }),
+      captainJson({ guard: 'accepted' }),
+      { status: 'ok', turnId: 1, finalText: 'Counted accepted outcomes.' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('chat before starting'), context.context);
+    await shell.handleBossTurn(
+      turn('/code count canonical outcomes', 2),
+      context.context,
+    );
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain(
+      'Saved you 2 interruptions and 1 copy-paste across 1 round of reviews/rebuttals.',
+    );
+    expect(summary?.prompt).toContain('Progress counts: 1 rebuttal');
+    await shell.dispose?.();
+  });
+
+  it('does not count schema-3 outcome evidence rejected by the host sink', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 1,
+        }),
+      );
+    });
+    const shell = makeShell(registry, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          registry.entry,
+          'rejected-accepted-outcome-lease',
+        ),
+      },
+    });
+    const backingSession = stubSession();
+    const forwardTelemetry = backingSession.session.emitTelemetry;
+    const session: StubSession = {
+      ...backingSession,
+      session: {
+        ...backingSession.session,
+        emitTelemetry: async (event) => {
+          const payload = event.payload as Record<string, unknown>;
+          if (
+            event.topic === 'playbook.trace' &&
+            payload.playbookId === 'code' &&
+            payload.type === 'outcome.accepted'
+          ) {
+            throw new Error('accepted-outcome telemetry rejected');
+          }
+          await forwardTelemetry(event);
+        },
+      },
+    };
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code reject accepted outcome'),
+      context.context,
+    );
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain('accepted-outcome telemetry rejected');
+    expect(summary?.prompt).toContain(
+      'No saved-counts line is supplied for this turn; append no saved-counts line.',
+    );
+    expect(summary?.prompt).not.toContain('Saved you');
+    await shell.dispose?.();
   });
 
   it('counts explicit labeled-state reentry without counting parallel snapshots twice', async () => {
@@ -3362,15 +4899,19 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
   });
 
   it('uses singular saved-count forms for one copy-paste and one round', async () => {
-    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+    const registry = fakeCodeEntry(async (runtime) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.emitTelemetry(stateTelemetry('adjudicateChallenges'));
-      await runtime.ports.callJudge('review pass', runtimeTurn.signal);
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 1,
+        }),
+      );
     });
     const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
-      captainJson({ guard: 'accepted' }),
       { status: 'ok', turnId: 1, finalText: 'Adjudicated the rebuttal.' },
     ]);
 
@@ -3379,7 +4920,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
     const summary = turnSummaryCalls(context)[0];
     expect(summary?.prompt).toContain(
-      'Saved you 0 interruptions and 1 copy-paste across 1 round of reviews/rebuttals.',
+      'Saved you 1 interruption and 1 copy-paste across 1 round of reviews/rebuttals.',
     );
     expect(summary?.prompt).toContain('Progress counts: 1 rebuttal');
   });
@@ -3502,10 +5043,11 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
   async function initWith(
     options: unknown,
     loadModule: (specifier: string) => Promise<unknown>,
+    hostCapabilities?: PlaybookCaptainDeps['hostCapabilities'],
   ): Promise<void> {
     const shell = createPlaybookCaptainShell(
       withSessionAgents(options as Record<string, unknown>),
-      { loadModule },
+      { loadModule, hostCapabilities },
     );
     await shell.init!(namespacedSession().session);
   }
@@ -3532,11 +5074,16 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
       sessionAgents,
       captainAdapter: 'claude',
     };
+    const hostCapabilities = fakeHostCapabilities(
+      registry.entry,
+      'namespaced-code-runtime-lease',
+    );
     const shell = createPlaybookCaptainShell(options, {
       loadModule: async (specifier) => {
         if (specifier === CODE_FROM) return { default: registry.entry };
         throw new Error(`no module ${specifier}`);
       },
+      hostCapabilities: { code: hostCapabilities },
     });
     const session = namespacedSession();
     const context = stubContext();
@@ -3548,7 +5095,10 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     expect(registry.validateOptions).toHaveBeenCalledWith({
       committer: 'reviewer',
     });
-    expect(registry.createRuntime).toHaveBeenCalledWith({ committer: 'reviewer' });
+    expect(registry.createRuntime).toHaveBeenCalledWith(
+      { committer: 'reviewer' },
+      hostCapabilities,
+    );
     expect(registry.runtimes[0]?.inputs.map((i) => i.text)).toEqual([
       'do the task',
     ]);
@@ -3597,6 +5147,13 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
           },
         },
         loader,
+        {
+          code: fakeHostCapabilities(code.entry, 'duplicate-command-code'),
+          code2: fakeHostCapabilities(
+            code2.entry,
+            'duplicate-command-code2',
+          ),
+        },
       ),
     ).rejects.toThrow(/reserved internal Captain command/);
     await expect(
@@ -3608,6 +5165,13 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
           },
         },
         loader,
+        {
+          code: fakeHostCapabilities(code.entry, 'duplicate-command-code'),
+          code2: fakeHostCapabilities(
+            code2.entry,
+            'duplicate-command-code2',
+          ),
+        },
       ),
     ).rejects.toThrow(/duplicate effective command/);
 
@@ -3677,7 +5241,11 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     ];
     for (const [_label, value, diagnostic] of exactRoleCases) {
       const config = value as Record<string, unknown>;
-      await expect(initWith(config, loader)).rejects.toThrow(diagnostic);
+      await expect(
+        initWith(config, loader, {
+          code: fakeHostCapabilities(code.entry, `role-case-${_label}`),
+        }),
+      ).rejects.toThrow(diagnostic);
     }
     const withoutAgents = createPlaybookCaptainShell(
       {
@@ -3704,6 +5272,12 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
       },
       {
         loadModule: async () => ({ default: registry.entry }),
+        hostCapabilities: {
+          code: fakeHostCapabilities(
+            registry.entry,
+            'visibility-rejection-lease',
+          ),
+        },
       },
     );
     const session = namespacedSession();
@@ -3743,7 +5317,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       await runtime.ports.emitTelemetry({
         topic: 'playbook.trace',
         payload: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           sessionId: runtime.session.sessionId,
           playbookId: runtime.session.playbookId,
           rootSessionId: runtime.session.rootSessionId,
@@ -4069,7 +5643,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
         await runtime.ports.emitTelemetry({
           topic: 'playbook.trace',
           payload: {
-            schemaVersion: 3,
+            schemaVersion: 4,
             sessionId: runtime.session.sessionId,
             playbookId: runtime.session.playbookId,
             rootSessionId: runtime.session.rootSessionId,
@@ -4412,6 +5986,189 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
         '◇ /docs returned to /code',
       ]),
     );
+  });
+
+  it('does not translate an unresolved-effect child or resume its parent', async () => {
+    const order: string[] = [];
+    let childStart:
+      | Awaited<ReturnType<PlaybookPorts['callPlaybook']>>
+      | undefined;
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        childStart = await runtime.ports.callPlaybook(
+          {
+            callId: 'code:docs:unresolved-effect',
+            playbookId: 'docs',
+            text: 'begin uncertain documentation',
+          },
+          runtimeTurn.signal,
+        );
+        if (childStart.state !== 'suspended') {
+          throw new Error('expected unresolved child to suspend');
+        }
+        return suspendedResult({
+          callId: 'code:docs:unresolved-effect',
+          playbookId: 'docs',
+          childSessionId: childStart.childSessionId,
+        });
+      },
+      async () => {
+        order.push('parent.dispose');
+      },
+      undefined,
+      async () => {
+        throw new Error('unresolved-effect child must not resume its parent');
+      },
+    );
+    const unresolved = unresolvedEffectResult('documentationEffectUnknown');
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async () => unresolved,
+      async () => {
+        order.push('child.dispose');
+      },
+    );
+    const authoritativeLedger = unresolvedEffectTestLedger(
+      'docs',
+      CHILD_ID,
+    );
+    const createDocsRuntime = docs.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    const applied: Parameters<NonNullable<PlaybookRuntime['apply']>>[0][] = [];
+    docs.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createDocsRuntime(
+        options,
+        hostCapabilities,
+      ) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: UNRESOLVED_EFFECT_BOUNDARY_ID,
+        },
+      ];
+      runtime.describe = () => ({
+        state: unresolved.state,
+        pendingQuestions: [],
+        actions: [
+          {
+            id: 'reconcile:unresolved-effect',
+            label: 'Retry unresolved effect reconciliation',
+          },
+          {
+            id: 'abandon:unresolved-effect',
+            label: 'Abandon unresolved workflow attempt',
+          },
+        ],
+      });
+      runtime.apply = async (input) => {
+        order.push('apply');
+        applied.push(input);
+        return { disposition: 'executed', run: unresolved };
+      };
+      return runtime;
+    }) as typeof docs.entry.createRuntime;
+    const docsCapabilityBase = fakeHostCapabilities(
+      docs.entry,
+      'unresolved-child-lease',
+    );
+    const docsCapabilities: PlaybookHostConstructionCapabilities = {
+      ...docsCapabilityBase,
+      effectLedger: {
+        snapshot: () => authoritativeLedger,
+        writeAhead: async () => authoritativeLedger,
+      },
+    };
+    const codeCapabilityBase = fakeHostCapabilities(
+      code.entry,
+      'unresolved-parent-lease',
+    );
+    const codeCapabilities: PlaybookHostConstructionCapabilities = {
+      ...codeCapabilityBase,
+      effectLedger: {
+        snapshot: () => authoritativeLedger,
+        writeAhead: async () => authoritativeLedger,
+      },
+    };
+    const begin = vi.fn(async () => {
+      order.push('begin');
+    });
+    const complete = vi.fn(async () => {
+      order.push('complete');
+    });
+    const shell = makeShell([code, docs], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+      hostCapabilities: {
+        code: codeCapabilities,
+        docs: docsCapabilities,
+      },
+      unresolvedEffectSettlement: { begin, complete },
+    });
+    const session = stubSession();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/code coordinate uncertain docs'),
+      stubContext().context,
+    );
+    const abandonment = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'abandon:unresolved-effect',
+      }),
+      () => {
+        order.push('present');
+        return {
+          status: 'ok',
+          turnId: 2,
+          finalText: 'The unresolved child has no authored completion.',
+        };
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('abandon the unresolved child', 2),
+      abandonment.context,
+    );
+
+    expect(childStart).toEqual({
+      state: 'suspended',
+      childSessionId: CHILD_ID,
+    });
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.actionId).toBe('abandon:unresolved-effect');
+    expect(code.runtimes[0]?.resumes).toEqual([]);
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(docs.runtimes[0]?.disposeCount).toBe(1);
+    expect(order).toEqual([
+      'apply',
+      'begin',
+      'child.dispose',
+      'parent.dispose',
+      'complete',
+      'present',
+    ]);
+    const expectedSettlement = {
+      rootPlaybookId: 'code',
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    };
+    expect(begin).toHaveBeenCalledWith(expectedSettlement);
+    expect(complete).toHaveBeenCalledWith(expectedSettlement);
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      unresolvedEffects: unresolvedEffectTestProjection(),
+    });
+    const publicEvidence = JSON.stringify({
+      statuses: session.statuses,
+      summary: turnSummaryCalls(abandonment).map(({ prompt }) => prompt),
+      telemetry: telemetryWithTopic(session, 'playbook.captain.fsm.state'),
+    });
+    expect(publicEvidence).not.toContain('/docs completed');
+    expect(publicEvidence).not.toContain('◇ /docs returned to /code');
+    expect(publicEvidence).not.toContain('"event":"final"');
+
+    await shell.dispose?.();
   });
 
   it.each([
@@ -4977,10 +6734,10 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     );
     const createChild = docs.entry.createRuntime;
     let factoryAttempt = 0;
-    docs.entry.createRuntime = (options) => {
+    docs.entry.createRuntime = (options, hostCapabilities) => {
       factoryAttempt += 1;
       if (factoryAttempt === 1) throw new Error('child factory failed');
-      return createChild(options);
+      return createChild(options, hostCapabilities);
     };
     const shell = makeShell([code, docs], {
       sessionIds: [ROOT_ID, CHILD_ID, LEAF_ID],
@@ -5341,6 +7098,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
             runtime.describe = () => {
               throw new Error('description unavailable');
             };
+            runtime.unresolvedEffectEnvelopes = () => [];
           } else if (description === 'mismatched') {
             runtime.describe = () => ({
               state: playbookState('differentState'),
@@ -5392,8 +7150,8 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         },
       );
       const createRuntime = code.entry.createRuntime;
-      code.entry.createRuntime = (options) => {
-        const runtime = createRuntime(options) as FakeRuntime;
+      code.entry.createRuntime = (options, hostCapabilities) => {
+        const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
         if (capability === 'marker-only') {
           runtime.retainedGenerationMetadata = Object.freeze({
             unfinishedFinalStateIds: Object.freeze([]),
@@ -5949,12 +7707,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await source.init!(sourceSession.session);
     const unopenedSnapshot = source.exportSnapshot()!;
     expect(unopenedSnapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       mode: 'chat',
       captain: {
         sessionId: SESSION_CAPTAIN_ID,
         conversation: { kind: 'unopened' },
-        runtime: { schemaVersion: 3, sequences: { turn: 0 } },
+        runtime: { schemaVersion: 4, sequences: { turn: 0 } },
       },
       issuedSessionIds: [SESSION_CAPTAIN_ID],
       sequences: { turn: 0, journal: 0 },
@@ -5991,12 +7749,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
 
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       mode: 'chat',
       captain: {
         conversation: { kind: 'pinned', token: 'conversation-1' },
         runtime: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           sequences: { turn: 1 },
           state: { tags: expect.arrayContaining(['playbook.parked']) },
         },
@@ -6054,7 +7812,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       mode: 'chat',
       captain: {
         conversation: { kind: 'needsSeeding' },
-        runtime: { schemaVersion: 3, sequences: { turn: 1 } },
+        runtime: { schemaVersion: 4, sequences: { turn: 1 } },
       },
       sequences: { turn: 1 },
     });
@@ -6484,6 +8242,104 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       asker: { kind: 'role' as const, roleId: 'coder' },
       question: 'Which target?',
     };
+    const observation = {
+      worktree: '/current/worktree',
+      gitDir: '/current/worktree/.git',
+      head: 'a'.repeat(40),
+      projection: {},
+      projectionDigest:
+        'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    };
+    const operationId = '43000000-0000-4000-8000-000000000003';
+    const firstBoundary = {
+      sequence: 1,
+      boundaryId: '41000000-0000-4000-8000-000000000001',
+      attemptId: '42000000-0000-4000-8000-000000000002',
+      attemptNumber: 1,
+      playbookId: 'code',
+      runtimeSessionId: ROOT_ID,
+      turnId: 1,
+      callId: 'code:coder:1',
+      roleId: 'coder',
+      sourceStateId: 'code.coder',
+      sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+      dispositions: ['deferred', 'one-descendant-commit'],
+      canonicalWorktree: {
+        worktree: observation.worktree,
+        gitDir: observation.gitDir,
+      },
+      baseline: observation,
+      after: observation,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: observation,
+        after: observation,
+      },
+      finalText: pendingQuestion.question,
+      semanticCandidate: {
+        guard: 'needsBossReply',
+        question: pendingQuestion.question,
+      },
+      correctionBudget: { limit: 1, spent: false },
+      logicalOperationId: operationId,
+    };
+    const boundLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [firstBoundary],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId: 'code',
+          runtimeSessionId: ROOT_ID,
+          boundaryIds: [firstBoundary.boundaryId],
+          originalBaseline: observation,
+          checkpoint: observation,
+          pendingQuestion,
+          playerContinuation: 'coder-root-token',
+          checkpointRestorationEligible: false,
+        },
+      ],
+    });
+    const completedLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [
+        firstBoundary,
+        {
+          ...firstBoundary,
+          sequence: 2,
+          boundaryId: '44000000-0000-4000-8000-000000000004',
+          attemptId: '45000000-0000-4000-8000-000000000005',
+          turnId: 3,
+          callId: 'code:coder:2',
+          finalText: 'Implemented.',
+          semanticCandidate: { guard: 'committed' },
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId: 'code',
+          runtimeSessionId: ROOT_ID,
+          boundaryIds: [
+            firstBoundary.boundaryId,
+            '44000000-0000-4000-8000-000000000004',
+          ],
+          originalBaseline: observation,
+          checkpointRestorationEligible: false,
+          logicalReceipt: {
+            classification: 'unchanged',
+            baseline: observation,
+            after: observation,
+          },
+        },
+      ],
+    });
+    let sourceLedger = emptyPlaybookEffectLedger();
+    let runtimeOwnedSnapshot: PlaybookRuntimeSnapshot | undefined;
     const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
       await callPlayerAndCommit(
         runtime,
@@ -6492,15 +8348,42 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         runtimeTurn.signal,
         false,
       );
+      sourceLedger = boundLedger;
+      runtimeOwnedSnapshot = runtimeSnapshot(
+        'code',
+        playbookState('awaitBossReply'),
+        {
+          turn: 1,
+          roleResumeTokens: { coder: 'coder-root-token' },
+          pendingBossQuestions: [pendingQuestion],
+          effectLedger: sourceLedger,
+        },
+      );
+      runtime.snapshot = runtimeOwnedSnapshot;
       await runtime.ports?.emitTelemetry(
-        stateTelemetry('ready', {
+        stateTelemetry('awaitBossReply', {
           pendingBossQuestions: [pendingQuestion],
           lastError: { name: 'TargetError', message: 'target missing' },
         }),
       );
-      return quiescentResult('ready');
+      return quiescentResult('awaitBossReply');
     });
-    const source = makeShell(sourceCode, { sessionIds: [ROOT_ID] });
+    const sourceCapabilityBase = fakeHostCapabilities(
+      sourceCode.entry,
+      'source-lease-authority',
+    );
+    const sourceCapabilities: PlaybookHostConstructionCapabilities =
+      Object.freeze({
+        ...sourceCapabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => sourceLedger),
+          writeAhead: vi.fn(async () => sourceLedger),
+        }),
+      });
+    const source = makeShell(sourceCode, {
+      sessionIds: [ROOT_ID],
+      hostCapabilities: { code: sourceCapabilities },
+    });
     await source.init!(stubSession(roster).session);
     const sourceContext = stubContext([
         { status: 'ok', turnId: 1, finalText: 'Implementation is parked.' },
@@ -6513,19 +8396,10 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       resumeToken: 'coder-root-token',
     });
     await source.handleBossTurn(turn('/code implement it'), sourceContext.context);
-    const runtimeOwnedSnapshot = runtimeSnapshot(
-      'code',
-      playbookState('ready'),
-      {
-        turn: 1,
-        roleResumeTokens: { coder: 'coder-root-token' },
-        pendingBossQuestions: [pendingQuestion],
-      },
-    );
-    sourceCode.runtimes[0]!.snapshot = runtimeOwnedSnapshot;
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
       mode: 'engaged.parked',
+      effectLedger: boundLedger,
       playerSessions: {
         'code-coder': expect.objectContaining({
           resumeToken: 'coder-root-token',
@@ -6533,7 +8407,14 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
       pendingBossQuestions: [pendingQuestion],
       lastError: { name: 'TargetError', message: 'target missing' },
-      frames: [{ playbookId: 'code', sessionId: ROOT_ID, depth: 0 }],
+      frames: [
+        {
+          playbookId: 'code',
+          sessionId: ROOT_ID,
+          depth: 0,
+          runtime: { effectLedger: boundLedger },
+        },
+      ],
     });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot?.captain)).toBe(true);
@@ -6542,7 +8423,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         Object.isFrozen(snapshot.frames[0]?.runtime),
     ).toBe(true);
     (
-      runtimeOwnedSnapshot.roleResumeTokens as Record<string, string>
+      runtimeOwnedSnapshot!.roleResumeTokens as Record<string, string>
     ).coder = 'mutated-after-export';
     expect(snapshot).toMatchObject({
       frames: [
@@ -6551,11 +8432,66 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     });
 
     let restoredToken: string | false | undefined;
-    const targetCode = fakeCodeEntry(async (runtime) => {
+    let targetLedger = boundLedger;
+    let targetInvocation = 0;
+    const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      targetInvocation += 1;
       restoredToken = runtime.session?.playerSessions?.select('coder');
+      expect(
+        targetLedger.logicalOperations[0]?.playerContinuation,
+      ).toBe(restoredToken);
+      if (targetInvocation === 1) {
+        runtime.snapshot = runtimeSnapshot(
+          'code',
+          playbookState('awaitBossReply'),
+          {
+            turn: 2,
+            roleResumeTokens: { coder: 'coder-root-token' },
+            pendingBossQuestions: [pendingQuestion],
+            effectLedger: targetLedger,
+          },
+        );
+        await runtime.ports?.emitTelemetry(
+          stateTelemetry('awaitBossReply', {
+            pendingBossQuestions: [pendingQuestion],
+          }),
+        );
+        return quiescentResult('awaitBossReply');
+      }
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'continue the exact bound question',
+        runtimeTurn.signal,
+        restoredToken ?? false,
+      );
+      targetLedger = completedLedger;
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {
+        turn: 3,
+        roleResumeTokens:
+          runtime.session?.playerSessions?.snapshot() ?? {},
+        effectLedger: targetLedger,
+      });
+      await runtime.ports?.emitTelemetry(
+        stateTelemetry('ready', { pendingBossQuestions: [] }),
+      );
       return quiescentResult('ready');
     });
-    const target = makeShell(targetCode);
+    const targetCapabilityBase = fakeHostCapabilities(
+      targetCode.entry,
+      'target-lease-authority',
+    );
+    const targetCapabilities: PlaybookHostConstructionCapabilities =
+      Object.freeze({
+        ...targetCapabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => targetLedger),
+          writeAhead: vi.fn(async () => targetLedger),
+        }),
+      });
+    const target = makeShell(targetCode, {
+      hostCapabilities: { code: targetCapabilities },
+    });
     const targetSession = stubSession(roster);
     await target.restore(
       targetSession.session,
@@ -6564,15 +8500,53 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     expect(targetSession.statuses).toEqual([]);
     expect(targetSession.telemetry).toEqual([]);
     expect(targetCode.runtimes[0]?.restoreCount).toBe(1);
+    expect(sourceCode.createRuntime).toHaveBeenCalledWith(
+      {},
+      sourceCapabilities,
+    );
+    expect(targetCode.createRuntime).toHaveBeenCalledWith(
+      {},
+      targetCapabilities,
+    );
     expect(target.exportSnapshot()).toEqual(snapshot);
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /source-lease-authority|target-lease-authority/,
+    );
 
+    const invalidContext = stubContext([
+      { status: 'ok', turnId: 2, finalText: 'Still waiting.' },
+    ]);
     await target.handleBossTurn(
-      turn('/code continue', 2),
-      stubContext([
-        { status: 'ok', turnId: 2, finalText: 'Continued.' },
-      ]).context,
+      turn('/code invalid answer', 2),
+      invalidContext.context,
+    );
+    expect(invalidContext.playerCalls).toEqual([]);
+    expect(target.exportSnapshot()).toMatchObject({
+      effectLedger: boundLedger,
+      pendingBossQuestions: [pendingQuestion],
+      frames: [{ runtime: { effectLedger: boundLedger } }],
+    });
+
+    const validContext = stubContext([
+      { status: 'ok', turnId: 3, finalText: 'Continued.' },
+    ]);
+    await target.handleBossTurn(
+      turn('/code valid answer', 3),
+      validContext.context,
     );
     expect(restoredToken).toBe('coder-root-token');
+    expect(validContext.playerCalls).toMatchObject([
+      {
+        playerId: 'code-coder',
+        options: { resume: 'coder-root-token' },
+      },
+    ]);
+    expect(targetCode.runtimes[0]?.inputs).toHaveLength(2);
+    expect(target.exportSnapshot()).toMatchObject({
+      effectLedger: completedLedger,
+      pendingBossQuestions: [],
+      frames: [{ runtime: { effectLedger: completedLedger } }],
+    });
 
     await source.dispose?.();
     await target.dispose?.();
@@ -6944,12 +8918,13 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         await session.ports.emitStatus('must stay gated');
       },
     );
-    const target = makeShell(targetCode);
+    const malformedTargetCode = fakeCodeEntry();
+    const malformedTarget = makeShell(malformedTargetCode);
     const rejectedSession = stubSession(roster);
     await expect(
-      target.restore(rejectedSession.session, malformed),
+      malformedTarget.restore(rejectedSession.session, malformed),
     ).rejects.toThrow(/session ids must be unique/);
-    expect(targetCode.createRuntime).not.toHaveBeenCalled();
+    expect(malformedTargetCode.createRuntime).not.toHaveBeenCalled();
     expect(rejectedSession.statuses).toEqual([]);
     expect(rejectedSession.telemetry).toEqual([]);
 
@@ -6957,11 +8932,25 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     mismatchedTokens.frames[0].runtime.roleResumeTokens = {
       coder: 'not-in-the-root-map',
     };
+    const mismatchedTargetCode = fakeCodeEntry();
+    const mismatchedTarget = makeShell(mismatchedTargetCode, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          mismatchedTargetCode.entry,
+          'mismatched-token-restore-lease',
+        ),
+      },
+    });
     await expect(
-      target.restore(stubSession(roster).session, mismatchedTokens),
+      mismatchedTarget.restore(stubSession(roster).session, mismatchedTokens),
     ).rejects.toThrow(/player tokens do not match session continuation/);
-    expect(targetCode.createRuntime).not.toHaveBeenCalled();
+    expect(mismatchedTargetCode.createRuntime).not.toHaveBeenCalled();
 
+    const target = makeShell(targetCode, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(targetCode.entry, 'gated-restore-lease'),
+      },
+    });
     const gatedSession = stubSession(roster);
     await expect(target.restore(gatedSession.session, valid)).rejects.toThrow(
       /attempted a host emission during restore/,
@@ -6970,13 +8959,25 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     expect(gatedSession.telemetry).toEqual([]);
     expect(targetCode.runtimes[0]?.disposeCount).toBe(1);
 
+    const successfulTargetCode = fakeCodeEntry();
+    const successfulTarget = makeShell(successfulTargetCode, {
+      hostCapabilities: {
+        code: fakeHostCapabilities(
+          successfulTargetCode.entry,
+          'successful-restore-lease',
+        ),
+      },
+    });
     const successfulSession = stubSession(roster);
-    await target.restore(successfulSession.session, valid);
+    await successfulTarget.restore(successfulSession.session, valid);
     expect(successfulSession.statuses).toEqual([]);
     expect(successfulSession.telemetry).toEqual([]);
 
     await source.dispose?.();
+    await malformedTarget.dispose?.();
     await target.dispose?.();
+    await mismatchedTarget.dispose?.();
+    await successfulTarget.dispose?.();
   });
 
   it('cleans Captain, root, and later-child restore failures in strict leaf-to-root order', async () => {
@@ -7360,6 +9361,9 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
       {
         loadModule: async () => imported.promise,
+        hostCapabilities: {
+          code: fakeHostCapabilities(registry.entry, 'restore-claim-lease'),
+        },
       },
     );
     const targetSession = stubSession(roster);
@@ -7470,6 +9474,13 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
       {
         loadModule: async (specifier) => modules[specifier],
+        hostCapabilities: {
+          code: fakeHostCapabilities(code.entry, 'historical-code-lease'),
+          review: fakeHostCapabilities(
+            review.entry,
+            'historical-review-lease',
+          ),
+        },
         // Restore allocates nothing. The next root allocation deliberately
         // proposes the removed root's historical UUID and must be rejected.
         createSessionId: () => ROOT_ID,
@@ -7800,6 +9811,8 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
   const TARGET_CHILD_ID = '50000000-0000-4000-8000-000000000002';
   const RETRY_ROOT_ID = '60000000-0000-4000-8000-000000000001';
   const RETRY_CHILD_ID = '60000000-0000-4000-8000-000000000002';
+  const ABSENT_DESCENDANT_ID = '70000000-0000-4000-8000-000000000003';
+  const ORIGINAL_SOURCE_ID = '30000000-0000-4000-8000-000000000004';
   const roster: CaptainSession['players'] = [
     { id: 'code-coder', adapter: 'claude' },
     { id: 'code-reviewer', adapter: 'codex' },
@@ -7808,6 +9821,61 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     coder: 'source-coder',
     reviewer: 'source-reviewer',
   } as const;
+  const retainedObservation = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: 'a'.repeat(40),
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const incompleteRetainedLedger = () =>
+    assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          sequence: 1,
+          boundaryId: '81000000-0000-4000-8000-000000000001',
+          attemptId: '82000000-0000-4000-8000-000000000002',
+          attemptNumber: 1,
+          playbookId: 'code',
+          runtimeSessionId: ABSENT_DESCENDANT_ID,
+          turnId: 1,
+          callId: 'code:coder:1',
+          roleId: 'coder',
+          sourceStateId: 'editing',
+          sourceOutcomeSchema: { committed: {} },
+          dispositions: ['one-descendant-commit'],
+          canonicalWorktree: {
+            worktree: retainedObservation.worktree,
+            gitDir: retainedObservation.gitDir,
+          },
+          baseline: retainedObservation,
+          correctionBudget: { limit: 1, spent: false },
+        },
+      ],
+      logicalOperations: [],
+    });
+  const completedRetainedLedger = () => {
+    const incomplete = incompleteRetainedLedger();
+    const boundary = incomplete.boundaries[0]!;
+    return assertPlaybookEffectLedger({
+      ...incomplete,
+      revision: 2,
+      boundaries: [
+        {
+          ...boundary,
+          after: retainedObservation,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline: retainedObservation,
+            after: retainedObservation,
+          },
+        },
+      ],
+    });
+  };
 
   const retainedRootGeneration = (
     playbookId: string,
@@ -7815,6 +9883,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     stateId: string,
     rootStateDescription?: string,
   ): PlaybookCaptainRetainedGeneration => ({
+    effectLedger: emptyPlaybookEffectLedger(),
     frames: [
       {
         playbookId,
@@ -7886,10 +9955,655 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       },
     ];
     return {
+      effectLedger: emptyPlaybookEffectLedger(),
       frames,
       rootStateDescription: 'Review of the retained edit is still pending.',
     };
   };
+
+  it('parks a pre-effect retained generation behind its authoritative ledger suffix', async () => {
+    let authoritativeLedger = incompleteRetainedLedger();
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    enableGenerationRetention(code, [], async (runtime, _session, snapshot, context) => {
+      runtime.snapshot = {
+        ...runtime.snapshot!,
+        effectLedger: authoritativeLedger,
+        retainedEffectSourceSessionId: context.sourceSessionId,
+        retainedEffectReconciliation: {
+          sourceSessionId: context.sourceSessionId,
+          checkpoint: snapshot.effectLedger,
+        },
+      };
+      runtime.unresolvedEffectEnvelopes = () => [
+        {
+          kind: 'boundary',
+          boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+        },
+      ];
+    });
+    enableGenerationRetention(
+      review,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: context.sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId: context.sourceSessionId,
+            checkpoint: snapshot.effectLedger,
+          },
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const reviewCapabilityBase = fakeHostCapabilities(
+      review.entry,
+      'retained-review-effect-lease',
+    );
+    const reviewCapabilities: PlaybookHostConstructionCapabilities =
+      Object.freeze({
+        ...reviewCapabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => authoritativeLedger),
+          writeAhead: vi.fn(async () => authoritativeLedger),
+        }),
+      });
+    const shell = makeShell([code, review], {
+      sessionIds: [TARGET_ROOT_ID, TARGET_CHILD_ID],
+      hostCapabilities: {
+        code: capabilities,
+        review: reviewCapabilities,
+      },
+    });
+    const host = stubSession(roster);
+    await shell.init!(host.session);
+    const generation = retainedNestedGeneration();
+    const generationBytes = JSON.stringify(generation);
+    await shell.installRetainedGenerations({ code: generation });
+
+    const resumed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText: 'The retained edit remains parked for reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('continue safely'), resumed.context);
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(code.runtimes[0]?.adoptions[0]?.snapshot.effectLedger).toEqual(
+      emptyPlaybookEffectLedger(),
+    );
+    expect(resumed.visiblePlayers).toEqual([]);
+    expect(resumed.replies[0]).toContain(
+      'remains parked until its repository-effect evidence is reconciled',
+    );
+    expect(resumed.replies[0]).toContain(
+      `Possible repository effect; a change could not be excluded (incomplete); ` +
+        `baseline HEAD ${retainedObservation.head}; after HEAD was not available.`,
+    );
+    expect(turnSummaryCalls(resumed)[0]?.prompt).toContain(
+      `Possible repository effect; a change could not be excluded (incomplete); ` +
+        `baseline HEAD ${retainedObservation.head}; after HEAD was not available.`,
+    );
+    expect(resumed.replies[0]).not.toContain('may duplicate external effects');
+    expect(shell.exportSettlement()).toMatchObject({
+      unresolvedEffects: incompleteUnresolvedEffectTestProjection(),
+      snapshot: {
+        mode: 'engaged.parked',
+        effectLedger: authoritativeLedger,
+        retainedEffectReconciliation: {
+          sourceGenerationId: SOURCE_ROOT_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        },
+        frames: [
+          {
+            runtime: {
+              effectLedger: authoritativeLedger,
+              retainedEffectSourceSessionId: SOURCE_ROOT_ID,
+              retainedEffectReconciliation: {
+                sourceSessionId: SOURCE_ROOT_ID,
+                checkpoint: emptyPlaybookEffectLedger(),
+              },
+            },
+          },
+          {
+            runtime: {
+              effectLedger: authoritativeLedger,
+              retainedEffectSourceSessionId: SOURCE_CHILD_ID,
+              retainedEffectReconciliation: {
+                sourceSessionId: SOURCE_CHILD_ID,
+                checkpoint: emptyPlaybookEffectLedger(),
+              },
+            },
+          },
+        ],
+      },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            effectLedger: emptyPlaybookEffectLedger(),
+            retainedEffectReconciliation: {
+              sourceGenerationId: SOURCE_ROOT_ID,
+            },
+          },
+        },
+      ],
+    });
+    expect(shell.exportSettlement()?.snapshot).not.toHaveProperty(
+      'pendingBossQuestions',
+    );
+
+    const refused = stubContext([
+      captainJson({ action: 'deliver' }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'No ordinary action was resumed.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('continue the edit', 2), refused.context);
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    expect(review.runtimes[0]?.inputs).toEqual([]);
+    expect(
+      refused.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain('Advertised actions: none.');
+
+    authoritativeLedger = completedRetainedLedger();
+    code.runtimes[0]!.snapshot = {
+      ...code.runtimes[0]!.snapshot!,
+      effectLedger: authoritativeLedger,
+    };
+    review.runtimes[0]!.snapshot = {
+      ...review.runtimes[0]!.snapshot!,
+      effectLedger: authoritativeLedger,
+    };
+    const stillFenced = stubContext([
+      captainJson({ action: 'deliver' }),
+      {
+        status: 'ok',
+        turnId: 3,
+        finalText: 'The retained frame still needs reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(
+      turn('try the retained child', 3),
+      stillFenced.context,
+    );
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    expect(review.runtimes[0]?.inputs).toEqual([]);
+    expect(
+      stillFenced.captainCalls.find((call) =>
+        isDecisionPrompt(call.prompt),
+      )?.prompt,
+    ).toContain('Advertised actions: none.');
+
+    await shell.dispose?.();
+  });
+
+  it('preserves original lineage when a safely adopted generation later fences', async () => {
+    const authoritativeLedger = incompleteRetainedLedger();
+    const code = fakeCodeEntry();
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        const sourceSessionId =
+          snapshot.retainedEffectSourceSessionId ?? context.sourceSessionId;
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId,
+            checkpoint: snapshot.effectLedger,
+          },
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'multi-hop-retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+      'A safely readopted edit is retained.',
+    );
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      ORIGINAL_SOURCE_ID;
+    const generationBytes = JSON.stringify(generation);
+
+    await shell.installRetainedGenerations({ code: generation });
+    await shell.handleBossTurn(
+      turn('resume the retained edit'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The retained edit remains fenced.',
+        },
+      ]).context,
+    );
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: {
+        retainedEffectReconciliation: {
+          sourceGenerationId: ORIGINAL_SOURCE_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        },
+        frames: [
+          {
+            runtime: {
+              retainedEffectSourceSessionId: ORIGINAL_SOURCE_ID,
+              retainedEffectReconciliation: {
+                sourceSessionId: ORIGINAL_SOURCE_ID,
+                checkpoint: emptyPlaybookEffectLedger(),
+              },
+            },
+          },
+        ],
+      },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          generation: {
+            retainedEffectReconciliation: {
+              sourceGenerationId: ORIGINAL_SOURCE_ID,
+            },
+          },
+        },
+      ],
+    });
+    await shell.dispose?.();
+  });
+
+  it('rejects an incomplete generation checkpoint before runtime construction', async () => {
+    const authoritativeLedger = incompleteRetainedLedger();
+    const code = fakeCodeEntry();
+    enableGenerationRetention(code);
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'incomplete-retained-checkpoint-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+    );
+    generation.effectLedger = authoritativeLedger;
+    generation.frames[0].runtime.effectLedger = authoritativeLedger;
+
+    await expect(
+      shell.installRetainedGenerations({ code: generation }),
+    ).rejects.toThrow('contains an incomplete physical boundary');
+    expect(code.runtimes).toHaveLength(0);
+    await shell.dispose?.();
+  });
+
+  it('accepts a marked capture mirror that later host authority extends', async () => {
+    const captureLedger = incompleteRetainedLedger();
+    const authoritativeLedger = completedRetainedLedger();
+    const code = fakeCodeEntry();
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        expect(snapshot.effectLedger).toEqual(captureLedger);
+        expect(snapshot.retainedEffectReconciliation).toEqual({
+          sourceSessionId: SOURCE_ROOT_ID,
+          checkpoint: emptyPlaybookEffectLedger(),
+        });
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: context.sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId: context.sourceSessionId,
+            checkpoint: snapshot.retainedEffectReconciliation!.checkpoint,
+          },
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'later-retained-effect-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedRootGeneration(
+      'code',
+      SOURCE_ROOT_ID,
+      'retainedCode',
+      'A fenced edit is retained.',
+    );
+    generation.retainedEffectReconciliation = {
+      sourceGenerationId: SOURCE_ROOT_ID,
+    };
+    generation.frames[0].runtime.effectLedger = captureLedger;
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      SOURCE_ROOT_ID;
+    generation.frames[0].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_ROOT_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+    const generationBytes = JSON.stringify(generation);
+
+    await shell.installRetainedGenerations({ code: generation });
+    const resumed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText: 'The retained edit remains parked for reconciliation.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('resume the fenced edit'), resumed.context);
+
+    expect(JSON.stringify(generation)).toBe(generationBytes);
+    expect(code.runtimes[0]?.adoptions[0]?.snapshot.effectLedger).toEqual(
+      captureLedger,
+    );
+    expect(resumed.visiblePlayers).toEqual([]);
+    expect(shell.exportSettlement()?.snapshot).toMatchObject({
+      effectLedger: authoritativeLedger,
+      retainedEffectReconciliation: {
+        sourceGenerationId: SOURCE_ROOT_ID,
+        checkpoint: emptyPlaybookEffectLedger(),
+      },
+      frames: [
+        {
+          runtime: {
+            effectLedger: authoritativeLedger,
+            retainedEffectReconciliation: {
+              sourceSessionId: SOURCE_ROOT_ID,
+              checkpoint: emptyPlaybookEffectLedger(),
+            },
+          },
+        },
+      ],
+    });
+    await shell.dispose?.();
+  });
+
+  it('rejects divergent marked schema-3 capture mirrors before construction', async () => {
+    const captureLedger = incompleteRetainedLedger();
+    const authoritativeLedger = completedRetainedLedger();
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    enableGenerationRetention(code);
+    enableGenerationRetention(review);
+    const codeCapabilities = fakeHostCapabilities(
+      code.entry,
+      'divergent-code-effect-lease',
+    );
+    const reviewCapabilities = fakeHostCapabilities(
+      review.entry,
+      'divergent-review-effect-lease',
+    );
+    const withAuthoritativeLedger = (
+      capabilities: PlaybookHostConstructionCapabilities,
+    ): PlaybookHostConstructionCapabilities =>
+      Object.freeze({
+        ...capabilities,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => authoritativeLedger),
+          writeAhead: vi.fn(async () => authoritativeLedger),
+        }),
+      });
+    const shell = makeShell([code, review], {
+      hostCapabilities: {
+        code: withAuthoritativeLedger(codeCapabilities),
+        review: withAuthoritativeLedger(reviewCapabilities),
+      },
+    });
+    await shell.init!(stubSession(roster).session);
+    const generation: any = retainedNestedGeneration();
+    generation.retainedEffectReconciliation = {
+      sourceGenerationId: SOURCE_ROOT_ID,
+    };
+    generation.frames[0].runtime.effectLedger = captureLedger;
+    generation.frames[0].runtime.retainedEffectSourceSessionId =
+      SOURCE_ROOT_ID;
+    generation.frames[0].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_ROOT_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+    generation.frames[1].runtime.effectLedger = authoritativeLedger;
+    generation.frames[1].runtime.retainedEffectSourceSessionId =
+      SOURCE_CHILD_ID;
+    generation.frames[1].runtime.retainedEffectReconciliation = {
+      sourceSessionId: SOURCE_CHILD_ID,
+      checkpoint: emptyPlaybookEffectLedger(),
+    };
+
+    await expect(
+      shell.installRetainedGenerations({ code: generation }),
+    ).rejects.toThrow(/marked generation capture mirror/);
+    expect(code.runtimes).toHaveLength(0);
+    expect(review.runtimes).toHaveLength(0);
+    await shell.dispose?.();
+  });
+
+  it('routes retained reconciliation and opens the root fence only after safe proof', async () => {
+    let authoritativeLedger = incompleteRetainedLedger();
+    let applyCalls = 0;
+    const code = fakeCodeEntry();
+    enableGenerationRetention(
+      code,
+      [],
+      async (runtime, _session, snapshot, context) => {
+        runtime.snapshot = {
+          ...runtime.snapshot!,
+          effectLedger: authoritativeLedger,
+          retainedEffectSourceSessionId: context.sourceSessionId,
+          retainedEffectReconciliation: {
+            sourceSessionId: context.sourceSessionId,
+            checkpoint: snapshot.effectLedger,
+          },
+        };
+        runtime.describe = () => ({
+          state: runtime.snapshot!.state,
+          pendingQuestions: [],
+          actions:
+            runtime.snapshot!.retainedEffectReconciliation === undefined
+              ? []
+              : [
+                  {
+                    id: 'reconcile:unresolved-effect',
+                    label: 'Retry unresolved effect reconciliation',
+                  },
+                  {
+                    id: 'abandon:unresolved-effect',
+                    label: 'Abandon unresolved workflow attempt',
+                  },
+                ],
+        });
+        runtime.unresolvedEffectEnvelopes = () => [
+          {
+            kind: 'boundary',
+            boundaryId: authoritativeLedger.boundaries[0]!.boundaryId,
+          },
+        ];
+        runtime.apply = async ({ actionId }) => {
+          expect(actionId).toBe('reconcile:unresolved-effect');
+          applyCalls += 1;
+          authoritativeLedger = completedRetainedLedger();
+          const {
+            retainedEffectReconciliation: _reconciled,
+            ...reconciledSnapshot
+          } = runtime.snapshot!;
+          runtime.snapshot = {
+            ...reconciledSnapshot,
+            effectLedger: authoritativeLedger,
+          };
+          return {
+            disposition: 'executed',
+            run: quiescentResult('retainedCode'),
+          };
+        };
+      },
+    );
+    const capabilityBase = fakeHostCapabilities(
+      code.entry,
+      'retained-effect-reconciliation-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = Object.freeze({
+      ...capabilityBase,
+      effectLedger: Object.freeze({
+        snapshot: vi.fn(() => authoritativeLedger),
+        writeAhead: vi.fn(async () => authoritativeLedger),
+      }),
+    });
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID],
+      hostCapabilities: { code: capabilities },
+    });
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      code: retainedRootGeneration(
+        'code',
+        SOURCE_ROOT_ID,
+        'retainedCode',
+        'A pre-effect edit is retained.',
+      ),
+    });
+
+    await shell.handleBossTurn(
+      turn('continue safely'),
+      stubContext([
+        captainJson({ action: 'resume', playbookId: 'code' }),
+        {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'The retained edit remains parked for reconciliation.',
+        },
+      ]).context,
+    );
+
+    const reconciled = stubContext([
+      captainJson({
+        action: 'runtime',
+        actionId: 'reconcile:unresolved-effect',
+      }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'The retained evidence is reconciled.',
+      },
+    ]);
+    await shell.handleBossTurn(turn('reconcile it', 2), reconciled.context);
+
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain(
+      '- reconcile:unresolved-effect: Retry unresolved effect reconciliation',
+    );
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain(
+      '- abandon:unresolved-effect: Abandon unresolved workflow attempt',
+    );
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).toContain('Only the advertised unresolved-effect controls may run.');
+    expect(
+      reconciled.captainCalls.find((call) => isDecisionPrompt(call.prompt))
+        ?.prompt,
+    ).not.toContain(
+      'Only an advertised repository-effect reconciliation action may run.',
+    );
+    expect(applyCalls).toBe(1);
+    expect(code.runtimes[0]?.inputs).toEqual([]);
+    const settlement = shell.exportSettlement();
+    expect(settlement?.snapshot).toMatchObject({
+      effectLedger: authoritativeLedger,
+      frames: [
+        {
+          runtime: {
+            effectLedger: authoritativeLedger,
+            retainedEffectSourceSessionId: SOURCE_ROOT_ID,
+          },
+        },
+      ],
+    });
+    expect(settlement?.snapshot).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    expect(settlement?.snapshot.frames[0]?.runtime).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    await shell.handleBossTurn(
+      turn('continue the edit', 3),
+      stubContext([
+        captainJson({ action: 'deliver' }),
+        {
+          status: 'ok',
+          turnId: 3,
+          finalText: 'The retained edit continued.',
+        },
+      ]).context,
+    );
+    expect(code.runtimes[0]?.inputs).toHaveLength(1);
+
+    await shell.dispose?.();
+  });
 
   it('advertises only adoptable retained generations with safe deterministic labels', async () => {
     const hostileDescription =
@@ -7904,22 +10618,22 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     enableGenerationRetention(notes);
     enableGenerationRetention(drafts);
     const createNotesRuntime = notes.entry.createRuntime;
-    notes.entry.createRuntime = (options) => {
-      const runtime = createNotesRuntime(options) as FakeRuntime;
+    notes.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createNotesRuntime(options, hostCapabilities) as FakeRuntime;
       delete runtime.retainedGenerationMetadata;
       return runtime;
     };
     const createReviewRuntime = review.entry.createRuntime;
-    review.entry.createRuntime = (options) => {
-      const runtime = createReviewRuntime(options) as FakeRuntime;
+    review.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createReviewRuntime(options, hostCapabilities) as FakeRuntime;
       runtime.retainedGenerationMetadata = Object.freeze({
         unfinishedFinalStateIds: Object.freeze([]),
       });
       return runtime;
     };
     const createDraftsRuntime = drafts.entry.createRuntime;
-    drafts.entry.createRuntime = (options) => {
-      const runtime = createDraftsRuntime(options) as FakeRuntime;
+    drafts.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createDraftsRuntime(options, hostCapabilities) as FakeRuntime;
       (runtime as unknown as { restore?: PlaybookRuntime['restore'] }).restore =
         undefined;
       return runtime;
@@ -8060,8 +10774,8 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     const review = fakePlaybookEntry('review', 'review');
     enableGenerationRetention(code);
     const createReviewRuntime = review.entry.createRuntime;
-    review.entry.createRuntime = (options) => {
-      const runtime = createReviewRuntime(options) as FakeRuntime;
+    review.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createReviewRuntime(options, hostCapabilities) as FakeRuntime;
       runtime.retainedGenerationMetadata = Object.freeze({
         unfinishedFinalStateIds: Object.freeze([]),
       });
@@ -8210,7 +10924,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         (generation.frames[0]!.runtime as { schemaVersion: number })
           .schemaVersion = 2;
       },
-      /schemaVersion 2 has incompatible player identity/,
+      /schemaVersion 2 is not supported \(expected 4\)/,
     ],
     [
       'broken suspended edge',
@@ -8268,9 +10982,21 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       sourceVariant: 'legacy',
     };
     const currentReviewOptions = { targetVariant: 'current' };
+    const codeCapabilities = fakeHostCapabilities(
+      code.entry,
+      'descendant-code-lease',
+    );
+    const reviewCapabilities = fakeHostCapabilities(
+      review.entry,
+      'descendant-review-lease',
+    );
     const shell = makeShell([code, review], {
       playbookOptions: { code: {}, review: currentReviewOptions },
       sessionIds: [TARGET_ROOT_ID, TARGET_CHILD_ID],
+      hostCapabilities: {
+        code: codeCapabilities,
+        review: reviewCapabilities,
+      },
     });
     await shell.init!(stubSession(roster).session);
 
@@ -8281,7 +11007,10 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     ]);
     await shell.handleBossTurn(turn('resume the review'), context.context);
 
-    expect(review.createRuntime).toHaveBeenCalledWith(currentReviewOptions);
+    expect(review.createRuntime).toHaveBeenCalledWith(
+      currentReviewOptions,
+      reviewCapabilities,
+    );
     expect(review.runtimes[0]?.session?.roleBindings).toMatchObject({
       coder: { playerId: 'code-coder' },
       reviewer: { playerId: 'code-reviewer' },
@@ -8543,12 +11272,12 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     enableGenerationRetention(review);
     const createReviewRuntime = review.entry.createRuntime;
     let reviewConstructionAttempts = 0;
-    review.entry.createRuntime = (options) => {
+    review.entry.createRuntime = (options, hostCapabilities) => {
       reviewConstructionAttempts += 1;
       if (reviewConstructionAttempts === 1) {
         throw new Error('transient probe construction failure');
       }
-      return createReviewRuntime(options);
+      return createReviewRuntime(options, hostCapabilities);
     };
     const entries = [code, drafts, review];
     const shell = makeShell(entries);
@@ -8777,8 +11506,20 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     enableGenerationRetention(review, [], async () => {
       adoptionOrder.push('review');
     });
+    const codeCapabilities = fakeHostCapabilities(
+      code.entry,
+      'current-code-lease-authority',
+    );
+    const reviewCapabilities = fakeHostCapabilities(
+      review.entry,
+      'current-review-lease-authority',
+    );
     const shell = makeShell([code, review], {
       sessionIds: [SOURCE_ROOT_ID, TARGET_ROOT_ID, TARGET_CHILD_ID],
+      hostCapabilities: {
+        code: codeCapabilities,
+        review: reviewCapabilities,
+      },
     });
     const host = stubSession(roster);
     await shell.init!(host.session);
@@ -8802,6 +11543,11 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     const reviewRuntime = review.runtimes[0]!;
     expect(codeRuntime.adoptCount).toBe(1);
     expect(reviewRuntime.adoptCount).toBe(1);
+    expect(code.createRuntime).toHaveBeenCalledWith({}, codeCapabilities);
+    expect(review.createRuntime).toHaveBeenCalledWith(
+      {},
+      reviewCapabilities,
+    );
     expect(adoptionOrder).toEqual(['code', 'review']);
     expect(
       [codeRuntime, reviewRuntime].map((runtime) => ({
@@ -8869,6 +11615,9 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         },
       ],
     });
+    expect(JSON.stringify(shell.exportSnapshot())).not.toMatch(
+      /current-code-lease-authority|current-review-lease-authority/,
+    );
     expect(turnSummaryCalls(context)[0]?.prompt).toContain(
       'may duplicate external effects',
     );
@@ -9216,8 +11965,8 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     });
     enableGenerationRetention(code);
     const createRuntime = code.entry.createRuntime;
-    code.entry.createRuntime = (options) => {
-      const runtime = createRuntime(options) as FakeRuntime;
+    code.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
       runtime.describe = () => ({
         state: runtime.snapshot?.state ?? playbookState('retainedEditing'),
         stateDescription: 'Editing is live.',
@@ -9292,36 +12041,46 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
 describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
   it('resolves the package shell export as a CODE-registered Captain factory', async () => {
     const mod = await import('@sublang/playbook/playbook-captain');
-    const shell = mod.default({
-      playbooks: {
-        code: {
-          from: '@sublang/playbook/code/registry',
-          roles: {
-            coder: {
-              playerId: 'code-coder',
-              model: { kind: 'provider-default' },
-              effort: { kind: 'provider-default' },
+    const shell = mod.default(
+      {
+        playbooks: {
+          code: {
+            from: '@sublang/playbook/code/registry',
+            roles: {
+              coder: {
+                playerId: 'code-coder',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
             },
+            options: {},
           },
-          options: {},
         },
-      },
-      sessionAgents: {
-        captain: {
-          adapter: 'claude',
-          model: { kind: 'provider-default' },
-          effort: { kind: 'provider-default' },
-        },
-        players: {
-          'code-coder': {
+        sessionAgents: {
+          captain: {
             adapter: 'claude',
             model: { kind: 'provider-default' },
             effort: { kind: 'provider-default' },
           },
+          players: {
+            'code-coder': {
+              adapter: 'claude',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+        captainAdapter: 'claude',
+      },
+      {
+        hostCapabilities: {
+          code: fakeHostCapabilities(
+            codePlaybookRegistryEntry,
+            'public-module-surface',
+          ),
         },
       },
-      captainAdapter: 'claude',
-    });
+    );
     const session = stubSession([
       { id: 'code-coder', adapter: 'claude' },
     ]);

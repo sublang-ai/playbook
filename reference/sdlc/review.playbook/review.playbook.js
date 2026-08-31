@@ -8,7 +8,7 @@
 //                callerInput; pending player questions retain BOSS_REPLY
 // Adjudication:  LLM judge per state; coderOutput and reviewerOutput are
 //                carried verbatim
-// Compat:        artifact schema 2 / runtime ABI 1
+// Compat:        artifact schema 3 / runtime ABI 1
 import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { reviewMachine, } from './review.fsm.js';
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
@@ -77,7 +77,7 @@ const runtimeSpec = {
     // time — a literal, never the loading engine's RUNTIME_ABI self-report,
     // which would follow whatever engine loads the module and make the
     // factory's skew check compare that engine with itself.
-    compat: { artifactSchema: 2, runtimeAbi: 1 },
+    compat: { artifactSchema: 3, runtimeAbi: 1 },
     snapshotOptions: snapshotReviewOptions,
     entryEvent: {
         type: 'START_REVIEW',
@@ -103,6 +103,66 @@ const runtimeSpec = {
         reviewAfterRebuttal: {
             role: 'reviewer',
             label: 'REVIEW-4: Reviewer adjudicates an all-rejected Coder disposition.',
+        },
+    },
+    outcomeAuthority: {
+        governedPlayerStates: {
+            reviewInitial: {
+                hasFindings: {
+                    fields: { reviewerOutput: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+                noFindings: {
+                    fields: {},
+                    repositoryDisposition: 'unchanged',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+            },
+            addressFindings: {
+                committed: {
+                    fields: { coderOutput: 'presentation' },
+                    repositoryDisposition: 'one-descendant-commit',
+                },
+                rejectedAll: {
+                    fields: { coderOutput: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'deferred',
+                },
+            },
+            reviewAfterCommit: {
+                hasFindings: {
+                    fields: { reviewerOutput: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+                noFindings: {
+                    fields: {},
+                    repositoryDisposition: 'unchanged',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+            },
+            reviewAfterRebuttal: {
+                hasFindings: {
+                    fields: { reviewerOutput: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+                noFindings: {
+                    fields: {},
+                    repositoryDisposition: 'unchanged',
+                },
+                needsBossReply: {
+                    fields: { question: 'presentation' },
+                    repositoryDisposition: 'unchanged',
+                },
+            },
         },
     },
     composePlayerPrompt: (input, promptIdentity) => composePlayerPrompt(input, promptIdentity),

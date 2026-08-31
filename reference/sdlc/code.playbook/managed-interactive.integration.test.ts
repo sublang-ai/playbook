@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { fork, type ChildProcess } from 'node:child_process';
+import { execFile, fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
   chmod,
@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { createEvent } from '@sublang/cligent';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
@@ -42,6 +43,7 @@ const CROSS_PROCESS_BOUNDARY_TIMEOUT_MS = 30_000;
 const CROSS_FRONT_TEST_TIMEOUT_MS = 45_000;
 const tempDirs: string[] = [];
 const children: ChildProcess[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   for (const child of children.splice(0)) {
@@ -295,7 +297,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     const record = await fixture.store.read(fixture.sessionId);
     expect(record).toEqual(visible.durableRecord);
     expect(record).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 6,
       state: 'settled',
       sessionId: fixture.sessionId,
       snapshot: {
@@ -467,6 +469,24 @@ async function crossFrontFixture(sessionId: string) {
   const cwd = join(root, 'working-directory');
   const sessionsDir = join(root, 'sessions');
   await mkdir(cwd);
+  await execFileAsync('git', ['init', '-q', cwd]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.name',
+    'Playbook Cross-Front Test',
+  ]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.email',
+    'cross-front@example.invalid',
+  ]);
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
+  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
   const controls = await managedControlBoundary(root, sessionId);
   const configAPath = join(root, 'playbook-a.yaml');
   const configBPath = join(root, 'playbook-b.yaml');
@@ -642,12 +662,12 @@ async function assertSettledTurnZero(
 ) {
   const record = await fixture.store.read(fixture.sessionId);
   expect(record).toMatchObject({
-    schemaVersion: 3,
+    schemaVersion: 6,
     state: 'settled',
     sessionId: fixture.sessionId,
     cwd: fixture.cwd,
     snapshot: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       sequences: { turn: 0, journal: 0 },
       playerSessions: { 'dev.coder': { adapter: 'claude' } },
     },
@@ -787,8 +807,8 @@ function fixtureRegistryEntry() {
     id: 'code',
     command: 'code',
     intent: 'exercise one durable player',
-    artifactSchema: 2 as const,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
@@ -869,7 +889,7 @@ function fixtureCaptainRuntime({ controller }: any): PlaybookRuntime {
 function runtimeSnapshot(turn: number): PlaybookRuntimeSnapshot {
   const state = activeState();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId: 'captain',
     machine: { value: state.value, status: state.status },
     roleResumeTokens: {},
@@ -883,6 +903,12 @@ function runtimeSnapshot(turn: number): PlaybookRuntimeSnapshot {
     },
     state,
     pendingBossQuestions: [],
+    effectLedger: {
+      schemaVersion: 1,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    },
   };
 }
 

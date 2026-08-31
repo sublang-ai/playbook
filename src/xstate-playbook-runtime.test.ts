@@ -16,8 +16,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 import type {
+  PlaybookEffectBoundary,
+  PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
   PlaybookAdoptionContext,
   PlaybookPorts,
+  PlaybookRepositoryObservation,
+  PlaybookRepositoryReceipt,
   PlaybookRunResult,
   PlaybookRuntime,
   PlaybookRuntimeSnapshot,
@@ -27,15 +32,18 @@ import type {
   PlayerResult,
 } from './runtime.js';
 import {
+  assertPlaybookEffectLedger,
   createXStatePlaybookRuntime,
   createPlayerBridge,
   defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
+  emptyPlaybookEffectLedger,
   normalizePlaybookSnapshot,
   resumableStateIdsFromMachine,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
+  type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
@@ -47,6 +55,7 @@ import createCodePlaybookRuntime, {
 import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
 import createDecidePlaybookRuntime, {
   _internal as decideArtifact,
+  type DecidePlaybookHostCapabilities,
 } from '../reference/sdlc/decide.playbook/decide.playbook.js';
 import { reviewMachine } from '../reference/sdlc/review.playbook/review.fsm.js';
 import { _internal as reviewArtifact } from '../reference/sdlc/review.playbook/review.playbook.js';
@@ -158,7 +167,8 @@ function makeSession(
   ports: PlaybookPorts,
   playerSessions?: PlayerSessionStore,
 ): PlaybookSession {
-  const sessionId = `factory-test-session-${++sessionSequence}`;
+  const suffix = String(++sessionSequence).padStart(12, '0');
+  const sessionId = `10000000-0000-4000-8000-${suffix}`;
   return {
     sessionId,
     playbookId: 'factory-test',
@@ -167,6 +177,307 @@ function makeSession(
     ...(playerSessions === undefined ? {} : { playerSessions }),
     ports,
   };
+}
+
+function makeCodeSession(
+  ports: PlaybookPorts,
+  depth: 0 | 1 = 0,
+): PlaybookSession {
+  const suffix = String(++sessionSequence).padStart(12, '0');
+  const sessionId = `20000000-0000-4000-8000-${suffix}`;
+  const rootSessionId =
+    depth === 0 ? sessionId : `30000000-0000-4000-8000-${suffix}`;
+  return {
+    sessionId,
+    playbookId: 'code',
+    rootSessionId,
+    ...(depth === 0
+      ? {}
+      : {
+          parentSessionId: `40000000-0000-4000-8000-${suffix}`,
+          parentCallId: `parent-call-${suffix}`,
+        }),
+    depth,
+    ports,
+  };
+}
+
+const CODE_EFFECT_OBSERVATION: PlaybookRepositoryObservation = Object.freeze({
+  worktree: '/repo',
+  gitDir: '/repo/.git',
+  head: '1'.repeat(40),
+  projection: Object.freeze({}),
+  projectionDigest:
+    'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+});
+
+type CodeEffectClassification = Extract<
+  PlaybookRepositoryReceipt['classification'],
+  'unchanged' | 'one-descendant-commit'
+>;
+
+/**
+ * A deliberately small host double for shared-runtime tests that exercise the
+ * real schema-3 CODE artifact. CODE's own integration suite covers Git and
+ * write-ahead mechanics; this double preserves their authoritative protocol
+ * while keeping these factory/control tests focused on the runtime surface.
+ */
+function governedRuntimeConstruction<TOptions>(
+  configuredOptions: TOptions,
+  playbookId: string,
+  classifications: readonly CodeEffectClassification[] = [],
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+): XStatePlaybookRuntimeConstruction<TOptions, object> {
+  let ledger = assertPlaybookEffectLedger(initialLedger);
+  let observation = ledger.boundaries.at(-1)?.after ?? CODE_EFFECT_OBSERVATION;
+  let callIndex = 0;
+  const attemptIdsByTurn = new Map<number, string>();
+
+  const effectLedger = {
+    snapshot: () => ledger,
+    writeAhead: async (
+      commands: PlaybookEffectLedgerCommandBatch,
+    ): Promise<PlaybookEffectLedger> => {
+      const boundaries = [...ledger.boundaries];
+      const logicalOperations = [...ledger.logicalOperations];
+      for (const command of commands) {
+        if (command.kind === 'replace-boundaries') {
+          for (const { expected, next } of command.replacements) {
+            const index = boundaries.findIndex(
+              ({ boundaryId }) => boundaryId === expected.boundaryId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(boundaries[index]) !== JSON.stringify(expected)
+            ) {
+              throw new Error('test effect-ledger boundary replacement is stale');
+            }
+            boundaries[index] = next;
+          }
+          continue;
+        }
+        if (command.kind === 'replace-logical-operations') {
+          for (const { expected, next } of command.replacements) {
+            const index = logicalOperations.findIndex(
+              ({ operationId }) => operationId === expected.operationId,
+            );
+            if (
+              index < 0 ||
+              JSON.stringify(logicalOperations[index]) !==
+                JSON.stringify(expected)
+            ) {
+              throw new Error(
+                'test effect-ledger logical-operation replacement is stale',
+              );
+            }
+            logicalOperations[index] = next;
+          }
+          continue;
+        }
+        throw new Error(
+          `test effect ledger does not support ${command.kind}`,
+        );
+      }
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries,
+        logicalOperations,
+      });
+      return ledger;
+    },
+  };
+
+  const runExclusive = async (options: {
+    readonly effectBoundary: Record<string, unknown>;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryObservation;
+      readonly identity: unknown;
+    }) => Promise<unknown>;
+    readonly completeEffectBoundary: (completion: {
+      readonly boundary: PlaybookEffectBoundary;
+      readonly operation:
+        | { readonly status: 'fulfilled'; readonly value: unknown }
+        | { readonly status: 'rejected'; readonly reason: unknown };
+      readonly receipt: PlaybookRepositoryReceipt;
+      readonly outcomeReceipt: PlaybookRepositoryReceipt;
+    }) => Promise<{
+      readonly finalText?: string;
+      readonly semanticCandidate?: unknown;
+      readonly deferred?: {
+        readonly operationId: string;
+        readonly pendingQuestion: unknown;
+        readonly playerContinuation: unknown;
+      };
+    }>;
+  }) => {
+    const currentCall = callIndex++;
+    const baseline = observation;
+    const boundarySequence = ledger.boundaries.length + 1;
+    const rawTurnId = options.effectBoundary.turnId;
+    if (!Number.isSafeInteger(rawTurnId) || (rawTurnId as number) <= 0) {
+      throw new TypeError('test governed boundary requires a positive turn id');
+    }
+    const turnId = rawTurnId as number;
+    let attemptId = attemptIdsByTurn.get(turnId);
+    if (attemptId === undefined) {
+      attemptId = `60000000-0000-4000-8000-${String(boundarySequence).padStart(12, '0')}`;
+      attemptIdsByTurn.set(turnId, attemptId);
+    }
+    const started = {
+      sequence: boundarySequence,
+      ...options.effectBoundary,
+      attemptId,
+      attemptNumber: 1,
+      playbookId,
+      canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+      baseline,
+    } as unknown as PlaybookEffectBoundary;
+    let operation:
+      | { readonly status: 'fulfilled'; readonly value: unknown }
+      | { readonly status: 'rejected'; readonly reason: unknown };
+    try {
+      operation = {
+        status: 'fulfilled',
+        value: await options.operation({
+          baseline,
+          identity: {
+            worktree: baseline.worktree,
+            gitDir: baseline.gitDir,
+          },
+        }),
+      };
+    } catch (reason) {
+      operation = { status: 'rejected', reason };
+    }
+    const classification = classifications[currentCall] ?? 'unchanged';
+    const after =
+      classification === 'unchanged'
+        ? baseline
+        : {
+            ...baseline,
+            head: (currentCall + 2).toString(16).padStart(40, '0'),
+          };
+    const receipt: PlaybookRepositoryReceipt = {
+      classification,
+      baseline,
+      after,
+      ...(classification === 'one-descendant-commit'
+        ? { commitOid: after.head }
+        : {}),
+    };
+    observation = after;
+    const completion = await options.completeEffectBoundary({
+      boundary: started,
+      operation,
+      receipt,
+      outcomeReceipt: receipt,
+    });
+    const operationId = completion.deferred?.operationId;
+    const completed: PlaybookEffectBoundary = {
+      ...started,
+      after,
+      physicalReceipt: receipt,
+      ...(completion.finalText === undefined
+        ? {}
+        : { finalText: completion.finalText }),
+      ...(completion.semanticCandidate === undefined
+        ? {}
+        : {
+            semanticCandidate:
+              completion.semanticCandidate as PlaybookEffectBoundary['semanticCandidate'],
+          }),
+      ...(operationId === undefined ? {} : { logicalOperationId: operationId }),
+    };
+    const logicalOperations =
+      completion.deferred === undefined
+        ? ledger.logicalOperations
+        : [
+            ...ledger.logicalOperations,
+            {
+              sequence: ledger.logicalOperations.length + 1,
+              operationId: completion.deferred.operationId,
+              playbookId,
+              runtimeSessionId: completed.runtimeSessionId,
+              boundaryIds: [completed.boundaryId],
+              originalBaseline: baseline,
+              checkpoint: after,
+              pendingQuestion: completion.deferred.pendingQuestion,
+              playerContinuation: completion.deferred.playerContinuation,
+              checkpointRestorationEligible: false,
+            },
+          ];
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries, completed],
+      logicalOperations,
+    });
+    return {
+      operation,
+      receipt,
+      effectLedger: ledger,
+      ...(completion.deferred === undefined ? {} : { deferredStatus: 'bound' }),
+    };
+  };
+
+  return {
+    configuredOptions,
+    hostCapabilities: {
+      effectLedger,
+      repository: {
+        runExclusive,
+        runDeferred: async () => {
+          throw new Error('deferred continuation is outside this test');
+        },
+      },
+    },
+  } as unknown as XStatePlaybookRuntimeConstruction<TOptions, object>;
+}
+
+function codeRuntimeConstruction(
+  classifications: readonly CodeEffectClassification[] = [],
+): Parameters<typeof createCodePlaybookRuntime>[0] {
+  return governedRuntimeConstruction({}, 'code', classifications) as unknown as
+    Parameters<typeof createCodePlaybookRuntime>[0];
+}
+
+function decideRuntimeConstruction(): Parameters<
+  typeof createDecidePlaybookRuntime
+>[0] {
+  const identity = Object.freeze({
+    worktree: '/repo',
+    gitDir: '/repo/.git',
+  });
+  const ledger = emptyPlaybookEffectLedger();
+  const unavailable = async (): Promise<never> => {
+    throw new Error('DECIDE repository work is outside this test');
+  };
+  const hostCapabilities: DecidePlaybookHostCapabilities = {
+    authority: {
+      playbookId: 'decide',
+      artifactSchema: 3,
+      cwd: identity.worktree,
+      sessionId: '70000000-0000-4000-8000-000000000001',
+      leaseOwnerToken: '70000000-0000-4000-8000-000000000002',
+      canonicalWorktree: identity,
+      requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [['coder', 'reviewer']],
+    },
+    repository: {
+      identity,
+      observe: async () => CODE_EFFECT_OBSERVATION,
+      acquire: unavailable,
+      runExclusive: unavailable,
+      runCohort: unavailable,
+      runDeferred: unavailable,
+    },
+    effectLedger: {
+      snapshot: () => ledger,
+      writeAhead: async () => ledger,
+    },
+  };
+  return { configuredOptions: {}, hostCapabilities };
 }
 
 function adoptionFrom(
@@ -183,6 +494,10 @@ function adoptionFrom(
 function turn(text: string): { text: string; signal: AbortSignal } {
   return { text, signal: new AbortController().signal };
 }
+
+const ROLELESS_OUTCOME_AUTHORITY = Object.freeze({
+  governedPlayerStates: Object.freeze({}),
+});
 
 interface WorkflowOptions {
   command?: string;
@@ -273,24 +588,44 @@ const workflowMachine = createMachine({
             guard: ({ event }) =>
               (event.output as { guard: string }).guard === 'needsBossReply',
             target: 'awaitBossReply',
-            actions: assign({
-              pendingBossQuestion: ({ event }) => ({
-                questionId: 'q-1',
-                resumeStateId: 'implement',
-                sourceItem: 'WF-1',
-                asker: { kind: 'role', roleId: 'coder' },
-                question: (event.output as { question: string }).question,
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'implement',
+                  target: 'awaitBossReply',
+                  acceptedOutcome: 'needsBossReply',
+                },
+              },
+              assign({
+                pendingBossQuestion: ({ event }) => ({
+                  questionId: 'q-1',
+                  resumeStateId: 'implement',
+                  sourceItem: 'WF-1',
+                  asker: { kind: 'role', roleId: 'coder' },
+                  question: (event.output as { question: string }).question,
+                }),
               }),
-            }),
+            ],
           },
           {
             target: 'verify',
-            actions: assign({
-              summary: ({ event }) =>
-                (event.output as { summary: string }).summary,
-              pendingBossQuestion: () => undefined,
-              bossReply: () => undefined,
-            }),
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'implement',
+                  target: 'verify',
+                  acceptedOutcome: 'implemented',
+                },
+              },
+              assign({
+                summary: ({ event }) =>
+                  (event.output as { summary: string }).summary,
+                pendingBossQuestion: () => undefined,
+                bossReply: () => undefined,
+              }),
+            ],
           },
         ],
         onError: {
@@ -373,11 +708,15 @@ const workflowMachine = createMachine({
     },
   },
   output: ({ context }) => ({ summary: context.summary ?? null }),
+}, {
+  actions: {
+    'playbook.acceptedOutcome': () => undefined,
+  },
 });
 
 const workflowSpec: XStatePlaybookRuntimeSpec<WorkflowOptions> = {
   label: 'workflow',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: (value) => {
     const options = (value ?? {}) as WorkflowOptions;
     return options;
@@ -388,14 +727,36 @@ const workflowSpec: XStatePlaybookRuntimeSpec<WorkflowOptions> = {
   roleStates: {
     implement: { role: 'coder', label: 'implement state' },
   },
+  verbatimPayloadFields: new Set(['question']),
+  outcomeAuthority: {
+    governedPlayerStates: {
+      implement: {
+        implemented: {
+          fields: { summary: 'semantic' },
+          repositoryDisposition: 'unchanged',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+    },
+  },
 };
 
-const createWorkflowRuntime = createXStatePlaybookRuntime(
+const createWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   workflowSpec,
 );
+const createWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createWorkflowRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test', [], initialLedger),
+  );
 
-const createLedgerAdoptionWorkflowRuntime = createXStatePlaybookRuntime(
+const createLedgerAdoptionWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -403,8 +764,20 @@ const createLedgerAdoptionWorkflowRuntime = createXStatePlaybookRuntime(
       `[${promptIdentity(input.role)}]\n${defaultComposePlayerPrompt(input)}`,
   },
 );
+const createLedgerAdoptionWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createLedgerAdoptionWorkflowRuntimeFactory(
+    governedRuntimeConstruction(
+      options,
+      'factory-test',
+      [],
+      initialLedger,
+    ),
+  );
 
-const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
+const createWorkflowRuntimeWithBossEventsFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -424,6 +797,179 @@ const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
     ],
   },
 );
+const createWorkflowRuntimeWithBossEvents = (options: WorkflowOptions) =>
+  createWorkflowRuntimeWithBossEventsFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
+
+const retainedFenceMachine = createMachine({
+  id: 'retained-fence',
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: meta('ready'),
+      tags: ['playbook.parked'],
+      on: {
+        START: [
+          {
+            guard: ({ event }) =>
+              (event as { task?: string }).task ===
+              'exercise retained lineage',
+            target: 'governed',
+          },
+          { target: 'done' },
+        ],
+      },
+    },
+    governed: {
+      meta: roleMeta('governed', 'coder'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: () => ({
+          stateId: 'governed',
+          role: 'coder',
+          sourceItem: 'TEST-1',
+          prompt: 'Exercise governed repository reconciliation.',
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'done',
+        onError: 'done',
+      },
+    },
+    done: { meta: meta('done'), type: 'final' },
+  },
+});
+
+const createRetainedFenceRuntime = createXStatePlaybookRuntime(
+  retainedFenceMachine,
+  {
+    label: 'retained-fence',
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    entryEvent: { type: 'START', textField: 'task' },
+    roleStates: {
+      governed: { role: 'coder', label: 'governed state' },
+    },
+    outcomeAuthority: {
+      governedPlayerStates: {
+        governed: {
+          complete: {
+            fields: {},
+            repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
+  },
+);
+
+const RETAINED_OBSERVATION = {
+  worktree: '/repo',
+  gitDir: '/repo/.git',
+  head: '1'.repeat(40),
+  projection: {},
+  projectionDigest:
+    'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+};
+
+function retainedBoundary(
+  classification?: 'unchanged' | 'observation-ambiguous',
+): PlaybookEffectBoundary {
+  const receipt =
+    classification === undefined
+      ? {}
+      : classification === 'unchanged'
+        ? {
+          after: RETAINED_OBSERVATION,
+          physicalReceipt: {
+            classification,
+            baseline: RETAINED_OBSERVATION,
+            after: RETAINED_OBSERVATION,
+          },
+        }
+        : {
+            physicalReceipt: {
+              classification,
+              baseline: RETAINED_OBSERVATION,
+            },
+          };
+  return {
+    sequence: 1,
+    boundaryId: '10000000-0000-4000-8000-000000000001',
+    attemptId: '10000000-0000-4000-8000-000000000002',
+    attemptNumber: 1,
+    playbookId: 'factory-test',
+    runtimeSessionId: '20000000-0000-4000-8000-000000000003',
+    turnId: 1,
+    callId: 'player-1',
+    roleId: 'coder',
+    sourceStateId: 'governed',
+    sourceOutcomeSchema: { complete: 'The task is complete.' },
+    dispositions: ['unchanged'],
+    canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+    baseline: RETAINED_OBSERVATION,
+    correctionBudget: { limit: 1, spent: false },
+    ...receipt,
+  };
+}
+
+function retainedLedger(
+  boundary?: PlaybookEffectBoundary,
+): PlaybookEffectLedger {
+  return boundary === undefined
+    ? {
+        schemaVersion: 1,
+        revision: 0,
+        boundaries: [],
+        logicalOperations: [],
+      }
+    : {
+        schemaVersion: 1,
+        revision: 1,
+        boundaries: [boundary],
+        logicalOperations: [],
+      };
+}
+
+function retainedRuntime(
+  readLedger: () => PlaybookEffectLedger,
+  repository?: object,
+) {
+  return createRetainedFenceRuntime({
+    configuredOptions: {},
+    hostCapabilities: {
+      effectLedger: {
+        snapshot: readLedger,
+        writeAhead: async () => readLedger(),
+      },
+      repository:
+        repository ??
+        {
+          runExclusive: async () => {
+            throw new Error('repository work is fenced in this test');
+          },
+          runDeferred: async () => {
+            throw new Error('repository work is fenced in this test');
+          },
+        },
+    },
+  } as unknown as Parameters<typeof createRetainedFenceRuntime>[0]);
+}
+
+function retainedSession(
+  suffix: string,
+  ports: PlaybookPorts,
+): PlaybookSession {
+  const sessionId = `20000000-0000-4000-8000-${suffix.padStart(12, '0')}`;
+  return {
+    sessionId,
+    playbookId: 'factory-test',
+    rootSessionId: sessionId,
+    depth: 0,
+    ports,
+  };
+}
 
 describe('generic strategy defaults', () => {
   it('defaultComposePlayerPrompt substitutes <field> placeholders and keeps unmatched ones', () => {
@@ -534,7 +1080,9 @@ describe('generic strategy defaults', () => {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(['done']),
     });
-    const runtime = createRuntime({});
+    const runtime = createRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     expect(typeof runtime.adopt).toBe('function');
     expect(runtime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: ['done'],
@@ -548,7 +1096,7 @@ describe('generic strategy defaults', () => {
     const emptyRuntime = createXStatePlaybookRuntime(workflowMachine, {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(),
-    })({});
+    })(governedRuntimeConstruction({}, 'factory-test'));
     expect(typeof emptyRuntime.adopt).toBe('function');
     expect(emptyRuntime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: [],
@@ -564,7 +1112,9 @@ describe('generic strategy defaults', () => {
     const unclassifiedRuntime = createWorkflowRuntime({});
     expect(unclassifiedRuntime.retainedGenerationMetadata).toBeUndefined();
     expect(typeof unclassifiedRuntime.adopt).toBe('function');
-    expect(createDecidePlaybookRuntime({}).adopt).toBeUndefined();
+    expect(
+      createDecidePlaybookRuntime(decideRuntimeConstruction()).adopt,
+    ).toBeUndefined();
   });
 
   it.each(['implement', 'missing'])(
@@ -744,7 +1294,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-abort-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const turn = runtime.handleBossInput({
         text: 'run the trap script',
@@ -804,7 +1354,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-coop-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const turnPromise = runtime.handleBossInput({
         text: 'run the cooperative script',
@@ -900,7 +1450,7 @@ describe('player + script workflow over the shared factory', () => {
         ...workflowSpec,
         label: 'script-postexit-workflow',
         machineInput: () => ({ command }),
-      })({});
+      })(governedRuntimeConstruction({}, 'factory-test'));
       await runtime.init(makeSession(ports));
       const settled = await runtime.handleBossInput({
         text: 'run the daemonish script',
@@ -974,7 +1524,7 @@ describe('player + script workflow over the shared factory', () => {
           ...workflowSpec,
           label: `script-${channel}-${failureKind}-workflow`,
           machineInput: () => ({ command }),
-        })({});
+        })(governedRuntimeConstruction({}, 'factory-test'));
         await runtime.init(makeSession(ports));
         const turnPromise = runtime.handleBossInput({
           text: 'run the daemonish script',
@@ -1174,7 +1724,6 @@ describe('player + script workflow over the shared factory', () => {
       '⤷ coder: implement state',
       '→ implemented',
       'Executed script for verify (exit 0).',
-      '→ verified',
     ]);
     const scriptEvents = telemetry.filter(
       ({ topic }) => topic === 'playbook.script',
@@ -1209,11 +1758,12 @@ describe('player + script workflow over the shared factory', () => {
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'undescribed-terminal',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       entryEvent: { type: 'COMPLETE', textField: 'task' },
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
 
@@ -1252,7 +1802,6 @@ describe('player + script workflow over the shared factory', () => {
         '⤷ coder: implement state',
         '→ implemented',
         'Executed script for verify (exit 1).',
-        '→ verificationFailed',
         '◆ workflow failed; awaiting Boss recovery.',
       ]);
       expect(statuses.at(-1)).toEqual({
@@ -1280,11 +1829,13 @@ describe('player + script workflow over the shared factory', () => {
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
-          expect(prompt).toContain('Pending Boss question: Which database?');
+          expect(prompt).toContain(
+            'Pending Boss question: Which database should I use?',
+          );
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -1296,7 +1847,7 @@ describe('player + script workflow over the shared factory', () => {
     expect(suspended.state.stateId).toBe('awaitBossReply');
     expect(statuses.slice(-3)).toEqual([
       { message: '→ needsBossReply' },
-      { message: 'coder asks: Which database?' },
+      { message: 'coder asks: Which database should I use?' },
       {
         message: '◆ awaiting Boss reply · implement · coder · WF-1',
       },
@@ -1306,7 +1857,9 @@ describe('player + script workflow over the shared factory', () => {
     expect(resumed.outcome).toBe('terminal');
     // The continuation preamble and exact Boss answer preceded the second
     // player prompt.
-    expect(playerInputsSeen[1]).toContain('Boss question:\nWhich database?');
+    expect(playerInputsSeen[1]).toContain(
+      'Boss question:\nWhich database should I use?',
+    );
     expect(playerInputsSeen[1]).toContain('Boss reply:\nuse sqlite');
     await runtime.dispose();
   });
@@ -1331,7 +1884,7 @@ describe('player + script workflow over the shared factory', () => {
             : '{"type":"START"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"restarted"}';
       },
     });
@@ -1370,7 +1923,7 @@ describe('player + script workflow over the shared factory', () => {
           return '{"type":"BOSS_INTERRUPT","targetId":"implement"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"interrupted"}';
       },
     });
@@ -1411,7 +1964,7 @@ describe('player + script workflow over the shared factory', () => {
           return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"interrupted"}';
       },
     });
@@ -1501,18 +2054,38 @@ describe('player + script workflow over the shared factory', () => {
                   (event.output as { guard: string }).guard ===
                   'needsBossReply',
                 target: 'awaitBossReply',
-                actions: assign({
-                  pendingBossQuestion: ({ event }) => ({
-                    questionId: 'chk-q',
-                    resumeStateId: 'work',
-                    sourceItem: 'CHK-1',
-                    asker: { kind: 'role', roleId: 'coder' } as const,
-                    question: (event.output as { question: string }).question,
+                actions: [
+                  {
+                    type: 'playbook.acceptedOutcome',
+                    params: {
+                      source: 'work',
+                      target: 'awaitBossReply',
+                      acceptedOutcome: 'needsBossReply',
+                    },
+                  },
+                  assign({
+                    pendingBossQuestion: ({ event }) => ({
+                      questionId: 'chk-q',
+                      resumeStateId: 'work',
+                      sourceItem: 'CHK-1',
+                      asker: { kind: 'role', roleId: 'coder' } as const,
+                      question: (event.output as { question: string }).question,
+                    }),
                   }),
-                }),
+                ],
               },
               // Deliberately retains pendingBossQuestion into the checkpoint.
-              { target: 'checkpoint' },
+              {
+                target: 'checkpoint',
+                actions: {
+                  type: 'playbook.acceptedOutcome',
+                  params: {
+                    source: 'work',
+                    target: 'checkpoint',
+                    acceptedOutcome: 'drafted',
+                  },
+                },
+              },
             ],
             onError: { target: 'checkpoint' },
           },
@@ -1553,16 +2126,37 @@ describe('player + script workflow over the shared factory', () => {
           },
         },
       },
-    });
+    },
+    {
+      actions: {
+        'playbook.acceptedOutcome': () => undefined,
+      },
+    },
+  );
     const createCheckpointRuntime = createXStatePlaybookRuntime(
       checkpointMachine,
       {
         label: 'checkpointed',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         machineInput: () => ({}),
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: { work: { role: 'coder', label: 'work state' } },
+        verbatimPayloadFields: new Set(['question']),
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              drafted: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+              needsBossReply: {
+                fields: { question: 'presentation' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
       },
     );
 
@@ -1587,12 +2181,14 @@ describe('player + script workflow over the shared factory', () => {
             : '{"type":"START"}';
         }
         return playerPrompts.length === 1
-          ? '{"guard":"needsBossReply","question":"Where should the intro go?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"drafted"}';
       },
     });
     const session = makeSession(ports);
-    const runtime = createCheckpointRuntime({});
+    const runtime = createCheckpointRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(session);
     const asked = await runtime.handleBossInput(turn('begin the draft'));
     expect(asked.state.stateId).toBe('awaitBossReply');
@@ -1655,7 +2251,14 @@ describe('player + script workflow over the shared factory', () => {
     // nor offers the checkpoint's configured BOSS_REPLY contract, which
     // only the pendingness gate can exclude.
     for (const text of ['/publish the draft', 'refine the intro']) {
-      const restored = createCheckpointRuntime({});
+      const restored = createCheckpointRuntime(
+        governedRuntimeConstruction(
+          {},
+          'factory-test',
+          [],
+          snapshot.effectLedger,
+        ),
+      );
       await restored.restore!(session, snapshot);
       const resumed = await restored.handleBossInput(turn(text));
       const prompt = classifierPrompts.at(-1)!;
@@ -1693,7 +2296,7 @@ describe('player + script workflow over the shared factory', () => {
           return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
         return playerCalls === 2
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"recovered"}';
       },
     });
@@ -1879,11 +2482,12 @@ describe('player + script workflow over the shared factory', () => {
         });
         const runtime = createXStatePlaybookRuntime(machine, {
           label: 'action-throw',
-          compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+          compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
           snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
           entryEvent: { type: 'START', textField: 'task' },
           roleStates: {},
-        })({});
+          outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+        })(governedRuntimeConstruction({}, 'factory-test'));
         await runtime.init(makeSession(makeRecordingPorts().ports));
         await expect(
           runtime.handleBossInput({ text: 'go', signal: controller.signal }),
@@ -2054,7 +2658,7 @@ describe('player + script workflow over the shared factory', () => {
       callJudge: async (prompt) =>
         prompt.includes('Classify the following Boss message')
           ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
-          : '{"guard":"needsBossReply","question":"Which database?"}',
+          : '{"guard":"needsBossReply"}',
       emitTelemetry: async (event) => {
         const trace = event.payload as { type?: string };
         if (
@@ -2099,7 +2703,7 @@ describe('player + script workflow over the shared factory', () => {
       },
       callJudge: async () => {
         judgeCalls += 1;
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
       emitTelemetry: async (event) => {
         if (event.topic !== 'playbook.trace') return;
@@ -2252,13 +2856,18 @@ const captainMachine = createMachine({
   output: ({ context }) => ({ response: context.response ?? null }),
 });
 
-const createCaptainRuntime = createXStatePlaybookRuntime(captainMachine, {
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+const createCaptainRuntimeFactory = createXStatePlaybookRuntime(captainMachine, {
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: (value) => (value ?? {}) as CaptainOptions,
   roleStates: {},
   machineInput: (options) => options,
   entryEvent: { type: 'GO', textField: 'topic' },
+  outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
 });
+const createCaptainRuntime = (options: CaptainOptions) =>
+  createCaptainRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 describe('direct-Captain actor over the shared factory', () => {
   it('finishes the captain pair aborted when the start sink cancels with the exact reason', async () => {
@@ -3252,7 +3861,7 @@ describe('host-owned player continuation (DR-030)', () => {
         };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const first = createWorkflowRuntime({});
     const firstSession = makeSession(ports, firstStore);
@@ -3281,7 +3890,7 @@ describe('host-owned player continuation (DR-030)', () => {
         }
       },
     };
-    const second = createWorkflowRuntime({});
+    const second = createWorkflowRuntime({}, snapshot.effectLedger);
     await second.restore!(makeSession(ports, restoredStore), snapshot!);
 
     expect(restoreCalls).toEqual([{ coder: 'parked-token' }]);
@@ -3376,7 +3985,7 @@ describe('host-owned player continuation (DR-030)', () => {
         resumeToken: 'snapshot-token',
       }),
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const source = createWorkflowRuntime({});
     await source.init(makeSession(ports, sourceStore));
@@ -3405,7 +4014,7 @@ describe('host-owned player continuation (DR-030)', () => {
       ...snapshot,
       machine: { ...snapshot.machine, status: 'done' },
     };
-    const restored = createWorkflowRuntime({});
+    const restored = createWorkflowRuntime({}, snapshot.effectLedger);
 
     await expect(
       restored.restore!(makeSession(ports, restoreStore), brokenSnapshot),
@@ -3518,13 +4127,18 @@ const nestedMachine = createMachine({
   output: ({ context }) => ({ childOutput: context.childOutput ?? null }),
 });
 
-const createNestedRuntime = createXStatePlaybookRuntime(nestedMachine, {
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+const createNestedRuntimeFactory = createXStatePlaybookRuntime(nestedMachine, {
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   roleStates: {},
   machineInput: () => ({}),
   entryEvent: { type: 'GO', textField: 'request' },
+  outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
 });
+const createNestedRuntime = (options: Record<string, never>) =>
+  createNestedRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 describe('nested playbook actor over the shared factory', () => {
   it('suspends on a child call and resumes to terminal through resumePlaybookCall', async () => {
@@ -3975,10 +4589,10 @@ describe('nested playbook actor over the shared factory', () => {
 
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     expect(snapshot.suspendedCall).toEqual({
       callId: 'playbook-1',
@@ -4085,10 +4699,10 @@ describe('nested playbook actor over the shared factory', () => {
 
     const sourceSnapshot = source.exportSnapshot?.();
     if (
-      sourceSnapshot?.schemaVersion !== 3 ||
+      sourceSnapshot?.schemaVersion !== 4 ||
       sourceSnapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     expect(sourceSnapshot.suspendedCall).toMatchObject({
       callId: 'playbook-4',
@@ -4255,10 +4869,10 @@ describe('nested playbook actor over the shared factory', () => {
       await first.handleBossInput(turn('do it'));
       const snapshot = first.exportSnapshot?.();
       if (
-        snapshot?.schemaVersion !== 3 ||
+        snapshot?.schemaVersion !== 4 ||
         snapshot.suspendedCall === undefined
       ) {
-        throw new Error('expected a schema-3 suspended-call snapshot');
+        throw new Error('expected a schema-4 suspended-call snapshot');
       }
       const mismatched = structuredClone(snapshot);
       if (mismatch === 'state') {
@@ -4386,10 +5000,10 @@ describe('nested playbook actor over the shared factory', () => {
     await first.handleBossInput(turn('do it'));
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
+      throw new Error('expected a schema-4 suspended-call snapshot');
     }
     const { suspendedCall: _suspendedCall, ...withoutCall } = snapshot;
     const forgedLegacy = {
@@ -4428,11 +5042,10 @@ describe('nested playbook actor over the shared factory', () => {
         playerCalls += 1;
         return {
           status: 'ok',
-          finalText: 'Implemented and verified.\nCommit: abc123',
+          finalText: 'Implemented and verified.',
         };
       },
-      callJudge: async () =>
-        '{"guard":"directCommit","latestCommit":"abc123"}',
+      callJudge: async () => '{"guard":"directCommit"}',
       callPlaybook: async () => {
         childStarts += 1;
         return {
@@ -4441,24 +5054,27 @@ describe('nested playbook actor over the shared factory', () => {
         };
       },
     });
-    const session = { ...makeSession(ports), playbookId: 'code' };
-    const first = createCodePlaybookRuntime({});
+    const session = makeCodeSession(ports);
+    const construction = codeRuntimeConstruction([
+      'one-descendant-commit',
+    ]);
+    const first = createCodePlaybookRuntime(construction);
     await first.init(session);
     const suspended = await first.handleBossInput(turn('Fix it.'));
     expect(suspended.outcome).toBe('suspended');
     const snapshot = first.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 3 ||
+      snapshot?.schemaVersion !== 4 ||
       snapshot.suspendedCall === undefined
     ) {
       throw new Error('expected CODE to export its suspended REVIEW call');
     }
 
-    const restored = createCodePlaybookRuntime({});
+    const restored = createCodePlaybookRuntime(construction);
     await restored.restore?.(session, snapshot);
     const immediate = restored.exportSnapshot?.();
     expect(immediate).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       state: snapshot.state,
       sequences: snapshot.sequences,
       suspendedCall: snapshot.suspendedCall,
@@ -4537,6 +5153,421 @@ describe('nested playbook actor over the shared factory', () => {
 });
 
 describe('parked-session snapshot over the shared factory', () => {
+  it('fences an unsafe retained ledger across export, restore, and readoption until reconstruction proves unchanged', async () => {
+    const callJudge = vi.fn(async () => '{}');
+    const callPlaybook = vi.fn<PlaybookPorts['callPlaybook']>(async () => ({
+      state: 'suspended',
+      childSessionId: 'unexpected-child',
+    }));
+    const recording = makeRecordingPorts({ callJudge, callPlaybook });
+    const sourceSession = retainedSession('3', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const retained = source.exportSnapshot?.();
+    if (retained === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary());
+    const targetSession = retainedSession('4', recording.ports);
+    const target = retainedRuntime(() => currentLedger);
+    await target.adopt?.(
+      targetSession,
+      retained,
+      adoptionFrom(sourceSession),
+    );
+
+    const fenced = target.exportSnapshot?.();
+    expect(fenced).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: retained.effectLedger,
+      },
+    });
+    expect(target.describe?.()).toMatchObject({
+      pendingQuestions: [],
+      actions: [
+        { id: 'reconcile:unresolved-effect' },
+        { id: 'abandon:unresolved-effect' },
+      ],
+    });
+    expect(target.describe?.()).not.toHaveProperty('stateDescription');
+    expect(target.unresolvedEffectEnvelopes?.()).toEqual([
+      {
+        kind: 'boundary',
+        boundaryId: currentLedger.boundaries[0]!.boundaryId,
+      },
+    ]);
+    await expect(target.handleBossInput(turn('must stay parked'))).resolves
+      .toMatchObject({ outcome: 'no-action', state: { stateId: 'ready' } });
+    await expect(
+      target.apply?.({
+        actionId: 'jump:done',
+        key: 'fenced-action',
+        signal: sigOf(),
+      }),
+    ).resolves.toMatchObject({ disposition: 'rejected' });
+    await expect(
+      target.resumePlaybookCall({
+        callId: 'foreign-call',
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'child-session',
+        },
+        signal: sigOf(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+    expect(callJudge).not.toHaveBeenCalled();
+    expect(callPlaybook).not.toHaveBeenCalled();
+
+    const fencedAgain = target.exportSnapshot?.();
+    if (fencedAgain === undefined) throw new Error('expected fenced snapshot');
+    await target.dispose();
+    const restored = retainedRuntime(() => currentLedger);
+    await restored.restore?.(targetSession, fencedAgain);
+    expect(restored.describe?.()).not.toHaveProperty('stateDescription');
+    const restoredSnapshot = restored.exportSnapshot?.();
+    if (restoredSnapshot === undefined) {
+      throw new Error('expected restored fenced snapshot');
+    }
+    await restored.dispose();
+
+    const readopted = retainedRuntime(() => currentLedger);
+    const readoptedSession = retainedSession('5', recording.ports);
+    await readopted.adopt?.(
+      readoptedSession,
+      restoredSnapshot,
+      adoptionFrom(targetSession),
+    );
+    expect(readopted.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: retained.effectLedger,
+      },
+    });
+
+    const earlierBoundary = retainedBoundary();
+    const laterBoundary = {
+      ...retainedBoundary('unchanged'),
+      sequence: 2,
+      boundaryId: '10000000-0000-4000-8000-000000000006',
+      callId: 'player-2',
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [earlierBoundary, laterBoundary],
+      logicalOperations: [],
+    };
+    expect(readopted.describe?.()).not.toHaveProperty('stateDescription');
+    expect(readopted.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    currentLedger = {
+      ...currentLedger,
+      revision: 3,
+      boundaries: [
+        {
+          ...earlierBoundary,
+          after: RETAINED_OBSERVATION,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline: RETAINED_OBSERVATION,
+            after: RETAINED_OBSERVATION,
+          },
+        },
+        laterBoundary,
+      ],
+    };
+    expect(readopted.describe?.()).toMatchObject({
+      stateDescription: 'ready state',
+      pendingQuestions: [],
+    });
+    expect(readopted.unresolvedEffectEnvelopes?.()).toEqual([]);
+    const reconciled = readopted.exportSnapshot?.();
+    expect(reconciled).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    expect(reconciled).not.toHaveProperty('retainedEffectReconciliation');
+    await expect(readopted.handleBossInput(turn('continue'))).resolves
+      .toMatchObject({ outcome: 'terminal', state: { stateId: 'done' } });
+    await readopted.dispose();
+  });
+
+  it('keeps a completed non-unchanged retained suffix fenced', async () => {
+    const recording = makeRecordingPorts();
+    const sourceSession = retainedSession('30', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(
+      retainedBoundary('observation-ambiguous'),
+    );
+    const adopted = retainedRuntime(() => currentLedger);
+    await adopted.adopt?.(
+      retainedSession('31', recording.ports),
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
+
+    expect(adopted.describe?.()).not.toHaveProperty('stateDescription');
+    expect(adopted.unresolvedEffectEnvelopes?.()).toEqual([
+      {
+        kind: 'boundary',
+        boundaryId: currentLedger.boundaries[0]!.boundaryId,
+      },
+    ]);
+    expect(adopted.exportSnapshot?.()).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: snapshot.effectLedger,
+      },
+    });
+    await adopted.dispose();
+  });
+
+  it('rejects an incomplete retained checkpoint before runtime work', async () => {
+    const callJudge = vi.fn(async () => '{}');
+    const recording = makeRecordingPorts({ callJudge });
+    const sourceSession = retainedSession('32', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected retained snapshot');
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary());
+    const incompleteSnapshot = {
+      ...snapshot,
+      effectLedger: currentLedger,
+    };
+    const adopted = retainedRuntime(() => currentLedger);
+    await expect(
+      adopted.adopt?.(
+        retainedSession('33', recording.ports),
+        incompleteSnapshot,
+        adoptionFrom(sourceSession),
+      ),
+    ).rejects.toThrow('checkpoint contains an incomplete physical boundary');
+    expect(callJudge).not.toHaveBeenCalled();
+    expect(adopted.exportSnapshot?.()).toBeUndefined();
+    await adopted.dispose();
+  });
+
+  it('admits an all-unchanged suffix and preserves source-owned deferred reconciliation', async () => {
+    const recording = makeRecordingPorts();
+    const sourceSession = retainedSession('3', recording.ports);
+    let currentLedger = retainedLedger();
+    const source = retainedRuntime(() => currentLedger);
+    await source.init(sourceSession);
+    const emptySnapshot = source.exportSnapshot?.();
+    if (emptySnapshot === undefined) throw new Error('expected source snapshot');
+    const emptySnapshotBytes = JSON.stringify(emptySnapshot);
+    await source.dispose();
+
+    currentLedger = retainedLedger(retainedBoundary('unchanged'));
+    const postAdoptionBoundaryOwners: string[] = [];
+    const safe = retainedRuntime(() => currentLedger, {
+      runExclusive: async (options: {
+        readonly effectBoundary: { readonly runtimeSessionId: string };
+      }) => {
+        postAdoptionBoundaryOwners.push(
+          options.effectBoundary.runtimeSessionId,
+        );
+        throw new Error('captured post-adoption boundary lineage');
+      },
+      runDeferred: async () => {
+        throw new Error('runDeferred is not used while capturing lineage');
+      },
+    });
+    await safe.adopt?.(
+      retainedSession('6', recording.ports),
+      emptySnapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(JSON.stringify(emptySnapshot)).toBe(emptySnapshotBytes);
+    expect(safe.describe?.()).toMatchObject({
+      stateDescription: 'ready state',
+    });
+    expect(safe.exportSnapshot?.()).toMatchObject({
+      effectLedger: currentLedger,
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    expect(safe.exportSnapshot?.()).not.toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+    await expect(
+      safe.handleBossInput(turn('exercise retained lineage')),
+    ).rejects.toThrow('captured post-adoption boundary lineage');
+    expect(postAdoptionBoundaryOwners).toEqual([sourceSession.sessionId]);
+    const postAdoptionBoundaryOwner = postAdoptionBoundaryOwners[0]!;
+    await safe.dispose();
+
+    const operationId = '10000000-0000-4000-8000-000000000004';
+    const operationBoundary = {
+      ...retainedBoundary('unchanged'),
+      runtimeSessionId: postAdoptionBoundaryOwner,
+      logicalOperationId: operationId,
+    };
+    const operation = {
+      sequence: 1,
+      operationId,
+      playbookId: 'factory-test',
+      runtimeSessionId: postAdoptionBoundaryOwner,
+      boundaryIds: [operationBoundary.boundaryId],
+      originalBaseline: RETAINED_OBSERVATION,
+      checkpoint: RETAINED_OBSERVATION,
+      pendingQuestion: {
+        questionId: 'question-1',
+        asker: { kind: 'role' as const, roleId: 'coder' },
+        question: 'Which path?',
+        sourceItem: 'TEST-1',
+      },
+      playerContinuation: false,
+      checkpointRestorationEligible: true,
+    };
+    const operationCheckpoint: PlaybookEffectLedger = {
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [operationBoundary],
+      logicalOperations: [operation],
+    };
+    const incompleteSuffix = {
+      ...retainedBoundary(),
+      sequence: 2,
+      boundaryId: '10000000-0000-4000-8000-000000000005',
+      callId: 'player-2',
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 3,
+      boundaries: [operationBoundary, incompleteSuffix],
+      logicalOperations: [operation],
+    };
+    const boundSnapshot = {
+      ...emptySnapshot,
+      effectLedger: operationCheckpoint,
+    };
+    const boundTargetSession = retainedSession('7', recording.ports);
+    const runDeferred = vi.fn(async () => ({
+      status: 'checkpoint-mismatch' as const,
+      effectLedger: currentLedger,
+    }));
+    const bound = retainedRuntime(() => currentLedger, {
+      runExclusive: async () => {
+        throw new Error('runExclusive must remain fenced');
+      },
+      runDeferred,
+    });
+    await bound.adopt?.(
+      boundTargetSession,
+      boundSnapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(bound.describe?.().actions).toEqual([
+      {
+        id: 'reconcile:unresolved-effect',
+        label: 'Retry unresolved effect reconciliation',
+      },
+      {
+        id: 'abandon:unresolved-effect',
+        label: 'Abandon unresolved workflow attempt',
+      },
+    ]);
+    expect(bound.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      retainedEffectReconciliation: {
+        sourceSessionId: sourceSession.sessionId,
+        checkpoint: operationCheckpoint,
+      },
+    });
+    const reconciliationReceipt = await bound.apply?.({
+      actionId: 'reconcile:unresolved-effect',
+      key: 'retained-reconciliation',
+      signal: sigOf(),
+    });
+    expect(reconciliationReceipt).toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'no-action' },
+    });
+    expect(runDeferred).toHaveBeenCalledOnce();
+    expect(bound.exportSnapshot?.()).toHaveProperty(
+      'retainedEffectReconciliation',
+    );
+
+    const completedSuffix = {
+      ...incompleteSuffix,
+      after: RETAINED_OBSERVATION,
+      physicalReceipt: {
+        classification: 'unchanged' as const,
+        baseline: RETAINED_OBSERVATION,
+        after: RETAINED_OBSERVATION,
+      },
+    };
+    currentLedger = {
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [operationBoundary, completedSuffix],
+      logicalOperations: [operation],
+    };
+    expect(bound.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    const boundExport = bound.exportSnapshot?.();
+    expect(boundExport).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+      effectLedger: currentLedger,
+    });
+    expect(boundExport).not.toHaveProperty('retainedEffectReconciliation');
+    if (boundExport === undefined) throw new Error('expected bound snapshot');
+    await bound.dispose();
+
+    const boundRestore = retainedRuntime(() => currentLedger);
+    await boundRestore.restore?.(boundTargetSession, boundExport);
+    expect(boundRestore.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    const restoredBoundExport = boundRestore.exportSnapshot?.();
+    if (restoredBoundExport === undefined) {
+      throw new Error('expected restored source-bound snapshot');
+    }
+    await boundRestore.dispose();
+
+    const rebound = retainedRuntime(() => currentLedger, {
+      runExclusive: async () => {
+        throw new Error('runExclusive must remain unavailable');
+      },
+      runDeferred,
+    });
+    await rebound.adopt?.(
+      retainedSession('8', recording.ports),
+      restoredBoundExport,
+      adoptionFrom(boundTargetSession),
+    );
+    expect(rebound.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    expect(rebound.exportSnapshot?.()).toMatchObject({
+      retainedEffectSourceSessionId: sourceSession.sessionId,
+    });
+    await rebound.dispose();
+  });
+
   it('exports a parked snapshot and restores it in a fresh runtime', async () => {
     let playerCalls = 0;
     const { ports } = makeRecordingPorts({
@@ -4551,7 +5582,7 @@ describe('parked-session snapshot over the shared factory', () => {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -4568,13 +5599,13 @@ describe('parked-session snapshot over the shared factory', () => {
       {
         questionId: 'q-1',
         asker: { kind: 'role', roleId: 'coder' },
-        question: 'Which database?',
+        question: 'Which database should I use?',
         sourceItem: 'WF-1',
       },
     ]);
     await first.dispose();
 
-    const second = createWorkflowRuntime({});
+    const second = createWorkflowRuntime({}, snapshot!.effectLedger);
     await second.restore!(
       { ...session, ports },
       snapshot!,
@@ -4626,7 +5657,7 @@ describe('parked-session snapshot over the shared factory', () => {
         snapshot: vi.fn(() => ({})),
         restore: vi.fn(),
       };
-      const target = createWorkflowRuntime({});
+      const target = createWorkflowRuntime({}, snapshot.effectLedger);
       let targetSession = makeSession(targetRecording.ports, playerSessions);
       let candidate = snapshot;
       if (mismatch === 'schema') {
@@ -4648,7 +5679,7 @@ describe('parked-session snapshot over the shared factory', () => {
         ),
       ).rejects.toThrow(
         mismatch === 'schema'
-          ? /incompatible player identity/
+          ? /expected 4/
           : mismatch === 'playbook'
             ? /does not match runtime playbook/
             : /roleBindings must cover exactly/,
@@ -4733,7 +5764,7 @@ describe('parked-session snapshot over the shared factory', () => {
         };
       }
 
-      const target = createWorkflowRuntime({});
+      const target = createWorkflowRuntime({}, snapshot.effectLedger);
       await expect(
         target.adopt?.(
           targetSession,
@@ -4790,7 +5821,7 @@ describe('parked-session snapshot over the shared factory', () => {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"used sqlite"}';
       },
     });
@@ -4816,7 +5847,7 @@ describe('parked-session snapshot over the shared factory', () => {
       telemetry: telemetry.length,
     };
 
-    const target = createWorkflowRuntime({});
+    const target = createWorkflowRuntime({}, snapshot.effectLedger);
     const targetSession = makeSession(ports);
     expect(targetSession.sessionId).not.toBe(sourceSession.sessionId);
     await target.adopt?.(
@@ -4825,7 +5856,7 @@ describe('parked-session snapshot over the shared factory', () => {
       adoptionFrom(sourceSession),
     );
     expect(target.exportSnapshot?.()).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       playbookId: sourceSession.playbookId,
       state: snapshot.state,
       sequences: {
@@ -4905,7 +5936,6 @@ describe('parked-session snapshot over the shared factory', () => {
     const playerScript: PlayerResult[] = [
       { status: 'error', error: 'source failed' },
       { status: 'error', error: 'source retry failed' },
-      { status: 'error', error: 'target retry failed' },
     ];
     const { ports, telemetry } = makeRecordingPorts({
       callPlayer: async () => {
@@ -4914,17 +5944,9 @@ describe('parked-session snapshot over the shared factory', () => {
         return next;
       },
     });
-    const sourceBase = makeSession(ports);
-    const sourceSession: PlaybookSession = {
-      ...sourceBase,
-      sessionId: `${sourceBase.sessionId}-child`,
-      playbookId: 'code',
-      rootSessionId: `${sourceBase.sessionId}-root`,
-      parentSessionId: `${sourceBase.sessionId}-parent`,
-      parentCallId: 'source-parent-call',
-      depth: 1,
-    };
-    const source = createCodePlaybookRuntime({});
+    const sourceSession = makeCodeSession(ports, 1);
+    const construction = codeRuntimeConstruction();
+    const source = createCodePlaybookRuntime(construction);
     await source.init(sourceSession);
     expect(
       (await source.handleBossInput(turn('fail inside the child'))).outcome,
@@ -4951,17 +5973,8 @@ describe('parked-session snapshot over the shared factory', () => {
     if (snapshot === undefined) throw new Error('expected failed snapshot');
     await source.dispose();
 
-    const targetBase = makeSession(ports);
-    const targetSession: PlaybookSession = {
-      ...targetBase,
-      sessionId: `${targetBase.sessionId}-child`,
-      playbookId: 'code',
-      rootSessionId: `${targetBase.sessionId}-root`,
-      parentSessionId: `${targetBase.sessionId}-parent`,
-      parentCallId: 'target-parent-call',
-      depth: 1,
-    };
-    const target = createCodePlaybookRuntime({});
+    const targetSession = makeCodeSession(ports, 1);
+    const target = createCodePlaybookRuntime(construction);
     await target.adopt?.(
       targetSession,
       snapshot,
@@ -4991,7 +6004,7 @@ describe('parked-session snapshot over the shared factory', () => {
         key: 'target-retry',
         signal: new AbortController().signal,
       }),
-    ).toMatchObject({ disposition: 'failed' });
+    ).toMatchObject({ disposition: 'rejected' });
     const targetApplyTraces = telemetry
       .map(({ payload }) => payload as PlaybookTraceEvent)
       .filter(
@@ -5019,7 +6032,7 @@ describe('parked-session snapshot over the shared factory', () => {
         };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const source = createWorkflowRuntime({});
     const sourceSession = makeSession(ports);
@@ -5039,7 +6052,7 @@ describe('parked-session snapshot over the shared factory', () => {
         throw new Error('restore is unavailable outside shell restoration');
       }),
     };
-    const target = createWorkflowRuntime({});
+    const target = createWorkflowRuntime({}, snapshot.effectLedger);
 
     await target.adopt?.(
       makeSession(ports, playerSessions),
@@ -5105,7 +6118,7 @@ describe('parked-session snapshot over the shared factory', () => {
           resumeToken: 'retained-token',
         }),
         callJudge: async () =>
-          '{"guard":"needsBossReply","question":"Which database?"}',
+          '{"guard":"needsBossReply"}',
       });
       const source = createLedgerAdoptionWorkflowRuntime({});
       const sourceSession: PlaybookSession = {
@@ -5182,7 +6195,10 @@ describe('parked-session snapshot over the shared factory', () => {
           }
         },
       });
-      const target = createLedgerAdoptionWorkflowRuntime({});
+      const target = createLedgerAdoptionWorkflowRuntime(
+        {},
+        snapshot.effectLedger,
+      );
       const targetSession: PlaybookSession = {
         ...makeSession(targetRecording.ports, playerSessions),
         roleBindings: {
@@ -5302,7 +6318,7 @@ describe('boundary hygiene', () => {
           classifierCalls += 1;
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
       emitTelemetry: async (event) => {
         if (event.topic === 'playbook.trace') {
@@ -5392,6 +6408,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
       ),
     ).toBe(true);
     expect(Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS)).toBe(true);
+    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([3]);
   });
 
   it('constructs and runs under a matching link-time declaration', async () => {
@@ -5401,7 +6418,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
         artifactSchema: SUPPORTED_ARTIFACT_SCHEMAS[0],
         runtimeAbi: RUNTIME_ABI,
       },
-    })({});
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
     const result = await runtime.handleBossInput(turn('   '));
@@ -5427,7 +6444,21 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'workflow artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
+          '@sublang/playbook/xstate-runtime engine supports [3]',
+      ),
+    );
+  });
+
+  it('rejects retired schema-2 artifacts naming schema 3 as the sole support', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(
+      new TypeError(
+        'workflow artifact declares schema 2, but this ' +
+          '@sublang/playbook/xstate-runtime engine supports [3]',
       ),
     );
   });
@@ -5436,7 +6467,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     expect(() =>
       createXStatePlaybookRuntime(workflowMachine, {
         ...workflowSpec,
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI + 1 },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI + 1 },
       }),
     ).toThrow(
       new TypeError(
@@ -5452,7 +6483,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
         ...workflowSpec,
         compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI + 1 },
       }),
-    ).toThrow(/declares schema 99.*supports \[2, 3\]/);
+    ).toThrow(/declares schema 99.*supports \[3\]/);
   });
 
   it('rejects a malformed declaration naming the offending member', () => {
@@ -5466,7 +6497,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
       createXStatePlaybookRuntime(workflowMachine, {
         ...workflowSpec,
         compat: {
-          artifactSchema: 2,
+          artifactSchema: 3,
           runtimeAbi: 'latest',
         } as unknown as { artifactSchema: number; runtimeAbi: number },
       }),
@@ -5484,7 +6515,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'decide-control artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
+          '@sublang/playbook/xstate-runtime engine supports [3]',
       ),
     );
   });
@@ -5575,7 +6606,17 @@ const conditionalMachine = createMachine({
           task: context.task,
           result: { done: 'Finished.' },
         }),
-        onDone: { target: 'ready' },
+        onDone: {
+          target: 'ready',
+          actions: {
+            type: 'playbook.acceptedOutcome',
+            params: {
+              source: 'implement',
+              target: 'ready',
+              acceptedOutcome: 'done',
+            },
+          },
+        },
         onError: {
           target: 'failed',
           actions: assign({ lastError: ({ event }) => event.error }),
@@ -5600,13 +6641,17 @@ const conditionalMachine = createMachine({
       },
     },
   },
+}, {
+  actions: {
+    'playbook.acceptedOutcome': () => undefined,
+  },
 });
 
-const createConditionalRuntime = createXStatePlaybookRuntime(
+const createConditionalRuntimeFactory = createXStatePlaybookRuntime(
   conditionalMachine,
   {
     label: 'conditional',
-    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
     roleStates: {
       implement: { role: 'coder', label: 'implement state' },
@@ -5616,14 +6661,28 @@ const createConditionalRuntime = createXStatePlaybookRuntime(
     // The declared projection names one JSON-safe member and one that is
     // not, so the sanitize row still has something to drop.
     controlContextFields: ['task', 'note', 'probe'],
+    outcomeAuthority: {
+      governedPlayerStates: {
+        implement: {
+          done: {
+            fields: {},
+            repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
   },
 );
+const createConditionalRuntime = (options: Record<string, never>) =>
+  createConditionalRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test'),
+  );
 
 // DR-034: the same workflow machine, whose entry action copies the entry
 // text into `task`, with that member declared as the retry payload's
 // source. Everything else matches `createWorkflowRuntime`, so a difference
 // between the two is the declaration's doing.
-const createRecoverableWorkflowRuntime = createXStatePlaybookRuntime(
+const createRecoverableWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
     ...workflowSpec,
@@ -5631,13 +6690,20 @@ const createRecoverableWorkflowRuntime = createXStatePlaybookRuntime(
     entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
   },
 );
+const createRecoverableWorkflowRuntime = (
+  options: WorkflowOptions,
+  initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+) =>
+  createRecoverableWorkflowRuntimeFactory(
+    governedRuntimeConstruction(options, 'factory-test', [], initialLedger),
+  );
 
 describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)', () => {
   it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
     const factoryRuntimes: PlaybookRuntime[] = [
       createWorkflowRuntime({}),
       createConditionalRuntime({}),
-      createCodePlaybookRuntime({}),
+      createCodePlaybookRuntime(codeRuntimeConstruction()),
     ];
     for (const runtime of factoryRuntimes) {
       expect(typeof runtime.describe).toBe('function');
@@ -5866,7 +6932,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         return { status: 'ok', finalText: 'Which database should I use?' };
       },
       callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which database?"}',
+        '{"guard":"needsBossReply"}',
     });
     const runtime = createWorkflowRuntime({});
     await runtime.init(makeSession(ports));
@@ -5908,7 +6974,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       {
         questionId: 'q-1',
         asker: { kind: 'role', roleId: 'coder' },
-        question: 'Which database?',
+        question: 'Which database should I use?',
         sourceItem: 'WF-1',
       },
     ]);
@@ -6006,7 +7072,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         if (prompt.includes('Classify the following Boss message')) {
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
-        return '{"guard":"needsBossReply","question":"Which database?"}';
+        return '{"guard":"needsBossReply"}';
       },
     });
     const runtime = createWorkflowRuntime({});
@@ -6053,6 +7119,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // persists, so nothing is added to the snapshot for it.
     const snapshot = source.exportSnapshot!()!;
     expect(Object.keys(snapshot).sort()).toEqual([
+      'effectLedger',
+      'failedEffectAttempt',
       'machine',
       'pendingBossQuestions',
       'playbookId',
@@ -6065,7 +7133,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
 
     // A fresh process holds no recorded event, and the same action derives
     // anyway — same id, same label — and replays the same player prompt.
-    const restored = createRecoverableWorkflowRuntime({});
+    const restored = createRecoverableWorkflowRuntime(
+      {},
+      snapshot.effectLedger,
+    );
     await restored.restore!(session, snapshot);
     expect(restored.describe!().actions).toEqual(live);
 
@@ -6096,7 +7167,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
             return '{"type":"BOSS_REPLY","questionId":"q-1"}';
           }
           return playerCalls === 1
-            ? '{"guard":"needsBossReply","question":"Which database?"}'
+            ? '{"guard":"needsBossReply"}'
             : '{"guard":"implemented","summary":"recovered"}';
         },
       });
@@ -6143,7 +7214,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(snapshot.pendingBossQuestions).toEqual([]);
     await declared.dispose();
 
-    const restored = createRecoverableWorkflowRuntime({});
+    const restored = createRecoverableWorkflowRuntime(
+      {},
+      snapshot.effectLedger,
+    );
     await restored.restore!(session, snapshot);
     const receipt = await restored.apply!({
       actionId: 'retry:START',
@@ -6175,7 +7249,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
           return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerPrompts.length === 1
-          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          ? '{"guard":"needsBossReply"}'
           : '{"guard":"implemented","summary":"restarted"}';
       },
     });
@@ -6214,7 +7288,9 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const { ports } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
     });
-    const runtime = createUnsourcedRuntime({});
+    const runtime = createUnsourcedRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
     expect((await runtime.handleBossInput(turn('build it'))).outcome).toBe(
       'failed',
@@ -6245,7 +7321,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const snapshot = source.exportSnapshot!()!;
     await source.dispose();
 
-    const restored = createWorkflowRuntime({});
+    const restored = createWorkflowRuntime({}, snapshot.effectLedger);
     await restored.restore!(session, snapshot);
     expect(restored.describe!().actions.map(({ id }) => id)).toEqual([
       'jump:implement',
@@ -6978,7 +8054,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const playerScript: PlayerResult[] = [
       { status: 'error', error: 'coder is down' },
       { status: 'error', error: 'coder is down again' },
-      { status: 'ok', finalText: 'I need to ask the Boss something.' },
+      { status: 'ok', finalText: 'Which repo should I touch?' },
     ];
     const playerCalls: { playerId: string; prompt: string }[] = [];
     const { ports, telemetry } = makeRecordingPorts({
@@ -6988,11 +8064,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         playerCalls.push({ playerId, prompt });
         return next;
       },
-      callJudge: async () =>
-        '{"guard":"needsBossReply","question":"Which repo should I touch?"}',
+      callJudge: async () => '{"guard":"needsBossReply"}',
     });
-    const runtime = createCodePlaybookRuntime({});
-    await runtime.init(makeSession(ports));
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
 
     const failedRun = await runtime.handleBossInput(turn('add a button'));
     expect(failedRun.outcome).toBe('failed');
@@ -7195,7 +8270,17 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
               prompt: 'Run the second route.',
               result: { done: 'The second route completed.' },
             }),
-            onDone: '#firstRoute',
+            onDone: {
+              target: '#firstRoute',
+              actions: {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'secondRoute',
+                  target: 'firstRoute',
+                  acceptedOutcome: 'done',
+                },
+              },
+            },
             onError: {
               target: '#interruptFailed',
               actions: assign({
@@ -7210,15 +8295,31 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
           tags: ['playbook.parked'],
         },
       },
-    });
+    },
+    {
+      actions: {
+        'playbook.acceptedOutcome': () => undefined,
+      },
+    },
+  );
     const createInterruptRuntime = createXStatePlaybookRuntime(
       interruptMachine,
       {
         label: 'interrupt-retry',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: () => ({}),
         roleStates: {
           secondRoute: { role: 'coder', label: 'secondRoute state' },
+        },
+        outcomeAuthority: {
+          governedPlayerStates: {
+            secondRoute: {
+              done: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
         },
       },
     );
@@ -7230,7 +8331,9 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       callJudge: async () =>
         '{"type":"BOSS_INTERRUPT","targetId":"secondRoute"}',
     });
-    const runtime = createInterruptRuntime({});
+    const runtime = createInterruptRuntime(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
 
     const failed = await runtime.handleBossInput(turn('take the second route'));
@@ -7250,11 +8353,12 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(decideMachine, {
         label: 'decide-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) =>
           (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START_DECIDE', textField: 'callerTopic' },
         controlContextFields: ['callerTopic'],
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'decide-control uses a parallel state; the shared runtime supports only single-region FSMs',
@@ -7279,10 +8383,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(compoundMachine, {
         label: 'compound-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'compound-control declares a compound state; the shared runtime supports only flat single-region FSMs',
@@ -7303,10 +8408,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(splitIdentityMachine, {
         label: 'split-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'split-control state pause declares meta.playbook.stateId awaitBossReply; the shared runtime requires the playbook state id to equal the state key',
@@ -7328,10 +8434,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(missingIdentityMachine, {
         label: 'missing-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         entryEvent: { type: 'START', textField: 'task' },
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'missing-control state ready declares no string meta.playbook.stateId; the shared runtime derives every playbook state identity from it',
@@ -7348,9 +8455,10 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(() =>
       createXStatePlaybookRuntime(machine, {
         label: 'zero-control',
-        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
         snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
         roleStates: {},
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
       }),
     ).toThrow(
       'zero-control declares no root states; the shared runtime requires at least one flat playbook state',
@@ -7380,11 +8488,12 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'bare-control',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       entryEvent: { type: 'START', textField: 'task' },
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     const { ports } = makeRecordingPorts();
     await runtime.init(makeSession(ports));
     const idle = await runtime.handleBossInput(turn(''));
@@ -7430,10 +8539,11 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     });
     const runtime = createXStatePlaybookRuntime(machine, {
       label: 'boom-init',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
       roleStates: {},
-    })({});
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+    })(governedRuntimeConstruction({}, 'factory-test'));
     await expect(runtime.init(makeSession(ports))).rejects.toBe(boom);
     expect(traces.map(({ type }) => type)).toContain('session.disposed');
     // The failed binding is cleared; a fresh init succeeds.
@@ -7491,12 +8601,15 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     });
     const createJump = createXStatePlaybookRuntime(jumpMachine, {
       label: 'jump',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: () => ({}),
       roleStates: {},
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
     });
     const { ports } = makeRecordingPorts();
-    const runtime = createJump({});
+    const runtime = createJump(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
 
     // Both targets are registered resumable states and the live snapshot
@@ -7530,13 +8643,16 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     });
     const createRetry = createXStatePlaybookRuntime(retryMachine, {
       label: 'retry',
-      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
       snapshotOptions: () => ({}),
       roleStates: {},
       entryEvent: { type: 'START', textField: 'task' },
+      outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
     });
     const { ports } = makeRecordingPorts();
-    const runtime = createRetry({});
+    const runtime = createRetry(
+      governedRuntimeConstruction({}, 'factory-test'),
+    );
     await runtime.init(makeSession(ports));
     await runtime.handleBossInput(turn('do the thing'));
 

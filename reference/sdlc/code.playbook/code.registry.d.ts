@@ -1,4 +1,4 @@
-import { type PlaybookRuntime } from './code.playbook.js';
+import { type CodePlaybookHostCapabilities, type PlaybookRuntime } from './code.playbook.js';
 export interface PlaybookSummaryPolicy {
     stateCountLabels: Readonly<Record<string, string>>;
     copyPasteGuardNames: readonly string[];
@@ -12,11 +12,11 @@ export interface CodePlaybookRegistryEntry {
     id: 'code';
     command: 'code';
     intent: string;
-    artifactSchema: 2;
+    artifactSchema: 3;
     runtimeProfile: {
         readonly kind: 'shared-factory';
         readonly compat: {
-            readonly artifactSchema: 2;
+            readonly artifactSchema: 3;
             readonly runtimeAbi: number;
         };
     };
@@ -24,7 +24,7 @@ export interface CodePlaybookRegistryEntry {
     concurrentRoleSets: readonly [];
     summaryPolicy: PlaybookSummaryPolicy;
     validateOptions(optionSlice: unknown): CodeOptions;
-    createRuntime(options: CodeOptions): PlaybookRuntime;
+    createRuntime(options: CodeOptions, hostCapabilities: CodePlaybookHostCapabilities): PlaybookRuntime;
 }
 export declare const codeStateCountLabels: {};
 export declare const codeCopyPasteGuardNames: readonly ["directCommit", "irCommit", "moreTasks", "finalTask"];

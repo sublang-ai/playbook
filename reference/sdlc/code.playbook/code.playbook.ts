@@ -8,21 +8,23 @@
 //                callerInput; pending Coder questions retain BOSS_REPLY
 // Adjudication:  LLM judge per player state; coderOutput is carried verbatim
 // Nested call:   literal review target through the shared bridge
-// Compat:        artifact schema 2 / runtime ABI 1
+// Compat:        artifact schema 3 / runtime ABI 1
 
 import {
   createXStatePlaybookRuntime,
   snapshotJsonValue,
   type PlaybookPlayerInput,
   type XStatePlaybookRuntimeFactory,
+  type XStatePlaybookRuntimeConstruction,
   type XStatePromptIdentity,
-  type XStatePlaybookRuntimeSpec,
+  type XStatePlaybookRuntimeSpecV3,
 } from '@sublang/playbook/xstate-runtime';
 import {
   codingMachine,
   type CodingInput,
   type PlayerInput,
 } from './code.fsm.js';
+import type { PlaybookHostConstructionCapabilities } from './playbook-captain.js';
 import type {
   CaptainCallOptions,
   CaptainResult,
@@ -76,6 +78,9 @@ export type {
 };
 
 export type CodePlaybookOptions = CodingInput;
+export type CodePlaybookHostCapabilities =
+  PlaybookHostConstructionCapabilities &
+    XStatePlaybookRuntimeConstruction<CodePlaybookOptions, object>['hostCapabilities'];
 
 const OPTION_KEYS = new Set(['runResults']);
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
@@ -176,7 +181,7 @@ const runtimeSpec = {
   // time — a literal, never the loading engine's RUNTIME_ABI self-report,
   // which would follow whatever engine loads the module and make the
   // factory's skew check compare that engine with itself.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: snapshotCodeOptions,
   entryEvent: {
     type: 'START_CODE',
@@ -197,6 +202,53 @@ const runtimeSpec = {
       label: 'Coder is implementing exactly one unfinished intent-record task.',
     },
   },
+  outcomeAuthority: {
+    governedPlayerStates: {
+      runFirstPhase: {
+        directCommit: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        irCommit: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+            irNumber: 'semantic',
+            irTask: 'semantic',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'deferred',
+        },
+      },
+      runIrTask: {
+        moreTasks: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+            irTask: 'semantic',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        finalTask: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        needsBossReply: {
+          fields: { question: 'presentation' },
+          repositoryDisposition: 'deferred',
+        },
+      },
+    },
+  },
   composePlayerPrompt: (
     input: PlaybookPlayerInput,
     promptIdentity: XStatePromptIdentity,
@@ -205,11 +257,20 @@ const runtimeSpec = {
   controlContextFields: ['phase'],
   unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
   transitionEventFields: ['callerInput', 'answer', 'questionId'],
-} satisfies XStatePlaybookRuntimeSpec<CodePlaybookOptions>;
+} satisfies XStatePlaybookRuntimeSpecV3<CodePlaybookOptions>;
 
 const createPlaybookRuntime: XStatePlaybookRuntimeFactory<
+  XStatePlaybookRuntimeConstruction<
+    CodePlaybookOptions,
+    CodePlaybookHostCapabilities
+  >,
+  3
+> = createXStatePlaybookRuntime<
   CodePlaybookOptions,
-  2
-> = createXStatePlaybookRuntime(codingMachine, runtimeSpec);
+  CodePlaybookHostCapabilities
+>(
+  codingMachine,
+  runtimeSpec,
+);
 
 export default createPlaybookRuntime;

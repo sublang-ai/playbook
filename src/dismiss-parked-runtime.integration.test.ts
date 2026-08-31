@@ -26,12 +26,14 @@ import type {
   PlayerRunResult,
 } from '@sublang/cligent/tmux-play';
 import type { PlaybookRuntime } from './runtime.js';
+import { emptyPlaybookEffectLedger } from './xstate-runtime.js';
 import {
   createXStatePlaybookRuntime,
   RUNTIME_ABI,
 } from './xstate-playbook-runtime.js';
 import {
   createPlaybookCaptainShell,
+  type PlaybookHostConstructionCapabilities,
   type PlaybookCaptainRegistryEntry,
 } from '../reference/sdlc/code.playbook/playbook-captain.ts';
 
@@ -100,10 +102,11 @@ const notesMachine = createMachine({
 
 const createChecklistRuntime = createXStatePlaybookRuntime(checklistMachine, {
   label: 'CHECKLIST',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
   classificationStatus: () => undefined,
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
@@ -115,10 +118,11 @@ const createChecklistRuntime = createXStatePlaybookRuntime(checklistMachine, {
 
 const createNotesRuntime = createXStatePlaybookRuntime(notesMachine, {
   label: 'NOTES',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'topic' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
   classificationStatus: () => undefined,
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
@@ -129,19 +133,61 @@ const createNotesRuntime = createXStatePlaybookRuntime(notesMachine, {
 function registryEntry(
   id: string,
   command: string,
-  createRuntime: () => PlaybookRuntime,
+  createRuntime: (
+    hostCapabilities: PlaybookHostConstructionCapabilities,
+  ) => PlaybookRuntime,
 ): PlaybookCaptainRegistryEntry {
   return {
     id,
     command,
     intent: `${id} dismissal-status fixture`,
-    artifactSchema: 2,
-    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
+    artifactSchema: 3,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
     requiredRoleIds: [],
     concurrentRoleSets: [],
     validateOptions: (options) => options,
-    createRuntime,
+    createRuntime: (_options, hostCapabilities) =>
+      createRuntime(hostCapabilities),
   };
+}
+
+function hostCapabilities(
+  entry: PlaybookCaptainRegistryEntry,
+): PlaybookHostConstructionCapabilities {
+  const identity = Object.freeze({
+    worktree: '/fixture',
+    gitDir: '/fixture/.git',
+  });
+  const ledger = emptyPlaybookEffectLedger();
+  const unavailable = async (): Promise<never> => {
+    throw new Error('repository work is outside this fixture');
+  };
+  return Object.freeze({
+    authority: Object.freeze({
+      playbookId: entry.id,
+      artifactSchema: 3 as const,
+      cwd: identity.worktree,
+      sessionId: '40000000-0000-4000-8000-000000000001',
+      leaseOwnerToken: '40000000-0000-4000-8000-000000000002',
+      canonicalWorktree: identity,
+      requiredRoleIds: Object.freeze([...entry.requiredRoleIds]),
+      concurrentRoleSets: Object.freeze(
+        entry.concurrentRoleSets.map((roles) => Object.freeze([...roles])),
+      ),
+    }),
+    repository: Object.freeze({
+      identity,
+      observe: unavailable,
+      acquire: unavailable,
+      runExclusive: unavailable,
+      runCohort: unavailable,
+      runDeferred: unavailable,
+    }),
+    effectLedger: Object.freeze({
+      snapshot: () => ledger,
+      writeAhead: async () => ledger,
+    }),
+  });
 }
 
 interface ShellTransition {
@@ -195,6 +241,9 @@ function createHarness(
     },
     {
       loadModule: async (specifier) => modules[specifier],
+      hostCapabilities: Object.fromEntries(
+        entries.map((entry) => [entry.id, hostCapabilities(entry)]),
+      ),
       createSessionId: () => {
         if (!captainIdIssued) {
           captainIdIssued = true;
@@ -262,8 +311,18 @@ function turn(prompt: string, id = 1): BossTurn {
 describe('dismissing a parked linked runtime (live-gate regression)', () => {
   it('emits the failure line once when a switch drops a runtime parked at failed', async () => {
     const harness = createHarness([
-      registryEntry('checklist', 'checklist', () => createChecklistRuntime({})),
-      registryEntry('notes', 'notes', () => createNotesRuntime({})),
+      registryEntry('checklist', 'checklist', (capabilities) =>
+        createChecklistRuntime({
+          configuredOptions: {},
+          hostCapabilities: capabilities,
+        }),
+      ),
+      registryEntry('notes', 'notes', (capabilities) =>
+        createNotesRuntime({
+          configuredOptions: {},
+          hostCapabilities: capabilities,
+        }),
+      ),
     ]);
     await harness.shell.init!(harness.session);
 
@@ -300,7 +359,12 @@ describe('dismissing a parked linked runtime (live-gate regression)', () => {
 
   it('emits no extra state line when a dismiss drops a runtime parked at a non-failure state', async () => {
     const harness = createHarness([
-      registryEntry('notes', 'notes', () => createNotesRuntime({})),
+      registryEntry('notes', 'notes', (capabilities) =>
+        createNotesRuntime({
+          configuredOptions: {},
+          hostCapabilities: capabilities,
+        }),
+      ),
     ]);
     await harness.shell.init!(harness.session);
 

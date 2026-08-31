@@ -37,7 +37,9 @@ depends on) rather than relying on it resolving through the package's
 tree, which pnpm's strict linking will not allow.
 
 ```ts
-import createPlaybookRuntime from '@sublang/playbook/review/playbook';
+import createPlaybookRuntime, {
+  type ReviewPlaybookHostCapabilities,
+} from '@sublang/playbook/review/playbook';
 import type {
   CaptainCallOptions,
   CaptainResult,
@@ -144,9 +146,21 @@ const ports: PlaybookPorts = {
   },
 };
 
-const runtime = createPlaybookRuntime({});
-
 const playbookSessionId = randomUUID();
+
+// Schema-3 artifacts keep persisted configured options separate from live
+// current-host authority. Build these capabilities only after acquiring the
+// session lease and resolving the canonical Git worktree. Their authority
+// must name this playbook/session/working directory and their repository and
+// effect-ledger operations must stay live; never put them in configuration,
+// machine input, or a persisted snapshot.
+declare const hostCapabilities: ReviewPlaybookHostCapabilities;
+
+const runtime = createPlaybookRuntime({
+  configuredOptions: {},
+  hostCapabilities,
+});
+
 await runtime.init({
   sessionId: playbookSessionId,
   playbookId: 'review',
@@ -165,7 +179,7 @@ await runtime.dispose();
 
 ## Sessions and traces
 
-Every init-to-dispose lifecycle is one playbook session. Schema-3
+Every init-to-dispose lifecycle is one playbook session. Schema-4
 `playbook.trace` telemetry carries that immutable ID plus a contiguous
 sequence across exact Boss input, judge/player calls, FSM transitions, visible
 Captain work, nested playbook calls, status, settlement, and disposal. A
@@ -184,15 +198,27 @@ sequential call lane across every frame that names them, while distinct IDs
 remain isolated. Child return, frame disposal, and a later root engagement do
 not clear the session ledger.
 
-Runtime snapshots are schema 3. Their `roleResumeTokens` projection remains
-role-local, while the composing shell's own schema-3 snapshot persists the
-stable player ledger and every frame's exact role bindings. Do not restore
-schema 1 or 2 by guessing identity. On a compatible restore, rebuild
+Runtime and complete shell snapshots are schema 4. Their role-resume
+projection remains role-local, while the composing shell persists the stable
+player ledger, every frame's exact role bindings, and the host's authoritative
+effect-ledger mirror. The bundled CLI wraps that shell state in Captain
+session-record schema 6. Do not restore an earlier snapshot or session record
+by guessing identity or effect evidence. This includes both pre-release
+schema-5 record shapes; the earlier one predates required `unresolvedEffects`,
+and neither is a canonical schema-6 boundary. Explicit selection rejects them,
+while fresh discovery reports and skips them. A fully validated nonresumable
+record participates in settled same-directory ordering and declines adoption
+only when it is newest; an older or different-directory record does not block a
+newer resumable predecessor. An unvalidatable record leaves ordering unproved,
+so discovery publishes an empty target without falling through. On a compatible
+restore, rebuild
 `promptIdentity` from the current model selection (or adapter for an explicit
-provider-default selection) so the next prompt and trace describe the current
-invocation rather than stale machine state. Trace data and tokens never enter
-Boss-visible status text. Because trace observers do receive opaque resume
-tokens, persisted traces should be protected as sensitive data.
+provider-default selection) and rebuild live host capabilities under the
+current lease, so neither invocation identity nor repository authority comes
+from stale machine state. Trace data, tokens, repository projections, and
+capability functions never enter Boss-visible status text or configured
+options. Because trace observers do receive opaque resume tokens, persisted
+traces should be protected as sensitive data.
 
 See
 [`code.playbook.test.ts`](https://github.com/sublang-ai/playbook/blob/main/reference/sdlc/code.playbook/code.playbook.test.ts)

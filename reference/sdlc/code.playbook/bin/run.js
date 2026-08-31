@@ -11,7 +11,14 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
-import { createPlaybookCaptainShell } from '../playbook-captain.js';
+import {
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
+} from '../../../../src/xstate-runtime.js';
+import {
+  assertPlaybookCaptainShellSnapshot,
+  createPlaybookCaptainShell,
+} from '../playbook-captain.js';
 import {
   adapterSdkFailureLines,
   checkAdapterSdks,
@@ -27,6 +34,11 @@ import {
   snapshotRegistryEntry,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
+import {
+  createRepositoryEffectCapabilities,
+  refreshRepositoryEffectCapabilities,
+  recoverIncompleteRepositoryEffects,
+} from './repository-effects.js';
 import {
   assertCaptainSessionExecutionCompatible,
   captainSessionSelectedMembers,
@@ -129,14 +141,12 @@ export async function runPlaybookRun(options = {}) {
           await awaitWithAbort(
             store.latest({
               preferredCwd: invokingCwd,
-              onLegacyRecord: ({
-                sessionId: legacyId,
-                path,
-                schemaVersion,
-              }) =>
-                writeStream(
+              onLegacyRecord: (record) =>
+                reportSkippedCaptainSession(
                   stderr,
-                  `playbook run: skipping legacy Captain session ${JSON.stringify(legacyId)} at ${JSON.stringify(path)} because ${legacyCaptainSessionReason(schemaVersion)}; move it outside the sessions directory or remove it to silence this warning\n`,
+                  'playbook run',
+                  'legacy',
+                  record,
                 ),
             }),
             options.signal,
@@ -155,7 +165,10 @@ export async function runPlaybookRun(options = {}) {
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
       throwIfAborted(options.signal);
-      const authoritative = await lease.read();
+      const authoritative =
+        typeof lease.recoverUnresolvedEffectAbandonment === 'function'
+          ? await lease.recoverUnresolvedEffectAbandonment()
+          : await lease.read();
       throwIfAborted(options.signal);
       if (authoritative === undefined) {
         throw new Error(
@@ -445,6 +458,7 @@ export async function runPlaybookRun(options = {}) {
       input,
       sessionId,
       cwd,
+      sessionLease: lease,
       loadModule,
       stderr,
       verbose: args.verbose,
@@ -460,11 +474,24 @@ export async function runPlaybookRun(options = {}) {
       ...(options.createHostRuntime
         ? { createHostRuntime: options.createHostRuntime }
         : {}),
+      ...(options.createEffectLedgerWriteAhead
+        ? {
+            createEffectLedgerWriteAhead:
+              options.createEffectLedgerWriteAhead,
+          }
+        : {}),
       ...(restoreSnapshot !== undefined
         ? { restoreSnapshot }
         : {}),
+      ...(args.retryUncertain
+        ? { reconcileUncertainTurnReplay: true }
+        : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-      beforeBossTurn: async (baselineSnapshot, shell) => {
+      beforeBossTurn: async (
+        baselineSnapshot,
+        shell,
+        reconcileRepositoryEffects,
+      ) => {
         throwIfAborted(options.signal);
         const installForLaunch =
           options.installRetainedGenerationsForLaunch ??
@@ -484,9 +511,24 @@ export async function runPlaybookRun(options = {}) {
                 onFreshRecord(record) {
                   freshLaunchRecord = record;
                 },
+                onLegacyRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    stderr,
+                    'playbook run',
+                    'legacy',
+                    record,
+                  ),
+                onInvalidRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    stderr,
+                    'playbook run',
+                    'invalid',
+                    record,
+                  ),
               }
             : {}),
           retainedGenerations: priorRecord?.retainedGenerations ?? {},
+          reconcileRepositoryEffects,
         });
         throwIfAborted(options.signal);
         return args.retryUncertain
@@ -554,6 +596,7 @@ export async function runPlaybookRun(options = {}) {
     durableRecord = await lease.settle({
       attemptId: settled.uncertainRecord.uncertain.attemptId,
       snapshot: settled.snapshot,
+      unresolvedEffects: settled.unresolvedEffects,
       retentionUpdates: settled.retentionUpdates,
     });
   } catch (error) {
@@ -642,6 +685,7 @@ export async function driveHeadlessCaptainTurn({
   input,
   sessionId,
   cwd,
+  sessionLease,
   loadModule,
   stderr,
   verbose = false,
@@ -649,7 +693,9 @@ export async function driveHeadlessCaptainTurn({
   createCaptainRuntime,
   createCaptainSessionId,
   createHostRuntime = createTmuxPlayRuntime,
+  createEffectLedgerWriteAhead,
   restoreSnapshot,
+  reconcileUncertainTurnReplay = false,
   beforeBossTurn,
   assertBeforeBossTurn,
   signal,
@@ -665,6 +711,7 @@ export async function driveHeadlessCaptainTurn({
         config,
         sessionId,
         cwd,
+        sessionLease,
         loadModule,
         observers: [
           {
@@ -684,10 +731,20 @@ export async function driveHeadlessCaptainTurn({
         ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
         ...(createCaptainSessionId ? { createCaptainSessionId } : {}),
         createHostRuntime,
+        ...(createEffectLedgerWriteAhead
+          ? { createEffectLedgerWriteAhead }
+          : {}),
         ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
+        ...(reconcileUncertainTurnReplay
+          ? { reconcileUncertainTurnReplay: true }
+          : {}),
       });
       ({ shell, host, snapshot: baselineSnapshot } = created);
-      uncertainRecord = await beforeBossTurn?.(baselineSnapshot, shell);
+      uncertainRecord = await beforeBossTurn?.(
+        baselineSnapshot,
+        shell,
+        created.reconcileRepositoryEffects,
+      );
     } catch (error) {
       throw new HeadlessHostSetupError(error);
     }
@@ -713,7 +770,7 @@ export async function driveHeadlessCaptainTurn({
     if (settlement === undefined) {
       throw new Error('Captain turn settled without an exportable session settlement');
     }
-    const { snapshot, retentionUpdates } = settlement;
+    const { snapshot, unresolvedEffects, retentionUpdates } = settlement;
     if (
       snapshot.captain?.sessionId === sessionId ||
       snapshot.issuedSessionIds?.includes(sessionId)
@@ -726,6 +783,7 @@ export async function driveHeadlessCaptainTurn({
       sessionId,
       reply: replies[0],
       snapshot,
+      unresolvedEffects,
       retentionUpdates,
       config: cloneJson(config),
       cwd,
@@ -762,6 +820,48 @@ export class CaptainSessionHostCleanupError extends AggregateError {
   }
 }
 
+async function createStoreEffectLedgerService(lease) {
+  let mirror =
+    (await lease.read())?.effectLedger ?? emptyPlaybookEffectLedger();
+  mirror = assertPlaybookEffectLedger(mirror);
+  return Object.freeze({
+    snapshot: () => mirror,
+    async refresh() {
+      mirror = assertPlaybookEffectLedger(
+        (await lease.read())?.effectLedger ?? emptyPlaybookEffectLedger(),
+      );
+      return mirror;
+    },
+    async writeAhead(authority, commands) {
+      mirror = assertPlaybookEffectLedger(
+        await lease.writeEffectLedger(authority, commands),
+      );
+      return mirror;
+    },
+  });
+}
+
+function effectLedgerSnapshotFromCapabilities(hostCapabilities) {
+  const capabilities = Object.values(hostCapabilities);
+  if (capabilities.length === 0) return emptyPlaybookEffectLedger();
+  const mirror = assertPlaybookEffectLedger(
+    capabilities[0].effectLedger.snapshot(),
+  );
+  for (const capability of capabilities.slice(1)) {
+    if (
+      !isDeepStrictEqual(
+        assertPlaybookEffectLedger(capability.effectLedger.snapshot()),
+        mirror,
+      )
+    ) {
+      throw new Error(
+        'schema-3 current-host capabilities disagree on their effect ledger',
+      );
+    }
+  }
+  return mirror;
+}
+
 function isCaptainSessionHostCleanupIncomplete(error) {
   if (error instanceof CaptainSessionHostCleanupError) return true;
   return (
@@ -770,21 +870,145 @@ function isCaptainSessionHostCleanupIncomplete(error) {
   );
 }
 
+function reconcileWholeTurnReplaySnapshot(snapshot, ledger, catalog) {
+  const checkpoint = assertPlaybookEffectLedger(snapshot.effectLedger);
+  const current = assertPlaybookEffectLedger(ledger);
+  const checkpointBoundaryCount = checkpoint.boundaries.length;
+  const currentPrefix = current.boundaries.slice(0, checkpointBoundaryCount);
+  if (!isDeepStrictEqual(currentPrefix, checkpoint.boundaries)) {
+    throw new Error(
+      'Captain uncertain turn repository-effect reconciliation cannot restore a changed pre-turn boundary',
+    );
+  }
+  if (
+    !isDeepStrictEqual(
+      current.logicalOperations,
+      checkpoint.logicalOperations,
+    )
+  ) {
+    throw new Error(
+      'Captain uncertain turn repository-effect reconciliation found deferred logical-operation progress and cannot replay the Boss turn',
+    );
+  }
+  const suffix = current.boundaries.slice(checkpointBoundaryCount);
+  const blocking = suffix.find(
+    (boundary) =>
+      boundary.physicalReceipt?.classification !== 'unchanged',
+  );
+  if (blocking !== undefined) {
+    const classification =
+      blocking.physicalReceipt?.classification ?? 'incomplete';
+    throw new Error(
+      `Captain uncertain turn repository-effect boundary ${JSON.stringify(blocking.boundaryId)} is ${classification}; whole-turn replay remains parked for reconciliation`,
+    );
+  }
+  const frames =
+    snapshot.mode !== 'engaged.parked'
+      ? undefined
+      : snapshot.frames.map((frame) => {
+          if (catalog[frame.playbookId]?.artifactSchema !== 3) {
+            throw new Error(
+              `Captain uncertain turn cannot rebase frame ${JSON.stringify(frame.playbookId)} without exact artifact-schema authority`,
+            );
+          }
+          return {
+            ...frame,
+            runtime: { ...frame.runtime, effectLedger: current },
+          };
+        });
+
+  return assertPlaybookCaptainShellSnapshot({
+    ...snapshot,
+    effectLedger: current,
+    ...(frames === undefined ? {} : { frames }),
+  });
+}
+
 export async function createCaptainSessionHost({
   config,
   sessionId,
   cwd,
+  sessionLease,
   loadModule,
   observers,
   adapterImports,
   createCaptainRuntime,
   createCaptainSessionId,
   createHostRuntime = createTmuxPlayRuntime,
+  createEffectLedgerWriteAhead,
   restoreSnapshot,
+  reconcileUncertainTurnReplay = false,
   signal,
 }) {
+  const hostCapabilities = await createRepositoryEffectCapabilities({
+    cwd,
+    catalog: config.catalog,
+    sessionId,
+    sessionLease,
+    createWriteAhead:
+      createEffectLedgerWriteAhead ?? createStoreEffectLedgerService,
+  });
+  const reconcileRepositoryEffects = async () => {
+    await refreshRepositoryEffectCapabilities(hostCapabilities);
+    await recoverIncompleteRepositoryEffects({
+      catalog: config.catalog,
+      capabilities: hostCapabilities,
+    });
+    return effectLedgerSnapshotFromCapabilities(hostCapabilities);
+  };
+  try {
+    await reconcileRepositoryEffects();
+  } catch (error) {
+    if (!reconcileUncertainTurnReplay) throw error;
+    throw new Error(
+      `Captain uncertain turn repository-effect reconciliation failed: ${message(error)}`,
+      { cause: error },
+    );
+  }
+  const currentEffectLedger = () =>
+    effectLedgerSnapshotFromCapabilities(hostCapabilities);
+  let sourceSnapshot = restoreSnapshot;
+  if (
+    sourceSnapshot !== undefined &&
+    !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
+  ) {
+    const recovered =
+      typeof sessionLease.read === 'function'
+        ? await sessionLease.read()
+        : undefined;
+    if (
+      recovered?.state === 'settled' &&
+      isDeepStrictEqual(recovered.snapshot.effectLedger, currentEffectLedger())
+    ) {
+      sourceSnapshot = recovered.snapshot;
+    }
+  }
+  if (
+    sourceSnapshot !== undefined &&
+    reconcileUncertainTurnReplay
+  ) {
+    sourceSnapshot = reconcileWholeTurnReplaySnapshot(
+      sourceSnapshot,
+      currentEffectLedger(),
+      config.catalog,
+    );
+  } else if (
+    sourceSnapshot !== undefined &&
+    !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
+  ) {
+    throw new Error(
+      'Captain session effect ledger requires reconciliation before source-state restoration',
+    );
+  }
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
+    hostCapabilities,
+    unresolvedEffectSettlement: {
+      begin: (input) =>
+        sessionLease.beginUnresolvedEffectAbandonment(input),
+      complete: (input) =>
+        sessionLease.completeUnresolvedEffectAbandonment(input),
+    },
     ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
     ...(createCaptainSessionId
       ? { createSessionId: createCaptainSessionId }
@@ -792,7 +1016,7 @@ export async function createCaptainSessionHost({
   });
   let host;
   try {
-    const captain = captainHostBoundary(shell, restoreSnapshot);
+    const captain = captainHostBoundary(shell, sourceSnapshot);
     host = await createHostRuntime({
       captain,
       captainConfig: projectHostAgent(
@@ -814,16 +1038,13 @@ export async function createCaptainSessionHost({
         'Captain shell initialized without an exportable session snapshot',
       );
     }
-    if (
-      restoreSnapshot !== undefined &&
-      !isDeepStrictEqual(snapshot, restoreSnapshot)
-    ) {
+    if (sourceSnapshot !== undefined && !isDeepStrictEqual(snapshot, sourceSnapshot)) {
       throw new Error('restored Captain snapshot changed before the Boss turn');
     }
     if (sessionId !== undefined) {
       assertLogicalSessionIdDistinct({ sessionId, snapshot });
     }
-    return { shell, host, snapshot };
+    return { shell, host, snapshot, reconcileRepositoryEffects };
   } catch (error) {
     let cleanupError;
     try {
@@ -850,15 +1071,23 @@ export async function installRetainedGenerationsForLaunch({
   shell,
   freshBoundary,
   onFreshRecord,
+  onLegacyRecord,
+  onInvalidRecord,
   retainedGenerations,
+  reconcileRepositoryEffects,
 }) {
   let authoritative = retainedGenerations;
   if (freshBoundary !== undefined) {
-    const record = await lease.initializeSettledWithPredecessor(
-      freshBoundary,
-    );
-    onFreshRecord?.(record);
+    const record = await lease.initializeSettledWithPredecessor({
+      ...freshBoundary,
+      onLegacyRecord,
+      onInvalidRecord,
+    });
     authoritative = record.retainedGenerations ?? {};
+  }
+  await reconcileRepositoryEffects?.();
+  if (freshBoundary !== undefined) {
+    onFreshRecord?.(await lease.read());
   }
   await shell.installRetainedGenerations(authoritative);
   await lease.assertOwner();
@@ -1301,7 +1530,29 @@ function legacyCaptainSessionReason(schemaVersion) {
   if (schemaVersion === 2) {
     return 'schema 2 has incompatible player identity';
   }
+  if (schemaVersion === 3 || schemaVersion === 4) {
+    return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
+  }
+  if (schemaVersion === 5) {
+    return 'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable';
+  }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
+}
+
+export async function reportSkippedCaptainSession(
+  stderr,
+  commandName,
+  kind,
+  { sessionId, path, schemaVersion, reason },
+) {
+  const explanation =
+    kind === 'legacy'
+      ? legacyCaptainSessionReason(schemaVersion)
+      : reason;
+  await writeStream(
+    stderr,
+    `${commandName}: skipping ${kind} Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} because ${explanation}; move it outside the sessions directory or remove it to silence this warning\n`,
+  );
 }
 
 function replayInvocation(argv, args, input) {

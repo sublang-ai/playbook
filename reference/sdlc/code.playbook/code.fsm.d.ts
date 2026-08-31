@@ -122,6 +122,13 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
+    type: "playbook.acceptedOutcome";
+    params: {
+        readonly source: string;
+        readonly target: string;
+        readonly acceptedOutcome: string;
+    };
+} | {
     type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 } | {

@@ -42,17 +42,20 @@ export const decidePlaybookRegistryEntry = {
     id: 'decide',
     command: 'decide',
     intent: 'turn independent Coder and Reviewer proposals into an approved spec-design commit',
-    artifactSchema: 2,
+    artifactSchema: 3,
     runtimeProfile: Object.freeze({
         kind: 'bespoke',
-        artifactSchema: 2,
+        artifactSchema: 3,
     }),
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [['coder', 'reviewer']],
     summaryPolicy: decideSummaryPolicy,
     validateOptions: validateDecideOptions,
-    createRuntime(options) {
-        return createPlaybookRuntime(options);
+    createRuntime(options, hostCapabilities) {
+        return createPlaybookRuntime({
+            configuredOptions: options,
+            hostCapabilities,
+        });
     },
 };
 export default decidePlaybookRegistryEntry;

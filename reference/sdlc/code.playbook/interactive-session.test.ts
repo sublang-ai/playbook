@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   chmod,
@@ -16,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createManagedInteractiveLifecycle,
@@ -38,13 +40,17 @@ import {
   PLAYBOOK_CAPTAIN_MODULE,
   projectHostAgent,
 } from './bin/launch-config.js';
+import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
 
 const logicalSessionId = '90000000-0000-4000-8000-000000000041';
 const internalSessionId = '80000000-0000-4000-8000-000000000041';
 const retainedFrameSessionId = '80000000-0000-4000-8000-000000000042';
 const attemptId = '90000000-0000-4000-8000-000000000042';
 const predecessorSessionId = '90000000-0000-4000-8000-000000000043';
+const olderPredecessorSessionId =
+  '90000000-0000-4000-8000-000000000044';
 const tempDirs: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(
@@ -74,6 +80,101 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     expect(acquired).toBe(0);
   });
 
+  it('assembles schema-3 capabilities under the managed child lease', async () => {
+    const execution = executionProjection();
+    const fixture = await lifecycleFixture(execution);
+    const payload = { ...fixture.payload, cwd: process.cwd() };
+    const context = { ...fixture.context, cwd: process.cwd() };
+    const events: string[] = [];
+    let writerLease: any;
+    const lifecycle = createManagedInteractiveLifecycle(payload, {
+      sessionStore: fixture.store,
+      loadModule: registryLoader(execution),
+      createEffectLedgerWriteAhead: (lease: unknown) => {
+        writerLease = lease;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
+      },
+      createHostRuntime: async (options: any) => {
+        await options.captain.init({
+          signal: new AbortController().signal,
+          players: options.players.map(({ id, adapter }: any) => ({
+            id,
+            adapter,
+          })),
+          async emitStatus() {},
+          async emitTelemetry() {},
+          async setVisiblePlayers() {},
+        });
+        return {
+          ...fakeHost(events),
+          async dispose() {
+            await options.captain.dispose();
+            events.push('disposed');
+          },
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(context);
+    expect(writerLease).toMatchObject({ sessionId: logicalSessionId });
+    const record = await fixture.store.read(logicalSessionId);
+    expect(record.cwd).toBe(process.cwd());
+    const durable = JSON.stringify(record);
+    expect(durable).not.toContain(writerLease.ownerToken);
+    for (const key of [
+      'hostCapabilities',
+      'leaseOwnerToken',
+    ]) {
+      expect(durable).not.toContain(`"${key}"`);
+    }
+    expect(record.effectLedger).toEqual(emptyPlaybookEffectLedger());
+
+    await runtime.dispose();
+    await lifecycle.shutdown();
+    expect(events).toEqual(['disposed']);
+  });
+
+  it('rejects schema-3 host construction under a different session lease', async () => {
+    const execution = executionProjection();
+    const fixture = await lifecycleFixture(execution);
+    let writerCreations = 0;
+    let hostCreations = 0;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: {
+        ...fixture.store,
+        async acquire(sessionId: string) {
+          const lease = await fixture.store.acquire(sessionId);
+          return { ...lease, sessionId: predecessorSessionId };
+        },
+      },
+      loadModule: registryLoader(execution),
+      createEffectLedgerWriteAhead: () => {
+        writerCreations += 1;
+        const effectLedger = emptyPlaybookEffectLedger();
+        return {
+          snapshot: () => effectLedger,
+          writeAhead: async () => effectLedger,
+        };
+      },
+      createHostRuntime: async () => {
+        hostCreations += 1;
+        throw new Error('must not construct a host under the wrong lease');
+      },
+    });
+
+    await expect(
+      lifecycle.initializeRuntime(fixture.context),
+    ).rejects.toThrow(/lease authority does not match its logical session/);
+    expect({ writerCreations, hostCreations }).toEqual({
+      writerCreations: 0,
+      hostCreations: 0,
+    });
+  });
+
   it('persists turn zero before readiness, brackets each reply, and retains the lease until shutdown', async () => {
     const fixture = await lifecycleFixture();
     let snapshot = shellSnapshot(fixture.execution, 0);
@@ -91,6 +192,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
           exportSnapshot: () => snapshot,
           exportSettlement: () => ({
             snapshot,
+            unresolvedEffects: [],
             retentionUpdates: [
               {
                 kind: 'retain',
@@ -244,14 +346,23 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     let installCalls = 0;
     let installed: unknown;
     let targetDuringInstall: unknown;
+    const reconciliationOrder: string[] = [];
     const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
       sessionStore: fixture.store,
       createSessionHost: async () => {
         const snapshot = shellSnapshot(fixture.execution, 0);
         return {
           host: fakeHost([]),
+          async reconcileRepositoryEffects() {
+            reconciliationOrder.push('reconcile');
+            expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+              state: 'settled',
+              retainedGenerations: { code: retainedGeneration() },
+            });
+          },
           shell: {
             async installRetainedGenerations(value: unknown) {
+              reconciliationOrder.push('install');
               installCalls += 1;
               installed = value;
               targetDuringInstall = await fixture.store.read(logicalSessionId);
@@ -265,6 +376,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
     const runtime = await lifecycle.initializeRuntime(fixture.context);
     expect(installCalls).toBe(1);
+    expect(reconciliationOrder).toEqual(['reconcile', 'install']);
     expect(installed).toEqual({ code: retainedGeneration() });
     expect(targetDuringInstall).toMatchObject({
       state: 'settled',
@@ -313,6 +425,87 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     await runtime.dispose();
     await lifecycle.shutdown();
     await held.release();
+  });
+
+  it('starts fresh and diagnoses a pre-cutover predecessor without changing it', async () => {
+    const fixture = await lifecycleFixture();
+    await seedRetainedSettled(fixture, predecessorSessionId);
+    const predecessorPath = join(
+      fixture.sessionsDir,
+      `${predecessorSessionId}.json`,
+    );
+    const canonical = JSON.parse(await readFile(predecessorPath, 'utf8'));
+    const olderPredecessor = {
+      ...structuredClone(canonical),
+      sessionId: olderPredecessorSessionId,
+      createdAt: new Date(
+        Date.parse(canonical.createdAt) - 2,
+      ).toISOString(),
+      updatedAt: new Date(
+        Date.parse(canonical.createdAt) - 1,
+      ).toISOString(),
+    };
+    const olderPredecessorPath = join(
+      fixture.sessionsDir,
+      `${olderPredecessorSessionId}.json`,
+    );
+    const olderPredecessorBytes = `${JSON.stringify(olderPredecessor)}\n`;
+    await writeFile(olderPredecessorPath, olderPredecessorBytes, {
+      mode: 0o600,
+    });
+    const preCutoverBytes = `${JSON.stringify(
+      preUnresolvedEffectsRecord(canonical),
+    )}\n`;
+    await writeFile(predecessorPath, preCutoverBytes, 'utf8');
+    const diagnostics: string[] = [];
+    const installed: unknown[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      stderr: {
+        write(chunk: string) {
+          diagnostics.push(String(chunk));
+          return true;
+        },
+      },
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost([]),
+          shell: {
+            async installRetainedGenerations(value: unknown) {
+              installed.push(value);
+            },
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    expect(installed).toEqual([{}]);
+    const diagnostic =
+      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable; move it outside the sessions directory or remove it to silence this warning`;
+    const diagnosticText = diagnostics.join('');
+    expect(diagnosticText).toContain(diagnostic);
+    expect(diagnosticText.split(diagnostic)).toHaveLength(2);
+    expect(diagnosticText).not.toContain(
+      'missing field "unresolvedEffects"',
+    );
+    expect(await readFile(predecessorPath, 'utf8')).toBe(preCutoverBytes);
+    expect(await readFile(olderPredecessorPath, 'utf8')).toBe(
+      olderPredecessorBytes,
+    );
+    expect(
+      (await fixture.store.read(olderPredecessorSessionId))
+        .retainedGenerations,
+    ).toEqual({ code: retainedGeneration() });
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    await runtime.dispose();
+    await lifecycle.shutdown();
   });
 
   it.each([
@@ -637,7 +830,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       execution: executionProjection,
       mutate: (entry: any) => ({
         ...entry,
-        runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
       }),
     },
     {
@@ -812,28 +1005,34 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
   it('quarantines the writer lease when shared host construction cannot roll back its host', async () => {
     const fixture = await lifecycleFixture();
-    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
-      sessionStore: fixture.store,
-      loadModule: async () => ({
-        default: {
-          ...registryEntry(fixture.execution),
-          validateOptions() {
-            throw new Error('shell init failed');
+    const lifecycle = createManagedInteractiveLifecycle(
+      { ...fixture.payload, cwd: process.cwd() },
+      {
+        sessionStore: fixture.store,
+        loadModule: async () => ({
+          default: {
+            ...registryEntry(fixture.execution),
+            validateOptions() {
+              throw new Error('shell init failed');
+            },
           },
-        },
-      }),
-      createHostRuntime: async () => ({
-        abortActiveTurn() {},
-        async runBossTurn() {},
-        async dispose() {
-          throw new Error('rollback dispose failed');
-        },
-      }),
-    });
-
-    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
-      /cleanup also failed/,
+        }),
+        createHostRuntime: async () => ({
+          abortActiveTurn() {},
+          async runBossTurn() {},
+          async dispose() {
+            throw new Error('rollback dispose failed');
+          },
+        }),
+      },
     );
+
+    await expect(
+      lifecycle.initializeRuntime({
+        ...fixture.context,
+        cwd: process.cwd(),
+      }),
+    ).rejects.toThrow(/cleanup also failed/);
     await lifecycle.shutdown();
     await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
       /lease is active/,
@@ -851,7 +1050,11 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
         shell: {
           async installRetainedGenerations() {},
           exportSnapshot: () => snapshot,
-          exportSettlement: () => ({ snapshot, retentionUpdates: [] }),
+          exportSettlement: () => ({
+            snapshot,
+            unresolvedEffects: [],
+            retentionUpdates: [],
+          }),
         },
         snapshot,
       }),
@@ -1167,6 +1370,24 @@ async function lifecycleFixture(
   const sessionsDir = join(root, 'sessions');
   const cwd = join(root, 'cwd');
   await mkdir(cwd);
+  await execFileAsync('git', ['init', '-q', cwd]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.name',
+    'Playbook Interactive Test',
+  ]);
+  await execFileAsync('git', [
+    '-C',
+    cwd,
+    'config',
+    'user.email',
+    'interactive@example.invalid',
+  ]);
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
+  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
   const controls = await controlBoundary(cwd);
   const payload = {
     schemaVersion: MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
@@ -1248,7 +1469,7 @@ function executionProjection() {
         command: 'code',
         intent:
           'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
-        artifactSchema: 2,
+        artifactSchema: 3,
         requiredRoleIds: ['coder'],
         concurrentRoleSets: [],
         roles: {
@@ -1352,12 +1573,13 @@ function shellSnapshot(
     kind: 'boss',
     payload: `turn-${index + 1}`,
   }));
+  const effectLedger = emptyPlaybookEffectLedger();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     captain: {
       sessionId: internalSessionId,
       runtime: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         playbookId: 'captain',
         machine: { value: state.value, status: state.status },
         roleResumeTokens: {},
@@ -1371,6 +1593,7 @@ function shellSnapshot(
         },
         state,
         pendingBossQuestions: [],
+        effectLedger,
       },
       agent: structural.captain,
       conversation:
@@ -1384,6 +1607,7 @@ function shellSnapshot(
     issuedSessionIds: [internalSessionId],
     sequences: { turn, journal: journal.length },
     journal,
+    effectLedger,
     ...(turn === 0
       ? {}
       : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
@@ -1401,6 +1625,7 @@ function retainedGeneration() {
     stateId: 'editing',
   } as const;
   return {
+    effectLedger: emptyPlaybookEffectLedger(),
     frames: [
       {
         playbookId: 'code',
@@ -1410,7 +1635,7 @@ function retainedGeneration() {
         options: {},
         roleBindings: { coder: 'dev.coder' },
         runtime: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           playbookId: 'code',
           machine: { value: state.value, status: state.status },
           roleResumeTokens: {},
@@ -1424,10 +1649,27 @@ function retainedGeneration() {
           },
           state,
           pendingBossQuestions: [],
+          effectLedger: emptyPlaybookEffectLedger(),
         },
       },
     ],
   };
+}
+
+function preUnresolvedEffectsRecord(value: Record<string, any>) {
+  const record = structuredClone(value);
+  record.schemaVersion = 5;
+  delete record.unresolvedEffects;
+  for (const projection of [
+    record.structuralProjection,
+    record.lastAppliedExecutionProjection,
+    record.uncertain?.attemptedExecutionProjection,
+  ]) {
+    for (const item of Object.values(projection?.catalog ?? {}) as any[]) {
+      item.artifactSchema = 2;
+    }
+  }
+  return record;
 }
 
 async function seedSettled(
@@ -1464,6 +1706,7 @@ async function seedRetainedSettled(
   await lease.settle({
     attemptId,
     snapshot,
+    unresolvedEffects: [],
     retentionUpdates: [
       {
         kind: 'retain',

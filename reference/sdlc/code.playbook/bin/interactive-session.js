@@ -31,6 +31,7 @@ import {
   captainOptionsFromConfig,
   createCaptainSessionHost,
   installRetainedGenerationsForLaunch,
+  reportSkippedCaptainSession,
   validateFrozenExecutionConfig,
 } from './run.js';
 import { prepareConfiguredRegistries } from './provision.js';
@@ -368,7 +369,10 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       let host;
       try {
         lease = await store.acquire(payload.sessionId);
-        const authoritative = await lease.read();
+        const authoritative =
+          typeof lease.recoverUnresolvedEffectAbandonment === 'function'
+            ? await lease.recoverUnresolvedEffectAbandonment()
+            : await lease.read();
         let retainedGenerations = {};
         let restoreSnapshot;
         const prepareRegistryModule =
@@ -429,6 +433,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           config: executionProjection,
           sessionId: payload.sessionId,
           cwd: payload.cwd,
+          sessionLease: lease,
           loadModule,
           observers: context.observers,
           ...(options.adapterImports
@@ -442,6 +447,12 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
             : {}),
           ...(options.createHostRuntime
             ? { createHostRuntime: options.createHostRuntime }
+            : {}),
+          ...(options.createEffectLedgerWriteAhead
+            ? {
+                createEffectLedgerWriteAhead:
+                  options.createEffectLedgerWriteAhead,
+              }
             : {}),
           ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
         });
@@ -461,9 +472,24 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
                 onFreshRecord(record) {
                   freshLaunchRecord = record;
                 },
+                onLegacyRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    options.stderr ?? process.stderr,
+                    'playbook',
+                    'legacy',
+                    record,
+                  ),
+                onInvalidRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    options.stderr ?? process.stderr,
+                    'playbook',
+                    'invalid',
+                    record,
+                  ),
               }
             : {}),
           retainedGenerations,
+          reconcileRepositoryEffects: created.reconcileRepositoryEffects,
         });
         initialized = true;
         return {
@@ -571,6 +597,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       await lease.settle({
         attemptId: activeTurn.attemptId,
         snapshot: settlement.snapshot,
+        unresolvedEffects: settlement.unresolvedEffects,
         retentionUpdates: settlement.retentionUpdates,
       });
       activeTurn = undefined;

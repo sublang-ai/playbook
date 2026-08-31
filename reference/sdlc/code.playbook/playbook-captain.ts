@@ -19,6 +19,8 @@ import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
   NormalizedError,
+  PlaybookEffectLedger,
+  PlaybookEffectLedgerCommandBatch,
   PlaybookCallRequest,
   PlaybookCallResult,
   PlaybookCallStart,
@@ -33,7 +35,10 @@ import type {
 } from '@sublang/playbook/runtime';
 import {
   assertPlaybookRuntimeSnapshot,
+  assertPlaybookEffectLedger,
+  emptyPlaybookEffectLedger,
   hiddenControlEnvelope,
+  isPlaybookEffectLedgerMonotonicExtension,
   registerPlaybookAbortCleanup,
   snapshotJsonValue,
   validatePlayerResult,
@@ -69,6 +74,25 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
       ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
       : T;
 
+export interface PlaybookCaptainUnresolvedEffect {
+  readonly classification:
+    | 'one-descendant-commit'
+    | 'multiple-commits'
+    | 'rewritten-or-non-descendant'
+    | 'worktree-only-change'
+    | 'concurrent-or-foreign-change'
+    | 'observation-ambiguous'
+    | 'incomplete';
+  readonly baselineHead: string;
+  readonly afterHead?: string;
+  readonly commitOid?: string;
+}
+
+interface PlaybookCaptainUnresolvedEffectSettlementInput {
+  readonly rootPlaybookId: string;
+  readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+}
+
 type SnapshotAgentEnvelope = DeepReadonly<
   Omit<SessionAgent, 'model' | 'effort'>
 >;
@@ -78,6 +102,9 @@ type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface PlaybookCaptainDeps {
   loadModule?: (specifier: string) => Promise<unknown>;
   createSessionId?: () => string;
+  hostCapabilities?: Readonly<
+    Record<string, PlaybookHostConstructionCapabilities>
+  >;
   createCaptainRuntime?: (options: {
     readonly enabledPlaybooks: readonly {
       readonly id: string;
@@ -86,45 +113,72 @@ export interface PlaybookCaptainDeps {
     }[];
     readonly controller: CaptainControllerPort;
   }) => PlaybookRuntime;
+  unresolvedEffectSettlement?: {
+    begin(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+    complete(input: PlaybookCaptainUnresolvedEffectSettlementInput): Promise<void>;
+  };
 }
 
 /** Live, artifact-typed host facilities supplied outside configured options. */
 export interface PlaybookHostConstructionCapabilities {
-  readonly [capability: string]: unknown;
+  readonly authority: {
+    readonly playbookId: string;
+    readonly artifactSchema: 3;
+    readonly cwd: string;
+    readonly sessionId: string;
+    readonly leaseOwnerToken: string;
+    readonly canonicalWorktree: {
+      readonly worktree: string;
+      readonly gitDir: string;
+    };
+    readonly requiredRoleIds: readonly string[];
+    readonly concurrentRoleSets: readonly (readonly string[])[];
+  };
+  readonly repository: {
+    readonly identity: {
+      readonly worktree: string;
+      readonly gitDir: string;
+    };
+    readonly observe: (options?: unknown) => Promise<unknown>;
+    readonly acquire: (options?: unknown) => Promise<unknown>;
+    readonly runExclusive: (options: unknown) => Promise<unknown>;
+    readonly runCohort: (options: unknown) => Promise<unknown>;
+    readonly runDeferred: (options: unknown) => Promise<unknown>;
+  };
+  readonly effectLedger: {
+    readonly snapshot: () => PlaybookEffectLedger;
+    readonly writeAhead: (
+      commands: PlaybookEffectLedgerCommandBatch,
+    ) => Promise<PlaybookEffectLedger>;
+  };
 }
 
-export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> =
+export type PlaybookCaptainRuntimeProfile =
   | {
       readonly kind: 'shared-factory';
       readonly compat: {
-        readonly artifactSchema: ArtifactSchema;
+        readonly artifactSchema: 3;
         readonly runtimeAbi: number;
       };
     }
   | {
       readonly kind: 'bespoke';
-      readonly artifactSchema: ArtifactSchema;
+      readonly artifactSchema: 3;
     };
 
-interface PlaybookCaptainRegistryEntryBase<ArtifactSchema extends 2 | 3> {
+interface PlaybookCaptainRegistryEntryBase {
   id: string;
   command: string;
   intent: string;
-  runtimeProfile: PlaybookCaptainRuntimeProfile<ArtifactSchema>;
+  runtimeProfile: PlaybookCaptainRuntimeProfile;
   requiredRoleIds: readonly string[];
   concurrentRoleSets: readonly (readonly string[])[];
   summaryPolicy?: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): unknown;
 }
 
-export interface PlaybookCaptainRegistryEntryV2
-  extends PlaybookCaptainRegistryEntryBase<2> {
-  artifactSchema: 2;
-  createRuntime(configuredOptions: unknown): PlaybookRuntime;
-}
-
 export interface PlaybookCaptainRegistryEntryV3
-  extends PlaybookCaptainRegistryEntryBase<3> {
+  extends PlaybookCaptainRegistryEntryBase {
   artifactSchema: 3;
   createRuntime(
     configuredOptions: unknown,
@@ -132,9 +186,7 @@ export interface PlaybookCaptainRegistryEntryV3
   ): PlaybookRuntime;
 }
 
-export type PlaybookCaptainRegistryEntry =
-  | PlaybookCaptainRegistryEntryV2
-  | PlaybookCaptainRegistryEntryV3;
+export type PlaybookCaptainRegistryEntry = PlaybookCaptainRegistryEntryV3;
 
 type PlaybookCaptainConversationSnapshot =
   | { readonly kind: 'unopened' }
@@ -166,7 +218,8 @@ export interface PlaybookCaptainFrameSnapshot {
 }
 
 interface PlaybookCaptainShellSnapshotFields {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
+  readonly effectLedger: DeepReadonly<PlaybookEffectLedger>;
   readonly captain: {
     readonly sessionId: string;
     readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
@@ -209,6 +262,7 @@ type PlaybookCaptainShellSnapshotValue =
           readonly mode: 'engaged.parked';
           /** Root-to-leaf engagement order. */
           readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+          readonly retainedEffectReconciliation?: PlaybookCaptainRetainedEffectReconciliation;
           readonly pendingBossQuestions?: JsonValue;
           readonly lastError?: { readonly name: string; readonly message: string };
         }
@@ -218,9 +272,50 @@ export type PlaybookCaptainShellSnapshot =
   DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 
 export interface PlaybookCaptainRetainedGeneration {
+  /** Repository-effect checkpoint reflected by the retained machine state. */
+  readonly effectLedger: DeepReadonly<PlaybookEffectLedger>;
   readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+  readonly retainedEffectReconciliation?: {
+    readonly sourceGenerationId: string;
+  };
   /** Boss-facing description published for the retained root state, if any. */
   readonly rootStateDescription?: string;
+}
+
+interface PlaybookCaptainRetainedEffectReconciliation {
+  readonly sourceGenerationId: string;
+  readonly checkpoint: DeepReadonly<PlaybookEffectLedger>;
+}
+
+function retainedEffectLedgerCanRebase(
+  checkpoint: PlaybookEffectLedger,
+  current: PlaybookEffectLedger,
+): boolean {
+  if (
+    checkpoint.boundaries.some(
+      ({ physicalReceipt }) => physicalReceipt === undefined,
+    )
+  ) {
+    return false;
+  }
+  if (!isPlaybookEffectLedgerMonotonicExtension(checkpoint, current)) {
+    return false;
+  }
+  if (
+    !isDeepStrictEqual(
+      current.boundaries.slice(0, checkpoint.boundaries.length),
+      checkpoint.boundaries,
+    ) ||
+    !isDeepStrictEqual(current.logicalOperations, checkpoint.logicalOperations)
+  ) {
+    return false;
+  }
+  return current.boundaries
+    .slice(checkpoint.boundaries.length)
+    .every(
+      ({ physicalReceipt }) =>
+        physicalReceipt?.classification === 'unchanged',
+    );
 }
 
 export type PlaybookCaptainRetentionUpdate =
@@ -234,6 +329,7 @@ export type PlaybookCaptainRetentionUpdate =
 export interface PlaybookCaptainSettlement {
   readonly snapshot: PlaybookCaptainShellSnapshot;
   readonly retentionUpdates: readonly PlaybookCaptainRetentionUpdate[];
+  readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
 /** tmux and headless front ends share this one durable Captain shell API. */
@@ -255,21 +351,26 @@ export interface PlaybookCaptainShell extends Captain {
 // normalized `captain.options.playbooks.<id>` role map.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
-  artifactSchema: 2 | 3;
+  artifactSchema: 3;
   command: string;
   options: JsonValue;
   roleBindings: ReadonlyMap<string, EffectivePlayerBinding>;
 }
 
-function createRuntimeForEnablement(enablement: Enablement): PlaybookRuntime {
-  if (enablement.artifactSchema === 3) {
+function createRuntimeForEnablement(
+  enablement: Enablement,
+  hostCapabilitiesById: ReadonlyMap<
+    string,
+    PlaybookHostConstructionCapabilities
+  >,
+): PlaybookRuntime {
+  const hostCapabilities = hostCapabilitiesById.get(enablement.entry.id);
+  if (hostCapabilities === undefined) {
     throw new Error(
       `/${enablement.command} schema-3 runtime requires current-host construction capabilities`,
     );
   }
-  return (enablement.entry as PlaybookCaptainRegistryEntryV2).createRuntime(
-    enablement.options,
-  );
+  return enablement.entry.createRuntime(enablement.options, hostCapabilities);
 }
 
 interface EffectivePlayerBinding {
@@ -363,7 +464,12 @@ async function classifySettingsCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
-type DisposalReason = 'dismiss' | 'final' | 'dispose' | 'failure';
+type DisposalReason =
+  | 'dismiss'
+  | 'final'
+  | 'dispose'
+  | 'failure'
+  | 'unresolved-effect';
 
 interface ControlLedger {
   activePlaybookId?: string;
@@ -441,6 +547,9 @@ const UUID_PATTERN =
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
+const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
+  'reconcile:unresolved-effect';
+const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING =
   'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 
@@ -453,6 +562,7 @@ interface ActiveTurnSummary {
   owner: EngagementFrame;
   counts: TurnSummaryCounts;
   stateCounts: Map<string, number>;
+  acceptedOutcomeTraceKeys: Set<string>;
 }
 
 /** The shell state of one Boss turn (DR-029). */
@@ -525,6 +635,8 @@ interface ActiveTurn {
   outcomePending?: boolean;
   /** Whether this turn already has a closing journal outcome. */
   outcomeRecorded: boolean;
+  /** Canonical host evidence frozen before the controller result phase. */
+  unresolvedEffects?: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
 function parseRegisteredCommand(
@@ -984,11 +1096,62 @@ interface OutcomeReport {
   savedLine?: string;
 }
 
+type ControllerSettlementDraft = Omit<
+  SettlementEvidence,
+  'unresolvedEffects'
+>;
+
+function unresolvedEffectReportLines(
+  unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[],
+): readonly string[] {
+  return unresolvedEffects.map((effect, index) => {
+    const merelyPossible =
+      effect.classification === 'observation-ambiguous' ||
+      effect.classification === 'incomplete';
+    return [
+      `${index + 1}. ${merelyPossible ? 'Possible repository effect; a change could not be excluded' : 'Observed repository change'} (${effect.classification})`,
+      `baseline HEAD ${effect.baselineHead}`,
+      effect.afterHead === undefined
+        ? 'after HEAD was not available'
+        : `after HEAD ${effect.afterHead}`,
+      ...(effect.commitOid === undefined
+        ? []
+        : [`proven commit OID ${effect.commitOid}`]),
+    ].join('; ') + '.';
+  });
+}
+
+function unresolvedEffectBossReport(
+  unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[],
+): string | undefined {
+  if (unresolvedEffects.length === 0) return undefined;
+  return [
+    'Repository-effect evidence:',
+    ...unresolvedEffectReportLines(unresolvedEffects).map((line) => `- ${line}`),
+    'This evidence does not establish workflow completion or attribute any repository change or commit to this workflow.',
+  ].join('\n');
+}
+
+function appendMandatoryPresentationSuffix(
+  turn: ActiveTurn,
+  suffix: string,
+): void {
+  const current = turn.mandatoryPresentationSuffix;
+  if (current === undefined) {
+    turn.mandatoryPresentationSuffix = suffix;
+  } else if (!current.includes(suffix)) {
+    turn.mandatoryPresentationSuffix = `${current}\n\n${suffix}`;
+  }
+}
+
 // CAPTAIN-20: the result-phase block the shell supplies inside the closing
 // reply call's envelope — the settlement's outcome-report facts verbatim, the
 // exact counts, and the saved-counts line only when counted activity is
 // nonzero.
-function outcomeReportBlock(report: OutcomeReport): string {
+function outcomeReportBlock(
+  report: OutcomeReport,
+  unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[],
+): string {
   const lines: string[] = [
     `Settlement status: ${report.status}`,
     ...(report.playbookId === undefined
@@ -1013,6 +1176,14 @@ function outcomeReportBlock(report: OutcomeReport): string {
   }
   if (report.leafStateSummary !== undefined) {
     lines.push(`Resulting leaf state: ${report.leafStateSummary}`);
+  }
+  const effectLines = unresolvedEffectReportLines(unresolvedEffects);
+  if (effectLines.length > 0) {
+    lines.push('Repository-effect evidence (canonical, in ledger order):');
+    lines.push(...effectLines.map((line) => `- ${line}`));
+    lines.push(
+      'Report this evidence without claiming workflow completion or attributing any repository change or commit to the workflow.',
+    );
   }
   lines.push(`Progress counts: ${report.progressPhrase}`);
   lines.push(
@@ -1063,13 +1234,9 @@ function summaryProgressRoundCount(
   return [...stateCounts.values()].reduce((total, count) => total + count, 0);
 }
 
-function guardFromJudgeReply(finalText: string): string | undefined {
-  return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
-}
-
 interface ValidatedRuntimeProfile {
   readonly kind: 'shared-factory' | 'bespoke';
-  readonly artifactSchema: 2 | 3;
+  readonly artifactSchema: 3;
 }
 
 function captureRegistryEntry(value: unknown): unknown {
@@ -1119,6 +1286,123 @@ function exactOwnDataRecord(
   );
 }
 
+function captureHostCapabilityRecord(
+  value: PlaybookCaptainDeps['hostCapabilities'],
+): Readonly<Record<string, PlaybookHostConstructionCapabilities>> {
+  if (value === undefined) return Object.freeze({});
+  const captured = exactOwnDataRecord(value, Object.keys(value));
+  if (captured === undefined) {
+    throw new TypeError(
+      'current-host construction capabilities must be an exact data-property record',
+    );
+  }
+  return captured as Readonly<
+    Record<string, PlaybookHostConstructionCapabilities>
+  >;
+}
+
+function validateHostCapabilities(
+  value: unknown,
+  entry: PlaybookCaptainRegistryEntryV3,
+  command: string,
+): PlaybookHostConstructionCapabilities {
+  if (value === undefined) {
+    throw new Error(
+      `/${command} schema-3 runtime requires current-host construction capabilities`,
+    );
+  }
+  const capability = exactOwnDataRecord(value, [
+    'authority',
+    'repository',
+    'effectLedger',
+  ]);
+  const authority = exactOwnDataRecord(capability?.authority, [
+    'playbookId',
+    'artifactSchema',
+    'cwd',
+    'sessionId',
+    'leaseOwnerToken',
+    'canonicalWorktree',
+    'requiredRoleIds',
+    'concurrentRoleSets',
+  ]);
+  const canonicalWorktree = exactOwnDataRecord(
+    authority?.canonicalWorktree,
+    ['worktree', 'gitDir'],
+  );
+  const repository = exactOwnDataRecord(capability?.repository, [
+    'identity',
+    'observe',
+    'acquire',
+    'runExclusive',
+    'runCohort',
+    'runDeferred',
+  ]);
+  const identity = exactOwnDataRecord(repository?.identity, [
+    'worktree',
+    'gitDir',
+  ]);
+  const effectLedger = exactOwnDataRecord(capability?.effectLedger, [
+    'snapshot',
+    'writeAhead',
+  ]);
+  if (
+    authority?.playbookId !== entry.id ||
+    authority.artifactSchema !== 3 ||
+    typeof authority.cwd !== 'string' ||
+    authority.cwd.length === 0 ||
+    typeof authority.sessionId !== 'string' ||
+    authority.sessionId.length === 0 ||
+    typeof authority.leaseOwnerToken !== 'string' ||
+    authority.leaseOwnerToken.length === 0 ||
+    canonicalWorktree === undefined ||
+    typeof canonicalWorktree.worktree !== 'string' ||
+    canonicalWorktree.worktree.length === 0 ||
+    typeof canonicalWorktree.gitDir !== 'string' ||
+    canonicalWorktree.gitDir.length === 0 ||
+    !isDeepStrictEqual(authority.requiredRoleIds, entry.requiredRoleIds) ||
+    !isDeepStrictEqual(
+      authority.concurrentRoleSets,
+      entry.concurrentRoleSets,
+    ) ||
+    identity === undefined ||
+    !isDeepStrictEqual(identity, canonicalWorktree) ||
+    typeof repository?.observe !== 'function' ||
+    typeof repository.acquire !== 'function' ||
+    typeof repository.runExclusive !== 'function' ||
+    typeof repository.runCohort !== 'function' ||
+    typeof repository.runDeferred !== 'function' ||
+    typeof effectLedger?.snapshot !== 'function' ||
+    typeof effectLedger.writeAhead !== 'function'
+  ) {
+    throw new Error(
+      `/${command} schema-3 current-host capability authority does not match its imported artifact`,
+    );
+  }
+  return value as PlaybookHostConstructionCapabilities;
+}
+
+function effectLedgerMirrorFromCapabilities(
+  capabilities: ReadonlyMap<string, PlaybookHostConstructionCapabilities>,
+): PlaybookEffectLedger {
+  const values = [...capabilities.values()];
+  if (values.length === 0) return emptyPlaybookEffectLedger();
+  const mirror = assertPlaybookEffectLedger(values[0]!.effectLedger.snapshot());
+  for (const capability of values.slice(1)) {
+    if (
+      !isDeepStrictEqual(
+        assertPlaybookEffectLedger(capability.effectLedger.snapshot()),
+        mirror,
+      )
+    ) {
+      throw new Error(
+        'schema-3 current-host capabilities disagree on their effect ledger',
+      );
+    }
+  }
+  return mirror;
+}
+
 function validateRuntimeProfile(
   value: unknown,
 ): ValidatedRuntimeProfile | undefined {
@@ -1129,7 +1413,7 @@ function validateRuntimeProfile(
       'runtimeAbi',
     ]);
     if (
-      (compat?.artifactSchema === 2 || compat?.artifactSchema === 3) &&
+      compat?.artifactSchema === 3 &&
       typeof compat.runtimeAbi === 'number' &&
       Number.isSafeInteger(compat.runtimeAbi)
     ) {
@@ -1143,7 +1427,7 @@ function validateRuntimeProfile(
   const bespoke = exactOwnDataRecord(value, ['kind', 'artifactSchema']);
   if (
     bespoke?.kind === 'bespoke' &&
-    (bespoke.artifactSchema === 2 || bespoke.artifactSchema === 3)
+    bespoke.artifactSchema === 3
   ) {
     return { kind: 'bespoke', artifactSchema: bespoke.artifactSchema };
   }
@@ -1188,7 +1472,7 @@ function isValidRegistryEntry(
     typeof e.id === 'string' &&
     typeof e.command === 'string' &&
     typeof e.intent === 'string' &&
-    (artifactSchema === 2 || artifactSchema === 3) &&
+    artifactSchema === 3 &&
     typeof e.validateOptions === 'function' &&
     typeof e.createRuntime === 'function'
   );
@@ -1215,6 +1499,93 @@ const SNAPSHOT_JOURNAL_KINDS = new Set([
   'action',
   'outcome',
 ] as const);
+const UNRESOLVED_EFFECT_CLASSIFICATIONS = new Set<
+  PlaybookCaptainUnresolvedEffect['classification']
+>([
+  'one-descendant-commit',
+  'multiple-commits',
+  'rewritten-or-non-descendant',
+  'worktree-only-change',
+  'concurrent-or-foreign-change',
+  'observation-ambiguous',
+  'incomplete',
+]);
+const GIT_OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+export function assertPlaybookCaptainUnresolvedEffects(
+  value: unknown,
+): readonly PlaybookCaptainUnresolvedEffect[] {
+  const detached = snapshotJsonValue(
+    value,
+    'Captain unresolved effects',
+  );
+  if (!Array.isArray(detached)) {
+    throw new TypeError('Captain unresolved effects must be an array');
+  }
+  for (const [index, raw] of detached.entries()) {
+    const path = `Captain unresolved effects[${index}]`;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new TypeError(`${path} must be an object`);
+    }
+    const entry = raw as Record<string, JsonValue>;
+    const allowed = new Set([
+      'classification',
+      'baselineHead',
+      'afterHead',
+      'commitOid',
+    ]);
+    const unknown = Object.keys(entry).find((key) => !allowed.has(key));
+    if (unknown !== undefined) {
+      throw new TypeError(`${path} has unknown field ${JSON.stringify(unknown)}`);
+    }
+    if (
+      typeof entry.classification !== 'string' ||
+      !UNRESOLVED_EFFECT_CLASSIFICATIONS.has(
+        entry.classification as PlaybookCaptainUnresolvedEffect['classification'],
+      )
+    ) {
+      throw new TypeError(`${path}.classification is not supported`);
+    }
+    if (
+      typeof entry.baselineHead !== 'string' ||
+      !GIT_OID_PATTERN.test(entry.baselineHead)
+    ) {
+      throw new TypeError(`${path}.baselineHead must be a Git OID`);
+    }
+    if (
+      entry.afterHead !== undefined &&
+      (typeof entry.afterHead !== 'string' ||
+        !GIT_OID_PATTERN.test(entry.afterHead))
+    ) {
+      throw new TypeError(`${path}.afterHead must be a Git OID`);
+    }
+    if (
+      entry.classification !== 'observation-ambiguous' &&
+      entry.classification !== 'incomplete' &&
+      entry.afterHead === undefined
+    ) {
+      throw new TypeError(
+        `${path}.afterHead is required for ${entry.classification}`,
+      );
+    }
+    if (entry.classification === 'one-descendant-commit') {
+      if (
+        typeof entry.commitOid !== 'string' ||
+        !GIT_OID_PATTERN.test(entry.commitOid) ||
+        entry.commitOid !== entry.afterHead
+      ) {
+        throw new TypeError(
+          `${path}.commitOid must equal afterHead for one-descendant-commit`,
+        );
+      }
+    } else if (entry.commitOid !== undefined) {
+      throw new TypeError(
+        `${path}.commitOid is permitted only for one-descendant-commit`,
+      );
+    }
+  }
+  return detached as unknown as readonly PlaybookCaptainUnresolvedEffect[];
+}
 
 function snapshotRecord(
   value: JsonValue | undefined,
@@ -1476,19 +1847,20 @@ export function assertPlaybookCaptainShellSnapshot(
 ): PlaybookCaptainShellSnapshot {
   const detached = snapshotJsonValue(value, 'Captain shell snapshot');
   const snapshot = snapshotRecord(detached, 'Captain shell snapshot');
-  if (snapshot.schemaVersion !== 3) {
+  if (snapshot.schemaVersion !== 4) {
     if (snapshot.schemaVersion === 1) {
       throw new TypeError(
-        'Captain shell snapshot schemaVersion 1 has incompatible player identity; schema 3 is required',
+        'Captain shell snapshot schemaVersion 1 has incompatible player identity; schema 4 is required',
       );
     }
     throw new TypeError(
-      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
+      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 4)`,
     );
   }
   const mode = snapshot.mode;
   const commonKeys = [
     'schemaVersion',
+    'effectLedger',
     'captain',
     'playerSessions',
     'issuedSessionIds',
@@ -1506,6 +1878,7 @@ export function assertPlaybookCaptainShellSnapshot(
       [
         ...commonKeys,
         'frames',
+        'retainedEffectReconciliation',
         'pendingBossQuestions',
         'lastError',
       ],
@@ -1533,6 +1906,50 @@ export function assertPlaybookCaptainShellSnapshot(
     captain.runtime,
     INTERNAL_CAPTAIN_ID,
   );
+  const effectLedger = assertPlaybookEffectLedger(snapshot.effectLedger);
+  let retainedEffectReconciliation:
+    | PlaybookCaptainRetainedEffectReconciliation
+    | undefined;
+  if (snapshot.retainedEffectReconciliation !== undefined) {
+    const reconciliation = snapshotRecord(
+      snapshot.retainedEffectReconciliation,
+      'Captain shell snapshot.retainedEffectReconciliation',
+    );
+    rejectSnapshotKeys(
+      reconciliation,
+      ['sourceGenerationId', 'checkpoint'],
+      'Captain shell snapshot.retainedEffectReconciliation',
+    );
+    const checkpoint = assertPlaybookEffectLedger(
+      reconciliation.checkpoint,
+      'Captain shell snapshot retained-effect checkpoint',
+    );
+    if (
+      isDeepStrictEqual(checkpoint, effectLedger) ||
+      !isPlaybookEffectLedgerMonotonicExtension(checkpoint, effectLedger)
+    ) {
+      throw new TypeError(
+        'Captain shell retained-effect checkpoint must be a strict monotonic prefix of its current mirror',
+      );
+    }
+    retainedEffectReconciliation = {
+      sourceGenerationId: snapshotUuid(
+        reconciliation.sourceGenerationId,
+        'Captain shell snapshot.retainedEffectReconciliation.sourceGenerationId',
+      ),
+      checkpoint,
+    };
+  }
+  if (
+    !isDeepStrictEqual(
+      captainRuntime.effectLedger,
+      emptyPlaybookEffectLedger(),
+    )
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot internal Captain runtime effect ledger must be empty',
+    );
+  }
   const captainAgent = snapshotFixedAgent(
     captain.agent,
     'Captain shell snapshot.captain.agent',
@@ -1762,7 +2179,8 @@ export function assertPlaybookCaptainShellSnapshot(
     'Captain shell snapshot.playerSessions',
   );
   const common: PlaybookCaptainShellSnapshotFields = {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    effectLedger,
     captain: {
       sessionId: captainSessionId,
       runtime: captainRuntime,
@@ -1911,6 +2329,51 @@ export function assertPlaybookCaptainShellSnapshot(
   const issuedIds = new Set(issued);
   const rootSessionId = normalizedFrames[0]!.sessionId;
   for (const [index, frame] of normalizedFrames.entries()) {
+    const frameLedger = frame.runtime.effectLedger;
+    if (
+      !isDeepStrictEqual(frameLedger, emptyPlaybookEffectLedger()) &&
+      !isDeepStrictEqual(frameLedger, effectLedger)
+    ) {
+      throw new TypeError(
+        `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger is neither empty nor the shell mirror`,
+      );
+    }
+    const frameReconciliation = frame.runtime.retainedEffectReconciliation;
+    if (retainedEffectReconciliation === undefined) {
+      if (frameReconciliation !== undefined) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} carries an unmirrored retained-effect fence`,
+        );
+      }
+    } else if (isDeepStrictEqual(frameLedger, effectLedger)) {
+      if (
+        frameReconciliation === undefined ||
+        !isDeepStrictEqual(
+          frameReconciliation.checkpoint,
+          retainedEffectReconciliation.checkpoint,
+        )
+      ) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} does not mirror the root retained-effect fence`,
+        );
+      }
+      if (
+        index === 0 &&
+        frameReconciliation.sourceSessionId !==
+          retainedEffectReconciliation.sourceGenerationId
+      ) {
+        throw new TypeError(
+          'Captain shell snapshot retained-effect root source identity differs from its generation',
+        );
+      }
+    } else if (
+      frameReconciliation !== undefined ||
+      frame.runtime.retainedEffectSourceSessionId !== undefined
+    ) {
+      throw new TypeError(
+        `Captain shell snapshot empty-ledger frame ${JSON.stringify(frame.playbookId)} carries retained-effect adoption state`,
+      );
+    }
     if (activePlaybooks.has(frame.playbookId)) {
       throw new TypeError(
         'Captain shell snapshot engagement path must not contain a playbook cycle',
@@ -2008,14 +2471,20 @@ export function assertPlaybookCaptainShellSnapshot(
       'Captain shell snapshot leaf runtime must be parked without a dangling suspended child call',
     );
   }
-  if (
-    !isDeepStrictEqual(
-      snapshot.pendingBossQuestions ?? [],
-      leafRuntime.pendingBossQuestions,
-    )
-  ) {
+  if (retainedEffectReconciliation === undefined) {
+    if (
+      !isDeepStrictEqual(
+        snapshot.pendingBossQuestions ?? [],
+        leafRuntime.pendingBossQuestions,
+      )
+    ) {
+      throw new TypeError(
+        'Captain shell snapshot pending Boss questions must equal the leaf runtime projection',
+      );
+    }
+  } else if (snapshot.pendingBossQuestions !== undefined) {
     throw new TypeError(
-      'Captain shell snapshot pending Boss questions must equal the leaf runtime projection',
+      'Captain shell snapshot must withhold pending Boss questions behind retained-effect reconciliation',
     );
   }
   return snapshotJsonValue(
@@ -2023,6 +2492,9 @@ export function assertPlaybookCaptainShellSnapshot(
       ...common,
       mode,
       frames: normalizedFrames,
+      ...(retainedEffectReconciliation === undefined
+        ? {}
+        : { retainedEffectReconciliation }),
       ...(snapshot.pendingBossQuestions === undefined
         ? {}
         : { pendingBossQuestions: snapshot.pendingBossQuestions }),
@@ -2039,6 +2511,10 @@ interface BuiltRegistry {
   byCommand: Map<string, PlaybookCaptainRegistryEntry>;
   byId: Map<string, PlaybookCaptainRegistryEntry>;
   enablementById: Map<string, Enablement>;
+  hostCapabilitiesById: ReadonlyMap<
+    string,
+    PlaybookHostConstructionCapabilities
+  >;
   captainAgent: SessionAgent;
   playerAgents: Map<string, SessionAgent>;
 }
@@ -2162,11 +2638,19 @@ function rejectConfiguredHostCapabilities(value: JsonValue | undefined, path: st
 async function buildEnablements(
   options: unknown,
   loadModule: (specifier: string) => Promise<unknown>,
+  hostCapabilities: PlaybookCaptainDeps['hostCapabilities'],
 ): Promise<BuiltRegistry> {
   const entries: PlaybookCaptainRegistryEntry[] = [];
   const byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
   const byId = new Map<string, PlaybookCaptainRegistryEntry>();
   const enablementById = new Map<string, Enablement>();
+  const hostCapabilitiesById = new Map<
+    string,
+    PlaybookHostConstructionCapabilities
+  >();
+  const suppliedHostCapabilities =
+    captureHostCapabilityRecord(hostCapabilities);
+  const expectedHostCapabilityIds: string[] = [];
 
   const detached = snapshotJsonValue(options, 'captain.options');
   const top = snapshotRecord(detached, 'captain.options');
@@ -2268,23 +2752,34 @@ async function buildEnablements(
         )}`,
       );
     }
-    const entry = captureRegistryEntry(
+    const capturedEntry = captureRegistryEntry(
       (mod as { default?: unknown })?.default,
     );
-    const artifactSchema = (entry as { artifactSchema?: unknown } | null)
+    const artifactSchema = (
+      capturedEntry as { artifactSchema?: unknown } | null
+    )
       ?.artifactSchema;
     const runtimeProfile = validateRuntimeProfile(
-      (entry as { runtimeProfile?: unknown } | null)?.runtimeProfile,
+      (capturedEntry as { runtimeProfile?: unknown } | null)?.runtimeProfile,
     );
     if (
-      (artifactSchema !== 2 && artifactSchema !== 3) ||
+      artifactSchema !== 3 ||
       runtimeProfile === undefined ||
-      !isValidRegistryEntry(entry, artifactSchema)
+      !isValidRegistryEntry(capturedEntry, artifactSchema)
     ) {
       throw new Error(
         `captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`,
       );
     }
+    const entry = Object.freeze({
+      ...capturedEntry,
+      requiredRoleIds: Object.freeze([...capturedEntry.requiredRoleIds]),
+      concurrentRoleSets: Object.freeze(
+        capturedEntry.concurrentRoleSets.map((roles) =>
+          Object.freeze([...roles]),
+        ),
+      ),
+    }) as PlaybookCaptainRegistryEntry;
     if (runtimeProfile.artifactSchema !== artifactSchema) {
       const implementation =
         runtimeProfile.kind === 'shared-factory'
@@ -2377,6 +2872,13 @@ async function buildEnablements(
     entries.push(entry);
     byId.set(entry.id, entry);
     byCommand.set(command, entry);
+    const hostCapability = validateHostCapabilities(
+      suppliedHostCapabilities[entry.id],
+      entry,
+      command,
+    );
+    expectedHostCapabilityIds.push(entry.id);
+    hostCapabilitiesById.set(entry.id, hostCapability);
     enablementById.set(entry.id, {
       entry,
       artifactSchema,
@@ -2384,6 +2886,20 @@ async function buildEnablements(
       options: validatedOptions,
       roleBindings,
     });
+  }
+  const suppliedHostCapabilityIds = Object.keys(
+    suppliedHostCapabilities,
+  ).sort();
+  expectedHostCapabilityIds.sort();
+  if (
+    !isDeepStrictEqual(
+      suppliedHostCapabilityIds,
+      expectedHostCapabilityIds,
+    )
+  ) {
+    throw new Error(
+      'current-host construction capabilities must exactly cover schema-3 playbooks',
+    );
   }
   const referenced = new Set(
     [...enablementById.values()].flatMap((enablement) =>
@@ -2401,6 +2917,7 @@ async function buildEnablements(
     byCommand,
     byId,
     enablementById,
+    hostCapabilitiesById,
     captainAgent,
     playerAgents,
   };
@@ -2416,6 +2933,17 @@ export function createPlaybookCaptainShell(
   const createCaptainRuntime: NonNullable<
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
+  const unresolvedEffectSettlement = deps.unresolvedEffectSettlement;
+  let pendingHostCapabilities = deps.hostCapabilities;
+  let currentEffectLedger = () => emptyPlaybookEffectLedger();
+  // The returned shell must not retain the caller's aggregate dependency
+  // object after its one live capability input has moved to a clearable slot.
+  deps = {};
+  const buildCurrentEnablements = async (): Promise<BuiltRegistry> => {
+    const hostCapabilities = pendingHostCapabilities;
+    pendingHostCapabilities = undefined;
+    return buildEnablements(options, loadModule, hostCapabilities);
+  };
   let captainAgent: SessionAgent | undefined;
   let captainAdapter: string | undefined;
   let playerAgents = new Map<string, SessionAgent>();
@@ -2425,6 +2953,10 @@ export function createPlaybookCaptainShell(
   let byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
   let byId = new Map<string, PlaybookCaptainRegistryEntry>();
   let enablementById = new Map<string, Enablement>();
+  let hostCapabilitiesById = new Map<
+    string,
+    PlaybookHostConstructionCapabilities
+  >();
   let session: CaptainSession | undefined;
   let sessionEmissionsOpen = false;
   let closedGateAttempted = false;
@@ -2439,6 +2971,9 @@ export function createPlaybookCaptainShell(
   let activeContext: CaptainContext | undefined;
   const frames: EngagementFrame[] = [];
   let mode: ShellMode = 'chat';
+  let retainedEffectReconciliation:
+    | PlaybookCaptainRetainedEffectReconciliation
+    | undefined;
   let pendingBossQuestions: unknown;
   let lastError: { name: string; message: string } | undefined;
   let activeTurnSummary: ActiveTurnSummary | undefined;
@@ -2540,6 +3075,7 @@ export function createPlaybookCaptainShell(
   >();
   interface RetainedGenerationOffer {
     readonly generation: PlaybookCaptainRetainedGeneration;
+    readonly requiresEffectReconciliation: boolean;
     /** Fresh, uninitialized runtimes reserved for one adoption attempt. */
     readonly runtimes: readonly PlaybookRuntime[];
   }
@@ -2558,6 +3094,10 @@ export function createPlaybookCaptainShell(
   let retainedGenerationInstallationInProgress = false;
   let retainedGenerationInstallationClosed = false;
   let retentionSettlementReady = false;
+  let abandonmentSettlementUnsafe = false;
+  let settledTurnUnresolvedEffects:
+    | readonly PlaybookCaptainUnresolvedEffect[]
+    | undefined;
   // DR-029: a run that lands in the runtime's own failure state
   // is an outcome the report must name. `processFrameResult` records it here
   // and the settling selection folds it into its facts, so the grounding the
@@ -2569,12 +3109,313 @@ export function createPlaybookCaptainShell(
   const frameLabel = (frame: EngagementFrame): string =>
     `/${frame.enablement.command}`;
 
+  type UnresolvedEnvelopeReference =
+    | { readonly kind: 'boundary'; readonly boundaryId: string }
+    | { readonly kind: 'logical-operation'; readonly operationId: string };
+
+  const capturedUnresolvedEnvelopeReferences = (
+    frame: EngagementFrame,
+  ): readonly UnresolvedEnvelopeReference[] => {
+    let advertisesUnresolved = false;
+    try {
+      advertisesUnresolved =
+        frame.runtime
+          .describe?.()
+          .actions.some(
+            ({ id }) =>
+              id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+              id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
+          ) === true;
+    } catch {
+      advertisesUnresolved = true;
+    }
+    if (typeof frame.runtime.unresolvedEffectEnvelopes !== 'function') {
+      if (advertisesUnresolved) {
+        throw new Error(
+          `${frameLabel(frame)} unresolved-effect runtime exposes no envelope identities`,
+        );
+      }
+      return [];
+    }
+    const detached = snapshotJsonValue(
+      frame.runtime.unresolvedEffectEnvelopes(),
+      `${frameLabel(frame)} unresolved effect envelope identities`,
+    );
+    if (!Array.isArray(detached)) {
+      throw new TypeError(
+        `${frameLabel(frame)} unresolved effect envelope identities must be an array`,
+      );
+    }
+    return detached.map((raw, index) => {
+      const path = `${frameLabel(frame)} unresolved effect envelope identities[${index}]`;
+      const record = snapshotRecord(raw, path);
+      if (record.kind === 'boundary') {
+        rejectSnapshotKeys(record, ['kind', 'boundaryId'], path);
+        return {
+          kind: 'boundary' as const,
+          boundaryId: snapshotString(record.boundaryId, `${path}.boundaryId`),
+        };
+      }
+      if (record.kind === 'logical-operation') {
+        rejectSnapshotKeys(record, ['kind', 'operationId'], path);
+        return {
+          kind: 'logical-operation' as const,
+          operationId: snapshotString(record.operationId, `${path}.operationId`),
+        };
+      }
+      throw new TypeError(`${path}.kind is not supported`);
+    });
+  };
+
+  const unresolvedEffectFromReceipt = (
+    receipt: NonNullable<
+      PlaybookEffectLedger['boundaries'][number]['physicalReceipt']
+    >,
+    baselineHead = receipt.baseline.head,
+  ): PlaybookCaptainUnresolvedEffect | undefined => {
+    if (receipt.classification === 'unchanged') return undefined;
+    return {
+      classification: receipt.classification,
+      baselineHead,
+      ...(receipt.after === undefined ? {} : { afterHead: receipt.after.head }),
+      ...(receipt.commitOid === undefined ? {} : { commitOid: receipt.commitOid }),
+    };
+  };
+
+  const cumulativeOpenLogicalEffect = (
+    operation: PlaybookEffectLedger['logicalOperations'][number],
+    boundaries: readonly PlaybookEffectLedger['boundaries'][number][],
+  ): PlaybookCaptainUnresolvedEffect | undefined => {
+    const original = operation.originalBaseline;
+    const latest = boundaries.at(-1)!;
+    const after = latest.after ?? operation.checkpoint;
+    const receipt = latest.physicalReceipt;
+    if (receipt === undefined) {
+      return {
+        classification: 'incomplete',
+        baselineHead: original.head,
+        ...(after === undefined ? {} : { afterHead: after.head }),
+      };
+    }
+    if (after === undefined) {
+      return unresolvedEffectFromReceipt(receipt, original.head);
+    }
+
+    // An open deferred chain has no authoritative cumulative receipt. Reuse
+    // physical ancestry only while every preceding checkpoint is one of the
+    // same-HEAD dispositions that can lawfully keep a deferred operation
+    // open. Any other history is bounded but not cumulatively attributable.
+    const checkpointChainIsSafe = boundaries
+      .slice(0, -1)
+      .every(
+        (boundary) =>
+          boundary.after?.head === original.head &&
+          (boundary.physicalReceipt?.classification === 'unchanged' ||
+            boundary.physicalReceipt?.classification ===
+              'worktree-only-change'),
+      );
+    if (!checkpointChainIsSafe || latest.baseline.head !== original.head) {
+      return {
+        classification: 'observation-ambiguous',
+        baselineHead: original.head,
+        afterHead: after.head,
+      };
+    }
+
+    if (
+      receipt.classification !== 'unchanged' &&
+      receipt.classification !== 'worktree-only-change' &&
+      receipt.classification !== 'one-descendant-commit'
+    ) {
+      return unresolvedEffectFromReceipt(receipt, original.head);
+    }
+
+    const sameProjection = isDeepStrictEqual(
+      original.projection,
+      after.projection,
+    );
+    if (after.head === original.head) {
+      if (
+        receipt.classification !== 'unchanged' &&
+        receipt.classification !== 'worktree-only-change'
+      ) {
+        return {
+          classification: 'observation-ambiguous',
+          baselineHead: original.head,
+          afterHead: after.head,
+        };
+      }
+      if (sameProjection) return undefined;
+      const preservesOriginal = Object.entries(original.projection).every(
+        ([path, entry]) =>
+          Object.hasOwn(after.projection, path) &&
+          isDeepStrictEqual(entry, after.projection[path]),
+      );
+      return {
+        classification: preservesOriginal
+          ? 'worktree-only-change'
+          : 'observation-ambiguous',
+        baselineHead: original.head,
+        afterHead: after.head,
+      };
+    }
+
+    if (
+      receipt.classification === 'one-descendant-commit' &&
+      sameProjection
+    ) {
+      return {
+        classification: 'one-descendant-commit',
+        baselineHead: original.head,
+        afterHead: after.head,
+        commitOid: after.head,
+      };
+    }
+    return {
+      classification: 'observation-ambiguous',
+      baselineHead: original.head,
+      afterHead: after.head,
+    };
+  };
+
+  const projectUnresolvedEffects = (
+    ledger: PlaybookEffectLedger,
+    references: readonly UnresolvedEnvelopeReference[],
+  ): readonly PlaybookCaptainUnresolvedEffect[] => {
+    const pendingReferences = [...references];
+    const projected: Array<{
+      readonly order: number;
+      readonly effect: PlaybookCaptainUnresolvedEffect;
+    }> = [];
+    const seenBoundaries = new Set<string>();
+    const seenOperations = new Set<string>();
+    for (let index = 0; index < pendingReferences.length; index += 1) {
+      const reference = pendingReferences[index]!;
+      if (reference.kind === 'boundary') {
+        if (seenBoundaries.has(reference.boundaryId)) continue;
+        seenBoundaries.add(reference.boundaryId);
+        const boundary = ledger.boundaries.find(
+          ({ boundaryId }) => boundaryId === reference.boundaryId,
+        );
+        if (boundary === undefined) {
+          throw new Error(
+            `unresolved effect boundary ${JSON.stringify(reference.boundaryId)} is absent from the authoritative ledger`,
+          );
+        }
+        if (boundary.logicalOperationId !== undefined) {
+          if (!seenOperations.has(boundary.logicalOperationId)) {
+            pendingReferences.push({
+              kind: 'logical-operation',
+              operationId: boundary.logicalOperationId,
+            });
+          }
+          continue;
+        }
+        const effect =
+          boundary.physicalReceipt === undefined
+            ? {
+                classification: 'incomplete' as const,
+                baselineHead: boundary.baseline.head,
+                ...(boundary.after === undefined
+                  ? {}
+                  : { afterHead: boundary.after.head }),
+              }
+            : unresolvedEffectFromReceipt(boundary.physicalReceipt);
+        if (effect !== undefined) {
+          projected.push({ order: boundary.sequence, effect });
+        }
+        continue;
+      }
+
+      if (seenOperations.has(reference.operationId)) continue;
+      seenOperations.add(reference.operationId);
+      const operation = ledger.logicalOperations.find(
+        ({ operationId }) => operationId === reference.operationId,
+      );
+      if (operation === undefined) {
+        throw new Error(
+          `unresolved logical operation ${JSON.stringify(reference.operationId)} is absent from the authoritative ledger`,
+        );
+      }
+      const boundaries = operation.boundaryIds.map((boundaryId) => {
+        const boundary = ledger.boundaries.find(
+          (candidate) => candidate.boundaryId === boundaryId,
+        );
+        if (boundary === undefined) {
+          throw new Error(
+            `unresolved logical operation ${JSON.stringify(reference.operationId)} names an absent boundary`,
+          );
+        }
+        seenBoundaries.add(boundaryId);
+        return boundary;
+      });
+      let effect: PlaybookCaptainUnresolvedEffect | undefined;
+      if (operation.logicalReceipt !== undefined) {
+        effect = unresolvedEffectFromReceipt(
+          operation.logicalReceipt,
+          operation.originalBaseline.head,
+        );
+      } else {
+        effect = cumulativeOpenLogicalEffect(operation, boundaries);
+      }
+      if (effect !== undefined) {
+        projected.push({ order: boundaries[0]!.sequence, effect });
+      }
+    }
+    return assertPlaybookCaptainUnresolvedEffects(
+      projected
+        .sort((left, right) => left.order - right.order)
+        .map(({ effect }) => effect),
+    );
+  };
+
+  const currentUnresolvedEffects =
+    (): readonly PlaybookCaptainUnresolvedEffect[] => {
+      const ledger = assertPlaybookEffectLedger(currentEffectLedger());
+      const references: UnresolvedEnvelopeReference[] = [];
+      for (const frame of frames) {
+        references.push(...capturedUnresolvedEnvelopeReferences(frame));
+      }
+      if (retainedEffectReconciliation !== undefined) {
+        for (const boundary of ledger.boundaries.slice(
+          retainedEffectReconciliation.checkpoint.boundaries.length,
+        )) {
+          if (boundary.physicalReceipt?.classification === 'unchanged') {
+            continue;
+          }
+          references.push(
+            boundary.logicalOperationId === undefined
+              ? { kind: 'boundary', boundaryId: boundary.boundaryId }
+              : {
+                  kind: 'logical-operation',
+                  operationId: boundary.logicalOperationId,
+                },
+          );
+        }
+      }
+      return projectUnresolvedEffects(ledger, references);
+    };
+
+  const freezeTurnUnresolvedEffects =
+    (): readonly PlaybookCaptainUnresolvedEffect[] => {
+      const turn = activeTurn;
+      if (turn?.unresolvedEffects !== undefined) return turn.unresolvedEffects;
+      const frozen = currentUnresolvedEffects();
+      if (turn !== undefined) turn.unresolvedEffects = frozen;
+      settledTurnUnresolvedEffects = frozen;
+      return frozen;
+    };
+
   const normalizeInstalledRetainedGenerations = (
     value: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>,
   ): Map<string, PlaybookCaptainRetainedGeneration> => {
     const path = 'Captain retained generations';
     const detached = snapshotJsonValue(value, path);
     const record = snapshotRecord(detached, path);
+    const authoritativeEffectLedger = assertPlaybookEffectLedger(
+      currentEffectLedger(),
+      `${path} current host effect ledger`,
+    );
     const sourceSessionIds = new Set<string>();
     const normalized = new Map<string, PlaybookCaptainRetainedGeneration>();
     for (const [rootPlaybookId, rawGeneration] of Object.entries(record)) {
@@ -2588,9 +3429,58 @@ export function createPlaybookCaptainShell(
       const generation = snapshotRecord(rawGeneration, generationPath);
       rejectSnapshotKeys(
         generation,
-        ['frames', 'rootStateDescription'],
+        [
+          'effectLedger',
+          'frames',
+          'retainedEffectReconciliation',
+          'rootStateDescription',
+        ],
         generationPath,
       );
+      const generationEffectLedger = assertPlaybookEffectLedger(
+        generation.effectLedger,
+        `${generationPath}.effectLedger`,
+      );
+      if (
+        generationEffectLedger.boundaries.some(
+          ({ physicalReceipt }) => physicalReceipt === undefined,
+        )
+      ) {
+        throw new TypeError(
+          `${generationPath}.effectLedger contains an incomplete physical boundary`,
+        );
+      }
+      if (
+        !isPlaybookEffectLedgerMonotonicExtension(
+          generationEffectLedger,
+          authoritativeEffectLedger,
+        )
+      ) {
+        throw new TypeError(
+          `${generationPath}.effectLedger is not a monotonic prefix of the current host mirror`,
+        );
+      }
+      const generationReconciliation =
+        generation.retainedEffectReconciliation === undefined
+          ? undefined
+          : snapshotRecord(
+              generation.retainedEffectReconciliation,
+              `${generationPath}.retainedEffectReconciliation`,
+            );
+      if (generationReconciliation !== undefined) {
+        rejectSnapshotKeys(
+          generationReconciliation,
+          ['sourceGenerationId'],
+          `${generationPath}.retainedEffectReconciliation`,
+        );
+      }
+      const sourceGenerationId =
+        generationReconciliation === undefined
+          ? undefined
+          : snapshotUuid(
+              generationReconciliation.sourceGenerationId,
+              `${generationPath}.retainedEffectReconciliation.sourceGenerationId`,
+            );
       if (!Array.isArray(generation.frames) || generation.frames.length === 0) {
         throw new TypeError(`${generationPath}.frames must be non-empty`);
       }
@@ -2603,6 +3493,9 @@ export function createPlaybookCaptainShell(
             );
       const normalizedFrames: PlaybookCaptainFrameSnapshot[] = [];
       const playbookIds = new Set<string>();
+      let markedCaptureEffectLedger:
+        | DeepReadonly<PlaybookEffectLedger>
+        | undefined;
       for (const [index, rawFrame] of generation.frames.entries()) {
         const framePath = `${generationPath}.frames[${index}]`;
         const frame = snapshotRecord(rawFrame, framePath);
@@ -2690,6 +3583,42 @@ export function createPlaybookCaptainShell(
           playbookId,
           { allowSuspendedCall: true },
         );
+        const retainedReconciliation = runtime.retainedEffectReconciliation;
+        if (retainedReconciliation === undefined) {
+          if (!isDeepStrictEqual(runtime.effectLedger, generationEffectLedger)) {
+            throw new TypeError(
+              `${framePath}.runtime effect ledger differs from the retained checkpoint`,
+            );
+          }
+        } else {
+          if (
+            !isDeepStrictEqual(
+              retainedReconciliation.checkpoint,
+              generationEffectLedger,
+            ) ||
+            isDeepStrictEqual(runtime.effectLedger, generationEffectLedger) ||
+            !isPlaybookEffectLedgerMonotonicExtension(
+              runtime.effectLedger,
+              authoritativeEffectLedger,
+            )
+          ) {
+            throw new TypeError(
+              `${framePath}.runtime retained-effect evidence is inconsistent`,
+            );
+          }
+          if (markedCaptureEffectLedger === undefined) {
+            markedCaptureEffectLedger = runtime.effectLedger;
+          } else if (
+            !isDeepStrictEqual(
+              runtime.effectLedger,
+              markedCaptureEffectLedger,
+            )
+          ) {
+            throw new TypeError(
+              `${framePath}.runtime effect ledger differs from the marked generation capture mirror`,
+            );
+          }
+        }
         if (
           runtime.state.status !== 'active' ||
           !runtime.state.quiescent ||
@@ -2773,11 +3702,32 @@ export function createPlaybookCaptainShell(
           `${generationPath} leaf must be parked without a suspended child`,
         );
       }
+      const markedFrames = normalizedFrames.filter(
+        ({ runtime }) => runtime.retainedEffectReconciliation !== undefined,
+      );
+      if (
+        (sourceGenerationId === undefined && markedFrames.length !== 0) ||
+        (sourceGenerationId !== undefined &&
+          markedFrames.length !== normalizedFrames.length) ||
+        (sourceGenerationId !== undefined &&
+          normalizedFrames[0]!.runtime.retainedEffectReconciliation
+            ?.sourceSessionId !== sourceGenerationId)
+      ) {
+        throw new TypeError(
+          `${generationPath} retained-effect source marker is inconsistent`,
+        );
+      }
       normalized.set(
         rootPlaybookId,
         snapshotJsonValue(
           {
+            effectLedger: generationEffectLedger,
             frames: normalizedFrames,
+            ...(sourceGenerationId === undefined
+              ? {}
+              : {
+                  retainedEffectReconciliation: { sourceGenerationId },
+                }),
             ...(rootStateDescription === undefined
               ? {}
               : { rootStateDescription }),
@@ -2909,7 +3859,9 @@ export function createPlaybookCaptainShell(
       try {
         for (const sourceFrame of generation.frames) {
           const enablement = enablementById.get(sourceFrame.playbookId)!;
-          runtimes.push(createRuntimeForEnablement(enablement));
+          runtimes.push(
+            createRuntimeForEnablement(enablement, hostCapabilitiesById),
+          );
         }
         if (runtimes.some((runtime) => !runtimeRetainsGenerations(runtime))) {
           const rootRetainsGenerations = runtimeRetainsGenerations(runtimes[0]!);
@@ -2926,6 +3878,16 @@ export function createPlaybookCaptainShell(
         }
         retainedGenerationOffers.set(rootPlaybookId, {
           generation,
+          requiresEffectReconciliation:
+            generation.retainedEffectReconciliation !== undefined ||
+            generation.frames.some(
+              ({ runtime }) =>
+                runtime.retainedEffectReconciliation !== undefined,
+            ) ||
+            !retainedEffectLedgerCanRebase(
+              generation.effectLedger as PlaybookEffectLedger,
+              assertPlaybookEffectLedger(currentEffectLedger()),
+            ),
           runtimes,
         });
       } catch (error) {
@@ -3018,7 +3980,10 @@ export function createPlaybookCaptainShell(
     ...(leafFrame()?.state
       ? { latestSubRuntimeState: leafFrame()!.state }
       : {}),
-    ...(pendingBossQuestions !== undefined ? { pendingBossQuestions } : {}),
+    ...(retainedEffectReconciliation === undefined &&
+    pendingBossQuestions !== undefined
+      ? { pendingBossQuestions }
+      : {}),
     ...(lastError ? { lastError } : {}),
     ...(captainSessionId ? { captainSessionId } : {}),
     // Presence only: the pinned token value never reaches telemetry
@@ -3239,6 +4204,69 @@ export function createPlaybookCaptainShell(
     }
   };
 
+  const observeSummaryTrace = (
+    frame: EngagementFrame,
+    payload: unknown,
+  ): void => {
+    const trace = payloadRecord(payload);
+    const turn = activeTurn;
+    const summary = activeTurnSummary;
+    const expectedParentSessionId = frame.parent?.frame.sessionId;
+    const expectedParentCallId = frame.parent?.callId;
+    if (
+      trace?.schemaVersion !== 4 ||
+      trace.sessionId !== frame.sessionId ||
+      trace.playbookId !== frame.entry.id ||
+      trace.rootSessionId !== frame.rootSessionId ||
+      (expectedParentSessionId === undefined
+        ? Object.hasOwn(trace, 'parentSessionId')
+        : !Object.hasOwn(trace, 'parentSessionId') ||
+          trace.parentSessionId !== expectedParentSessionId) ||
+      (expectedParentCallId === undefined
+        ? Object.hasOwn(trace, 'parentCallId')
+        : !Object.hasOwn(trace, 'parentCallId') ||
+          trace.parentCallId !== expectedParentCallId) ||
+      trace.depth !== frame.depth ||
+      turn === undefined ||
+      !Number.isSafeInteger(trace.turnId) ||
+      (trace.turnId as number) <= 0 ||
+      !Number.isSafeInteger(trace.sequence) ||
+      (trace.sequence as number) <= 0 ||
+      summary === undefined ||
+      !summaryIncludes(frame)
+    ) {
+      return;
+    }
+    if (trace.type !== 'outcome.accepted') return;
+    const receipt = exactOwnDataRecord(trace.payload, [
+      'source',
+      'target',
+      'acceptedOutcome',
+    ]);
+    if (
+      receipt === undefined ||
+      typeof receipt.source !== 'string' ||
+      receipt.source.trim().length === 0 ||
+      typeof receipt.target !== 'string' ||
+      receipt.target.trim().length === 0 ||
+      typeof receipt.acceptedOutcome !== 'string' ||
+      receipt.acceptedOutcome.trim().length === 0
+    ) {
+      return;
+    }
+    const traceKey = `${frame.sessionId}:${trace.sequence}`;
+    if (summary.acceptedOutcomeTraceKeys.has(traceKey)) return;
+    summary.acceptedOutcomeTraceKeys.add(traceKey);
+    summary.counts.interruptions++;
+    if (
+      frame.entry.summaryPolicy?.copyPasteGuardNames.includes(
+        receipt.acceptedOutcome,
+      )
+    ) {
+      summary.counts.copyPastes++;
+    }
+  };
+
   let callNestedPlaybook: (
     frame: EngagementFrame,
     request: PlaybookCallRequest,
@@ -3435,16 +4463,6 @@ export function createPlaybookCaptainShell(
       if (result.finalText === undefined) {
         throw new Error('callCaptain returned status=ok with no finalText');
       }
-      const guard = guardFromJudgeReply(result.finalText);
-      const summary = activeTurnSummary;
-      if (
-        guard &&
-        summary &&
-        summaryIncludes(frame) &&
-        frame.entry.summaryPolicy?.copyPasteGuardNames.includes(guard)
-      ) {
-        summary.counts.copyPastes++;
-      }
       return result.finalText;
     },
     callPlaybook: (request, signal) => {
@@ -3480,6 +4498,9 @@ export function createPlaybookCaptainShell(
           await mirrorSubRuntimeTelemetry(frame, event.payload);
         }
         await requireSession().emitTelemetry(event);
+        if (event.topic === 'playbook.trace') {
+          observeSummaryTrace(frame, event.payload);
+        }
       })();
       return trackHostCall(frame, emission);
     },
@@ -3575,7 +4596,10 @@ export function createPlaybookCaptainShell(
     const entry = enablement.entry;
     const sessionId = allocateSessionId();
     const playerBindings = makePlayerBindings(enablement);
-    const runtime = createRuntimeForEnablement(enablement);
+    const runtime = createRuntimeForEnablement(
+      enablement,
+      hostCapabilitiesById,
+    );
     return {
       entry,
       enablement,
@@ -3596,7 +4620,10 @@ export function createPlaybookCaptainShell(
   ): EngagementFrame => {
     const entry = enablement.entry;
     const playerBindings = makePlayerBindings(enablement);
-    const runtime = createRuntimeForEnablement(enablement);
+    const runtime = createRuntimeForEnablement(
+      enablement,
+      hostCapabilitiesById,
+    );
     return {
       entry,
       enablement,
@@ -3653,16 +4680,6 @@ export function createPlaybookCaptainShell(
       try {
         if (resumeToken === undefined) delete ledger.resumeToken;
         else ledger.resumeToken = resumeToken;
-        // CAPTAIN-20: a result counts only after the runtime validated it and
-        // atomically published its authorized continuation transition.
-        const summary = activeTurnSummary;
-        if (
-          pending.status === 'ok' &&
-          summary &&
-          summaryIncludes(frame)
-        ) {
-          summary.counts.interruptions++;
-        }
       } finally {
         playerTransactions.delete(binding.playerId);
       }
@@ -3942,6 +4959,7 @@ export function createPlaybookCaptainShell(
       }
     }
     clearLeafLedger();
+    if (frames.length === 0) retainedEffectReconciliation = undefined;
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1) {
       throw new AggregateError(
@@ -4051,10 +5069,62 @@ export function createPlaybookCaptainShell(
     }
   };
 
+  /**
+   * DR-040 task 11: abandonment is a host settlement, not an authored FSM
+   * result.  Freeze the bounded evidence while the complete stack and its
+   * runtime-owned envelope identities still exist, durably fence recovery,
+   * dispose leaf-to-root without resuming a parent, then publish the matching
+   * root clear and evidence as one durable completion before the controller
+   * may return an executed receipt to its result phase.
+   */
+  const settleUnresolvedEffectAbandonment = async (
+    unresolvedLeaf: EngagementFrame,
+  ): Promise<void> => {
+    if (leafFrame() !== unresolvedLeaf) {
+      throw new Error(
+        'unresolved-effect abandonment requires the active leaf',
+      );
+    }
+    const root = rootFrame();
+    if (root === undefined) {
+      throw new Error(
+        'unresolved-effect abandonment requires an active root',
+      );
+    }
+    const unresolvedEffects = freezeTurnUnresolvedEffects();
+    if (unresolvedEffects.length === 0) {
+      throw new Error(
+        'unresolved-effect abandonment requires nonempty effect evidence',
+      );
+    }
+    if (unresolvedEffectSettlement === undefined) {
+      throw new Error(
+        'unresolved-effect abandonment requires durable host settlement',
+      );
+    }
+    const rootPlaybookId = root.entry.id;
+    const settlement = Object.freeze({
+      rootPlaybookId,
+      unresolvedEffects,
+    });
+    await runEffect(() => unresolvedEffectSettlement.begin(settlement));
+    await runEffect(() => disposeStack('unresolved-effect'));
+    pendingRetentionUpdates.set(rootPlaybookId, {
+      kind: 'clear',
+      rootPlaybookId,
+    });
+    await runEffect(() => unresolvedEffectSettlement.complete(settlement));
+  };
+
   const callResultFor = (
     frame: EngagementFrame,
     result: PlaybookRunResult,
   ): PlaybookCallResult => {
+    if (result.outcome === 'unresolved-effect') {
+      throw new Error(
+        `playbook ${frame.entry.id} unresolved-effect result cannot resume a parent`,
+      );
+    }
     if (result.outcome === 'terminal') {
       return {
         status: 'ok',
@@ -4102,6 +5172,11 @@ export function createPlaybookCaptainShell(
     if (leafFrame() !== frame) {
       throw new Error('only the active leaf may receive Boss input');
     }
+    if (retainedEffectReconciliation !== undefined) {
+      throw new Error(
+        'retained repository-effect reconciliation is required before Boss input',
+      );
+    }
     // CAPTAIN-35: the leaf check, the visibility request, and the mode change
     // are shell control work performed on the way to the runtime, not the
     // effect. Only the call below is the effect, so only it is inside the
@@ -4128,6 +5203,11 @@ export function createPlaybookCaptainShell(
     const parentLink = child.parent;
     if (!parentLink) throw new Error('root playbook has no caller');
     const parent = parentLink.frame;
+    if (retainedEffectReconciliation !== undefined) {
+      throw new Error(
+        'retained repository-effect reconciliation is required before parent resumption',
+      );
+    }
     const invocationSignal = child.invocationSignal;
     let effectiveResult = callResult;
     let ownsReturn = false;
@@ -4212,6 +5292,16 @@ export function createPlaybookCaptainShell(
     result: PlaybookRunResult,
     context: CaptainContext,
   ): Promise<void> {
+    if (result.outcome === 'unresolved-effect') {
+      // Task 10 exposes the runtime-owned abandonment signal without
+      // translating it into a nested result or claiming workflow completion.
+      // Task 11 owns the durable host settlement and complete-stack disposal.
+      assertRetainableResult(frame, result);
+      if (leafFrame() === frame) {
+        await setMode('engaged.parked', 'turn:unresolved-effect');
+      }
+      return;
+    }
     if (result.outcome === 'terminal') {
       if (frame.parent) {
         await resumeParent(frame, callResultFor(frame, result), context);
@@ -4439,7 +5529,14 @@ export function createPlaybookCaptainShell(
     const policy = frame.entry.summaryPolicy;
     const counts: TurnSummaryCounts = { interruptions: 0, copyPastes: 0 };
     const stateCounts = new Map<string, number>();
-    activeTurnSummary = policy ? { owner: frame, counts, stateCounts } : undefined;
+    activeTurnSummary = policy
+      ? {
+          owner: frame,
+          counts,
+          stateCounts,
+          acceptedOutcomeTraceKeys: new Set(),
+        }
+      : undefined;
     let result: T | undefined;
     let error: unknown;
     try {
@@ -4539,6 +5636,51 @@ export function createPlaybookCaptainShell(
     if (!leaf) {
       lines.push('The shell is idle: no leaf state, no pending question.');
       lines.push('Advertised actions: none.');
+      lines.push(retainedResumptionDigest());
+      return lines.join('\n');
+    }
+    refreshRetainedEffectFence();
+    if (retainedEffectReconciliation !== undefined) {
+      let reconciliationActions: readonly {
+        readonly id: string;
+        readonly label: string;
+      }[] = [];
+      if (
+        typeof leaf.runtime.describe === 'function' &&
+        typeof leaf.runtime.apply === 'function'
+      ) {
+        try {
+          reconciliationActions = leaf.runtime
+            .describe()
+            .actions.filter(
+              ({ id }) =>
+                id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+                id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
+            );
+        } catch {
+          // An unreadable control surface cannot open a fail-closed fence.
+        }
+      }
+      for (const action of reconciliationActions) {
+        recordSuppliedIdentifier(action.id);
+      }
+      lines.push(
+        `Leaf ${frameLabel(leaf)} is parked for repository-effect reconciliation.`,
+      );
+      lines.push('Pending Boss questions: withheld until reconciliation.');
+      lines.push(
+        reconciliationActions.length === 0
+          ? 'Advertised actions: none.'
+          : [
+              'Advertised actions:',
+              ...reconciliationActions.map(
+                (action) => digestLine`- ${action.id}: ${action.label}`,
+              ),
+            ].join('\n'),
+      );
+      lines.push(
+        'Ordinary delivery, switching, dismissal, and runtime actions are unavailable while retained effect evidence is unresolved. Only the advertised unresolved-effect controls may run. Conversation is unaffected: `respond` stays valid for any turn.',
+      );
       lines.push(retainedResumptionDigest());
       return lines.join('\n');
     }
@@ -5201,7 +6343,10 @@ export function createPlaybookCaptainShell(
           ...(kind === 'closingReply' && turn?.report
             ? [
                 labeledBlock('ControlView digest', controlViewDigest()),
-                outcomeReportBlock(turn.report),
+                outcomeReportBlock(
+                  turn.report,
+                  turn.unresolvedEffects ?? [],
+                ),
               ]
             : []),
           ...(options.proseRejection === undefined
@@ -5378,6 +6523,9 @@ export function createPlaybookCaptainShell(
   const leafStateSummary = (): string | undefined => {
     const leaf = leafFrame();
     if (!leaf) return 'idle: no playbook is engaged';
+    if (retainedEffectReconciliation !== undefined) {
+      return `${frameLabel(leaf)} parked for repository-effect reconciliation`;
+    }
     if (!leaf.state) return `${frameLabel(leaf)} engaged`;
     return `${frameLabel(leaf)} at ${stateDigestLine(
       leaf.state,
@@ -5389,9 +6537,9 @@ export function createPlaybookCaptainShell(
     selection: CaptainControllerSelection | undefined,
     reason: string,
     options: { silent?: boolean } = {},
-  ): Promise<SettlementEvidence> => {
+  ): Promise<ControllerSettlementDraft> => {
     const summary = leafStateSummary();
-    const settlement: SettlementEvidence = {
+    const settlement: ControllerSettlementDraft = {
       status: 'rejected',
       facts: [`Rejected: ${reason}.`],
       reason,
@@ -5501,6 +6649,13 @@ export function createPlaybookCaptainShell(
     offer: RetainedGenerationOffer,
   ): Promise<readonly string[]> => {
     const generation = offer.generation;
+    const currentLedger = assertPlaybookEffectLedger(currentEffectLedger());
+    const requiresEffectReconciliation =
+      offer.requiresEffectReconciliation ||
+      !retainedEffectLedgerCanRebase(
+        generation.effectLedger as PlaybookEffectLedger,
+        currentLedger,
+      );
     const sourceSessionIds = new Set(
       generation.frames.map((frame) => frame.sessionId),
     );
@@ -5552,13 +6707,22 @@ export function createPlaybookCaptainShell(
 
       frames.push(...adoptedFrames);
       installed = true;
+      retainedEffectReconciliation = requiresEffectReconciliation
+        ? {
+            sourceGenerationId:
+              generation.retainedEffectReconciliation?.sourceGenerationId ??
+              generation.frames[0]!.runtime.retainedEffectSourceSessionId ??
+              generation.frames[0]!.rootSessionId,
+            checkpoint: generation.effectLedger,
+          }
+        : undefined;
       for (const parent of adoptedFrames.slice(0, -1)) {
         pendingChildParents.add(parent);
       }
       const retainedQuestions = generation.frames.at(-1)!.runtime
         .pendingBossQuestions;
       pendingBossQuestions =
-        retainedQuestions.length === 0
+        requiresEffectReconciliation || retainedQuestions.length === 0
           ? undefined
           : mirroredBossQuestions(retainedQuestions);
       lastError = undefined;
@@ -5570,24 +6734,35 @@ export function createPlaybookCaptainShell(
         rootPlaybookId,
         targetRootSessionId,
       );
-      await requestVisibility(adoptedFrames.at(-1)!);
+      if (requiresEffectReconciliation) {
+        await requireSession().setVisiblePlayers([]);
+      } else {
+        await requestVisibility(adoptedFrames.at(-1)!);
+      }
       await requireSession().emitStatus(
         `◇ /${enablementById.get(rootPlaybookId)!.command} resumed`,
       );
       if (activeTurn) {
-        activeTurn.mandatoryPresentationSuffix =
-          RESUMPTION_DUPLICATE_EFFECT_WARNING;
+        appendMandatoryPresentationSuffix(
+          activeTurn,
+          requiresEffectReconciliation
+            ? 'The retained work remains parked until its repository-effect evidence is reconciled.'
+            : RESUMPTION_DUPLICATE_EFFECT_WARNING,
+        );
       }
       return [
         generation.rootStateDescription === undefined
           ? `Resumed /${enablementById.get(rootPlaybookId)!.command} from its retained state; no published root-state description was retained.`
           : `Resumed /${enablementById.get(rootPlaybookId)!.command} from the retained state described as ${quoteEvidence(compactEvidence(generation.rootStateDescription))}.`,
-        RESUMPTION_DUPLICATE_EFFECT_WARNING,
+        requiresEffectReconciliation
+          ? 'The retained work remains parked until its repository-effect evidence is reconciled; no ordinary action was resumed.'
+          : RESUMPTION_DUPLICATE_EFFECT_WARNING,
       ];
     } catch (error) {
       if (installed) {
         frames.splice(0);
         pendingChildParents.clear();
+        retainedEffectReconciliation = undefined;
         clearLeafLedger();
       }
       const cleanupFailures: unknown[] = [];
@@ -5670,8 +6845,32 @@ export function createPlaybookCaptainShell(
   ): Promise<SettlementEvidence> => {
     const turn = activeTurn;
     runFailureFacts = [];
+    let frozenUnresolvedEffects:
+      | readonly PlaybookCaptainUnresolvedEffect[]
+      | undefined;
+    const freezeControllerEvidence =
+      (): readonly PlaybookCaptainUnresolvedEffect[] => {
+        frozenUnresolvedEffects ??= freezeTurnUnresolvedEffects();
+        const report = unresolvedEffectBossReport(frozenUnresolvedEffects);
+        if (turn !== undefined && report !== undefined) {
+          appendMandatoryPresentationSuffix(turn, report);
+        }
+        return frozenUnresolvedEffects;
+      };
+    const finalizeSettlement = (
+      settlement: ControllerSettlementDraft,
+    ): SettlementEvidence =>
+      Object.freeze({
+        ...settlement,
+        unresolvedEffects: freezeControllerEvidence(),
+      });
     try {
-      return await executeSelection(selection, signal);
+      // `respond` has no result phase: freeze its no-effect projection before
+      // its decision-call prose crosses the presentation boundary. Acting
+      // selections freeze after their work and before reporting begins.
+      if (selection.action === 'respond') freezeControllerEvidence();
+      const settlement = await executeSelection(selection, signal);
+      return finalizeSettlement(settlement);
     } catch (error) {
       if (turn?.presentationError === error) throw error;
       const aborted = signal.aborted || activeContext?.signal.aborted === true;
@@ -5745,7 +6944,7 @@ export function createPlaybookCaptainShell(
       };
       turn.settled = true;
       lastSettlementStatus = 'failed';
-      return {
+      const settlement: ControllerSettlementDraft = {
         status: 'failed',
         facts: [...turn.settlementFacts],
         ...(turn.report.receipt === undefined
@@ -5753,6 +6952,7 @@ export function createPlaybookCaptainShell(
           : { receipt: turn.report.receipt }),
         ...(summary === undefined ? {} : { leafStateSummary: summary }),
       };
+      return finalizeSettlement(settlement);
     } finally {
       runFailureFacts = undefined;
     }
@@ -5769,7 +6969,7 @@ export function createPlaybookCaptainShell(
   const executeSelection = async (
     selection: CaptainControllerSelection,
     signal: AbortSignal,
-  ): Promise<SettlementEvidence> => {
+  ): Promise<ControllerSettlementDraft> => {
     const context = activeContext;
     const turn = activeTurn;
     if (!context || !turn) {
@@ -5820,6 +7020,23 @@ export function createPlaybookCaptainShell(
           ? {}
           : { leafStateSummary: leafStateSummary()! }),
       };
+    }
+
+    refreshRetainedEffectFence();
+    const fencedLeaf = leafFrame();
+    const routesRetainedReconciliation =
+      selection.action === 'runtime' &&
+      (selection.actionId === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+        selection.actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID) &&
+      fencedLeaf !== undefined;
+    if (
+      retainedEffectReconciliation !== undefined &&
+      !routesRetainedReconciliation
+    ) {
+      return rejectSelection(
+        selection,
+        'retained work must reconcile its repository-effect evidence before an ordinary action can run',
+      );
     }
 
     if (selection.action === 'resume') {
@@ -6128,6 +7345,7 @@ export function createPlaybookCaptainShell(
     );
     if (outcome.error !== undefined) throw outcome.error;
     const receipt = outcome.result!;
+    refreshRetainedEffectFence();
     let status: SettlementEvidence['status'] =
       receipt.disposition === 'executed'
         ? 'ok'
@@ -6148,9 +7366,53 @@ export function createPlaybookCaptainShell(
           }
         : {}),
     };
+    const unresolvedAbandonment =
+      receipt.disposition === 'executed' &&
+      actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID;
     if (receipt.disposition === 'executed') {
-      facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
+      if (
+        unresolvedAbandonment &&
+        receipt.run?.outcome !== 'unresolved-effect'
+      ) {
+        throw new Error(
+          'unresolved-effect abandonment returned no unresolved-effect result',
+        );
+      }
       const establishedSummary = leafStateSummary();
+      if (unresolvedAbandonment) {
+        try {
+          await settleUnresolvedEffectAbandonment(leaf);
+        } catch (error) {
+          abandonmentSettlementUnsafe = true;
+          const normalized = normalizeErrorCompact(error) ?? {
+            name: 'Error',
+            message: String(error),
+          };
+          // The runtime action was accepted, but its distinct host-level
+          // settlement did not complete.  Do not expose an `executed` control
+          // receipt until both disposal and durable publication have
+          // succeeded.
+          turn.report = {
+            ...outcome.report,
+            facts: [...facts],
+            bossFacts: facts.map((fact) =>
+              fact
+                .split(`"${actionId}"`)
+                .join(`"${compactEvidence(actionLabel)}"`),
+            ),
+            status: 'failed',
+            receipt: {
+              disposition: 'failed',
+              error: normalized,
+            },
+            ...(establishedSummary === undefined
+              ? {}
+              : { leafStateSummary: establishedSummary }),
+          };
+          throw error;
+        }
+      }
+      facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
       // Execution is now proven. Preserve that receipt and the counts already
       // collected before processing the returned run, because disposal,
       // telemetry, or parent resumption can still fail afterward.
@@ -6168,7 +7430,11 @@ export function createPlaybookCaptainShell(
           ? {}
           : { leafStateSummary: establishedSummary }),
       };
-      if (receipt.run !== undefined) {
+      if (
+        !unresolvedAbandonment &&
+        receipt.run !== undefined &&
+        retainedEffectReconciliation === undefined
+      ) {
         // The same rule as the drive path: processing the run the receipt
         // carried is not itself an effect, and the resume or disposal it may
         // perform is marked where it happens (CAPTAIN-35).
@@ -6409,6 +7675,42 @@ export function createPlaybookCaptainShell(
           `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} role bindings changed`,
         );
       }
+      if (
+        !isDeepStrictEqual(frame.runtime.effectLedger, snapshot.effectLedger)
+      ) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} effect ledger does not match its artifact schema`,
+        );
+      }
+      const runtimeReconciliation =
+        frame.runtime.retainedEffectReconciliation;
+      if (snapshot.retainedEffectReconciliation === undefined) {
+        if (runtimeReconciliation !== undefined) {
+          throw new TypeError(
+            `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} carries an unmirrored retained-effect fence`,
+          );
+        }
+      } else if (
+        runtimeReconciliation === undefined ||
+        !isDeepStrictEqual(
+          runtimeReconciliation.checkpoint,
+          snapshot.retainedEffectReconciliation.checkpoint,
+        )
+      ) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} does not mirror the root retained-effect fence`,
+        );
+      }
+      if (
+        frame.depth === 0 &&
+        snapshot.retainedEffectReconciliation !== undefined &&
+        runtimeReconciliation?.sourceSessionId !==
+          snapshot.retainedEffectReconciliation.sourceGenerationId
+      ) {
+        throw new TypeError(
+          'Captain shell snapshot retained-effect root source identity differs from its generation',
+        );
+      }
     }
   };
 
@@ -6551,6 +7853,47 @@ export function createPlaybookCaptainShell(
     }
   };
 
+  const refreshRetainedEffectFence = (
+    capturedFrames?: readonly PlaybookCaptainFrameSnapshot[],
+    capturedLedger?: PlaybookEffectLedger,
+  ): void => {
+    const fence = retainedEffectReconciliation;
+    if (fence === undefined) return;
+    try {
+      const ledger =
+        capturedLedger ?? assertPlaybookEffectLedger(currentEffectLedger());
+      if (
+        !retainedEffectLedgerCanRebase(
+          fence.checkpoint as PlaybookEffectLedger,
+          ledger,
+        )
+      ) {
+        return;
+      }
+      const snapshots = capturedFrames ?? captureFrameSnapshots(true);
+      if (snapshots === undefined || snapshots.length !== frames.length) return;
+      for (const frameSnapshot of snapshots) {
+        const runtime = frameSnapshot.runtime;
+        if (
+          !isDeepStrictEqual(runtime.effectLedger, ledger) ||
+          runtime.retainedEffectSourceSessionId === undefined ||
+          runtime.retainedEffectReconciliation !== undefined
+        ) {
+          return;
+        }
+      }
+      const retainedQuestions = snapshots.at(-1)!.runtime.pendingBossQuestions;
+      const restoredQuestions =
+        retainedQuestions.length === 0
+          ? undefined
+          : mirroredBossQuestions(retainedQuestions);
+      pendingBossQuestions = restoredQuestions;
+      retainedEffectReconciliation = undefined;
+    } catch {
+      // Any host-ledger or runtime-snapshot defect leaves the root fence shut.
+    }
+  };
+
   const rootStateDescriptionForRetention = (
     root: EngagementFrame,
     retainedState: PlaybookState,
@@ -6576,9 +7919,30 @@ export function createPlaybookCaptainShell(
       root,
       frameSnapshots[0]!.runtime.state,
     );
+    const checkpoint =
+      retainedEffectReconciliation?.checkpoint ??
+      assertPlaybookEffectLedger(currentEffectLedger());
+    if (
+      checkpoint.boundaries.some(
+        ({ physicalReceipt }) => physicalReceipt === undefined,
+      )
+    ) {
+      throw new TypeError(
+        'Captain retained-generation checkpoint contains an incomplete physical boundary',
+      );
+    }
     return snapshotJsonValue(
       {
+        effectLedger: checkpoint,
         frames: frameSnapshots,
+        ...(retainedEffectReconciliation === undefined
+          ? {}
+          : {
+              retainedEffectReconciliation: {
+                sourceGenerationId:
+                  retainedEffectReconciliation.sourceGenerationId,
+              },
+            }),
         ...(rootStateDescription === undefined
           ? {}
           : { rootStateDescription }),
@@ -6712,8 +8076,11 @@ export function createPlaybookCaptainShell(
       if (captainSnapshot === undefined) return undefined;
       const frameSnapshots = captureFrameSnapshots(true);
       if (frameSnapshots === undefined) return undefined;
+      const effectLedger = assertPlaybookEffectLedger(currentEffectLedger());
+      refreshRetainedEffectFence(frameSnapshots, effectLedger);
       const common = {
-        schemaVersion: 3 as const,
+        schemaVersion: 4 as const,
+        effectLedger,
         captain: {
           sessionId: captainSessionId,
           runtime: captainSnapshot,
@@ -6736,6 +8103,9 @@ export function createPlaybookCaptainShell(
               ...common,
               mode: 'engaged.parked',
               frames: frameSnapshots,
+              ...(retainedEffectReconciliation === undefined
+                ? {}
+                : { retainedEffectReconciliation }),
               ...(pendingBossQuestions === undefined
                 ? {}
                 : { pendingBossQuestions: pendingBossQuestions as JsonValue }),
@@ -6750,9 +8120,18 @@ export function createPlaybookCaptainShell(
   };
 
   const exportSettlement = (): PlaybookCaptainSettlement | undefined => {
-    if (!retentionSettlementReady) return undefined;
+    if (!retentionSettlementReady || abandonmentSettlementUnsafe) {
+      return undefined;
+    }
     const snapshot = exportShellSnapshot();
     if (snapshot === undefined) return undefined;
+    let unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+    try {
+      unresolvedEffects =
+        settledTurnUnresolvedEffects ?? currentUnresolvedEffects();
+    } catch {
+      return undefined;
+    }
     const updates = new Map(pendingRetentionUpdates);
     for (const rootPlaybookId of retainedGenerationRootClears) {
       updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
@@ -6794,6 +8173,7 @@ export function createPlaybookCaptainShell(
         retentionUpdates: [...updates.values()].sort((left, right) =>
           left.rootPlaybookId.localeCompare(right.rootPlaybookId),
         ),
+        unresolvedEffects,
       },
       'Captain settlement',
     ) as unknown as PlaybookCaptainSettlement;
@@ -6822,6 +8202,9 @@ export function createPlaybookCaptainShell(
       'sequences',
       'pendingBossQuestions',
       'suspendedCall',
+      'effectLedger',
+      'retainedEffectSourceSessionId',
+      'retainedEffectReconciliation',
     ] as const) {
       if (!isDeepStrictEqual(normalized[key], expected[key])) {
         throw new Error(
@@ -6868,6 +8251,9 @@ export function createPlaybookCaptainShell(
     byCommand = new Map();
     byId = new Map();
     enablementById = new Map();
+    hostCapabilitiesById = new Map();
+    pendingHostCapabilities = undefined;
+    currentEffectLedger = () => emptyPlaybookEffectLedger();
     captainAgent = undefined;
     captainAdapter = undefined;
     playerAgents = new Map();
@@ -6886,6 +8272,7 @@ export function createPlaybookCaptainShell(
     captainSessionId = undefined;
     conversation = { kind: 'unopened' };
     mode = 'chat';
+    retainedEffectReconciliation = undefined;
     pendingBossQuestions = undefined;
     lastError = undefined;
     journalSeq = 0;
@@ -6915,7 +8302,16 @@ export function createPlaybookCaptainShell(
     lifecycle = 'restoring';
     try {
       const snapshot = assertPlaybookCaptainShellSnapshot(untrusted);
-      const built = await buildEnablements(options, loadModule);
+      const built = await buildCurrentEnablements();
+      const builtHostCapabilities = new Map(built.hostCapabilitiesById);
+      const readEffectLedger = () =>
+        effectLedgerMirrorFromCapabilities(builtHostCapabilities);
+      const hostLedger = readEffectLedger();
+      if (!isDeepStrictEqual(snapshot.effectLedger, hostLedger)) {
+        throw new Error(
+          'Captain shell restore effect ledger does not match current-host authority',
+        );
+      }
       captainAgent = built.captainAgent;
       captainAdapter = captainAgent.adapter;
       playerAgents = built.playerAgents;
@@ -6926,6 +8322,8 @@ export function createPlaybookCaptainShell(
       byCommand = built.byCommand;
       byId = built.byId;
       enablementById = built.enablementById;
+      hostCapabilitiesById = builtHostCapabilities;
+      currentEffectLedger = readEffectLedger;
       for (const [playerId, saved] of Object.entries(snapshot.playerSessions)) {
         playerLedger.set(playerId, {
           adapter: saved.adapter,
@@ -7031,6 +8429,8 @@ export function createPlaybookCaptainShell(
       lastSettlementStatus = snapshot.lastSettlementStatus;
       mode = snapshot.mode;
       if (snapshot.mode === 'engaged.parked') {
+        retainedEffectReconciliation =
+          snapshot.retainedEffectReconciliation;
         pendingBossQuestions = snapshot.pendingBossQuestions;
         lastError = snapshot.lastError;
       }
@@ -7128,11 +8528,17 @@ export function createPlaybookCaptainShell(
       lifecycle = 'initializing';
       try {
         installSession(initSession, true);
-        const built = await buildEnablements(options, loadModule);
+        const built = await buildCurrentEnablements();
+        const builtHostCapabilities = new Map(built.hostCapabilitiesById);
+        const readEffectLedger = () =>
+          effectLedgerMirrorFromCapabilities(builtHostCapabilities);
+        readEffectLedger();
         entries = built.entries;
         byCommand = built.byCommand;
         byId = built.byId;
         enablementById = built.enablementById;
+        hostCapabilitiesById = builtHostCapabilities;
+        currentEffectLedger = readEffectLedger;
         captainAgent = built.captainAgent;
         captainAdapter = captainAgent.adapter;
         playerAgents = built.playerAgents;
@@ -7188,7 +8594,9 @@ export function createPlaybookCaptainShell(
       // Empty or whitespace-only input allocates no call, session, or
       // telemetry (CAPTAIN-7).
       retentionSettlementReady = false;
+      abandonmentSettlementUnsafe = false;
       if (turn.prompt.trim().length === 0) return;
+      settledTurnUnresolvedEffects = undefined;
       retainedGenerationInstallationClosed = true;
       for (const update of pendingRetentionUpdates.values()) {
         applyRetentionUpdateToCatalog(update);
@@ -7360,6 +8768,9 @@ export function createPlaybookCaptainShell(
     // Quarantine is session-wide by design. Only terminal teardown may drop
     // its ownership after every frame host call and the Captain are drained.
     playerTransactions.clear();
+    hostCapabilitiesById = new Map();
+    pendingHostCapabilities = undefined;
+    currentEffectLedger = () => emptyPlaybookEffectLedger();
     lifecycle = 'closed';
     if (failure !== undefined) throw failure;
   }

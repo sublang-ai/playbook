@@ -3,9 +3,11 @@
 // A headless run whose real CODE artifact parks at a coder
 // Boss question must settle durably and release the question as the reply.
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import {
   createEvent,
   type AgentAdapter,
@@ -26,6 +28,7 @@ const { runPlaybookCli } = await import(
 );
 
 const tempDirs: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(
@@ -44,6 +47,29 @@ function writer() {
   };
 }
 
+async function initializeTestRepository(root: string) {
+  const cwd = join(root, 'repository');
+  await mkdir(cwd);
+  await execFileAsync('git', ['init', '--quiet'], { cwd });
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['add', 'tracked.txt'], { cwd });
+  await execFileAsync(
+    'git',
+    [
+      '-c',
+      'user.name=Playbook Test',
+      '-c',
+      'user.email=playbook-test@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'baseline',
+    ],
+    { cwd },
+  );
+  return cwd;
+}
+
 class ScriptedAdapter implements AgentAdapter {
   static calls: Array<{ prompt: string; resume: string | undefined }> = [];
   readonly agent = 'claude-code';
@@ -56,7 +82,6 @@ class ScriptedAdapter implements AgentAdapter {
     const result = prompt.includes('This is hidden control work.')
       ? JSON.stringify({
           guard: 'needsBossReply',
-          question: 'May I proceed with the risky rename?',
         })
       : prompt.includes('compose closing reply')
         ? 'Coder needs a Boss answer before continuing.'
@@ -105,7 +130,7 @@ function runtimeSnapshot(
   turns: number,
 ): PlaybookRuntimeSnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     playbookId,
     machine: { value: 'hub', status: 'active' },
     roleResumeTokens: {},
@@ -119,6 +144,12 @@ function runtimeSnapshot(
     },
     state: activeState('hub'),
     pendingBossQuestions: [],
+    effectLedger: {
+      schemaVersion: 1,
+      revision: 0,
+      boundaries: [],
+      logicalOperations: [],
+    },
   } as PlaybookRuntimeSnapshot;
 }
 
@@ -180,6 +211,7 @@ describe('headless Boss-question settlement', () => {
   it('settles durably when the real CODE artifact parks at a coder question', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'playbook-bossq-'));
     tempDirs.push(dir);
+    const cwd = await initializeTestRepository(dir);
     const configPath = join(dir, 'playbook.config.yaml');
     await writeFile(
       configPath,
@@ -218,6 +250,7 @@ describe('headless Boss-question settlement', () => {
           `10000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
       })(),
       probeAdapterSdk: async () => true,
+      cwd,
       sessionsDir,
       stdout,
       stderr,

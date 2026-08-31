@@ -170,6 +170,7 @@ export const reviewMachine = setup({
             event.bossIntent.trim().length > 0,
     },
     actions: {
+        'playbook.acceptedOutcome': (_args, _params) => undefined,
         copyStartInput: assign({
             callerInput: ({ event }) => event.type === 'START_REVIEW' ? event.callerInput : undefined,
             reviewerOutput: undefined,
@@ -320,17 +321,47 @@ export const reviewMachine = setup({
                     {
                         guard: 'hasFindings',
                         target: '#addressFindings',
-                        actions: 'rememberReviewerOutput',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewInitial',
+                                    target: 'addressFindings',
+                                    acceptedOutcome: 'hasFindings',
+                                },
+                            },
+                            'rememberReviewerOutput',
+                        ],
                     },
                     {
                         guard: 'noFindings',
                         target: '#done',
-                        actions: 'clearBossReplyContext',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewInitial',
+                                    target: 'done',
+                                    acceptedOutcome: 'noFindings',
+                                },
+                            },
+                            'clearBossReplyContext',
+                        ],
                     },
                     {
                         guard: 'needsBossReply',
                         target: '#awaitBossReply',
-                        actions: 'setPendingReviewInitial',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewInitial',
+                                    target: 'awaitBossReply',
+                                    acceptedOutcome: 'needsBossReply',
+                                },
+                            },
+                            'setPendingReviewInitial',
+                        ],
                     },
                 ],
                 onError: {
@@ -360,17 +391,47 @@ export const reviewMachine = setup({
                     {
                         guard: 'committed',
                         target: '#reviewAfterCommit',
-                        actions: 'rememberCoderOutput',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'addressFindings',
+                                    target: 'reviewAfterCommit',
+                                    acceptedOutcome: 'committed',
+                                },
+                            },
+                            'rememberCoderOutput',
+                        ],
                     },
                     {
                         guard: 'rejectedAll',
                         target: '#reviewAfterRebuttal',
-                        actions: 'rememberCoderOutput',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'addressFindings',
+                                    target: 'reviewAfterRebuttal',
+                                    acceptedOutcome: 'rejectedAll',
+                                },
+                            },
+                            'rememberCoderOutput',
+                        ],
                     },
                     {
                         guard: 'needsBossReply',
                         target: '#awaitBossReply',
-                        actions: 'setPendingAddressFindings',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'addressFindings',
+                                    target: 'awaitBossReply',
+                                    acceptedOutcome: 'needsBossReply',
+                                },
+                            },
+                            'setPendingAddressFindings',
+                        ],
                     },
                 ],
                 onError: {
@@ -400,17 +461,47 @@ export const reviewMachine = setup({
                     {
                         guard: 'hasFindings',
                         target: '#addressFindings',
-                        actions: 'rememberReviewerOutput',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterCommit',
+                                    target: 'addressFindings',
+                                    acceptedOutcome: 'hasFindings',
+                                },
+                            },
+                            'rememberReviewerOutput',
+                        ],
                     },
                     {
                         guard: 'noFindings',
                         target: '#done',
-                        actions: 'clearBossReplyContext',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterCommit',
+                                    target: 'done',
+                                    acceptedOutcome: 'noFindings',
+                                },
+                            },
+                            'clearBossReplyContext',
+                        ],
                     },
                     {
                         guard: 'needsBossReply',
                         target: '#awaitBossReply',
-                        actions: 'setPendingReviewAfterCommit',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterCommit',
+                                    target: 'awaitBossReply',
+                                    acceptedOutcome: 'needsBossReply',
+                                },
+                            },
+                            'setPendingReviewAfterCommit',
+                        ],
                     },
                 ],
                 onError: {
@@ -440,17 +531,47 @@ export const reviewMachine = setup({
                     {
                         guard: 'hasFindings',
                         target: '#addressFindings',
-                        actions: 'rememberReviewerOutput',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterRebuttal',
+                                    target: 'addressFindings',
+                                    acceptedOutcome: 'hasFindings',
+                                },
+                            },
+                            'rememberReviewerOutput',
+                        ],
                     },
                     {
                         guard: 'noFindings',
                         target: '#done',
-                        actions: 'clearBossReplyContext',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterRebuttal',
+                                    target: 'done',
+                                    acceptedOutcome: 'noFindings',
+                                },
+                            },
+                            'clearBossReplyContext',
+                        ],
                     },
                     {
                         guard: 'needsBossReply',
                         target: '#awaitBossReply',
-                        actions: 'setPendingReviewAfterRebuttal',
+                        actions: [
+                            {
+                                type: 'playbook.acceptedOutcome',
+                                params: {
+                                    source: 'reviewAfterRebuttal',
+                                    target: 'awaitBossReply',
+                                    acceptedOutcome: 'needsBossReply',
+                                },
+                            },
+                            'setPendingReviewAfterRebuttal',
+                        ],
                     },
                 ],
                 onError: {

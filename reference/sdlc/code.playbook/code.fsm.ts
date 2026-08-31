@@ -154,7 +154,6 @@ const FIRST_PHASE_PROMPT = [
   'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
   "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
   'Make the commit message explain concisely what changed and why, including relevant verification.',
-  'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
   'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 
@@ -170,7 +169,6 @@ const IR_TASK_PROMPT = [
   'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
   "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
   'Make the commit message explain concisely what changed and why, including relevant verification.',
-  'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
   'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 
@@ -246,36 +244,24 @@ function outputString(event: unknown, field: string): string | undefined {
   return isNonEmptyString(value) ? value : undefined;
 }
 
-function commitOutput(
-  event: unknown,
-): { readonly coderOutput: string; readonly latestCommit: string } | undefined {
-  const coderOutput = outputString(event, 'coderOutput');
-  const latestCommit = outputString(event, 'latestCommit');
-  const commitLines = coderOutput
-    ?.split('\n')
-    .filter((line) => line.startsWith('Commit: '));
-  if (
-    coderOutput === undefined ||
-    latestCommit === undefined ||
-    commitLines?.length !== 1 ||
-    commitLines[0] !== `Commit: ${latestCommit}`
-  ) {
-    return undefined;
-  }
-  return { coderOutput, latestCommit };
+function hasCommittedOutput(event: unknown): boolean {
+  return (
+    outputString(event, 'coderOutput') !== undefined &&
+    outputString(event, 'latestCommit') !== undefined
+  );
 }
 
 function isDirectCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'directCommit') &&
-    commitOutput(event) !== undefined
+    hasCommittedOutput(event)
   );
 }
 
 function isIrCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'irCommit') &&
-    commitOutput(event) !== undefined &&
+    hasCommittedOutput(event) &&
     outputString(event, 'irNumber') !== undefined &&
     outputString(event, 'irTask') !== undefined
   );
@@ -284,7 +270,7 @@ function isIrCommit({ event }: { event: unknown }): boolean {
 function isMoreTasks({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'moreTasks') &&
-    commitOutput(event) !== undefined &&
+    hasCommittedOutput(event) &&
     outputString(event, 'irTask') !== undefined
   );
 }
@@ -292,7 +278,7 @@ function isMoreTasks({ event }: { event: unknown }): boolean {
 function isFinalTask({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'finalTask') &&
-    commitOutput(event) !== undefined
+    hasCommittedOutput(event)
   );
 }
 
@@ -553,6 +539,14 @@ const machineSetup = setup({
       (event.questionId === undefined || event.questionId === 'runIrTask'),
   },
   actions: {
+    'playbook.acceptedOutcome': (
+      _args,
+      _params: {
+        readonly source: string;
+        readonly target: string;
+        readonly acceptedOutcome: string;
+      },
+    ) => undefined,
     startCoding: assign(({ context, event }) => {
       if (event.type !== 'START_CODE') return {};
       return {
@@ -726,17 +720,47 @@ export const codingMachine = machineSetup.createMachine({
           {
             guard: 'isDirectCommit',
             target: 'reviewFirstCommit',
-            actions: 'rememberDirectCommit',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runFirstPhase',
+                  target: 'reviewFirstCommit',
+                  acceptedOutcome: 'directCommit',
+                },
+              },
+              'rememberDirectCommit',
+            ],
           },
           {
             guard: 'isIrCommit',
             target: 'reviewFirstCommit',
-            actions: 'rememberIrCommit',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runFirstPhase',
+                  target: 'reviewFirstCommit',
+                  acceptedOutcome: 'irCommit',
+                },
+              },
+              'rememberIrCommit',
+            ],
           },
           {
             guard: 'needsBossReply',
             target: 'awaitBossReply',
-            actions: 'rememberPendingQuestion',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runFirstPhase',
+                  target: 'awaitBossReply',
+                  acceptedOutcome: 'needsBossReply',
+                },
+              },
+              'rememberPendingQuestion',
+            ],
           },
           {
             target: 'failed',
@@ -814,17 +838,47 @@ export const codingMachine = machineSetup.createMachine({
           {
             guard: 'isMoreTasks',
             target: 'reviewIrTask',
-            actions: 'rememberMoreTasks',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runIrTask',
+                  target: 'reviewIrTask',
+                  acceptedOutcome: 'moreTasks',
+                },
+              },
+              'rememberMoreTasks',
+            ],
           },
           {
             guard: 'isFinalTask',
             target: 'reviewIrTask',
-            actions: 'rememberFinalTask',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runIrTask',
+                  target: 'reviewIrTask',
+                  acceptedOutcome: 'finalTask',
+                },
+              },
+              'rememberFinalTask',
+            ],
           },
           {
             guard: 'needsBossReply',
             target: 'awaitBossReply',
-            actions: 'rememberPendingQuestion',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runIrTask',
+                  target: 'awaitBossReply',
+                  acceptedOutcome: 'needsBossReply',
+                },
+              },
+              'rememberPendingQuestion',
+            ],
           },
           {
             target: 'failed',

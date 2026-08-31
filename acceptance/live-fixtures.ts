@@ -33,6 +33,9 @@ const machine = setup({
       event.output.token ===
         readFileSync('acceptance-hermetic-token.txt', 'utf8').trim(),
   },
+  actions: {
+    'playbook.acceptedOutcome': () => {},
+  },
 }).createMachine({
   id: 'hermetic',
   initial: 'ready',
@@ -82,7 +85,17 @@ const machine = setup({
           {
             guard: 'returnedExactFixtureToken',
             target: 'done',
-            actions: assign({ token: ({ event }) => event.output.token }),
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'work',
+                  target: 'done',
+                  acceptedOutcome: 'done',
+                },
+              },
+              assign({ token: ({ event }) => event.output.token }),
+            ],
           },
           {
             target: 'failed',
@@ -137,7 +150,7 @@ const machine = setup({
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'HERMETIC',
   // Link-time literal per slc/link.md, so the fixture models linker output.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {
@@ -146,21 +159,31 @@ const createRuntime = createXStatePlaybookRuntime(machine, {
       label: 'HERMETIC-1: Worker echoes the fixture token.',
     },
   },
+  outcomeAuthority: {
+    governedPlayerStates: {
+      work: {
+        done: {
+          fields: { token: 'semantic' },
+          repositoryDisposition: 'unchanged',
+        },
+      },
+    },
+  },
 });
 
 export default {
   id: 'hermetic',
   command: 'hermetic',
   intent: 'hermetic global-only acceptance fixture',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: ['worker'],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
-    return createRuntime({});
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
   },
 };
 `;
@@ -315,10 +338,11 @@ const machine = setup({}).createMachine({
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'CHECKLIST',
   // Link-time literal per slc/link.md, so the fixture models linker output.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
   // The same failure grammar the bundled playbooks use, so the gate can
   // count the two engineered failures apart from any real one.
   statusesForState: (state) =>
@@ -333,15 +357,15 @@ export default {
   id: 'checklist',
   command: 'checklist',
   intent: 'run the fixture release checklist end to end',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
-    return createRuntime({});
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
   },
 };
 `;
@@ -454,10 +478,11 @@ const machine = setup({}).createMachine({
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'NOTES',
   // Link-time literal per slc/link.md, so the fixture models linker output.
-  compat: { artifactSchema: 2, runtimeAbi: 1 },
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'topic' },
   roleStates: {},
+  outcomeAuthority: { governedPlayerStates: {} },
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
       ? []
@@ -470,15 +495,15 @@ export default {
   id: 'notes',
   command: 'notes',
   intent: 'draft and discuss the release notes for this repository',
-  artifactSchema: 2,
+  artifactSchema: 3,
   runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
-  createRuntime() {
-    return createRuntime({});
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
   },
 };
 `;

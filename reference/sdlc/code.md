@@ -48,7 +48,6 @@ At the start of *every* phase, Captain shall append the following instruction:
 Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
-Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 Coder is <coder-llm>; format the model token in conventional human form.
 ```
 

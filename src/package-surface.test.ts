@@ -189,9 +189,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 22 ||
-            (declaredFloor[1] === 22 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.22.0 capability floor`,
+          (declaredFloor[1] > 23 ||
+            (declaredFloor[1] === 23 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.23.0 capability floor`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -214,9 +214,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 22 ||
-              (resolvedFloor[1] === 22 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.22.0 capability floor`,
+            (resolvedFloor[1] > 23 ||
+              (resolvedFloor[1] === 23 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.23.0 capability floor`,
       ).toBe(true);
     }
   });
@@ -616,6 +616,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         validateCaptainResult,
         validatePlayerResult,
         waitForPlaybookQuiescence,
+        emptyPlaybookEffectLedger,
         RUNTIME_ABI,
         SUPPORTED_ARTIFACT_SCHEMAS,
       } from '@sublang/playbook/xstate-runtime';
@@ -662,9 +663,8 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       if (
         !Array.isArray(SUPPORTED_ARTIFACT_SCHEMAS) ||
         !Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS) ||
-        SUPPORTED_ARTIFACT_SCHEMAS.length !== 2 ||
-        SUPPORTED_ARTIFACT_SCHEMAS[0] !== 2 ||
-        SUPPORTED_ARTIFACT_SCHEMAS[1] !== 3
+        SUPPORTED_ARTIFACT_SCHEMAS.length !== 1 ||
+        SUPPORTED_ARTIFACT_SCHEMAS[0] !== 3
       ) {
         throw new Error('unexpected SUPPORTED_ARTIFACT_SCHEMAS');
       }
@@ -683,11 +683,24 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         }),
         {
           label: 'probe',
-          compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+          compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
           snapshotOptions: (value) => value ?? {},
           roleStates: {},
+          outcomeAuthority: { governedPlayerStates: {} },
         },
-      )({});
+      )({
+        configuredOptions: {},
+        hostCapabilities: {
+          repository: {
+            runExclusive() { throw new Error('unused'); },
+            runDeferred() { throw new Error('unused'); },
+          },
+          effectLedger: {
+            snapshot: () => emptyPlaybookEffectLedger(),
+            writeAhead: async () => emptyPlaybookEffectLedger(),
+          },
+        },
+      });
       if (
         typeof probeRuntime.describe !== 'function' ||
         typeof probeRuntime.apply !== 'function'
@@ -713,6 +726,89 @@ describe('canonical Captain compiler bundle (CAPPLAY-11)', () => {
         `canonical Captain bundle missing ${artifact}`,
       ).toBe(true);
     }
+  });
+});
+
+describe('artifact schema cutover (RELEASE-15)', () => {
+  it('keeps every shipped runtime and registry sibling on schema 3', () => {
+    const schemaDeclaration = /artifactSchema:\s*3/;
+    const legacyDeclaration =
+      /artifactSchema:\s*2|SchemaV2|RegistryEntryV2/;
+
+    for (const id of BUNDLED_WORKFLOW_IDS) {
+      const base = `reference/sdlc/${id}.playbook/`;
+      const runtimeSource = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.ts`),
+        'utf8',
+      );
+      const runtimeJavaScript = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.js`),
+        'utf8',
+      );
+      const runtimeDeclaration = readFileSync(
+        join(repoRoot, `${base}${id}.playbook.d.ts`),
+        'utf8',
+      );
+      for (const [kind, contents] of [
+        ['TypeScript', runtimeSource],
+        ['JavaScript', runtimeJavaScript],
+      ] as const) {
+        const currentSchemaContract =
+          id === 'decide'
+            ? /authority\.artifactSchema !== 3/
+            : schemaDeclaration;
+        expect(
+          contents,
+          `${id} ${kind} runtime omits its artifact-schema-3 contract`,
+        ).toMatch(currentSchemaContract);
+        expect(
+          contents,
+          `${id} ${kind} runtime retains artifact schema 2`,
+        ).not.toMatch(legacyDeclaration);
+      }
+      expect(runtimeDeclaration).not.toMatch(legacyDeclaration);
+      if (id === 'code' || id === 'review') {
+        expect(runtimeDeclaration).toMatch(
+          /XStatePlaybookRuntimeFactory<[\s\S]*, 3>;/,
+        );
+      } else {
+        expect(runtimeDeclaration).toContain(
+          'PlaybookRuntimeFactory<DecidePlaybookRuntimeConstruction>',
+        );
+      }
+
+      for (const extension of ['ts', 'js', 'd.ts'] as const) {
+        const registry = readFileSync(
+          join(repoRoot, `${base}${id}.registry.${extension}`),
+          'utf8',
+        );
+        expect(
+          registry,
+          `${id} registry.${extension} omits artifact schema 3`,
+        ).toMatch(schemaDeclaration);
+        expect(registry).not.toMatch(legacyDeclaration);
+      }
+    }
+
+    for (const extension of ['ts', 'js'] as const) {
+      const captain = readFileSync(
+        join(repoRoot, `${CAPTAIN_BASE}captain.playbook.${extension}`),
+        'utf8',
+      );
+      expect(
+        captain,
+        `Captain ${extension} runtime omits artifact schema 3`,
+      ).toMatch(schemaDeclaration);
+      expect(captain).not.toMatch(legacyDeclaration);
+    }
+    const captainDeclaration = readFileSync(
+      join(repoRoot, `${CAPTAIN_BASE}captain.playbook.d.ts`),
+      'utf8',
+    );
+    expect(captainDeclaration).toContain(
+      'createPlaybookRuntime(options: PlaybookRuntimeOptions)',
+    );
+    expect(captainDeclaration).not.toMatch(legacyDeclaration);
   });
 });
 
@@ -742,6 +838,9 @@ describe('packed tarball contents (RELEASE-18)', () => {
     for (const artifact of [
       'src/runtime.js',
       'src/runtime.d.ts',
+      'src/accepted-outcome.ts',
+      'src/accepted-outcome.js',
+      'src/accepted-outcome.d.ts',
       'src/xstate-runtime.js',
       'src/xstate-runtime.d.ts',
       'src/xstate-playbook-runtime.js',
@@ -832,7 +931,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const failures: string[] = [];
     let scanned = 0;
     for (const doc of [...packed].filter((path) => path.endsWith('.md'))) {
-      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // release-28 step 8 pins packed bytes to repository bytes, so the
       // repository copy is the packed content.
       for (const { line, target } of linksOf(
         readFileSync(join(repoRoot, doc), 'utf8'),
@@ -965,7 +1064,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const forms = new Set<string>();
     let scanned = 0;
     for (const doc of packedDocs) {
-      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // release-28 step 8 pins packed bytes to repository bytes, so the
       // repository copy is the packed content.
       const body = blankCodeSpans(
         blankFences(readFileSync(join(repoRoot, doc), 'utf8')),
@@ -1042,8 +1141,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   const DECIDE_BASE = 'reference/sdlc/decide.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
-    expect(manifest.bin).toHaveProperty('playbook');
-    expect(manifest.bin).not.toHaveProperty('playbook-code');
+    expect(manifest.bin).toEqual({
+      playbook: 'reference/sdlc/code.playbook/bin/playbook.js',
+    });
     expect(manifest.exports).toHaveProperty('./runtime');
     expect(manifest.exports).toHaveProperty('./xstate-runtime');
     expect(manifest.exports).toHaveProperty('./code/registry');
@@ -1055,7 +1155,6 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
     expect(manifest.exports).not.toHaveProperty('./interactive-session');
-    expect(manifest.bin).not.toHaveProperty('playbook-managed-session');
   });
 
   // RELEASE-20: the semver-stable unit of a public subpath is the module's
@@ -1102,11 +1201,13 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './xstate-runtime': [
       'BOSS_REPLY_ERRORS',
       'NestedPlaybookCallError',
+      'PlaybookSemanticCandidateStructureError',
       'RUNTIME_ABI',
       'SUPPORTED_ARTIFACT_SCHEMAS',
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
       'assertJsonSafe',
+      'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
       'combineAbortSignals',
       'createNestedPlaybookBridge',
@@ -1118,8 +1219,10 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'defaultComposePlayerPrompt',
       'defaultExtractRequiredFields',
       'detachPersistedMachineSnapshot',
+      'emptyPlaybookEffectLedger',
       'extractJsonValue',
       'hiddenControlEnvelope',
+      'isPlaybookEffectLedgerMonotonicExtension',
       'normalizeError',
       'normalizeErrorCompact',
       'normalizeErrorFull',
@@ -1127,6 +1230,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'parseJudgeJson',
       'pendingBossQuestionFromContext',
       'registerPlaybookAbortCleanup',
+      'reconcilePlaybookSemanticEvidence',
       'resumableStateIdsFromMachine',
       'snapshotJsonValue',
       'snapshotPlaybookSession',
@@ -1150,6 +1254,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'validateCodeOptions',
     ],
     './playbook-captain': [
+      'assertPlaybookCaptainUnresolvedEffects',
       'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
@@ -1191,6 +1296,13 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookControlAction',
       'PlaybookControlReceipt',
       'PlaybookControlView',
+      'PlaybookEffectBoundary',
+      'PlaybookEffectBoundaryStart',
+      'PlaybookEffectLedger',
+      'PlaybookEffectLedgerCapability',
+      'PlaybookEffectLedgerCommand',
+      'PlaybookEffectLedgerCommandBatch',
+      'PlaybookEffectLogicalOperation',
       'PlaybookPendingBossQuestion',
       'PlaybookPendingCall',
       'PlaybookPorts',
@@ -1200,6 +1312,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookRuntimeFactory',
       'PlaybookRuntimeSnapshot',
       'PlaybookRoleBinding',
+      'PlaybookRepositoryDisposition',
+      'PlaybookRepositoryObservation',
+      'PlaybookRepositoryReceipt',
       'PlaybookSession',
       'PlaybookState',
       'PlaybookStateValue',
@@ -1228,6 +1343,14 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookPendingBossQuestionContext',
       'PlaybookPlayerInput',
       'PlaybookRuntimeSnapshotValidationOptions',
+      'PlaybookReconciledSemanticOutput',
+      'PlaybookRetainedSemanticEvidence',
+      'PlaybookSemanticCandidateStructureError',
+      'PlaybookSemanticEvidenceInput',
+      'PlaybookSemanticFieldAuthority',
+      'PlaybookSemanticOutcomeSpec',
+      'PlaybookSemanticReconciliation',
+      'PlaybookSemanticReconciliationReason',
       'PlaybookScriptInput',
       'PlaybookStateMetadata',
       'PlayerAdjudicationSpec',
@@ -1248,16 +1371,17 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStatePlaybookRuntimeConstruction',
       'XStatePlaybookRuntimeFactory',
       'XStatePlaybookRuntimeFactoryOptions',
-      'XStatePlaybookRuntimeSpecV2',
       'XStatePlaybookRuntimeSpecV3',
       'XStatePromptIdentity',
       'XStateRoleStateStatus',
       'XStatePlaybookRuntimeCompat',
       'XStatePlaybookRuntimeSpec',
+      'XStateRepositoryCapability',
       'XStateRepositoryDisposition',
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
       'assertJsonSafe',
+      'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
       'combineAbortSignals',
       'createNestedPlaybookBridge',
@@ -1269,8 +1393,10 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'defaultComposePlayerPrompt',
       'defaultExtractRequiredFields',
       'detachPersistedMachineSnapshot',
+      'emptyPlaybookEffectLedger',
       'extractJsonValue',
       'hiddenControlEnvelope',
+      'isPlaybookEffectLedgerMonotonicExtension',
       'normalizeError',
       'normalizeErrorCompact',
       'normalizeErrorFull',
@@ -1278,6 +1404,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'parseJudgeJson',
       'pendingBossQuestionFromContext',
       'registerPlaybookAbortCleanup',
+      'reconcilePlaybookSemanticEvidence',
       'resumableStateIdsFromMachine',
       'snapshotJsonValue',
       'snapshotPlaybookSession',
@@ -1329,6 +1456,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './code/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
+      'CodePlaybookHostCapabilities',
       'CodePlaybookOptions',
       'JsonValue',
       'NormalizedError',
@@ -1370,7 +1498,6 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainDeps',
       'PlaybookCaptainFrameSnapshot',
       'PlaybookCaptainRegistryEntry',
-      'PlaybookCaptainRegistryEntryV2',
       'PlaybookCaptainRegistryEntryV3',
       'PlaybookCaptainRuntimeProfile',
       'PlaybookCaptainRetainedGeneration',
@@ -1378,7 +1505,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainSettlement',
       'PlaybookCaptainShell',
       'PlaybookCaptainShellSnapshot',
+      'PlaybookCaptainUnresolvedEffect',
       'PlaybookHostConstructionCapabilities',
+      'assertPlaybookCaptainUnresolvedEffects',
       'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
@@ -1407,6 +1536,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlayerCallOptions',
       'PlayerResult',
       'PlayerSessionStore',
+      'ReviewPlaybookHostCapabilities',
       'ReviewPlaybookOptions',
       '_internal',
       'default',
@@ -1426,6 +1556,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './decide/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
+      'DecidePlaybookHostCapabilities',
+      'DecidePlaybookRuntimeConstruction',
       'JsonValue',
       'NormalizedError',
       'PlaybookCallRequest',
@@ -1596,6 +1728,48 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     },
   );
 
+  it('publishes unresolved-effect as an exact state-only run result', () => {
+    const runtimeDeclaration = declarationSourceOf('./runtime');
+    const runResult = runtimeDeclaration.match(
+      /export type PlaybookRunResult\s*=([\s\S]*?\n};)\n/,
+    )?.[1];
+    expect(runResult).toBeDefined();
+    const unresolvedEffect = runResult!.match(
+      /\{[^{}]*outcome:\s*'unresolved-effect';[^{}]*\}/,
+    )?.[0];
+    expect(unresolvedEffect?.replace(/\s+/g, '')).toBe(
+      "{outcome:'unresolved-effect';state:PlaybookState;}",
+    );
+    expect(unresolvedEffect).not.toMatch(
+      /stateDescription|output|pendingCall|error|effectLedger|receipt|unresolvedEffects|semanticCandidate/,
+    );
+  });
+
+  it('publishes exact bounded unresolved-effect Captain settlements', () => {
+    const declaration = declarationSourceOf('./playbook-captain');
+    const evidence = declaration.match(
+      /export interface PlaybookCaptainUnresolvedEffect\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(evidence).toBeDefined();
+    expect(evidence!.replace(/\s+/g, '')).toBe(
+      "readonlyclassification:'one-descendant-commit'|'multiple-commits'|'rewritten-or-non-descendant'|'worktree-only-change'|'concurrent-or-foreign-change'|'observation-ambiguous'|'incomplete';readonlybaselineHead:string;readonlyafterHead?:string;readonlycommitOid?:string;",
+    );
+    expect(evidence).not.toMatch(
+      /path|projection|digest|boundary|operation|call|session|player|semantic|budget|prose/i,
+    );
+
+    const settlement = declaration.match(
+      /export interface PlaybookCaptainSettlement\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(settlement).toBeDefined();
+    expect(settlement).toMatch(
+      /readonly unresolvedEffects:\s*readonly PlaybookCaptainUnresolvedEffect\[\];/,
+    );
+    expect(declaration).toMatch(
+      /export declare function assertPlaybookCaptainUnresolvedEffects\(value: unknown[^)]*\): readonly PlaybookCaptainUnresolvedEffect\[\];/,
+    );
+  });
+
   it('declares validated Captain shell snapshots recursively readonly', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-snapshot-types-'));
     try {
@@ -1659,77 +1833,140 @@ if (snapshot.mode === 'engaged.parked') {
         `import {
   createXStatePlaybookRuntime,
   type XStatePlaybookRuntimeSpec,
-  type XStatePlaybookRuntimeSpecV2,
   type XStatePlaybookRuntimeSpecV3,
+  type XStateRepositoryCapability,
 } from '@sublang/playbook/xstate-runtime';
 import type {
-  PlaybookCaptainRegistryEntryV2,
   PlaybookCaptainRegistryEntryV3,
   PlaybookCaptainRuntimeProfile,
   PlaybookHostConstructionCapabilities,
 } from '@sublang/playbook/playbook-captain';
-import type { PlaybookPorts } from '@sublang/playbook/runtime';
+import type {
+  PlaybookEffectBoundaryStart,
+  PlaybookEffectLedgerCapability,
+  PlaybookPorts,
+} from '@sublang/playbook/runtime';
+import { codePlaybookRegistryEntry } from '@sublang/playbook/code/registry';
+import type { CodePlaybookHostCapabilities } from '@sublang/playbook/code/playbook';
+import { reviewPlaybookRegistryEntry } from '@sublang/playbook/review/registry';
+import type { ReviewPlaybookHostCapabilities } from '@sublang/playbook/review/playbook';
+import { decidePlaybookRegistryEntry } from '@sublang/playbook/decide/registry';
+import type {
+  DecidePlaybookHostCapabilities,
+  DecidePlaybookRuntimeConstruction,
+} from '@sublang/playbook/decide/playbook';
 
 interface Options { readonly mode: string }
-interface Capabilities { readonly observe: () => string }
+interface Capabilities {
+  readonly observe: () => string;
+  readonly effectLedger: PlaybookEffectLedgerCapability;
+}
 declare const machine: any;
-declare const legacySpec: XStatePlaybookRuntimeSpec<Options>;
-declare const v2Spec: XStatePlaybookRuntimeSpecV2<Options>;
+declare const boundaryStart: PlaybookEffectBoundaryStart;
+declare const effectLedger: PlaybookEffectLedgerCapability;
+declare const repository: XStateRepositoryCapability;
+declare const canonicalSpec: XStatePlaybookRuntimeSpec<Options>;
 declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
 
-const legacyFactory = createXStatePlaybookRuntime<Options>(machine, legacySpec);
-legacyFactory({ mode: 'safe' });
+// @ts-expect-error a start command cannot carry completion evidence
+boundaryStart.finalText;
 
-const v2Factory = createXStatePlaybookRuntime<Options>(machine, v2Spec);
-v2Factory({ mode: 'safe' });
-const v2FactorySchema: 2 = v2Factory.compat.artifactSchema;
-// @ts-expect-error schema 2 retains raw configured factory options
-v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+type ExclusiveOperation = Parameters<XStateRepositoryCapability['runExclusive']>[0]['operation'];
+const exclusiveOperation: ExclusiveOperation = async ({ baseline, identity }) => {
+  const head: string = baseline.head;
+  void head;
+  void identity;
+};
+declare const resumeShapedOperation: (resume?: string | false) => Promise<void>;
+// @ts-expect-error repository context cannot bind to a resume-token parameter
+const invalidExclusiveOperation: ExclusiveOperation = resumeShapedOperation;
+void exclusiveOperation;
+void invalidExclusiveOperation;
+
+const canonicalFactory = createXStatePlaybookRuntime<Options, Capabilities>(machine, canonicalSpec);
+canonicalFactory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', repository, effectLedger } });
+const canonicalFactorySchema: 3 = canonicalFactory.compat.artifactSchema;
+// @ts-expect-error the schema-3-only factory rejects raw configured options
+canonicalFactory({ mode: 'safe' });
 
 const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
-v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', repository, effectLedger } });
 const v3FactorySchema: 3 = v3Factory.compat.artifactSchema;
 // @ts-expect-error schema 3 requires the disjoint construction object
 v3Factory({ mode: 'safe' });
+// @ts-expect-error schema 3 requires repository serialization around governed calls
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head', effectLedger } });
 // @ts-expect-error live host capabilities must use an object type
 createXStatePlaybookRuntime<Options, number>(machine, v3Spec);
 
 const inferredV3Factory = createXStatePlaybookRuntime(machine, v3Spec);
-inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: {} });
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { repository, effectLedger } });
 // @ts-expect-error inferred schema 3 still rejects raw configured options
 inferredV3Factory({ mode: 'safe' });
 // @ts-expect-error inferred schema 3 still requires an object capability
 inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: 1 });
 
-// @ts-expect-error schema 2 forbids outcome authority metadata
-const wrongV2: XStatePlaybookRuntimeSpecV2<Options> = { ...v2Spec, outcomeAuthority: { governedPlayerStates: {} } };
 // @ts-expect-error schema 3 requires outcome authority metadata
-const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { ...v2Spec, compat: { artifactSchema: 3, runtimeAbi: 1 } };
-void wrongV2;
+const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { snapshotOptions: () => ({ mode: 'safe' }), compat: { artifactSchema: 3, runtimeAbi: 1 } };
 void wrongV3;
 
 declare const configuredOptions: unknown;
 declare const hostCapabilities: PlaybookHostConstructionCapabilities;
+declare const codeHostCapabilities: CodePlaybookHostCapabilities;
+declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
+declare const decideHostCapabilities: DecidePlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
-declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
 // @ts-expect-error live construction capabilities are not runtime ports
 ports.hostCapabilities;
-const v2Profile: PlaybookCaptainRuntimeProfile<2> = v2Entry.runtimeProfile;
-const v3Profile: PlaybookCaptainRuntimeProfile<3> = v3Entry.runtimeProfile;
-// @ts-expect-error a schema-2 registry profile cannot claim schema 3
-const wrongProfile: PlaybookCaptainRuntimeProfile<2> = { kind: 'bespoke', artifactSchema: 3 };
-v2Entry.createRuntime(configuredOptions);
-// @ts-expect-error schema 2 registry construction has no capability argument
-v2Entry.createRuntime(configuredOptions, hostCapabilities);
+const v3Profile: PlaybookCaptainRuntimeProfile = v3Entry.runtimeProfile;
 // @ts-expect-error schema 3 registry construction requires capabilities
 v3Entry.createRuntime(configuredOptions);
 v3Entry.createRuntime(configuredOptions, hostCapabilities);
-void v2FactorySchema;
+const codeSchema: 3 = codePlaybookRegistryEntry.artifactSchema;
+const codeProfile: PlaybookCaptainRuntimeProfile = codePlaybookRegistryEntry.runtimeProfile;
+const codeEntry: PlaybookCaptainRegistryEntryV3 = codePlaybookRegistryEntry;
+const codeCapabilities: PlaybookHostConstructionCapabilities = codeHostCapabilities;
+codePlaybookRegistryEntry.createRuntime({}, codeHostCapabilities);
+// @ts-expect-error CODE is schema 3 and requires current-host capabilities
+codePlaybookRegistryEntry.createRuntime({});
+const reviewSchema: 3 = reviewPlaybookRegistryEntry.artifactSchema;
+const reviewProfile: PlaybookCaptainRuntimeProfile = reviewPlaybookRegistryEntry.runtimeProfile;
+const reviewEntry: PlaybookCaptainRegistryEntryV3 = reviewPlaybookRegistryEntry;
+const reviewCapabilities: PlaybookHostConstructionCapabilities = reviewHostCapabilities;
+reviewPlaybookRegistryEntry.createRuntime({}, reviewHostCapabilities);
+// @ts-expect-error REVIEW is schema 3 and requires current-host capabilities
+reviewPlaybookRegistryEntry.createRuntime({});
+const decideSchema: 3 = decidePlaybookRegistryEntry.artifactSchema;
+const decideProfile: PlaybookCaptainRuntimeProfile = decidePlaybookRegistryEntry.runtimeProfile;
+const decideEntry: PlaybookCaptainRegistryEntryV3 = decidePlaybookRegistryEntry;
+const decideCapabilities: PlaybookHostConstructionCapabilities = decideHostCapabilities;
+const decideConstruction: DecidePlaybookRuntimeConstruction = {
+  configuredOptions: {},
+  hostCapabilities: decideHostCapabilities,
+};
+decidePlaybookRegistryEntry.createRuntime(
+  decideConstruction.configuredOptions,
+  decideConstruction.hostCapabilities,
+);
+// @ts-expect-error DECIDE is schema 3 and requires current-host capabilities
+decidePlaybookRegistryEntry.createRuntime({});
+void canonicalFactorySchema;
 void v3FactorySchema;
-void v2Profile;
 void v3Profile;
-void wrongProfile;
+void codeSchema;
+void codeProfile;
+void codeEntry;
+void codeCapabilities;
+void reviewSchema;
+void reviewProfile;
+void reviewEntry;
+void reviewCapabilities;
+void decideSchema;
+void decideProfile;
+void decideEntry;
+void decideCapabilities;
+void decideConstruction;
 `,
       );
       const program = ts.createProgram([fixture], {
@@ -1948,6 +2185,7 @@ void wrongProfile;
       `${CODE_BASE}bin/session-store.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,
+      `${CODE_BASE}bin/repository-effects.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       `${REVIEW_BASE}review.playbook.js`,

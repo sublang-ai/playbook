@@ -272,6 +272,28 @@ supported
 ([[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
 [DR-032](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/032-explicit-roles-session-players.md)).
 
+### Reconciling possible repository effects
+
+For each governed player call, Playbook records a Git baseline before the call
+and a durable receipt afterward. CODE and DECIDE commit arms, and REVIEW's
+Coder commit arm, accept a commit only when the receipt proves exactly one
+descendant commit with no residual repository change; REVIEW's Reviewer calls
+and DECIDE's proposal calls require the repository to remain exact. The
+player's prose, including any `Commit:` line, is presentation rather than
+proof.
+
+If interruption, missing semantic evidence, concurrent work, or an ambiguous
+repository delta prevents those facts from agreeing, the workflow parks
+without replaying the player. Captain reports whether a change was observed or
+could not be excluded, with the available baseline, after-HEAD, and proven
+commit identity but no repository paths. While parked, ask Captain either to
+retry reconciliation from the retained evidence or to abandon the unresolved
+attempt. Reconciliation may complete the saved evidence or restore an exact
+deferred Boss-question checkpoint, but it starts no replacement player call;
+abandonment disposes the complete engagement without claiming an authored
+workflow outcome. The same restricted recovery survives process restart
+([DR-040](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/040-outcome-authority-effect-reconciliation.md)).
+
 ### Recovering an uncertain turn
 
 Before model work, the runner takes one exclusive session lease and writes an
@@ -290,13 +312,22 @@ cannot retune that attempt, and retry may duplicate external effects. Discard
 reads no input and runs no model: it restores the exact prior settled boundary,
 or deletes a never-settled fresh session, while abandoning the attempted work.
 An interrupted interactive turn uses the same uncertain record and is
-recovered with these headless commands. Session files written by the removed
-direct v6 runner and incompatible schema-2 records are not shared schema-3
-Captain sessions and cannot be continued. Explicit selection rejects them.
-Implicit `--continue` reports and skips released schema-2 Captain records,
-naming each session and path; move them outside the sessions directory or
-remove them to silence the warning. A schema-3 record without the optional
-retained-generation member remains continuable and treats its absence as an
-empty map. Structurally valid schema-4 records emitted by the earlier
-retention implementation also remain continuable. Malformed records and
-unknown schemas still fail closed.
+recovered with these headless commands. Current sessions use Captain-session
+record schema 6. Records from the removed direct v6 runner and released record
+schema 2 have incompatible player identity; Playbook 9 record schema 3, the
+historical schema-4 retention shape, and both pre-release schema-5 shapes
+predate the canonical schema-6 record boundary; the earlier schema-5 shape also
+lacks `unresolvedEffects` and cannot prove whether governed work may replay.
+Explicit selection rejects
+all of them before registry construction or governed work with the applicable
+cutover explanation. Implicit `--continue` reports and skips each fully
+validated nonresumable record with its session id, path, applicable reason, and
+an archive-or-remove remedy while leaving the file intact. Fresh-session
+discovery likewise leaves and reports nonresumable, malformed, unsafe, or
+unknown-schema files. A fully validated nonresumable record participates in
+settled same-directory predecessor ordering: it declines adoption only when it
+is newest, while an older or different-directory record does not block a newer
+resumable predecessor. A record whose directory or order cannot be validated
+publishes an empty fresh boundary without falling through. Those invalid
+records still fail closed when explicitly selected or encountered by
+`--continue`; no path converts or restores them.
