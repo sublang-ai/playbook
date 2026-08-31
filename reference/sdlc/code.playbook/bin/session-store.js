@@ -217,6 +217,7 @@ async function createLeaseReplayWriter({
   let incomplete = true;
   let identity;
   let completeOffset = 0;
+  let writerHandle;
   let operationTail = Promise.resolve();
   let appendAdmissionClosed = false;
 
@@ -300,13 +301,14 @@ async function createLeaseReplayWriter({
 
       if (retainTail) {
         try {
-          await mutateReplayWriterFile({
+          writerHandle = await mutateReplayWriterFile({
             sessionsDir,
             path,
             identity,
             expectedSize: snapshot.bytes.length,
             expectedFinalSize: snapshot.bytes.length + 1,
             fs,
+            retainHandle: true,
             operation: async (handle) => {
               await writeReplayRange(
                 handle,
@@ -327,13 +329,14 @@ async function createLeaseReplayWriter({
       }
 
       try {
-        await mutateReplayWriterFile({
+        writerHandle = await mutateReplayWriterFile({
           sessionsDir,
           path,
           identity,
           expectedSize: snapshot.bytes.length,
           expectedFinalSize: parsed.completeBytes,
           fs,
+          retainHandle: true,
           operation: async (handle) => {
             await handle.truncate(parsed.completeBytes);
             completeOffset = parsed.completeBytes;
@@ -355,16 +358,23 @@ async function createLeaseReplayWriter({
 
   const appendAtQueueHead = async (record, role) => {
     if (lastReadableSeq === null || incomplete) return undefined;
-    await assertOwner();
 
     let sanitized;
+    let sanitizationFailed = false;
+    let sanitizationFailure;
     try {
       sanitized = sanitizeReplayRecord(record);
     } catch (cause) {
-      latch();
-      throw cause;
+      sanitizationFailed = true;
+      sanitizationFailure = cause;
     }
+    // Sanitization may invoke caller-controlled Proxy traps. This one owner
+    // check is the append's cooperative-lease linearization point.
     await assertOwner();
+    if (sanitizationFailed) {
+      latch();
+      throw sanitizationFailure;
+    }
 
     if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) {
       latch();
@@ -389,24 +399,34 @@ async function createLeaseReplayWriter({
           fs,
         });
         identity = published.identity;
+        writerHandle = published.handle;
         completeOffset = line.length;
         lastReadableSeq = sequence;
         await syncDirectory(sessionsDir, fs);
-      } else {
-        await mutateReplayWriterFile({
+      } else if (writerHandle === undefined) {
+        writerHandle = await mutateReplayWriterFile({
           sessionsDir,
           path,
           identity,
           expectedSize: completeOffset,
           expectedFinalSize: completeOffset + line.length,
           fs,
+          retainHandle: true,
           operation: (handle) =>
             writeReplayRange(handle, line, completeOffset),
         });
         completeOffset += line.length;
         lastReadableSeq = sequence;
+      } else {
+        await appendReplayWriterFile({
+          handle: writerHandle,
+          identity,
+          expectedSize: completeOffset,
+          bytes: line,
+        });
+        completeOffset += line.length;
+        lastReadableSeq = sequence;
       }
-      await assertOwner();
       return undefined;
     } catch (cause) {
       await updateReadableFromDisk();
@@ -460,14 +480,16 @@ async function createLeaseReplayWriter({
     }
     try {
       await assertOwner();
-      await mutateReplayWriterFile({
+      if (writerHandle === undefined) {
+        throw new Error('replay stream checkpoint has no writer handle');
+      }
+      await checkpointReplayWriterFile({
         sessionsDir,
         path,
+        handle: writerHandle,
         identity,
         expectedSize: completeOffset,
-        expectedFinalSize: completeOffset,
         fs,
-        operation: (handle) => handle.sync(),
       });
       await assertOwner();
       lastDurableSeq = lastReadableSeq;
@@ -483,7 +505,21 @@ async function createLeaseReplayWriter({
     appendAdmissionClosed = true;
   };
 
-  const prepareRelease = () => enqueue(checkpointAtQueueHead);
+  const prepareRelease = () =>
+    enqueue(async () => {
+      try {
+        await checkpointAtQueueHead();
+      } finally {
+        const handle = writerHandle;
+        writerHandle = undefined;
+        try {
+          await handle?.close();
+        } catch {
+          // A completed checkpoint owns durability; descriptor cleanup cannot
+          // broaden the latch trigger set or block canonical lease retirement.
+        }
+      }
+    });
 
   await initialize();
   return Object.freeze({
@@ -1531,6 +1567,7 @@ async function mutateReplayWriterFile({
   expectedSize,
   expectedFinalSize,
   fs,
+  retainHandle = false,
   operation,
 }) {
   await assertPrivateDirectory(sessionsDir, fs);
@@ -1580,9 +1617,76 @@ async function mutateReplayWriterFile({
       throw new Error('replay stream path changed during writer mutation');
     }
     await assertPrivateDirectory(sessionsDir, fs);
+    if (retainHandle) {
+      const retained = handle;
+      handle = undefined;
+      return retained;
+    }
   } finally {
     await handle?.close();
   }
+}
+
+async function appendReplayWriterFile({
+  handle,
+  identity,
+  expectedSize,
+  bytes,
+}) {
+  const openedStat = await handle.stat();
+  assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+  if (
+    !sameReplayIdentity(identity, openedStat) ||
+    requireReplayFileSize(openedStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed before writer append');
+  }
+  await writeReplayRange(handle, bytes, expectedSize);
+}
+
+async function checkpointReplayWriterFile({
+  sessionsDir,
+  path,
+  handle,
+  identity,
+  expectedSize,
+  fs,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  const pathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  const openedStat = await handle.stat();
+  assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+  if (
+    !sameFileIdentity(pathStat, openedStat) ||
+    !sameReplayIdentity(identity, openedStat) ||
+    requireReplayFileSize(openedStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed before writer checkpoint');
+  }
+  await handle.sync();
+  const finalStat = await handle.stat();
+  assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+  if (
+    !sameFileIdentity(openedStat, finalStat) ||
+    requireReplayFileSize(finalStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed during writer checkpoint');
+  }
+  const finalPathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  if (!sameFileIdentity(openedStat, finalPathStat)) {
+    throw new Error('replay stream path changed during writer checkpoint');
+  }
+  await assertPrivateDirectory(sessionsDir, fs);
 }
 
 async function publishReplayWriterFile({ sessionsDir, path, bytes, fs }) {
@@ -1623,7 +1727,12 @@ async function publishReplayWriterFile({ sessionsDir, path, bytes, fs }) {
       throw new Error('new replay stream path changed during publication');
     }
     await assertPrivateDirectory(sessionsDir, fs);
-    return { identity: replayFileIdentity(openedStat) };
+    const retained = handle;
+    handle = undefined;
+    return {
+      handle: retained,
+      identity: replayFileIdentity(openedStat),
+    };
   } finally {
     await handle?.close();
   }

@@ -185,6 +185,12 @@ function observedReplayMutationFs(
   let replayWrites = 0;
   let replaySyncs = 0;
   let sessionsSyncs = 0;
+  let ownerOpens = 0;
+  let replayOpens = 0;
+  let replayPathStats = 0;
+  let replayHandleStats = 0;
+  let replayCloses = 0;
+  let sessionsDirStats = 0;
   const observeWrite = async <T>(operation: () => Promise<T>) => {
     replayWrites += 1;
     const event = { call: replayWrites, path: streamPath };
@@ -194,13 +200,47 @@ function observedReplayMutationFs(
     return result;
   };
   return {
-    counts: () => ({ replayWrites, replaySyncs, sessionsSyncs }),
+    counts: () => ({
+      replayWrites,
+      replaySyncs,
+      sessionsSyncs,
+      ownerOpens,
+      replayOpens,
+      replayPathStats,
+      replayHandleStats,
+      replayCloses,
+      sessionsDirStats,
+    }),
+    reset() {
+      replayWrites = 0;
+      replaySyncs = 0;
+      sessionsSyncs = 0;
+      ownerOpens = 0;
+      replayOpens = 0;
+      replayPathStats = 0;
+      replayHandleStats = 0;
+      replayCloses = 0;
+      sessionsDirStats = 0;
+    },
     fsOps: {
+      async lstat(path: string) {
+        if (path === streamPath) replayPathStats += 1;
+        if (path === sessionsDir) sessionsDirStats += 1;
+        return lstat(path);
+      },
       async open(path: string, flags: string | number, mode?: number) {
+        if (path.endsWith('/owner.json')) ownerOpens += 1;
         const handle = await open(path, flags as any, mode);
         if (path === streamPath) {
+          replayOpens += 1;
           return new Proxy(handle as any, {
             get(target, property) {
+              if (property === 'stat') {
+                return (...args: unknown[]) => {
+                  replayHandleStats += 1;
+                  return target.stat(...args);
+                };
+              }
               if (property === 'write') {
                 return (...args: unknown[]) =>
                   observeWrite(() => target.write(...args));
@@ -221,6 +261,12 @@ function observedReplayMutationFs(
                     path,
                   });
                   return target.sync();
+                };
+              }
+              if (property === 'close') {
+                return (...args: unknown[]) => {
+                  replayCloses += 1;
+                  return target.close(...args);
                 };
               }
               const value = Reflect.get(target, property, target);
@@ -5545,6 +5591,54 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
   });
 
+  it('reuses one writer handle and one owner read per steady append', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const streamPath = replayStreamPath(sessionsDir);
+    const observed = observedReplayMutationFs(sessionsDir, streamPath);
+    const lease = await fixedStore(sessionsDir, tokenO, {
+      fsOps: observed.fsOps,
+    }).acquire(sessionId);
+    await lease.append({ type: 'publish-and-retain-handle' });
+
+    observed.reset();
+    await expect(lease.append({ type: 'steady-state' })).resolves
+      .toBeUndefined();
+    expect(observed.counts()).toEqual({
+      replayWrites: 1,
+      replaySyncs: 0,
+      sessionsSyncs: 0,
+      ownerOpens: 1,
+      replayOpens: 0,
+      replayPathStats: 0,
+      replayHandleStats: 1,
+      replayCloses: 0,
+      sessionsDirStats: 0,
+    });
+
+    await lease.release();
+    expect(observed.counts().replayCloses).toBe(1);
+  });
+
+  it('detects canonical stream replacement at the next checkpoint', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const streamPath = replayStreamPath(sessionsDir);
+    const displacedPath = `${streamPath}.displaced`;
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    await lease.append({ type: 'held-inode' });
+    const bytes = await readFile(streamPath);
+
+    await rename(streamPath, displacedPath);
+    await writeFile(streamPath, bytes, { mode: 0o600 });
+    await chmod(streamPath, 0o600);
+
+    await expect(lease.release()).resolves.toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(await readFile(streamPath)).toEqual(bytes);
+  });
+
   it('serializes overlapping appends and makes release an admission barrier', async () => {
     const { sessionsDir } = await fixtureDir();
     const streamPath = replayStreamPath(sessionsDir);
@@ -5976,51 +6070,6 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await writeFile(ownerPath, ownerBytes, 'utf8');
     await lease.release();
 
-    const raced = await fixtureDir();
-    const racedStreamPath = replayStreamPath(raced.sessionsDir);
-    const racedOwnerPath = join(
-      raced.sessionsDir,
-      `.${sessionId}.lock`,
-      'owner.json',
-    );
-    let racedOwner: Record<string, unknown> = {};
-    const observed = observedReplayMutationFs(
-      raced.sessionsDir,
-      racedStreamPath,
-      {
-        async afterReplayWrite() {
-          await writeFile(
-            racedOwnerPath,
-            `${JSON.stringify({ ...racedOwner, ownerToken: tokenN })}\n`,
-            'utf8',
-          );
-        },
-      },
-    );
-    const racedLease = await fixedStore(raced.sessionsDir, tokenO, {
-      fsOps: observed.fsOps,
-    }).acquire(sessionId);
-    const racedOwnerBytes = await readFile(racedOwnerPath, 'utf8');
-    racedOwner = JSON.parse(racedOwnerBytes);
-    await expect(racedLease.append({ type: 'visible-before-owner-loss' }))
-      .rejects.toThrow(/different token|ownership/);
-    expect(racedLease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
-      incomplete: true,
-    });
-    expect(
-      (await fixedStore(raced.sessionsDir, tokenR).readStream(sessionId))
-        .entries,
-    ).toEqual([
-      replayEnvelope(1, { type: 'visible-before-owner-loss' }),
-    ]);
-    await writeFile(racedOwnerPath, racedOwnerBytes, 'utf8');
-    await expect(racedLease.release()).resolves.toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
-      incomplete: true,
-    });
   });
 });
 
