@@ -6,7 +6,7 @@
 // PBCLI-53: a fresh lease may move its newest same-directory predecessor's
 // complete retained-generation map under guarded source-first publication.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
   chmod,
@@ -39,6 +39,7 @@ import {
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
+export const RECORDS_STREAM_VERSION = 1;
 const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 // The interrupted retention change emitted this required-member shape before
 // canonical writes returned to additive schema 3. Both pre-effect shapes and
@@ -131,6 +132,15 @@ const DEFAULT_FS_OPERATIONS = Object.freeze({
   rmdir,
   unlink,
 });
+const EMPTY_REPLAY_PREFIX_DIGEST = createHash('sha256').digest('hex');
+const REPLAY_READ_CHUNK_SIZE = 64 * 1024;
+
+class ReplaySnapshotChangedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ReplaySnapshotChangedError';
+  }
+}
 
 class CaptainSessionRecordSchemaError extends Error {
   constructor(schemaVersion, message, cause) {
@@ -169,6 +179,11 @@ export function defaultCaptainSessionsDir(
   return join(stateHome, 'playbook', 'sessions');
 }
 
+export function sanitizeReplayRecord(value) {
+  const sanitized = sanitizeReplayValue(value, 'replay record', new Set());
+  return requireRecord(sanitized, 'replay record');
+}
+
 export function createCaptainSessionStore(options = {}) {
   const env = options.env ?? process.env;
   const home = options.homeDir ?? env.HOME ?? homedir();
@@ -182,6 +197,8 @@ export function createCaptainSessionStore(options = {}) {
   const probeProcess =
     options.probeProcess ?? ((pid) => process.kill(pid, 0));
   const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
+  const replayReadCursors = new Map();
+  const replayReadQueues = new Map();
 
   if (!isAbsolute(sessionsDir)) {
     throw new Error('Captain session store path must be absolute');
@@ -202,6 +219,10 @@ export function createCaptainSessionStore(options = {}) {
   const recordPathFor = (sessionId) => {
     assertSessionId(sessionId);
     return join(sessionsDir, `${sessionId}.json`);
+  };
+  const recordsPathFor = (sessionId) => {
+    assertSessionId(sessionId);
+    return join(sessionsDir, `${sessionId}.records.jsonl`);
   };
   const leasePathFor = (sessionId) => {
     assertSessionId(sessionId);
@@ -285,6 +306,40 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const read = (sessionId) => readRecord(sessionId);
+
+  const readStream = async (sessionId, options) => {
+    assertSessionId(sessionId);
+    const afterSeq = validateReplayReadOptions(options);
+    const previous = replayReadQueues.get(sessionId) ?? Promise.resolve();
+    const operation = previous.then(() =>
+      readReplayStream({
+        sessionsDir,
+        path: recordsPathFor(sessionId),
+        afterSeq,
+        cursor: replayReadCursors.get(sessionId),
+        fs,
+      }),
+    );
+    const drained = operation.then(
+      (result) => {
+        if (result.cursor === undefined) {
+          replayReadCursors.delete(sessionId);
+        } else {
+          replayReadCursors.set(sessionId, result.cursor);
+        }
+        return undefined;
+      },
+      () => undefined,
+    );
+    replayReadQueues.set(sessionId, drained);
+    void drained.then(() => {
+      if (replayReadQueues.get(sessionId) === drained) {
+        replayReadQueues.delete(sessionId);
+      }
+    });
+    const result = await operation;
+    return result.value;
+  };
 
   const listRecords = async ({
     onLegacyRecord,
@@ -844,7 +899,511 @@ export function createCaptainSessionStore(options = {}) {
     }
   };
 
-  return Object.freeze({ sessionsDir, read, latest, acquire });
+  return Object.freeze({ sessionsDir, read, readStream, latest, acquire });
+}
+
+async function readReplayStream({
+  sessionsDir,
+  path,
+  afterSeq,
+  cursor,
+  fs,
+}) {
+  let forceFullRead = false;
+  let snapshot;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      snapshot = await readReplaySnapshot({
+        sessionsDir,
+        path,
+        afterSeq,
+        cursor,
+        forceFullRead,
+        fs,
+      });
+      break;
+    } catch (cause) {
+      if (!(cause instanceof ReplaySnapshotChangedError) || attempt === 1) {
+        throw cause;
+      }
+      if (cursor !== undefined) cursor.reusable = false;
+      forceFullRead = true;
+    }
+  }
+
+  if (snapshot === undefined) {
+    throw new Error('replay stream changed during both read snapshots');
+  }
+  if (snapshot.absent) {
+    if (cursor !== undefined) cursor.reusable = false;
+    if (cursor !== undefined && cursor.sequence > 0) {
+      throw new Error('replay stream rolled back below its observed prefix');
+    }
+    if (afterSeq !== 0) {
+      throw new Error(
+        `replay stream afterSeq ${afterSeq} exceeds last readable sequence 0`,
+      );
+    }
+    return {
+      cursor: undefined,
+      value: freezeReplayReadResult([], 0),
+    };
+  }
+
+  const initialSequence = snapshot.incremental ? cursor.sequence : 0;
+  const initialDigest = snapshot.incremental
+    ? cursor.digest
+    : EMPTY_REPLAY_PREFIX_DIGEST;
+  const parsed = parseReplayLines(
+    snapshot.bytes,
+    initialSequence,
+    initialDigest,
+    snapshot.incremental ? undefined : cursor?.sequence,
+  );
+  const lastReadableSeq = parsed.sequence;
+
+  if (!snapshot.incremental && cursor !== undefined && cursor.sequence > 0) {
+    if (
+      lastReadableSeq < cursor.sequence ||
+      parsed.observedDigest !== cursor.digest
+    ) {
+      throw new Error('replay stream rolled back or changed its observed prefix');
+    }
+  }
+  if (afterSeq > lastReadableSeq) {
+    throw new Error(
+      `replay stream afterSeq ${afterSeq} exceeds last readable sequence ${lastReadableSeq}`,
+    );
+  }
+
+  const completeOffset = snapshot.startOffset + parsed.completeBytes;
+  const nextCursor = {
+    identity: snapshot.identity,
+    offset: completeOffset,
+    sequence: lastReadableSeq,
+    digest: parsed.digest,
+    reusable: true,
+  };
+  const entries = parsed.entries.filter((entry) => entry.seq > afterSeq);
+  return {
+    cursor: nextCursor,
+    value: freezeReplayReadResult(entries, lastReadableSeq),
+  };
+}
+
+async function readReplaySnapshot({
+  sessionsDir,
+  path,
+  afterSeq,
+  cursor,
+  forceFullRead,
+  fs,
+}) {
+  try {
+    await assertPrivateDirectory(sessionsDir, fs);
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return { absent: true };
+    throw cause;
+  }
+
+  let pathStat;
+  try {
+    pathStat = await assertPrivateRegularPath(path, 0o600, fs, 'replay stream');
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return { absent: true };
+    throw cause;
+  }
+
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') {
+      throw new ReplaySnapshotChangedError(
+        'replay stream disappeared while opening its snapshot',
+      );
+    }
+    throw cause;
+  }
+
+  try {
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (!sameFileIdentity(pathStat, openedStat)) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was replaced while opening its snapshot',
+      );
+    }
+    const snapshotLength = requireReplayFileSize(openedStat.size);
+    const identity = replayFileIdentity(openedStat);
+    const cursorBoundaryChanged =
+      cursor !== undefined &&
+      (!sameReplayIdentity(cursor.identity, identity) ||
+        snapshotLength < cursor.offset);
+    if (cursorBoundaryChanged) cursor.reusable = false;
+    const incremental =
+      !forceFullRead &&
+      cursor !== undefined &&
+      cursor.reusable &&
+      sameReplayIdentity(cursor.identity, identity) &&
+      snapshotLength >= cursor.offset &&
+      afterSeq >= cursor.sequence;
+    const startOffset = incremental ? cursor.offset : 0;
+    const first = await readReplayRange(handle, startOffset, snapshotLength);
+    const second = await readReplayRange(handle, startOffset, snapshotLength);
+    if (!first.equals(second)) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream changed within its pinned snapshot',
+      );
+    }
+
+    const finalHandleStat = await handle.stat();
+    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalHandleStat) ||
+      requireReplayFileSize(finalHandleStat.size) < snapshotLength
+    ) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was truncated within its pinned snapshot',
+      );
+    }
+
+    let finalPathStat;
+    try {
+      finalPathStat = await assertPrivateRegularPath(
+        path,
+        0o600,
+        fs,
+        'replay stream',
+      );
+    } catch (cause) {
+      if (cause?.code === 'ENOENT') {
+        throw new ReplaySnapshotChangedError(
+          'replay stream disappeared within its pinned snapshot',
+        );
+      }
+      throw cause;
+    }
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was replaced within its pinned snapshot',
+      );
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+
+    return {
+      absent: false,
+      bytes: first,
+      identity,
+      incremental,
+      startOffset,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readReplayRange(handle, start, end) {
+  const chunks = [];
+  let position = start;
+  while (position < end) {
+    const length = Math.min(REPLAY_READ_CHUNK_SIZE, end - position);
+    const buffer = Buffer.allocUnsafe(length);
+    const result = await handle.read(buffer, 0, length, position);
+    if (
+      result === null ||
+      typeof result !== 'object' ||
+      !Number.isSafeInteger(result.bytesRead) ||
+      result.bytesRead <= 0 ||
+      result.bytesRead > length
+    ) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream ended before its pinned snapshot boundary',
+      );
+    }
+    chunks.push(buffer.subarray(0, result.bytesRead));
+    position += result.bytesRead;
+  }
+  return Buffer.concat(chunks, end - start);
+}
+
+function parseReplayLines(bytes, initialSequence, initialDigest, observedSeq) {
+  const entries = [];
+  let sequence = initialSequence;
+  let digest = initialDigest;
+  let observedDigest = observedSeq === 0 ? initialDigest : undefined;
+  let lineStart = 0;
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] !== 0x0a) continue;
+    const line = bytes.subarray(lineStart, index);
+    const entry = parseReplayEnvelope(line, sequence + 1);
+    sequence = entry.seq;
+    digest = digestReplayEntry(digest, entry);
+    if (sequence === observedSeq) observedDigest = digest;
+    entries.push(entry);
+    lineStart = index + 1;
+  }
+
+  return {
+    completeBytes: lineStart,
+    digest,
+    entries,
+    observedDigest,
+    sequence,
+  };
+}
+
+function parseReplayEnvelope(bytes, expectedSequence) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (cause) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} is not valid UTF-8: ${errorMessage(cause)}`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (cause) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} is not valid JSON: ${errorMessage(cause)}`,
+    );
+  }
+  const envelope = requireRecord(
+    snapshotJsonValue(parsed, `replay stream sequence ${expectedSequence}`),
+    `replay stream sequence ${expectedSequence}`,
+  );
+  exactOptionalKeys(
+    envelope,
+    ['v', 'seq', 'record'],
+    ['role'],
+    `replay stream sequence ${expectedSequence}`,
+  );
+  if (envelope.v !== RECORDS_STREAM_VERSION) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} version must be ${RECORDS_STREAM_VERSION}`,
+    );
+  }
+  if (!Number.isSafeInteger(envelope.seq) || envelope.seq <= 0) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} seq must be a positive safe integer`,
+    );
+  }
+  if (envelope.seq !== expectedSequence) {
+    throw new Error(
+      `replay stream expected sequence ${expectedSequence}, received ${envelope.seq}`,
+    );
+  }
+  if (envelope.role !== undefined && typeof envelope.role !== 'string') {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} role must be a string`,
+    );
+  }
+  requireRecord(
+    envelope.record,
+    `replay stream sequence ${expectedSequence} record`,
+  );
+  return envelope;
+}
+
+function validateReplayReadOptions(options) {
+  if (options === undefined) return 0;
+  const value = requireRecord(
+    snapshotJsonValue(options, 'replay stream read options'),
+    'replay stream read options',
+  );
+  exactOptionalKeys(value, [], ['afterSeq'], 'replay stream read options');
+  const afterSeq = Object.hasOwn(value, 'afterSeq') ? value.afterSeq : 0;
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+    throw new Error(
+      'replay stream read options afterSeq must be a nonnegative safe integer',
+    );
+  }
+  return afterSeq;
+}
+
+function freezeReplayReadResult(entries, lastReadableSeq) {
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    lastReadableSeq,
+  });
+}
+
+function replayFileIdentity(stat) {
+  return Object.freeze({ dev: stat.dev, ino: stat.ino });
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameReplayIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function requireReplayFileSize(value) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error('replay stream size must be a nonnegative safe integer');
+  }
+  return value;
+}
+
+function assertPrivateRegularStat(stat, mode, label) {
+  if (!stat.isFile()) {
+    throw new Error(`${label} path is not a regular file`);
+  }
+  if ((stat.mode & 0o7777) !== mode) {
+    throw new Error(`${label} permissions must be ${octal(mode)}`);
+  }
+}
+
+function digestReplayEntry(previous, entry) {
+  return createHash('sha256')
+    .update(previous)
+    .update('\u0000')
+    .update(canonicalReplayJson(entry))
+    .digest('hex');
+}
+
+function canonicalReplayJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalReplayJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalReplayJson(value[key])}`,
+      )
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sanitizeReplayValue(value, path, ancestors) {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${path} must contain a finite JSON number`);
+    }
+    if (Object.is(value, -0)) {
+      throw new TypeError(`${path} must not contain negative zero`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError(`${path} must be a plain JSON array`);
+    }
+    if (ancestors.has(value)) {
+      throw new TypeError(`${path} must not contain a JSON cycle`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key === 'symbol')) {
+      throw new TypeError(`${path} must not contain symbol-keyed properties`);
+    }
+    const lengthDescriptor = descriptors.length;
+    if (
+      lengthDescriptor === undefined ||
+      !Object.hasOwn(lengthDescriptor, 'value') ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      throw new TypeError(`${path} must be a plain JSON array`);
+    }
+    const length = lengthDescriptor.value;
+    const nextAncestors = new Set(ancestors).add(value);
+    const copy = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !Object.hasOwn(descriptor, 'value')
+      ) {
+        throw new TypeError(`${path} must not be a sparse JSON array`);
+      }
+      copy.push(
+        sanitizeReplayValue(
+          descriptor.value,
+          `${path}[${index}]`,
+          nextAncestors,
+        ),
+      );
+    }
+    const extra = keys.find(
+      (key) =>
+        typeof key === 'string' &&
+        key !== 'length' &&
+        (!Number.isSafeInteger(Number(key)) ||
+          Number(key) < 0 ||
+          Number(key) >= length ||
+          String(Number(key)) !== key),
+    );
+    if (extra !== undefined) {
+      throw new TypeError(`${path}.${extra} is not a JSON array index`);
+    }
+    return Object.freeze(copy);
+  }
+  if (value === null || typeof value !== 'object') {
+    throw new TypeError(`${path} must be a JSON value`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${path} must be a JSON value`);
+  }
+  if (ancestors.has(value)) {
+    throw new TypeError(`${path} must not contain a JSON cycle`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.some((key) => typeof key === 'symbol')) {
+    throw new TypeError(`${path} must not contain symbol-keyed properties`);
+  }
+  const nextAncestors = new Set(ancestors).add(value);
+  const copy = {};
+  for (const key of keys) {
+    if (typeof key !== 'string') continue;
+    if (key === 'resumeToken') continue;
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, 'value')
+    ) {
+      throw new TypeError(
+        `${path}.${key} must be an enumerable JSON data property`,
+      );
+    }
+    if (key === 'resume' && typeof descriptor.value === 'string') continue;
+    Object.defineProperty(copy, key, {
+      value: sanitizeReplayValue(
+        descriptor.value,
+        `${path}.${key}`,
+        nextAncestors,
+      ),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return Object.freeze(copy);
 }
 
 function createLease({
