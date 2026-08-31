@@ -618,8 +618,9 @@ Where the package publishes the shared session store, one facade module shall ex
 | Lease | its session id and owner token, record appending, stream reading, stream status, and release |
 
 Validators, staging, publication, retirement, effect-ledger writing ([[playbook-cli-63](#playbook-cli-63)]), and every turn-lifecycle operation of [[playbook-cli-23](#playbook-cli-23)] — beginning a turn, beginning a retry, settling, discarding, and abandonment — shall remain unexported, so the published lease is a narrower handle than the internal one.
-Listing shall validate every canonically named record and report the ones it skips rather than fail the listing, while reading a record below the current schema shall be rejected rather than migrated ([[playbook-cli-23](#playbook-cli-23)]).
-Both front ends shall reach the store through this facade, so an external consumer applies the same validation the CLI applies rather than a copy of it.
+Listing shall consider only canonical lowercase `<session-id>.json` Playbook manifests, validate every such record, and report the ones it skips rather than fail the listing, while reading a record below the current schema shall be rejected rather than migrated ([[playbook-cli-23](#playbook-cli-23)]).
+A replay stream or host-owned sidecar without that manifest shall not create a listable Playbook session, and every unrecognized host file shall remain unadopted, undeleted, and byte-identical.
+The facade and both front ends shall use the same private store implementation and validators, so an external consumer applies the same validation the CLI applies rather than a copy of it, while the front ends retain their richer private lifecycle leases and need not use the facade as their access path.
 
 #### playbook-cli-74
 
@@ -628,24 +629,29 @@ Where a session has a replay stream, that stream shall be one file beside the se
 | Element | Contract |
 | --- | --- |
 | File | `<session-id>.records.jsonl`, a regular non-symlink file with mode `0600` in the mode `0700` real non-symlink sessions directory of [[playbook-cli-23](#playbook-cli-23)] |
-| Envelope | one JSON object per line, `{"v": 1, "seq": <n>, "role"?: <string>, "record": <sanitized record>}` |
+| Envelope | one closed JSON object per line, `{"v": 1, "seq": <n>, "role"?: <string>, "record": <sanitized record>}`, with no missing required or unknown member |
+| Record | one value of the frozen closed observed-record schema; an unknown record type or malformed record shall be rejected rather than migrated or skipped |
 | Sequence | assigned by the writer, contiguous from 1 across the session's whole life, so a reader may resume incrementally from a known sequence |
 | Role | optional, naming the role a player record's call served; when absent a reader needing roles refolds them from the `playbook.trace` records of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)] |
 | Readable content | the complete newline-terminated prefix, of which at most the final line may be torn |
-| Version | a line whose `v` is not `1` shall be rejected rather than migrated or skipped |
+| Version | a line whose `v` is missing or not `1` shall be rejected rather than migrated or skipped |
 
 Because the writer assigns the sequence, contiguity shall be an invariant rather than a signal, and a missing sequence shall be malformed input rather than a loss report.
+Every host reading or writing a live stream shall satisfy the file and directory privacy boundary, and the store shall reject an incompatible mode, symlink, or non-regular file rather than relax that boundary.
+The Playbook writer shall add `role` to each observed `player_prompt`, `player_event`, and `player_finished` record while a preceding `playbook.trace` `player.call.started` of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)] establishes an unambiguous active role for that player, clear the association after its matching `player.call.finished`, and omit `role` from every other or indeterminate record.
 
 #### playbook-cli-75
 
 Where the writer prepares a record for the replay stream, it shall write a token-free projection: it shall strip every `resumeToken` field at any depth and every string-valued `resume` selection of [[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)], including those carried by the `playbook.trace` payloads of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)], while retaining `resume: false` as semantics rather than as a token.
 The session record's snapshot shall remain the only durable home for a provider resume token ([[playbook-cli-23](#playbook-cli-23)]), and the stream shall be insufficient to resume a conversation.
-An entry that cannot be sanitized into JSON-safe data shall be dropped rather than written, under the append-failure handling of [[playbook-cli-76](#playbook-cli-76)].
+An entry that cannot be sanitized into JSON-safe data shall be treated as an append failure and shall not be written, causing the latch-and-stop behavior of [[playbook-cli-76](#playbook-cli-76)].
 
 #### playbook-cli-76
 
 Where a host appends to a replay stream, it shall hold that session's exclusive lease of [[playbook-cli-23](#playbook-cli-23)], and appends shall be awaited in record order with the next sequence one past the last durable sequence the stream already holds ([[playbook-cli-74](#playbook-cli-74)]).
+An append shall synchronize its completed line and, when it first publishes the stream pathname, the containing sessions directory before acknowledging success or advancing the reported last durable sequence.
 When an append fails, the writer shall latch the stream incomplete at the last durable sequence, stop appending for the remainder of the session so the file stays a clean contiguous prefix, and let the turn continue rather than raise into the record dispatcher.
+Where a content or first-publication directory synchronization failure follows a complete visible write, the writer shall not roll that line back; a successor lease shall accept whichever complete prefix the filesystem retained and continue one past it.
 The latching store instance shall report that condition and its last durable sequence through its stream reader and status, and that latch shall be live state only, so a reader that did not observe the failing process sees a shorter clean prefix and no loss report.
 A lease-free reader shall return the readable prefix of [[playbook-cli-74](#playbook-cli-74)], leave the file byte-identical, and repair nothing, while repairing a torn final line shall be lawful only under a held lease.
 
@@ -663,7 +669,7 @@ Where the shared launch configuration carries an optional top-level `sessions` k
 | Key unset | `${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions` |
 | Leading `~` or `~/` | expanded from the home directory, with no `~user` form accepted |
 | Absolute path | accepted as given |
-| Relative path | resolved against the primary config's directory, as a registry specifier is under [[playbook-cli-46](#playbook-cli-46)] |
+| Relative path | every other non-absolute value, including bare `sessions/here` without `./`, is a filesystem path resolved against the primary config's directory |
 | Per-launch overlay | overrides the primary value under [[playbook-cli-25](#playbook-cli-25)] |
 | Explicitly injected store | takes precedence over the key |
 | Unusable directory | prints a diagnostic and fails closed, launching nothing |
@@ -742,7 +748,7 @@ Guarded predecessor transfer shall preserve the source record's list and `settle
 
 Where either front end prepares a new or ordinarily reopened Captain session from the generic config, when the launcher resolves that config, it shall use one leaf launch-config module to perform the following ordered pipeline:
 
-1. Resolve the primary path per [[playbook-cli-3](#playbook-cli-3)]; for a new session, seed and migrate that primary file before applying overlays and merge every [[playbook-cli-25](#playbook-cli-25)] overlay in argument order without mutating an input, then resolve the merged `sessions` locator of [[playbook-cli-78](#playbook-cli-78)] before any record is selected, because selection reads that directory.
+1. Resolve the primary path per [[playbook-cli-3](#playbook-cli-3)]; for a new session, seed and migrate that primary file before applying overlays and merge every [[playbook-cli-25](#playbook-cli-25)] overlay in argument order without mutating an input, then resolve the merged `sessions` locator of [[playbook-cli-78](#playbook-cli-78)] as a filesystem path — including a bare relative value — before any record is selected, because selection reads that directory.
 2. For an ordinary reopen, skip whole-file migration and use the selected record's ordered playbook ids and referenced player ids to project each primary or overlay layer to its optional own selected map members before recursively merging that layer, so a later overlay may supply a selected member while no unselected member is cloned or inspected; after all layers merge, require every selected id to exist, and neither inspect nor admit an additional current entry.
 3. Resolve a relative retained filesystem `playbooks.<id>.from` against the primary config's directory, including one introduced by an overlay, canonicalize an absolute filesystem path to a file URL, and preserve an existing file URL, bare package specifier, or custom specifier unchanged.
 4. Reject non-JSON data, retired or unknown root keys, malformed retained launcher-owned structure, invalid or reserved retained player and role ids, unknown retained players, incomplete or extra retained role bindings, adapter overrides, and authority-key smuggling through an own `hostCapabilities` key in a raw playbook block or stored or derived option slice before an external side effect.
@@ -975,13 +981,24 @@ The durable crash and successor-lease rows shall stop after durable begin and af
 
 #### playbook-cli-79
 
-Where a headless run turn completes against a temporary sessions directory, the suite shall read that session's replay stream back through the facade reader and shall fail unless: the stream replays the complete observed record stream in order with player prompts and events included ([[playbook-cli-77](#playbook-cli-77)]) through the facade's published surface ([[playbook-cli-73](#playbook-cli-73)]); every envelope matches the frozen contract with sequences contiguous from 1 across two successive turns ([[playbook-cli-74](#playbook-cli-74)]); no line carries a `resumeToken` or a string-valued `resume` while a `resume: false` selection survives ([[playbook-cli-75](#playbook-cli-75)]); and the checked-in cross-repository fixture round-trips through that reader and writer unchanged ([[playbook-cli-74](#playbook-cli-74)]).
+Where the shared-session-store positive compatibility suite runs against the repository and packed artifacts, it shall fail unless every case satisfies its required evidence:
+
+| Case | Required evidence |
+| --- | --- |
+| Public surface and listing | The JavaScript and declaration exports and every returned store and lease member equal the exact narrow-facade names and shapes; no lifecycle, validator, effect-ledger, staging, publication, or retirement member is reachable; listing returns every valid canonical Playbook manifest while reporting every invalid canonical manifest without aborting; direct reading rejects a below-schema record; and stream-only or foreign-sidecar files remain unlisted and byte-identical ([[playbook-cli-73](#playbook-cli-73)]). |
+| Both front ends | Two successive turns through the headless run observer and through the managed pane child's forwarded host observer list create the exact `<session-id>.records.jsonl` file; it replays every observed record in order, including player prompts and events, with sequences contiguous from `1` across both turns and `role` present on each trace-associated player record and absent from other records; and reply, settlement, buffered stdout, and buffered stderr are unchanged ([[playbook-cli-74](#playbook-cli-74)], [[playbook-cli-77](#playbook-cli-77)]). |
+| Fixture and sanitizer | Recursive sanitization removes every `resumeToken` and string-valued `resume` while preserving `resume: false`; and the checked-in cross-repository fixture parses and rewrites to semantically equal envelopes with one terminating line feed per envelope regardless of JSON member order or source-checkout mode, including a role-omitting record whose role remains derivable from its trace ([[playbook-cli-74](#playbook-cli-74)], [[playbook-cli-75](#playbook-cli-75)]). |
 
 #### playbook-cli-80
 
-Where a turn runs against a replay stream whose append is made to fail, the suite shall fail unless the turn still completes and returns its reply, the file remains a clean contiguous prefix ending at the last durable sequence, no later record is appended, and the latching store reports the incomplete condition carrying that sequence ([[playbook-cli-76](#playbook-cli-76)]).
-Where a stream file ends in a torn final line, the suite shall fail unless a lease-free read returns the newline-terminated prefix and leaves the file byte-identical, the same read under a held lease repairs that line, and an append attempted without a held lease is refused ([[playbook-cli-76](#playbook-cli-76)]).
+Where the shared-session-store negative and recovery compatibility suite runs against real filesystem and front-end boundaries, it shall fail unless every case satisfies its required evidence:
+
+| Case | Required evidence |
+| --- | --- |
+| Reader rejection | A missing or unknown envelope version, missing required or unknown envelope member, unknown or malformed observed-record schema, nonpositive, duplicate, missing, or noncontiguous sequence, malformed completed line, symlink or non-regular stream, wrong stream mode, or non-private or symlinked sessions directory rejects without returning a partial history or mutating the stream and leaves every unrecognized host sidecar byte-identical ([[playbook-cli-73](#playbook-cli-73)], [[playbook-cli-74](#playbook-cli-74)]). |
+| Fail-soft writer | Where either front end observes an entry that cannot become JSON-safe or a stream append, content synchronization, or first-publication directory synchronization fails, the turn and reply still complete; the file remains a clean contiguous prefix; no later record is appended; the live store reports incompleteness at the last acknowledged durable sequence; and a complete line already visible at the failing synchronization boundary is not rolled back ([[playbook-cli-75](#playbook-cli-75)], [[playbook-cli-76](#playbook-cli-76)], [[playbook-cli-77](#playbook-cli-77)]). |
+| Torn tail and successor | A lease-free read returns only the newline-terminated prefix and leaves a torn file byte-identical; held-lease reading repairs and synchronizes only the torn final line; append without exact ownership is refused; after a normal or failed writer, a successor accepts the complete prefix actually retained and appends at its next sequence; and a newly opened store reports no prior process's live-only incomplete latch ([[playbook-cli-76](#playbook-cli-76)]). |
 
 #### playbook-cli-81
 
-Where a config sets `sessions`, the suite shall fail unless both front ends read and write that one directory, every resolution case holds — unset default, `~` expansion with `~user` rejected, absolute, primary-config-relative, overlay override, injected-store precedence, and fail-closed launch on an unusable directory — and the persisted record's structural and execution projections carry no `sessions` member ([[playbook-cli-78](#playbook-cli-78)]).
+Where a config sets `sessions`, the suite shall fail unless both front ends resolve and use that one directory before selecting any record, every resolution case holds — unset default, `~` expansion with `~user` rejected, absolute, dot-relative and bare-relative against the primary config directory, overlay override, injected-store precedence, and fail-closed launch on an unusable directory — the existing managed-child sessions-directory descriptor carries the resolved value unchanged, and the persisted record's structural and execution projections carry no `sessions` member ([[playbook-cli-78](#playbook-cli-78)]).

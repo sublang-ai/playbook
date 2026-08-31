@@ -301,8 +301,10 @@ options type — is likewise a breaking change under [[release-1](#release-1)].
 The published package shall expose `@sublang/playbook/session-store` as a
 public, semver-stable subpath export backed by committed `.d.ts` and
 `.js` artifacts listed in `files` and mapped under
-`exports['./session-store']` (`types` and `default`), as the one shared
-home for playbook sessions that an external host reads and writes
+`exports['./session-store']` (`types` and `default`), as the public
+boundary through which an external host lists and reads canonical Playbook
+sessions and acquires their leases to append and read replay streams
+alongside its own host sidecars
 ([DR-042](../decisions/042-shared-session-store-and-replay-stream.md)).
 That module shall expose only the narrow store facade — the default
 sessions directory, the store opener, the records-stream version
