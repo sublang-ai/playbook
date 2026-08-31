@@ -296,6 +296,27 @@ Narrowing an existing public declaration so input that previously
 typechecked no longer does — including adding a required property to an
 options type — is likewise a breaking change under [[release-1](#release-1)].
 
+#### release-33
+
+The published package shall expose `@sublang/playbook/session-store` as a
+public, semver-stable subpath export backed by committed `.d.ts` and
+`.js` artifacts listed in `files` and mapped under
+`exports['./session-store']` (`types` and `default`), as the one shared
+home for playbook sessions that an external host reads and writes
+([DR-042](../decisions/042-shared-session-store-and-replay-stream.md)).
+That module shall expose only the narrow store facade — the default
+sessions directory, the store opener, the records-stream version
+constant, session listing and reading, lease-free stream reading, lease
+acquisition, and the lease's append, stream read, status, and release
+([[playbook-cli-73](playbook-cli.md#playbook-cli-73)]) — while the store
+module behind it, its validators, staging, retirement, and turn-lifecycle
+operations shall remain unexported.
+A breaking change to that subpath's exported names or shapes, and any
+change to the frozen replay-stream file contract it reads and writes
+([[playbook-cli-74](playbook-cli.md#playbook-cli-74)]), shall be released
+under [[release-1](#release-1)] SemVer, because a dependent host pins its
+floor to the release that ships them.
+
 ### Pre-release Checklist
 
 #### release-28
@@ -347,6 +368,8 @@ step below holds of the packed candidate:
    Through that installed runtime, a deterministic Codex-shaped adapter shall emit one complete commentary `text` message, one complete final-response `text` message, and a successful terminal `done` event with no result, and the player result shall preserve exactly one newline between the two messages and exactly one final-response line.
    Every interface-member proof shall resolve the owning public type rather than search declarations by spelling, because an unrelated member or documentation reference can retain the same spelling after the required interface loses or narrows it.
    A candidate whose declared range admits only published cligent releases without any one of these capabilities shall fail here rather than at a Boss turn or attachment.
+10. **Packed session-store consumer.** An external package declaring only `@sublang/playbook` shall install the candidate tarball into a throwaway prefix and type-check against the packed `@sublang/playbook/session-store` declaration, then through that facade alone open a store on a temporary directory, list and read a session record the installed CLI wrote, acquire and release its lease, and append and read back replay-stream entries ([[release-33](#release-33)], [[playbook-cli-73](playbook-cli.md#playbook-cli-73)]).
+   The read-back shall satisfy the frozen envelope, sequence, and readable-prefix contract and carry no resume token, and a record below the current schema shall be rejected rather than migrated, so the external consumer is proven to apply the CLI's own validation ([[playbook-cli-74](playbook-cli.md#playbook-cli-74)], [[playbook-cli-75](playbook-cli.md#playbook-cli-75)]).
 
 Step 8 shall claim no more than it proves. The SLC pipeline is agentic, so
 this gate shall not attempt to re-derive the compiled artifacts and shall
@@ -617,8 +640,8 @@ The test suite shall fail unless each of
 #### release-18
 
 
-The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath and the internal `accepted-outcome` `.ts`, `.js`, and `.d.ts` siblings — and all four `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, and DECIDE sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, and DECIDE registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
-Generated verification support shall remain canonical repository content but need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], and [[release-20](#release-20)]).
+The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime`, `@sublang/playbook/xstate-runtime`, and `@sublang/playbook/session-store` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath and the internal `accepted-outcome` `.ts`, `.js`, and `.d.ts` siblings — and all four `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, and DECIDE sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, and DECIDE registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
+Generated verification support shall remain canonical repository content but need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], [[release-20](#release-20)], and [[release-33](#release-33)]).
 The suite shall further fail unless every packed Markdown file is link-closed over the packed file list: each relative target and reference-definition destination resolves to a packed file or a directory containing packed files, and a fragment on a packed Markdown target names an anchor that file renders (verifying [[release-20](#release-20)]).
 The closure's two escape hatches shall themselves be verified against the repository tree: a packed SLC definition's exempt relative citation into `specs/` shall name an existing repository file whose fragment, when present, that file renders, and every living-pointer URL in a packed Markdown file shall name this repository's `main` branch, use `blob/main` for an existing file or `tree/main` for an existing directory, and — on a Markdown file target — name an anchor that file renders (verifying [[release-20](#release-20)]).
 
@@ -710,7 +733,8 @@ unless all of the following hold:
 - the retuned process applies the current Captain, player, and role model and effort values to the retained tokens, including explicit provider-default resets, while the stored structural projection, working directory, settled effects, public id, and repository remain unchanged (verifying [[release-28](#release-28)]);
 - the installed Captain, CODE, REVIEW, and DECIDE playbook subpaths construct, Captain, CODE, and REVIEW expose retained-snapshot adoption while bespoke DECIDE omits it ([[release-28](#release-28)]), every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
 - the nested installed `@sublang/cligent` satisfies the packed manifest's caret range; is reached through `@sublang/cligent/tmux-play` resolved from that nested copy; exposes the managed launch and direct-session runtime values and signatures plus the enumerated Captain lifecycle, context call, continuation, complete-setting, typed-rejection, managed work-directory cleanup-authority, attachment activation, and synchronous native-hand-off release-floor members at the exact optionality and callable type Playbook relies on; accepts and preserves a segmented player id such as `dev.coder` through its real config loader; resolves an empty roster to the Boss-only layout and initializes its public runtime core with an empty Captain player manifest; and carries full model and effort tuning selections that distinguish every concrete shell value from an explicit provider-default reset (verifying [[release-14](#release-14)]); and
-- one deterministic Codex-shaped call through that nested installed runtime preserves complete commentary and final-response `text` messages as exactly two lines when terminal `done` supplies no result (verifying [[release-14](#release-14)] and [[release-28](#release-28)]).
+- one deterministic Codex-shaped call through that nested installed runtime preserves complete commentary and final-response `text` messages as exactly two lines when terminal `done` supplies no result (verifying [[release-14](#release-14)] and [[release-28](#release-28)]); and
+- an external package declaring only `@sublang/playbook` type-checks against the packed session-store declaration and, through that facade alone, opens a store, lists and reads a CLI-written session record, acquires and releases its lease, and appends and reads back stream entries that satisfy the frozen envelope, sequence, and readable-prefix contract, carry no resume token, and reject a below-schema record rather than migrate it (verifying [[release-33](#release-33)] and [[release-28](#release-28)]).
 
 The last clause is a standing guard, not a formality: Playbook relies on every enumerated lifecycle, conversation, settings, and attachment capability, a global install resolves cligent from that nested copy alone, and a candidate whose declared range admits only releases without one of them would install and then fail during initialization, a Boss turn, or managed attachment.
 

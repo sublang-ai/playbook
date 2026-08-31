@@ -67,6 +67,7 @@ meta.md       The spec of specs
 | [DR-039](decisions/039-cohesive-concern-spec-item-boundary.md) | 039-cohesive-concern-spec-item-boundary.md | Cohesive-concern spec-item boundary preserved across scaffold refreshes; sentence-count lint findings remain advisory review prompts |
 | [DR-040](decisions/040-outcome-authority-effect-reconciliation.md) | 040-outcome-authority-effect-reconciliation.md | CODE, REVIEW, and DECIDE field authority, per-arm repository dispositions, current-host construction capabilities, checkpoint-bound Boss continuation, durable no-replay reconciliation, and cleared evidence-grounded unresolved disposal |
 | [DR-041](decisions/041-working-directory-aware-continuation.md) | 041-working-directory-aware-continuation.md | Bare continuation prefers the newest same-working-directory Captain session, reports a global fallback, and preserves explicit selection and uncertain refusal |
+| [DR-042](decisions/042-shared-session-store-and-replay-stream.md) | 042-shared-session-store-and-replay-stream.md | One shared sessions home for every host: a narrow published session-store facade, a token-free per-session replay stream under a frozen ABI, lease-bound appends that latch and stop, and a `sessions` bootstrap locator |
 
 ## Packages
 
@@ -78,6 +79,6 @@ meta.md       The spec of specs
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, and DECIDE source, GEARS, FSM, prompt, transition, nesting, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
-| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, and checks |
+| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store and replay stream, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |
