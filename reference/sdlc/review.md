@@ -81,7 +81,7 @@ If you accept any item, make minimal changes and add one new review-fix commit; 
 Follow @specs/packages/git.md.
 Make the commit message explain concisely what changed and why, including relevant verification.
 Identify every new commit you make.
-Coder is <coder-llm>; Reviewer is <reviewer-llm>; format model tokens in conventional human form.
+Coder is <coder-llm>; Reviewer is <reviewer-llm>.
 
 If you reject every item, change nothing and make no commit.
 Report every disposition, all relevant run results, and every rebuttal.

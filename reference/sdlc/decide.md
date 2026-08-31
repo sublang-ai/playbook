@@ -24,6 +24,8 @@ Do not change any files.
 ```
 
 Neither role's player shall receive the other role's proposal until both proposals are complete.
+Each proposal is complete only when its player affirmatively provides a complete design proposal.
+A progress report, status update, or promise of a later proposal supports no proposal outcome.
 A Boss interrupt during the parallel proposal pair shall restart the whole pair so both players receive the same new topic and remain independent.
 
 When both proposals are complete, Captain shall give Coder the following instruction and relay Reviewer's complete proposal beneath it, quoting every proposal line with `>`:
@@ -38,7 +40,7 @@ Do not change code or implement the design.
 Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
 Identify every new commit you make.
-Coder is <coder-llm> and Reviewer is <reviewer-llm>; format both model tokens in conventional human form.
+Coder is <coder-llm> and Reviewer is <reviewer-llm>.
 
 > Reviewer's independent proposal:
 > \<reviewer-proposal\>

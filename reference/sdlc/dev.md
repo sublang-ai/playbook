@@ -41,13 +41,12 @@ Discussion complete is available only after a Boss reply, when any useful analys
 It completes `dev` without a child call or repository change.
 
 For code, `dev` shall directly call playbook `code` with the development request, relevant discussion context, and planning result in quotes (`>`).
-The planning result shall establish whether `code` receives a new coding intent or an existing IR and shall identify the IR in the latter case.
 
 For decide then code, `dev` shall call playbook `decide` with the development request, relevant discussion context, and planning result in quotes (`>`).
 Only after `decide` succeeds shall `dev` call playbook `code` with the development request, relevant discussion context, planning result, `decide`-owned commit, and exact evaluated repository revision in quotes (`>`).
 `dev` shall not separately call `review` for the design scope already reviewed by `decide`.
 
 `dev` completes with the successful result of its final child call.
-If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall report that result and the exact last commit attributable to the selected child path, if any.
+If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result.
 If a child call fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.
 `dev` shall consume commit identities only from each child's canonical structured result, never from player prose.

@@ -8,8 +8,7 @@ Roles:
 
 - Coder
 
-The caller supplies either a new coding intent or an existing IR with unfinished work to continue, together with any relevant context.
-The caller establishes which case applies before the first Coder call, so each case begins with its own phase prompt.
+The caller supplies a coding request together with any relevant context.
 
 A new coding intent follows either one direct implementation phase or an IR sequence consisting of a new-IR phase followed by one phase for each IR task.
 An existing IR follows one IR-task phase for each remaining unfinished task, starting with its next unfinished task.
@@ -24,18 +23,26 @@ When `review` passes the final IR-task phase, `code` is complete.
 When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
 When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.
 
-At the start of the first phase for a new coding intent, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
+At the start of the first phase, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
 
 ```markdown
-Assess whether the coding intent can be completed well in one commit.
+First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.
+If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.
+
+For a new coding intent, assess whether it can be completed well in one commit.
 If it can, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.
 If it cannot, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.
 Plan affected spec updates before, with, or after their corresponding code changes, either as standalone IR tasks or as explicit work within related tasks.
 
+For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
+Do not implement a later task in this phase.
+Mark the IR's progress and deliverables when relevant.
+If the IR will be finished after this phase, double-check that all acceptance criteria are met.
+
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
-At the start of every IR-task phase, Captain shall relay to Coder the IR identity and any relevant run results in quotes (`>`), along with the following instruction:
+At the start of every later IR-task phase, Captain shall relay to Coder the IR identity and any relevant run results in quotes (`>`), along with the following instruction:
 
 ```markdown
 Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
@@ -51,18 +58,18 @@ Do not re-run tests or builds whose inputs have not changed since any previous r
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
 Identify every new commit you make.
-Coder is <coder-llm>; format the model token in conventional human form.
+Coder is <coder-llm>.
 ```
 
-The first phase for a new coding intent has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
-Every IR-task phase identifies the implemented task and has two semantic outcomes: more tasks and final task.
+Every new-intent phase has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
+Every IR-task phase, including the first phase for an existing IR, identifies the implemented task and has two semantic outcomes: more tasks and final task.
 Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 
 At the end of every phase, Captain shall call playbook `review` and input the following in quotes (`>`):
 
 > Review scope: the commit \<code-commit\> from this coding phase and its resulting repository state.
-> Original coding request: \<caller-input\>
+> Original coding intent: \<caller-input\>
 > Coder output: \<coder-output\>
 
 For an IR-task phase, Captain shall additionally input the following in quotes (`>`):
