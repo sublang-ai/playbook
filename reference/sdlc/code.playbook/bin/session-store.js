@@ -121,6 +121,9 @@ const LEASE_OWNER_KEYS = [
   'hostname',
   'acquiredAt',
 ];
+const PLAYBOOK_SESSION_NOT_FOUND = 'PLAYBOOK_SESSION_NOT_FOUND';
+const PLAYBOOK_SESSION_LEASE_ACTIVE = 'PLAYBOOK_SESSION_LEASE_ACTIVE';
+const ACTIVE_LEASE_ERROR = Symbol('active Playbook session lease');
 const DEFAULT_FS_OPERATIONS = Object.freeze({
   chmod,
   link,
@@ -160,15 +163,40 @@ class CaptainSessionRecordNonresumableError extends
   }
 }
 
+class CaptainSessionNotFoundError extends Error {
+  constructor(sessionId, path) {
+    super(
+      `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} does not exist`,
+    );
+    this.name = 'CaptainSessionNotFoundError';
+    this.code = PLAYBOOK_SESSION_NOT_FOUND;
+  }
+}
+
 class CaptainSessionLeaseActiveError extends Error {
   constructor(sessionId, pid) {
     super(
       `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: Captain session lease is active in process ${pid}`,
     );
     this.name = 'CaptainSessionLeaseActiveError';
+    this.code = PLAYBOOK_SESSION_LEASE_ACTIVE;
+    this[ACTIVE_LEASE_ERROR] = true;
     this.sessionId = sessionId;
     this.pid = pid;
   }
+}
+
+function foreignCaptainSessionLeaseActiveError(sessionId, hostname) {
+  const error = new Error(
+    `Captain session ${JSON.stringify(sessionId)} lease is owned by foreign host ${JSON.stringify(hostname)}`,
+  );
+  error.code = PLAYBOOK_SESSION_LEASE_ACTIVE;
+  error[ACTIVE_LEASE_ERROR] = true;
+  return error;
+}
+
+function isActiveLeaseError(value) {
+  return value?.[ACTIVE_LEASE_ERROR] === true;
 }
 
 export function defaultCaptainSessionsDir(
@@ -591,9 +619,7 @@ export function createCaptainSessionStore(options = {}) {
     } catch (cause) {
       if (cause?.code === 'ENOENT' && missing === 'undefined') return undefined;
       if (cause?.code === 'ENOENT') {
-        throw new Error(
-          `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} does not exist`,
-        );
+        throw new CaptainSessionNotFoundError(sessionId, path);
       }
       throw new Error(
         `cannot read Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${errorMessage(cause)}`,
@@ -782,6 +808,39 @@ export function createCaptainSessionStore(options = {}) {
       candidates.find((candidate) => candidate.cwd === preferredCwd) ??
       candidates[0]
     );
+  };
+
+  const readSummary = async (sessionId) =>
+    projectPlaybookSessionSummary(await readRecord(sessionId));
+
+  const listSummaries = async () => {
+    const skipped = [];
+    const records = await listRecords({
+      onLegacyRecord: ({ sessionId, schemaVersion }) => {
+        skipped.push(
+          Object.freeze({
+            sessionId,
+            reason:
+              `Captain session schema ${schemaVersion} is below current ` +
+              `schema ${CAPTAIN_SESSION_RECORD_SCHEMA_VERSION}`,
+          }),
+        );
+      },
+      onInvalidRecord: ({ sessionId, reason }) => {
+        skipped.push(Object.freeze({ sessionId, reason }));
+      },
+      skipInvalidRecords: true,
+    });
+    return Object.freeze({
+      sessions: Object.freeze(
+        sortCaptainSessionRecords(records).map(projectPlaybookSessionSummary),
+      ),
+      skipped: Object.freeze(
+        skipped.sort((left, right) =>
+          left.sessionId.localeCompare(right.sessionId),
+        ),
+      ),
+    });
   };
 
   const scanAdoptionPredecessor = async (
@@ -983,6 +1042,24 @@ export function createCaptainSessionStore(options = {}) {
   const readLeaseOwner = (sessionId, path = leasePathFor(sessionId)) =>
     readLeaseDirectory(sessionId, path, [LEASE_OWNER_FILE]);
 
+  const activeLeaseErrorFor = async (sessionId, owner) => {
+    if (owner.hostname !== localHostname) {
+      return foreignCaptainSessionLeaseActiveError(
+        sessionId,
+        owner.hostname,
+      );
+    }
+    try {
+      await probeProcess(owner.pid);
+      return new CaptainSessionLeaseActiveError(sessionId, owner.pid);
+    } catch (cause) {
+      if (cause?.code === 'ESRCH') return undefined;
+      throw new Error(
+        `Captain session lease owner process cannot be ruled dead: ${errorMessage(cause)}`,
+      );
+    }
+  };
+
   const readRetiredLease = async (sessionId, path, expectedToken) => {
     const owner = await readLeaseDirectory(
       sessionId,
@@ -1135,18 +1212,27 @@ export function createCaptainSessionStore(options = {}) {
   const publishLeaseStage = async (sessionId, stage, onRenamed) => {
     const canonicalPath = leasePathFor(sessionId);
     await validateRetiredLeases(sessionId);
-    await assertPathMissing(
-      canonicalPath,
-      fs,
-      'Captain session lease became active before publication',
-    );
     try {
+      await assertPathMissing(
+        canonicalPath,
+        fs,
+        'Captain session lease became active before publication',
+      );
       // Program-created canonical lease directories are nonempty. Therefore a
       // racing rename cannot replace one; it fails closed instead. Static empty
       // or malformed destinations are rejected by the preflight above.
       await fs.rename(stage.stagePath, canonicalPath);
       onRenamed();
     } catch (cause) {
+      try {
+        const winner = await readLeaseOwner(sessionId);
+        const active = await activeLeaseErrorFor(sessionId, winner);
+        if (active !== undefined) throw active;
+      } catch (winnerCause) {
+        if (isActiveLeaseError(winnerCause)) {
+          throw winnerCause;
+        }
+      }
       throw new Error(
         `Captain session lease publication lost its race: ${errorMessage(cause)}`,
       );
@@ -1177,25 +1263,8 @@ export function createCaptainSessionStore(options = {}) {
         if (existing.ownerToken === stage.owner.ownerToken) {
           throw new Error('Captain session lease owner token was reused');
         }
-        if (existing.hostname !== localHostname) {
-          throw new Error(
-            `Captain session lease is owned by foreign host ${JSON.stringify(existing.hostname)}`,
-          );
-        }
-        try {
-          await probeProcess(existing.pid);
-          throw new CaptainSessionLeaseActiveError(
-            sessionId,
-            existing.pid,
-          );
-        } catch (cause) {
-          if (cause?.code !== 'ESRCH') {
-            if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
-            throw new Error(
-              `Captain session lease owner process cannot be ruled dead: ${errorMessage(cause)}`,
-            );
-          }
-        }
+        const active = await activeLeaseErrorFor(sessionId, existing);
+        if (active !== undefined) throw active;
         await retireObservedLease(sessionId, existing);
       } else {
         // Preserve the explicit local solely for easier audit of the no-owner
@@ -1244,14 +1313,22 @@ export function createCaptainSessionStore(options = {}) {
           `cannot acquire Captain session ${JSON.stringify(sessionId)} lease without leaving ownership uncertain`,
         );
       }
-      if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
+      if (isActiveLeaseError(cause)) throw cause;
       throw new Error(
         `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: ${errorMessage(cause)}`,
       );
     }
   };
 
-  return Object.freeze({ sessionsDir, read, readStream, latest, acquire });
+  return Object.freeze({
+    sessionsDir,
+    listSummaries,
+    readSummary,
+    read,
+    readStream,
+    latest,
+    acquire,
+  });
 }
 
 async function readReplayStream({
@@ -1866,6 +1943,16 @@ function freezeReplayReadResult(entries, lastReadableSeq) {
   return Object.freeze({
     entries: Object.freeze(entries),
     lastReadableSeq,
+  });
+}
+
+function projectPlaybookSessionSummary(record) {
+  return Object.freeze({
+    schemaVersion: record.schemaVersion,
+    sessionId: record.sessionId,
+    state: record.state,
+    cwd: record.cwd,
+    updatedAt: record.updatedAt,
   });
 }
 

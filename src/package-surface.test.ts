@@ -1261,6 +1261,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createPlaybookCaptainShell',
       'default',
     ],
+    './session-store': [
+      'RECORDS_STREAM_VERSION',
+      'defaultSessionsDir',
+      'openSessionStore',
+    ],
     './review/playbook': ['_internal', 'default'],
     './review/registry': [
       'default',
@@ -1514,6 +1519,23 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createPlaybookCaptainShell',
       'default',
     ],
+    './session-store': [
+      'LeaseReplayStreamReadResult',
+      'PlaybookSessionLease',
+      'PlaybookSessionListResult',
+      'PlaybookSessionStore',
+      'PlaybookSessionSummary',
+      'RECORDS_STREAM_VERSION',
+      'ReplayJsonValue',
+      'ReplayRecord',
+      'ReplayStreamEntry',
+      'ReplayStreamReadOptions',
+      'ReplayStreamReadResult',
+      'ReplayStreamStatus',
+      'SkippedPlaybookSession',
+      'defaultSessionsDir',
+      'openSessionStore',
+    ],
     './review/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
@@ -1729,6 +1751,102 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       );
     },
   );
+
+  it('publishes a self-contained strict session-store declaration', () => {
+    const declaration = declarationSourceOf('./session-store');
+    expect(declaration).not.toMatch(/^\s*import\b/m);
+    expect(declaration).not.toMatch(/\bfrom\s+['"]/);
+
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-session-types-'));
+    try {
+      mkdirSync(join(scratch, 'node_modules', '@sublang'), { recursive: true });
+      symlinkSync(
+        repoRoot,
+        join(scratch, 'node_modules', '@sublang', 'playbook'),
+        'junction',
+      );
+      writeFileSync(join(scratch, 'package.json'), '{"type":"module"}\n');
+      const fixture = join(scratch, 'consumer.ts');
+      writeFileSync(
+        fixture,
+        `// @ts-expect-error the facade has no default export
+import sessionStoreDefault, {
+  RECORDS_STREAM_VERSION,
+  defaultSessionsDir,
+  openSessionStore,
+  type LeaseReplayStreamReadResult,
+  type PlaybookSessionLease,
+  type PlaybookSessionStore,
+  type ReplayStreamReadOptions,
+  type ReplayStreamStatus,
+} from '@sublang/playbook/session-store';
+
+void sessionStoreDefault;
+interface ObservedRecord {
+  readonly type: 'player_event';
+  readonly event: { readonly text: string };
+}
+declare const observed: ObservedRecord;
+declare const lease: PlaybookSessionLease;
+
+const version: 1 = RECORDS_STREAM_VERSION;
+const sessionsDir: string = defaultSessionsDir();
+const store: PlaybookSessionStore = openSessionStore(sessionsDir);
+const appendResult: Promise<void> = lease.append(observed, 'coder');
+const options: ReplayStreamReadOptions = { afterSeq: undefined };
+const status: ReplayStreamStatus = lease.streamStatus();
+
+async function consume(): Promise<void> {
+  const summary = await store.read(lease.sessionId);
+  const schemaVersion: number = summary.schemaVersion;
+  const sessionId: string = summary.sessionId;
+  const state: 'settled' | 'uncertain' = summary.state;
+  const cwd: string = summary.cwd;
+  const updatedAt: string = summary.updatedAt;
+  // @ts-expect-error the facade cannot expose the canonical snapshot
+  summary.snapshot;
+  // @ts-expect-error the facade cannot expose provider credentials
+  summary.resumeToken;
+
+  const followed = await store.readStream(sessionId, options);
+  const readable: number = followed.lastReadableSeq;
+  // @ts-expect-error a lease-free reader cannot claim durability
+  followed.lastDurableSeq;
+  // @ts-expect-error a lease-free reader cannot claim incompleteness
+  followed.incomplete;
+
+  const bound: LeaseReplayStreamReadResult = await lease.readStream();
+  const durable: number = bound.lastDurableSeq;
+  const incomplete: boolean = bound.incomplete;
+  void [schemaVersion, state, cwd, updatedAt, readable, durable, incomplete];
+}
+
+// @ts-expect-error callers cannot supply an envelope sequence
+lease.append(observed, 'coder', 2);
+// @ts-expect-error primitive records are outside the declaration boundary
+lease.append('player_event');
+void [version, store, appendResult, status, consume];
+`,
+      );
+      const program = ts.createProgram([fixture], {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+        types: ['node'],
+        typeRoots: [join(repoRoot, 'node_modules', '@types')],
+      });
+      expect(
+        ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        ),
+      ).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
   it('publishes unresolved-effect as an exact state-only run result', () => {
     const runtimeDeclaration = declarationSourceOf('./runtime');
@@ -2190,6 +2308,8 @@ void decideConstruction;
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,
       `${CODE_BASE}bin/repository-effects.js`,
+      `${CODE_BASE}session-store.js`,
+      `${CODE_BASE}session-store.d.ts`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       `${REVIEW_BASE}review.playbook.js`,

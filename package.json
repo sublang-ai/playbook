@@ -67,6 +67,8 @@
     "reference/sdlc/code.playbook/playbook-captain.ts",
     "reference/sdlc/code.playbook/playbook-captain.js",
     "reference/sdlc/code.playbook/playbook-captain.d.ts",
+    "reference/sdlc/code.playbook/session-store.js",
+    "reference/sdlc/code.playbook/session-store.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
@@ -126,6 +128,10 @@
     "./playbook-captain": {
       "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
       "default": "./reference/sdlc/code.playbook/playbook-captain.js"
+    },
+    "./session-store": {
+      "types": "./reference/sdlc/code.playbook/session-store.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-store.js"
     },
     "./slc/*": "./slc/*",
     "./review/playbook": {
