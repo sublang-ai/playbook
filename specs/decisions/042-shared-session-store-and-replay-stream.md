@@ -53,26 +53,29 @@ The following ABI is frozen at the release that ships it:
 | File | `<sessionId>.records.jsonl`, beside `<sessionId>.json` in the sessions directory |
 | Privacy | every live store participant uses mode `0600` regular non-symlink stream files in a mode `0700` real non-symlink directory, and a reader rejects an incompatible boundary rather than weakening it |
 | Envelope | one JSON object per line, `{"v": 1, "seq": <n>, "role"?: <string>, "record": <sanitized record>}` |
-| Record | the current closed observed-record schema; a missing or unknown record type or malformed record is rejected rather than migrated or skipped |
+| Record | one opaque recursively sanitized JSON object, preserved without interpreting or gating its `type` or members; a missing or non-object value is a malformed envelope |
 | Sequence | assigned by the writer, contiguous from 1 across the session's whole life, so replay can be incremental |
-| Role | optional enrichment naming the role a player record's call served; a reader needing roles refolds them from trace records when it is absent |
+| Role | optional enrichment naming the local Playbook role a player record's call served, distinct from any host player identity inside `record`; a reader needing roles refolds them from trace telemetry when it is absent |
 | Corruption | the readable content is the complete newline-terminated prefix, and at most the final line may be torn |
 | Version | a line carrying an unknown `v` is rejected rather than migrated or skipped |
 
 Contiguity is an invariant rather than a signal: the writer assigns the sequence, so a caller cannot violate it, and a missing sequence is malformed input rather than a loss report.
-The Playbook writer enriches each player prompt, event, and finish with the role established by the preceding `playbook.trace` player-call start until its matching finish, and omits `role` from other or indeterminate records.
+A trace bracket arrives as a `captain_telemetry` observed record with `topic: "playbook.trace"` and the schema-4 trace event in `record.payload`.
+Where the CLI shell's explicit role binding supplies a player id, the Playbook writer keys each active player-call frame by that trace event's `(sessionId, callId)`, retains its `payload.playerId` and `payload.roleId`, closes only the exactly matching frame, and enriches each `player_prompt`, `player_event`, and `player_finished` with envelope `role` only when that player's active frames establish exactly one role; other, malformed, or indeterminate records omit `role`.
 A checked-in cross-repository fixture pins the format, so both repositories read one file rather than two readings of one prose description.
 Fixture compatibility is semantic equality of parsed envelopes: JSON object member order and the fixture's source-checkout mode are not ABI data, while a fixture materialized as a live stream must satisfy the privacy boundary.
 
 ### 4. Lease-bound appends that latch and stop
 
-Appending is offered only through an acquired session lease, appends are awaited in record order, and a resumed lease continues one past the last durable sequence.
-An append is acknowledged and advances the last durable sequence only after synchronizing the completed line and, when first publishing the stream pathname, the containing directory.
-Repairing a torn final line is lawful only while holding the lease; a lease-free reader returns the newline-terminated prefix, mutates nothing, and leaves the file byte-identical.
+Appending is offered only through an acquired session lease, appends are awaited in record order, and a resumed lease continues one past the last complete sequence the stream retained.
+When first publishing the stream pathname, the writer shall synchronize the containing directory before accepting the first append.
+Completed lines accumulate in order, and the writer shall synchronize them as one content checkpoint after each successful private session-record settlement and before a normal lease release returns; only that checkpoint advances the last durable sequence.
+Repairing a torn final line is lawful only while holding the lease; a lease-free reader mutates nothing and leaves the file byte-identical, and absent that store instance's live latch returns the newline-terminated prefix.
 Record I/O shall not kill an agent turn, because a throwing observer poisons the record dispatcher, but silently truncated history shall not be presented as complete.
-When an append fails, the writer shall therefore latch the stream incomplete at the last durable sequence and stop appending for the remainder of the session, keeping the file a clean contiguous prefix, while the turn continues.
-Where a synchronization failure follows a complete visible write, the writer shall not roll that line back; a successor accepts whichever complete prefix the filesystem retained and resumes one past it.
-The latching store instance reports that condition through its stream reader and status; the latch is live state and is not durable, so a later reader sees only a shorter clean prefix.
+When an append or checkpoint fails, the writer shall therefore latch the stream incomplete at the last durable sequence and stop appending for the remainder of the session, keeping its readable content a clean contiguous prefix, while neither failing nor undoing the agent turn, a successful private session-record settlement, or an otherwise valid lease release.
+Where an append or content-checkpoint failure leaves complete visible lines beyond that durable sequence, the writer shall not roll them back; a successor accepts whichever complete prefix the filesystem retained and resumes one past its last sequence.
+After latching, that store instance's stream reader returns records only through its reported last durable sequence and reports the incomplete condition, while leaving later complete bytes untouched, so an incremental reader can resume from that exact returned boundary.
+The latch is live state and is not durable, so a newly opened store scans the actual complete retained prefix, reports no inherited latch, and may reveal complete lines the latching instance withheld.
 
 ### 5. A `sessions` bootstrap locator
 
@@ -107,6 +110,6 @@ Every change above ships in one release, so the dependent host pins its floor to
 - One directory holds canonical Playbook manifests, shared streams, and host sidecars; the Playbook manifest governs Playbook listing and resumption, while sidecar-only sessions remain discoverable only by their owning host.
 - The published surface is deliberately smaller than the module behind it, so internals stay changeable while the facade carries the semver obligation.
 - The stream cannot leak a conversation credential even though it carries hidden prompts and tool I/O, because the projection is written token-free rather than filtered on read.
-- Incompleteness is a mutual blind spot, stated rather than smoothed over: each host latches into its own manifest and neither reads the other's, so a truncated stream is indistinguishable from a normally-ended one to any reader that did not observe the failing process. Under this decision that limit is ours; it is already the dependent host's limit toward us.
+- Incompleteness is a mutual blind spot, stated rather than smoothed over: each host latches only in its own live store or process, so a truncated stream is indistinguishable from a normally-ended one to any reader that did not observe the failing process. Under this decision that limit is ours; it is already the dependent host's limit toward us.
 - The frozen content ABI matches what the dependent host writes modulo immaterial JSON member order, while its privacy modes and strict reader remain explicit adoption work and the shared fixture prevents later content drift.
 - Freezing the format and surface makes both a release event: changing either is a recorded decision and a SemVer obligation, not a refactor.
