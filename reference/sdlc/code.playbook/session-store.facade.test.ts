@@ -14,6 +14,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import ts from 'typescript';
+import { runPlaybookCli } from './bin/playbook.js';
 import {
   createCaptainSessionStore,
   projectCaptainSessionStructure,
@@ -219,6 +221,59 @@ async function rejectedError(operation: Promise<unknown>) {
   throw new Error('expected operation to reject');
 }
 
+function importedBindingSpecifier(
+  source: string,
+  importer: URL,
+  importedName: string,
+) {
+  const parsed = ts.createSourceFile(
+    importer.pathname,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const matches: string[] = [];
+  for (const statement of parsed.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    if (
+      bindings.elements.some(
+        (element) =>
+          (element.propertyName?.text ?? element.name.text) === importedName,
+      )
+    ) {
+      matches.push(statement.moduleSpecifier.text);
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      `${importer.href} must import ${importedName} from exactly one module`,
+    );
+  }
+  return matches[0]!;
+}
+
+function resolveImportedBinding(
+  source: string,
+  importer: URL,
+  importedName: string,
+) {
+  const specifier = importedBindingSpecifier(source, importer, importedName);
+  if (!specifier.startsWith('./') && !specifier.startsWith('../')) {
+    throw new Error(
+      `${importer.href} must import ${importedName} from a relative module`,
+    );
+  }
+  return new URL(specifier, importer).href;
+}
+
 function processOutputSpies() {
   const stdout = vi
     .spyOn(process.stdout, 'write')
@@ -231,31 +286,40 @@ function processOutputSpies() {
 
 describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => {
   it('shares one private store and validator with every CLI path', async () => {
-    const [facade, store, headless, managed, launcher] = await Promise.all(
-      [
-        './session-store.js',
-        './bin/session-store.js',
-        './bin/run.js',
-        './bin/interactive-session.js',
-        './bin/playbook.js',
-      ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')),
+    const facadeUrl = new URL('./session-store.js', import.meta.url);
+    const cliUrls = [
+      new URL('./bin/run.js', import.meta.url),
+      new URL('./bin/interactive-session.js', import.meta.url),
+      new URL('./bin/playbook.js', import.meta.url),
+    ];
+    const [facade, ...cliSources] = await Promise.all(
+      [facadeUrl, ...cliUrls].map((url) => readFile(url, 'utf8')),
     );
 
-    expect(facade).toContain("from './bin/session-store.js';");
-    for (const source of [headless, managed, launcher]) {
-      expect(source).toContain("from './session-store.js';");
-      expect(source).not.toContain('function validateCaptainSessionRecord');
-      expect(source).not.toContain('function createCaptainSessionStore');
-      expect(source).not.toContain('function parseReplayEnvelope');
+    const privateStore = new URL(
+      './bin/session-store.js',
+      import.meta.url,
+    ).href;
+    expect(
+      resolveImportedBinding(
+        facade,
+        facadeUrl,
+        'createCaptainSessionStore',
+      ),
+    ).toBe(privateStore);
+    for (const [index, source] of cliSources.entries()) {
+      const importer = cliUrls[index]!;
+      expect(
+        resolveImportedBinding(source, importer, 'createCaptainSessionStore'),
+      ).toBe(privateStore);
+      expect(
+        resolveImportedBinding(
+          source,
+          importer,
+          'validateCaptainSessionRecord',
+        ),
+      ).toBe(privateStore);
     }
-    expect(store.match(/function createCaptainSessionStore\(/g)).toHaveLength(1);
-    expect(store.match(/function validateCaptainSessionRecord\(/g)).toHaveLength(
-      1,
-    );
-    expect(store.match(/function parseReplayEnvelope\(/g)).toHaveLength(1);
-    expect(facade).not.toContain('function validateCaptainSessionRecord');
-    expect(facade).not.toContain('function createCaptainSessionStore');
-    expect(facade).not.toContain('function parseReplayEnvelope');
   });
 
   it('publishes only the exact narrow runtime capabilities', async () => {
@@ -325,7 +389,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
   });
 
   it('lists and reads detached token-free summaries while reporting skips', async () => {
-    const { sessionsDir } = await fixtureDir();
+    const { root, sessionsDir } = await fixtureDir();
     const manifest = await publishCredentialManifest(sessionsDir);
     const invalidPath = join(sessionsDir, `${skippedSessionId}.json`);
     const {
@@ -391,6 +455,35 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
     expect(Object.isFrozen(direct)).toBe(true);
     const oldSchemaError = await rejectedError(store.read(skippedSessionId));
     expect(oldSchemaError.code).toBeUndefined();
+    for (const [argv, prefix] of [
+      [
+        ['run', '--session', skippedSessionId, 'must not run'],
+        'playbook run:',
+      ],
+      [['--session', skippedSessionId], 'playbook:'],
+    ] as const) {
+      const frontEndStdout = vi.fn(() => true);
+      const frontEndStderr = vi.fn(() => true);
+      const launch = vi.fn();
+      expect(
+        await runPlaybookCli({
+          argv,
+          env: {},
+          homeDir: root,
+          sessionsDir,
+          stdout: { write: frontEndStdout },
+          stderr: { write: frontEndStderr },
+          tmuxPlayBin: '/unused/tmux-play.js',
+          launchManagedTmuxPlay: launch,
+        }),
+      ).toEqual({ code: 1 });
+      expect(frontEndStdout).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+      expect(frontEndStderr).toHaveBeenCalledTimes(1);
+      expect(frontEndStderr).toHaveBeenCalledWith(
+        `${prefix} ${oldSchemaError.message}\n`,
+      );
+    }
     expect(await readFile(sidecarPath, 'utf8')).toBe(sidecarBytes);
     expect(await readFile(streamOnlyPath, 'utf8')).toBe(streamOnlyBytes);
   });
