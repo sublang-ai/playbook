@@ -324,6 +324,10 @@ cutover explanation. Implicit `--continue` reports and skips each fully
 validated nonresumable record with its session id, path, applicable reason, and
 an archive-or-remove remedy while leaving the file intact. Fresh-session
 discovery likewise leaves and reports nonresumable, malformed, unsafe, or
-unknown-schema files, publishes an empty fresh boundary, and never falls
-through to older retained work. Those invalid records still fail closed when explicitly selected or
-encountered by `--continue`; no path converts or restores them.
+unknown-schema files. A fully validated nonresumable record participates in
+settled same-directory predecessor ordering: it declines adoption only when it
+is newest, while an older or different-directory record does not block a newer
+resumable predecessor. A record whose directory or order cannot be validated
+publishes an empty fresh boundary without falling through. Those invalid
+records still fail closed when explicitly selected or encountered by
+`--continue`; no path converts or restores them.

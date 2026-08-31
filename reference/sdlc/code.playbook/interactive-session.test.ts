@@ -47,6 +47,8 @@ const internalSessionId = '80000000-0000-4000-8000-000000000041';
 const retainedFrameSessionId = '80000000-0000-4000-8000-000000000042';
 const attemptId = '90000000-0000-4000-8000-000000000042';
 const predecessorSessionId = '90000000-0000-4000-8000-000000000043';
+const olderPredecessorSessionId =
+  '90000000-0000-4000-8000-000000000044';
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
 
@@ -433,6 +435,24 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       `${predecessorSessionId}.json`,
     );
     const canonical = JSON.parse(await readFile(predecessorPath, 'utf8'));
+    const olderPredecessor = {
+      ...structuredClone(canonical),
+      sessionId: olderPredecessorSessionId,
+      createdAt: new Date(
+        Date.parse(canonical.createdAt) - 2,
+      ).toISOString(),
+      updatedAt: new Date(
+        Date.parse(canonical.createdAt) - 1,
+      ).toISOString(),
+    };
+    const olderPredecessorPath = join(
+      fixture.sessionsDir,
+      `${olderPredecessorSessionId}.json`,
+    );
+    const olderPredecessorBytes = `${JSON.stringify(olderPredecessor)}\n`;
+    await writeFile(olderPredecessorPath, olderPredecessorBytes, {
+      mode: 0o600,
+    });
     const preCutoverBytes = `${JSON.stringify(
       preUnresolvedEffectsRecord(canonical),
     )}\n`;
@@ -464,13 +484,22 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
 
     const runtime = await lifecycle.initializeRuntime(fixture.context);
     expect(installed).toEqual([{}]);
-    expect(diagnostics.join('')).toContain(
-      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable; move it outside the sessions directory or remove it to silence this warning`,
-    );
-    expect(diagnostics.join('')).not.toContain(
+    const diagnostic =
+      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable; move it outside the sessions directory or remove it to silence this warning`;
+    const diagnosticText = diagnostics.join('');
+    expect(diagnosticText).toContain(diagnostic);
+    expect(diagnosticText.split(diagnostic)).toHaveLength(2);
+    expect(diagnosticText).not.toContain(
       'missing field "unresolvedEffects"',
     );
     expect(await readFile(predecessorPath, 'utf8')).toBe(preCutoverBytes);
+    expect(await readFile(olderPredecessorPath, 'utf8')).toBe(
+      olderPredecessorBytes,
+    );
+    expect(
+      (await fixture.store.read(olderPredecessorSessionId))
+        .retainedGenerations,
+    ).toEqual({ code: retainedGeneration() });
     expect(await fixture.store.read(logicalSessionId)).toMatchObject({
       state: 'settled',
       retainedGenerations: {},

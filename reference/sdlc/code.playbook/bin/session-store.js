@@ -143,9 +143,10 @@ class CaptainSessionRecordSchemaError extends Error {
 
 class CaptainSessionRecordNonresumableError extends
   CaptainSessionRecordSchemaError {
-  constructor(schemaVersion, message, cause) {
+  constructor(schemaVersion, message, orderingBoundary, cause) {
     super(schemaVersion, message, cause);
     this.name = 'CaptainSessionRecordNonresumableError';
+    this.orderingBoundary = orderingBoundary;
   }
 }
 
@@ -256,10 +257,15 @@ export function createCaptainSessionStore(options = {}) {
               JSON.stringify(value.sessionId),
           );
         }
-        const SchemaError = nonresumable
-          ? CaptainSessionRecordNonresumableError
-          : CaptainSessionRecordSchemaError;
-        throw new SchemaError(
+        if (nonresumable) {
+          throw new CaptainSessionRecordNonresumableError(
+            cause.schemaVersion,
+            `${context}: ${cause.message}`,
+            cause.orderingBoundary,
+            cause,
+          );
+        }
+        throw new CaptainSessionRecordSchemaError(
           cause.schemaVersion,
           `${context}: ${cause.message}`,
           cause,
@@ -282,6 +288,7 @@ export function createCaptainSessionStore(options = {}) {
 
   const listRecords = async ({
     onLegacyRecord,
+    onLegacyOrderingBoundary,
     onInvalidRecord,
     skipInvalidRecords = false,
   } = {}) => {
@@ -291,6 +298,14 @@ export function createCaptainSessionStore(options = {}) {
     ) {
       throw new Error(
         'Captain session legacy-record observer must be a function',
+      );
+    }
+    if (
+      onLegacyOrderingBoundary !== undefined &&
+      typeof onLegacyOrderingBoundary !== 'function'
+    ) {
+      throw new Error(
+        'Captain session legacy ordering-boundary observer must be a function',
       );
     }
     if (
@@ -327,6 +342,7 @@ export function createCaptainSessionStore(options = {}) {
         candidates.push(await readRecord(sessionId));
       } catch (error) {
         if (error instanceof CaptainSessionRecordNonresumableError) {
+          await onLegacyOrderingBoundary?.(error.orderingBoundary);
           await onLegacyRecord?.(
             Object.freeze({
               sessionId,
@@ -370,30 +386,52 @@ export function createCaptainSessionStore(options = {}) {
     { onLegacyRecord, onInvalidRecord } = {},
   ) => {
     let orderingUnproved = false;
-    const observeSkipped = (observer) => async (record) => {
+    const legacyOrderingBoundaries = [];
+    const observeInvalid = async (record) => {
       orderingUnproved = true;
-      await observer?.(record);
+      await onInvalidRecord?.(record);
     };
     const records = await listRecords({
-      onLegacyRecord: observeSkipped(onLegacyRecord),
-      onInvalidRecord: observeSkipped(onInvalidRecord),
+      onLegacyRecord,
+      onLegacyOrderingBoundary: (record) => {
+        legacyOrderingBoundaries.push(record);
+      },
+      onInvalidRecord: observeInvalid,
       skipInvalidRecords: true,
     });
-    const candidates = sortCaptainSessionRecords(
-      records.filter(
+    const resumableCandidates = records.filter(
+      (candidate) =>
+        candidate.sessionId !== target.sessionId &&
+        candidate.state === 'settled' &&
+        candidate.cwd === target.cwd,
+    );
+    const resumableById = new Map(
+      resumableCandidates.map((candidate) => [candidate.sessionId, candidate]),
+    );
+    const orderedBoundaries = sortCaptainSessionRecords([
+      ...resumableCandidates,
+      ...legacyOrderingBoundaries.filter(
         (candidate) =>
           candidate.sessionId !== target.sessionId &&
           candidate.state === 'settled' &&
           candidate.cwd === target.cwd,
-        ),
-    );
-    // A skipped store-owned record cannot prove its place in the same-cwd
-    // predecessor order. Decline adoption rather than offering older work;
-    // the newest valid candidate still floors the intentional empty boundary.
+      ),
+    ]);
+    const newestBoundary = orderedBoundaries[0];
+    const candidate =
+      orderingUnproved || newestBoundary === undefined
+        ? undefined
+        : resumableById.get(newestBoundary.sessionId);
+    const adoptionDeclined =
+      orderingUnproved ||
+      (newestBoundary !== undefined && candidate === undefined);
+    // A fully validated legacy record has a trustworthy place in the
+    // same-cwd predecessor order even though it cannot resume. Only a record
+    // whose contents cannot be validated leaves that order globally unproved.
     return {
-      candidate: orderingUnproved ? undefined : candidates[0],
-      newestValidUpdatedAt: candidates[0]?.updatedAt,
-      orderingUnproved,
+      candidate,
+      newestBoundaryUpdatedAt: newestBoundary?.updatedAt,
+      adoptionDeclined,
     };
   };
 
@@ -999,10 +1037,10 @@ function createLease({
         target,
         predecessorScanOptions,
       );
-      if (initialScan.orderingUnproved) {
+      if (initialScan.adoptionDeclined) {
         const emptyTarget = emptyFreshTargetAfter(
           target,
-          initialScan.newestValidUpdatedAt,
+          initialScan.newestBoundaryUpdatedAt,
         );
         await publishEmptyFreshTarget(emptyTarget);
         await assertOwnerUnchecked();
@@ -1028,7 +1066,7 @@ function createLease({
               kind: 'declined',
               predecessorUpdatedAt: laterTimestamp(
                 selected.updatedAt,
-                currentScan.newestValidUpdatedAt,
+                currentScan.newestBoundaryUpdatedAt,
               ),
             };
           }
@@ -1048,7 +1086,7 @@ function createLease({
               kind: 'declined',
               predecessorUpdatedAt: laterTimestamp(
                 source.updatedAt,
-                currentScan.newestValidUpdatedAt,
+                currentScan.newestBoundaryUpdatedAt,
               ),
             };
           }
@@ -2000,19 +2038,21 @@ export function validateCaptainSessionRecord(value) {
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
       'Captain session record schema 2 has incompatible root-owned player identity; schema 6 is required',
+      captainSessionOrderingBoundary(record),
     );
   }
   if (
     record.schemaVersion === LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION ||
     record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
   ) {
-    validateCanonicalCaptainSessionRecord(
+    const projectedRecord = validateCanonicalCaptainSessionRecord(
       projectPreEffectCaptainSessionRecordForValidation(record),
       PRE_EFFECT_ARTIFACT_SCHEMAS,
     );
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
       `Captain session record schema ${record.schemaVersion} predates the artifact-schema-3 effect-authority cutover and is not resumable`,
+      captainSessionOrderingBoundary(projectedRecord),
     );
   }
   if (
@@ -2030,7 +2070,7 @@ export function validateCaptainSessionRecord(value) {
         'Captain session record schema 5 pre-unresolved-effects shape has an unknown abandonment field',
       );
     }
-    validateCanonicalCaptainSessionRecord(
+    const projectedRecord = validateCanonicalCaptainSessionRecord(
       {
         ...record,
         schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
@@ -2043,6 +2083,7 @@ export function validateCaptainSessionRecord(value) {
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
       'Captain session record schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
+      captainSessionOrderingBoundary(projectedRecord),
     );
   }
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
@@ -2052,6 +2093,15 @@ export function validateCaptainSessionRecord(value) {
     );
   }
   return validateCanonicalCaptainSessionRecord(record);
+}
+
+function captainSessionOrderingBoundary(record) {
+  return Object.freeze({
+    sessionId: record.sessionId,
+    state: record.state,
+    cwd: record.cwd,
+    updatedAt: record.updatedAt,
+  });
 }
 
 function validateCanonicalCaptainSessionRecord(

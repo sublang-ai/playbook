@@ -206,9 +206,12 @@ session-record schema 6. Do not restore an earlier snapshot or session record
 by guessing identity or effect evidence. This includes both pre-release
 schema-5 record shapes; the earlier one predates required `unresolvedEffects`,
 and neither is a canonical schema-6 boundary. Explicit selection rejects them,
-while fresh discovery reports and skips them, publishes an empty target, and
-does not fall through to older retained work. On a
-compatible restore, rebuild
+while fresh discovery reports and skips them. A fully validated nonresumable
+record participates in settled same-directory ordering and declines adoption
+only when it is newest; an older or different-directory record does not block a
+newer resumable predecessor. An unvalidatable record leaves ordering unproved,
+so discovery publishes an empty target without falling through. On a compatible
+restore, rebuild
 `promptIdentity` from the current model selection (or adapter for an explicit
 provider-default selection) and rebuild live host capabilities under the
 current lease, so neither invocation identity nor repository authority comes

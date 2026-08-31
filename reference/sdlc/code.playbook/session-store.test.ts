@@ -3125,6 +3125,77 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     },
   );
 
+  it('orders validated legacy records without globally fencing adoption', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(13);
+    const olderLegacyId = adoptionSessionId(14);
+    const foreignLegacyId = adoptionSessionId(15);
+    const targetId = adoptionSessionId(16);
+    const source = retainedSettledRecord({
+      id: sourceId,
+      updatedAt: '2026-08-11T21:00:00.060Z',
+    });
+    const olderLegacy = legacyRecord(
+      retainedSettledRecord({
+        id: olderLegacyId,
+        updatedAt: '2026-08-11T21:00:00.040Z',
+      }),
+      3,
+    );
+    const foreignLegacy = releasedSchema2Record({
+      sessionId: foreignLegacyId,
+      cwd: join(process.cwd(), 'other-working-directory'),
+      updatedAt: '2026-08-11T21:00:00.080Z',
+    });
+    const sourcePath = await writeRecordFixture(sessionsDir, source);
+    const olderLegacyPath = join(sessionsDir, `${olderLegacyId}.json`);
+    const foreignLegacyPath = join(sessionsDir, `${foreignLegacyId}.json`);
+    const olderLegacyBytes = `${JSON.stringify(olderLegacy)}\n`;
+    const foreignLegacyBytes = `${JSON.stringify(foreignLegacy)}\n`;
+    await writeFile(olderLegacyPath, olderLegacyBytes, { mode: 0o600 });
+    await writeFile(foreignLegacyPath, foreignLegacyBytes, { mode: 0o600 });
+    const target = freshAdoptionTargetRecord({ id: targetId });
+    const store = sequencedStore(sessionsDir, 15);
+    const lease = await store.acquire(targetId);
+    const legacyRecords: unknown[] = [];
+
+    const targetAfter = await lease.initializeSettledWithPredecessor({
+      cwd: target.cwd,
+      structuralProjection: target.structuralProjection,
+      executionProjection: target.lastAppliedExecutionProjection,
+      snapshot: target.snapshot,
+      onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+    });
+
+    expect(targetAfter.retainedGenerations).toEqual(
+      source.retainedGenerations,
+    );
+    expect((await store.read(sourceId)).retainedGenerations).toEqual({});
+    expect(await readFile(sourcePath, 'utf8')).not.toEqual(
+      `${JSON.stringify(source)}\n`,
+    );
+    expect(await readFile(olderLegacyPath, 'utf8')).toBe(olderLegacyBytes);
+    expect(await readFile(foreignLegacyPath, 'utf8')).toBe(
+      foreignLegacyBytes,
+    );
+    expect(legacyRecords).toHaveLength(2);
+    expect(legacyRecords).toEqual(
+      expect.arrayContaining([
+        {
+          sessionId: olderLegacyId,
+          path: olderLegacyPath,
+          schemaVersion: 3,
+        },
+        {
+          sessionId: foreignLegacyId,
+          path: foreignLegacyPath,
+          schemaVersion: 2,
+        },
+      ]),
+    );
+    await lease.release();
+  });
+
   it('does not adopt retained generations from a pre-effect schema-4 record', async () => {
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(10);
@@ -3178,6 +3249,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     });
     expect(Object.isFrozen(targetAfter)).toBe(true);
     expect(targetAfter.retainedGenerations).toEqual({});
+    expect(Date.parse(targetAfter.updatedAt)).toBeGreaterThan(
+      Date.parse(source.updatedAt),
+    );
     expect(legacyRecords).toEqual([
       {
         sessionId: sourceId,
