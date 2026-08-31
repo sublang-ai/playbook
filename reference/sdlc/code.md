@@ -8,35 +8,37 @@ Roles:
 
 - Coder
 
-The caller supplies the coding intent including any specific context.
+The caller supplies either a new coding intent or an existing IR with unfinished work to continue, together with any relevant context.
+The caller establishes which case applies before the first Coder call, so each case begins with its own phase prompt.
 
-A coding intent follows either one direct implementation phase or an IR sequence consisting of a new-IR phase and one phase for each IR task.
+A new coding intent follows either one direct implementation phase or an IR sequence consisting of a new-IR phase followed by one phase for each IR task.
+An existing IR follows one IR-task phase for each remaining unfinished task, starting with its next unfinished task.
 Each phase ends with one new Coder commit (owned by `code`).
 After each `code`-owned commit, Captain shall call the `review` playbook and wait until it passes with no unsettled findings.
 Playbook `review` owns every review round and every review-fix commit.
-Do not amend any reviewed commit.
+Do not rewrite any existing commit.
 
 When `review` passes a direct implementation phase, `code` is complete.
 When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.
 When `review` passes the final IR-task phase, `code` is complete.
-When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
+When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
 When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.
 
-At the start of the first phase, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
+At the start of the first phase for a new coding intent, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
 
 ```markdown
 Assess whether the coding intent can be completed well in one commit.
-If yes, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.
-Otherwise, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.
+If it can, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.
+If it cannot, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.
 Plan affected spec updates before, with, or after their corresponding code changes, either as standalone IR tasks or as explicit work within related tasks.
 
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
-At the start of every IR-task phase, Captain shall relay to Coder the exact next task and any relevant run results in quotes (`>`), along with the following instruction:
+At the start of every IR-task phase, Captain shall relay to Coder the IR identity and any relevant run results in quotes (`>`), along with the following instruction:
 
 ```markdown
-Read IR-<#> and implement exactly the next unfinished task, including corresponding tests or specs if any.
+Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 Do not implement a later task in this phase.
 Mark the IR's progress and deliverables when relevant.
 If the IR will be finished after this phase, double-check that all acceptance criteria are met.
@@ -48,15 +50,24 @@ At the start of *every* phase, Captain shall append the following instruction:
 Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
+Identify every new commit you make.
 Coder is <coder-llm>; format the model token in conventional human form.
 ```
 
-After the first phase (either direct implementation or a new-IR phase), Captain shall call playbook `review` and input the following in quotes (`>`):
+The first phase for a new coding intent has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
+Every IR-task phase identifies the implemented task and has two semantic outcomes: more tasks and final task.
+Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
+Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 
-> Initial intent: \<caller-input\>
+At the end of every phase, Captain shall call playbook `review` and input the following in quotes (`>`):
+
+> Review scope: the commit \<code-commit\> from this coding phase and its resulting repository state.
+> Original coding request: \<caller-input\>
 > Coder output: \<coder-output\>
 
-After every IR-task phase, Captain shall call playbook `review` and input the following in quotes (`>`):
+For an IR-task phase, Captain shall additionally input the following in quotes (`>`):
 
-> IR task: \<ir-task\>
-> Coder output: \<coder-output\>
+> Current IR task: \<ir-task\>
+
+A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.
+On successful completion, `code` returns the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase's review passed with no unsettled findings.

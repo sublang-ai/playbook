@@ -23,31 +23,37 @@ Consult @specs/map.md for relevant context and @specs/meta.md for spec requireme
 Do not change any files.
 ```
 
-Neither role's player shall receive the other role's proposal until both proposals are complete and Coder has committed Coder's own proposal.
+Neither role's player shall receive the other role's proposal until both proposals are complete.
 A Boss interrupt during the parallel proposal pair shall restart the whole pair so both players receive the same new topic and remain independent.
 
-When both proposals are complete, Captain shall then give Coder the following instruction:
+When both proposals are complete, Captain shall give Coder the following instruction and relay Reviewer's complete proposal beneath it, quoting every proposal line with `>`:
 
 ```markdown
-Turn your proposal into the necessary spec items or DRs.
+Synthesize your independent proposal with Reviewer's proposal below.
+Keep the best, essential parts of either proposal and reject any point that is unsound, unnecessary, or outside the topic.
+Turn the resulting design into the necessary DRs and/or spec items.
 Follow @specs/meta.md and update @specs/map.md when needed.
-Do not inspect or incorporate Reviewer's proposal before this commit.
-Do not change code or implement the proposal.
+Do not change code or implement the design.
 
 Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
-Coder is <coder-llm>; format the model token in conventional human form.
+Identify every new commit you make.
+Coder is <coder-llm> and Reviewer is <reviewer-llm>; format both model tokens in conventional human form.
+
+> Reviewer's independent proposal:
+> \<reviewer-proposal\>
 ```
 
-After Coder commits, Captain shall call playbook `review`:
+No transition shall depend on a fixed presentation format of either player's reply.
+Captain shall use the repository-effect receipt as the authoritative identity of Coder's new `decide`-owned commit.
 
-> Review the latest commit as a spec-design change against the initial intent.
-> Compare it with your independent proposal and take the best of both.
-> Make your suggestions.
->
-> Initial intent: \<caller-topic\>.
-> Coder's independent proposal: \<coder-proposal\>.
+After Coder commits, Captain shall call playbook `review` with the following input in quotes (`>`):
 
-`decide` is complete when `review` returns the approved latest commit and the fact that no unsettled findings remain.
-When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `decide` shall report the failure and the last `decide`-owned commit to its caller.
+> Review scope: the `decide`-owned commit \<decide-commit\> and its resulting repository state.
+> Original design request: \<caller-topic\>
+> Coder output: \<coder-output\>
+
+`decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.
+It then returns the `decide`-owned commit and that evaluated revision to its caller.
+When `review` returns an authored abort or failure, or a terminal result that does not establish those facts, `decide` shall report the failure and the last `decide`-owned commit to its caller.
 When the nested `review` call fails outside that authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.
