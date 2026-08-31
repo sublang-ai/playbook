@@ -278,13 +278,30 @@ export function createCaptainSessionStore(options = {}) {
 
   const read = (sessionId) => readRecord(sessionId);
 
-  const listRecords = async ({ onLegacyRecord } = {}) => {
+  const listRecords = async ({
+    onLegacyRecord,
+    onInvalidRecord,
+    skipInvalidRecords = false,
+  } = {}) => {
     if (
       onLegacyRecord !== undefined &&
       typeof onLegacyRecord !== 'function'
     ) {
       throw new Error(
         'Captain session legacy-record observer must be a function',
+      );
+    }
+    if (
+      onInvalidRecord !== undefined &&
+      typeof onInvalidRecord !== 'function'
+    ) {
+      throw new Error(
+        'Captain session invalid-record observer must be a function',
+      );
+    }
+    if (typeof skipInvalidRecords !== 'boolean') {
+      throw new Error(
+        'Captain session invalid-record skip option must be a boolean',
       );
     }
     let names;
@@ -317,6 +334,16 @@ export function createCaptainSessionStore(options = {}) {
           );
           continue;
         }
+        if (skipInvalidRecords) {
+          await onInvalidRecord?.(
+            Object.freeze({
+              sessionId,
+              path: recordPathFor(sessionId),
+              reason: errorMessage(error),
+            }),
+          );
+          continue;
+        }
         throw error;
       }
     }
@@ -338,10 +365,16 @@ export function createCaptainSessionStore(options = {}) {
 
   const selectAdoptionPredecessor = async (
     target,
-    { onLegacyRecord } = {},
+    { onLegacyRecord, onInvalidRecord } = {},
   ) =>
     sortCaptainSessionRecords(
-      (await listRecords({ onLegacyRecord })).filter(
+      (
+        await listRecords({
+          onLegacyRecord,
+          onInvalidRecord,
+          skipInvalidRecords: true,
+        })
+      ).filter(
         (candidate) =>
           candidate.sessionId !== target.sessionId &&
           candidate.state === 'settled' &&
@@ -909,9 +942,33 @@ function createLease({
           `Captain session ${JSON.stringify(sessionId)} already exists`,
         );
       }
-      const selected = await selectAdoptionPredecessor(target, {
-        onLegacyRecord: options.onLegacyRecord,
-      });
+      const reportedSkippedRecords = new Set();
+      const reportOnce = (observer, label) => {
+        if (observer === undefined) return undefined;
+        if (typeof observer !== 'function') {
+          throw new Error(`Captain session ${label} observer must be a function`);
+        }
+        return async (record) => {
+          const key = `${record.sessionId}\u0000${record.path}`;
+          if (reportedSkippedRecords.has(key)) return;
+          reportedSkippedRecords.add(key);
+          await observer(record);
+        };
+      };
+      const predecessorScanOptions = {
+        onLegacyRecord: reportOnce(
+          options.onLegacyRecord,
+          'legacy-record',
+        ),
+        onInvalidRecord: reportOnce(
+          options.onInvalidRecord,
+          'invalid-record',
+        ),
+      };
+      const selected = await selectAdoptionPredecessor(
+        target,
+        predecessorScanOptions,
+      );
       if (selected === undefined) {
         await publishEmptyFreshTarget(target);
         await assertOwnerUnchecked();
@@ -923,7 +980,10 @@ function createLease({
         async (sourceLease) => {
           const source = await sourceLease.read();
           if (source === undefined) {
-            const current = await selectAdoptionPredecessor(target);
+            const current = await selectAdoptionPredecessor(
+              target,
+              predecessorScanOptions,
+            );
             return {
               kind: 'declined',
               predecessorUpdatedAt:
@@ -940,7 +1000,10 @@ function createLease({
           ) {
             throw new Error('Captain session adoption target changed');
           }
-          const current = await selectAdoptionPredecessor(target);
+          const current = await selectAdoptionPredecessor(
+            target,
+            predecessorScanOptions,
+          );
           if (current?.sessionId !== source.sessionId) {
             return {
               kind: 'declined',
@@ -1918,6 +1981,19 @@ export function validateCaptainSessionRecord(value) {
     throw new CaptainSessionRecordNonresumableError(
       record.schemaVersion,
       `Captain session record schema ${record.schemaVersion} predates the artifact-schema-3 effect-authority cutover and is not resumable`,
+    );
+  }
+  if (
+    record.schemaVersion === CAPTAIN_SESSION_RECORD_SCHEMA_VERSION &&
+    !Object.hasOwn(record, 'unresolvedEffects')
+  ) {
+    validateCanonicalCaptainSessionRecord(
+      { ...record, unresolvedEffects: [] },
+      PRE_EFFECT_ARTIFACT_SCHEMAS,
+    );
+    throw new CaptainSessionRecordNonresumableError(
+      record.schemaVersion,
+      'Captain session record schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable',
     );
   }
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {

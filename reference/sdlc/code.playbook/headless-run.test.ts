@@ -205,6 +205,21 @@ function preEffectSessionRecord(
   return record;
 }
 
+function preUnresolvedEffectsSessionRecord(value: any) {
+  const record = JSON.parse(JSON.stringify(value));
+  delete record.unresolvedEffects;
+  for (const projection of [
+    record.structuralProjection,
+    record.lastAppliedExecutionProjection,
+    record.uncertain?.attemptedExecutionProjection,
+  ]) {
+    for (const item of Object.values(projection?.catalog ?? {}) as any[]) {
+      item.artifactSchema = 2;
+    }
+  }
+  return record;
+}
+
 function scriptedCaptainRuntime(
   inputs: string[],
   selectedDecision?: { action: string; playbookId?: string },
@@ -1420,6 +1435,63 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(second.inputs).toEqual(['unrelated work']);
     expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
     await held.release();
+  });
+
+  it('skips a pre-cutover record for fresh work and explains explicit selection', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-pre-cutover-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'first session'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const preCutoverPath = join(sessionsDir, `${firstId}.json`);
+    const canonical = JSON.parse(await readFile(preCutoverPath, 'utf8'));
+    const preCutoverBytes = `${JSON.stringify(
+      preUnresolvedEffectsSessionRecord(canonical),
+    )}\n`;
+    await writeFile(preCutoverPath, preCutoverBytes, 'utf8');
+
+    let explicitHosts = 0;
+    const explicit = await headlessHarness(
+      ['run', '--session', firstId, 'must not run'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          explicitHosts += 1;
+          throw new Error('must not construct a pre-cutover host');
+        },
+      },
+    );
+    expect(explicit.result.code).toBe(1);
+    expect(explicit.stdout).toBe('');
+    expect(explicit.inputs).toEqual([]);
+    expect(explicitHosts).toBe(0);
+    expect(explicit.stderr).toContain(
+      'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover',
+    );
+    expect(explicit.stderr).not.toContain(
+      'missing field "unresolvedEffects"',
+    );
+
+    const fresh = await headlessHarness(['run', 'unrelated fresh work'], {
+      sessionsDir,
+      createLogicalSessionId: () => secondId,
+    });
+    expect(fresh.result.code).toBe(0);
+    expect(fresh.result.sessionId).toBe(secondId);
+    expect(fresh.inputs).toEqual(['unrelated fresh work']);
+    expect(fresh.stderr).toContain(
+      `skipping legacy Captain session "${firstId}" at "${preCutoverPath}"`,
+    );
+    expect(fresh.stderr).toContain(
+      'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable',
+    );
+    expect(fresh.stderr).toContain(
+      'move it outside the sessions directory or remove it',
+    );
+    expect(await readFile(preCutoverPath, 'utf8')).toBe(preCutoverBytes);
   });
 
   it('starts fresh when the predecessor root options no longer match', async () => {

@@ -4,9 +4,11 @@
 // failure state must offer that recovery to the next process, so
 // `playbook run --continue` can retry it in place instead of dismissing it.
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import {
   createEvent,
   type AgentAdapter,
@@ -27,6 +29,7 @@ const { runPlaybookCli } = await import(
 );
 
 const tempDirs: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(
@@ -43,6 +46,29 @@ function writer() {
     },
     text: () => chunks.join(''),
   };
+}
+
+async function initializeTestRepository(root: string) {
+  const cwd = join(root, 'repository');
+  await mkdir(cwd);
+  await execFileAsync('git', ['init', '--quiet'], { cwd });
+  await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
+  await execFileAsync('git', ['add', 'tracked.txt'], { cwd });
+  await execFileAsync(
+    'git',
+    [
+      '-c',
+      'user.name=Playbook Test',
+      '-c',
+      'user.email=playbook-test@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'baseline',
+    ],
+    { cwd },
+  );
+  return cwd;
 }
 
 /**
@@ -229,6 +255,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     ScriptedAdapter.playerCalls = 0;
     const dir = await mkdtemp(join(tmpdir(), 'playbook-retry-'));
     tempDirs.push(dir);
+    const cwd = await initializeTestRepository(dir);
     const configPath = join(dir, 'playbook.config.yaml');
     await writeFile(
       configPath,
@@ -265,6 +292,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
           `10000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
       })(),
       probeAdapterSdk: async () => true,
+      cwd,
       sessionsDir,
       spawn: () => {
         throw new Error('headless run must not spawn tmux-play');
@@ -329,6 +357,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     ScriptedAdapter.playerCalls = 0;
     const dir = await mkdtemp(join(tmpdir(), 'playbook-replyfail-'));
     tempDirs.push(dir);
+    const cwd = await initializeTestRepository(dir);
     const configPath = join(dir, 'playbook.config.yaml');
     await writeFile(
       configPath,
@@ -365,6 +394,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
           `20000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
       })(),
       probeAdapterSdk: async () => true,
+      cwd,
       sessionsDir,
       spawn: () => {
         throw new Error('headless run must not spawn tmux-play');

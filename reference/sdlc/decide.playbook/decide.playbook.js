@@ -850,9 +850,8 @@ function createDecidePlaybookRuntime(options, deferredEffects) {
     };
     const bindSession = (nextSession) => {
         const bound = snapshotPlaybookSession(nextSession);
-        if (bound.playbookId !== deferredEffects.authority.playbookId ||
-            bound.sessionId !== deferredEffects.authority.sessionId) {
-            throw new TypeError('DECIDE runtime session identity must match its bound schema-3 host authority');
+        if (bound.playbookId !== deferredEffects.authority.playbookId) {
+            throw new TypeError('DECIDE runtime playbook identity must match its bound schema-3 host authority');
         }
         if (bound.roleBindings === undefined)
             return bound;

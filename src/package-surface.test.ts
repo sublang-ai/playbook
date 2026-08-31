@@ -931,7 +931,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const failures: string[] = [];
     let scanned = 0;
     for (const doc of [...packed].filter((path) => path.endsWith('.md'))) {
-      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // release-28 step 8 pins packed bytes to repository bytes, so the
       // repository copy is the packed content.
       for (const { line, target } of linksOf(
         readFileSync(join(repoRoot, doc), 'utf8'),
@@ -1064,7 +1064,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const forms = new Set<string>();
     let scanned = 0;
     for (const doc of packedDocs) {
-      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // release-28 step 8 pins packed bytes to repository bytes, so the
       // repository copy is the packed content.
       const body = blankCodeSpans(
         blankFences(readFileSync(join(repoRoot, doc), 'utf8')),

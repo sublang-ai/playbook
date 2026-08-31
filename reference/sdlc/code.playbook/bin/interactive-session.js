@@ -31,6 +31,7 @@ import {
   captainOptionsFromConfig,
   createCaptainSessionHost,
   installRetainedGenerationsForLaunch,
+  reportSkippedCaptainSession,
   validateFrozenExecutionConfig,
 } from './run.js';
 import { prepareConfiguredRegistries } from './provision.js';
@@ -471,6 +472,20 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
                 onFreshRecord(record) {
                   freshLaunchRecord = record;
                 },
+                onLegacyRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    options.stderr ?? process.stderr,
+                    'playbook',
+                    'legacy',
+                    record,
+                  ),
+                onInvalidRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    options.stderr ?? process.stderr,
+                    'playbook',
+                    'invalid',
+                    record,
+                  ),
               }
             : {}),
           retainedGenerations,

@@ -10,9 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-08-30
+
+### Added
+
+- **Fresh sessions can adopt compatible retained work instead of silently starting over.** A settlement may retain the latest safe unfinished pre-terminal generation with its nested stack, player continuity, and exact structural envelope; a later fresh launch may offer and adopt that generation only after current configuration, lineage, and repository evidence pass the same fail-closed checks as ordinary continuation. Adoption never fabricates support for DECIDE or another runtime that cannot export and restore a generation, and clean completion or an explicit clear removes the root's retained work ([DR-038](specs/decisions/038-universal-run-resumption.md), [IR-046](specs/intents/046-universal-run-resumption.md)).
+
+- **Repository effects now have durable authority independent of player prose.** CODE, REVIEW, and DECIDE declare each delegated outcome's semantic fields and required repository disposition; the host serializes same-worktree governed calls, observes exact Git baselines and results, records every boundary before work, and admits a commit outcome only from one clean descendant commit. `Commit:` formatting in an agent response no longer establishes or changes an outcome. Missing, ambiguous, or inconsistent evidence parks the workflow without replaying the player and offers only explicit reconciliation or abandonment; Captain reports a bounded HEAD-and-classification summary without exposing paths, prompts, or internal ledger identities ([DR-040](specs/decisions/040-outcome-authority-effect-reconciliation.md), [[playbook-runtime-77](specs/packages/playbook-runtime.md#playbook-runtime-77)], [[playbook-captain-58](specs/packages/playbook-captain.md#playbook-captain-58)]).
+
 ### Changed
 
+- **Breaking: the runtime and host contracts move atomically to effect-authority schema 3.** `SUPPORTED_ARTIFACT_SCHEMAS` is now exactly `[3]` under unchanged runtime ABI `1`; CODE, REVIEW, DECIDE, and Captain ship only schema-3 artifacts; runtime, trace, and shell snapshots advance to schema 4; and Captain session records advance to schema 5. Schema-3 factories receive separate `{ configuredOptions, hostCapabilities }` construction input, `PlaybookRunResult` adds its state-only `unresolved-effect` arm, `PlaybookCaptainSettlement` requires `unresolvedEffects`, and schema-3 Captain `SettlementEvidence` requires the same bounded list. Custom hosts must rebuild live repository and write-ahead capabilities for the current lease rather than persist them or place them in workflow configuration ([DR-040](specs/decisions/040-outcome-authority-effect-reconciliation.md), [[release-15](specs/packages/release.md#release-15)]).
+
+- **The required `@sublang/cligent` range rises from `^0.22.0` to `^0.23.0`.** The published repair preserves adjacent complete Codex commentary and final-response messages as newline-separated `finalText` when terminal `done` supplies no result; the lockfile pins the registry artifact and the packed release gate exercises that exact transport shape ([[release-14](specs/packages/release.md#release-14)], [[release-28](specs/packages/release.md#release-28)]).
+
 - **Spec validation now runs on Spex 3 while retaining the repository's cohesive-concern item boundary.** The runtime dependency floor, historical intent wording, and decision-reference layout now conform to the refreshed scaffold, while sentence-count findings remain advisory under [DR-039](specs/decisions/039-cohesive-concern-spec-item-boundary.md).
+
+### Removed
+
+- **Breaking: pre-cutover sessions cannot resume after the effect-authority cutover.** Version 9 record schema 3, the historical schema-4 retention shape, and the transitional schema-5 shape lacking `unresolvedEffects` cannot prove complete authoritative settlement evidence. Playbook 10 therefore leaves those files intact but rejects explicit selection with the applicable cutover explanation and reports and skips them during bare `--continue`; fresh discovery also diagnoses and skips unrelated invalid or nonresumable records so one stale file cannot block new work. Archive or remove a skipped record after preserving anything needed; no path guesses missing authority evidence ([DR-040](specs/decisions/040-outcome-authority-effect-reconciliation.md), [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-53](specs/packages/playbook-cli.md#playbook-cli-53)]).
 
 ### Fixed
 
@@ -483,7 +499,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v9.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v10.0.0...HEAD
+[10.0.0]: https://github.com/sublang-ai/playbook/compare/v9.0.0...v10.0.0
 [9.0.0]: https://github.com/sublang-ai/playbook/compare/v8.0.0...v9.0.0
 [8.0.0]: https://github.com/sublang-ai/playbook/compare/v7.0.0...v8.0.0
 [7.0.0]: https://github.com/sublang-ai/playbook/compare/v6.0.0...v7.0.0

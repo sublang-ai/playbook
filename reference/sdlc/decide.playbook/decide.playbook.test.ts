@@ -1094,6 +1094,20 @@ async function startWithCommitOutput(
 }
 
 describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
+  it('keeps its internal runtime id distinct from logical host authority', async () => {
+    const host = createTestEffectHost({
+      sessionId: '30000000-0000-4000-8000-000000000099',
+    });
+    const runtime = createPlaybookRuntime({}, host);
+
+    await expect(runtime.init(session(completePorts({})))).resolves.toBe(
+      undefined,
+    );
+    expect(runtime.exportSnapshot()).toMatchObject({ playbookId: 'decide' });
+
+    await runtime.dispose();
+  });
+
   it('keeps proposals blind, resumes mapped roles, and suspends on exact REVIEW input', async () => {
     const coderProposal = 'Coder proposal with literal <caller-topic> token.';
     const reviewerProposal = 'Reviewer private alternative.';

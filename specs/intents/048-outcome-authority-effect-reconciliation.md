@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done
 
 ## Intent
 
@@ -24,7 +24,7 @@ Consumption and packed acceptance of the upstream transport repair gate only tas
 - [x] Accepted-outcome evidence is the single source for governed transition status and saved-count metrics, while Captain controller settlements consume canonical structured settlement, terminal-result, and bounded unresolved-effect facts whenever an episode remains parked or is abandoned.
 - [x] Explicit unresolved-effect abandonment uses its own host-level disposal result outside the public `terminal` variant, reports bounded host-owned receipt identity, clears prior retained work for the root, disposes the complete engagement, and reaches no authored FSM outcome or parent resumption.
 - [x] A published Cligent patch preserves complete-message boundaries, and Playbook's dependency floor, lockfile, and packaged integration exercise that published artifact with Codex-shaped commentary followed by a final response.
-- [ ] Specs, authored and generated artifacts, deterministic and integration suites, release gates, changelog, and candidate metadata agree and pass.
+- [x] Specs, authored and generated artifacts, deterministic and integration suites, release gates, changelog, and candidate metadata agree and pass.
 
 ## Tasks
 
@@ -64,7 +64,7 @@ Consumption and packed acceptance of the upstream transport repair gate only tas
     One commit: prove every shipped artifact, registry, generated sibling, packed fixture, CLI launch projection, and durable artifact reference uses schema `3`, remove schema `2` from the engine, registries, and CLI validators, delete the schema-2-only raw status and judge-parser fallbacks, retain runtime ABI `1`, update the runtime, Captain, CLI, and release contracts, and cover rejection of legacy artifacts before governed work.
 18. **Consume the published transport repair.** _[done]_
     One commit: when the repaired Cligent release is public, raise the dependency floor and lock, amend the `release` package contract, and add a packed integration case whose Codex-shaped commentary and final response remain separate through the installed dependency.
-19. **Gate and close the intent.**
+19. **Gate and close the intent.** _[done]_
     One commit: add the final packed and cross-process acceptance matrix through the published Cligent dependency, update public documentation, changelog, and candidate metadata, run Spex, deterministic, build, fidelity, packed, and conditional manual tmux UX gates, mark this intent complete, and stop without tagging, pushing, or publishing Playbook.
 
 ## Verification

@@ -399,7 +399,8 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     const { liveConfig } = await import(
       new URL('../../../acceptance/live-config.ts', import.meta.url).href
     );
-    const top = parseYaml(liveConfig());
+    const reviewerInstruction = 'Keep the acceptance marker continuous.';
+    const top = parseYaml(liveConfig({ reviewerInstruction }));
     const { config, playbooks } = await composeGenericConfig(
       top,
       (specifier: string) => import(specifier),
@@ -417,6 +418,11 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       'acceptance.dev.coder claude',
       'acceptance.dev.reviewer codex',
     ]);
+    expect(
+      config.players.find((player: any) =>
+        player.id === 'acceptance.dev.reviewer',
+      )?.instruction,
+    ).toBe(reviewerInstruction);
   });
 
   it('composes the selected DECIDE current-tuning overlay', async () => {

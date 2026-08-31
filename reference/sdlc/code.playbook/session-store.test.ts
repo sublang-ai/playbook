@@ -768,6 +768,21 @@ function legacyRecord(
   };
 }
 
+function preUnresolvedEffectsRecord(value: Record<string, any>) {
+  const record = structuredClone(value);
+  delete record.unresolvedEffects;
+  for (const projection of [
+    record.structuralProjection,
+    record.lastAppliedExecutionProjection,
+    record.uncertain?.attemptedExecutionProjection,
+  ]) {
+    for (const item of Object.values(projection?.catalog ?? {}) as any[]) {
+      item.artifactSchema = 2;
+    }
+  }
+  return record;
+}
+
 function memberlessSchema3Record(overrides: Record<string, unknown> = {}) {
   const canonical = { ...settledRecord(), ...overrides };
   const { retainedGenerations: _retainedGenerations, ...record } =
@@ -932,6 +947,18 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(() => validateCaptainSessionRecord(pollutedRuntime)).toThrow(
       /runtime must not contain an effect ledger/,
     );
+
+    const preUnresolvedEffects = preUnresolvedEffectsRecord(settledRecord());
+    expect(() => validateCaptainSessionRecord(preUnresolvedEffects)).toThrow(
+      /schema 5 predates required unresolved-effect settlement evidence/,
+    );
+    const malformedPreUnresolvedEffects = structuredClone(
+      preUnresolvedEffects,
+    );
+    delete malformedPreUnresolvedEffects.effectLedger;
+    expect(() =>
+      validateCaptainSessionRecord(malformedPreUnresolvedEffects),
+    ).toThrow(/missing field "effectLedger"/);
   });
 
   it('writes exact effect-ledger batches atomically and preserves their authoritative mirror', async () => {
@@ -2783,7 +2810,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     },
   );
 
-  it('leaves an absent target absent when predecessor scanning fails closed', async () => {
+  it('skips an invalid record while publishing an empty fresh target', async () => {
     const { sessionsDir } = await fixtureDir();
     const corruptId = adoptionSessionId(65);
     const targetId = adoptionSessionId(66);
@@ -2795,15 +2822,17 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const store = sequencedStore(sessionsDir, 80);
     const lease = await store.acquire(targetId);
 
-    await expect(
-      lease.initializeSettledWithPredecessor({
-        cwd: targetTemplate.cwd,
-        structuralProjection: targetTemplate.structuralProjection,
-        executionProjection: targetTemplate.lastAppliedExecutionProjection,
-        snapshot: targetTemplate.snapshot,
-      }),
-    ).rejects.toThrow(/not valid JSON/);
-    await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
+    const initialized = await lease.initializeSettledWithPredecessor({
+      cwd: targetTemplate.cwd,
+      structuralProjection: targetTemplate.structuralProjection,
+      executionProjection: targetTemplate.lastAppliedExecutionProjection,
+      snapshot: targetTemplate.snapshot,
+    });
+    expect(initialized).toMatchObject({
+      sessionId: targetId,
+      retainedGenerations: {},
+    });
+    expect(await store.read(targetId)).toEqual(initialized);
     await lease.release();
   });
 
@@ -3010,7 +3039,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
   });
 
   it.each(['malformed', 'unknown schema', 'unsafe'] as const)(
-    'fails predecessor selection closed on a %s canonical record',
+    'reports and skips a %s canonical record during fresh discovery',
     async (shape) => {
       const { sessionsDir } = await fixtureDir();
       const targetId = adoptionSessionId(7);
@@ -3035,21 +3064,32 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       }
       const store = sequencedStore(sessionsDir, 7);
       const lease = await store.acquire(targetId);
-      await expect(
-        lease.initializeSettledWithPredecessor({
-          cwd: target.cwd,
-          structuralProjection: target.structuralProjection,
-          executionProjection: target.lastAppliedExecutionProjection,
-          snapshot: target.snapshot,
-        }),
-      ).rejects.toThrow(
-        shape === 'malformed'
-          ? /not valid JSON/
-          : shape === 'unknown schema'
-            ? /schema 99/
-            : /0600/,
-      );
-      await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
+      const invalidRecords: any[] = [];
+      const initialized = await lease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
+        onInvalidRecord: (record: any) => invalidRecords.push(record),
+      });
+      expect(initialized).toMatchObject({
+        sessionId: targetId,
+        retainedGenerations: {},
+      });
+      expect(invalidRecords).toEqual([
+        {
+          sessionId: corruptId,
+          path: corruptPath,
+          reason: expect.stringMatching(
+            shape === 'malformed'
+              ? /not valid JSON/
+              : shape === 'unknown schema'
+                ? /schema 99/
+                : /0600/,
+          ),
+        },
+      ]);
+      expect(await store.read(targetId)).toEqual(initialized);
       await lease.release();
     },
   );
@@ -4306,6 +4346,31 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         ),
       );
     }
+
+    const preUnresolvedEffects = preUnresolvedEffectsRecord(wrongEmbeddedId);
+    await writeFile(
+      secondPath,
+      `${JSON.stringify(preUnresolvedEffects)}\n`,
+      'utf8',
+    );
+    legacyRecords.length = 0;
+    expect(
+      (
+        await store.latest({
+          onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+        })
+      ).sessionId,
+    ).toBe(sessionId);
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: secondSessionId,
+        path: secondPath,
+        schemaVersion: 5,
+      },
+    ]);
+    await expect(store.read(secondSessionId)).rejects.toThrow(
+      /schema 5 predates required unresolved-effect settlement evidence/,
+    );
 
     const malformedUnmigratable = legacyRecord(
       preEffectSchema3Artifact,

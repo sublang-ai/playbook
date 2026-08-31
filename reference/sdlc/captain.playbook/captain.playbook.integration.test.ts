@@ -2244,13 +2244,11 @@ function makeShellHarness(
   }
   const sessionIdAt = (sequence: number): string =>
     `${sessionNamespace}0000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
-  // Shell init allocates the session Captain first, so the first root
-  // playbook frame is sequence two. Schema-3 DECIDE binds its runtime session
-  // to the same host authority before crossing any governed boundary.
+  // Keep the logical Captain-session authority distinct from the internal
+  // runtime session IDs allocated by the shell.
   const effectHost = shellEffectHost(
     entries,
     harnessOptions.repositoryClassifications,
-    sessionIdAt(2),
   );
   const shell = createPlaybookCaptainShell(
     {

@@ -136,13 +136,27 @@ const decideCommand =
   'This run is documentation-only: do not create the implementation file. ' +
   'The specs/map.md index already lists the file, so leave it untouched. ' +
   'Converge quickly and commit only the agreed spec item file. ' +
-  'For this acceptance fixture only, Reviewer shall invent one unique ' +
+  'For this acceptance fixture only, during the independent proposal ' +
+  'phase Reviewer shall invent and disclose one unique ' +
   'continuity marker in the independent proposal: REVIEW_CONTINUITY_ ' +
   'followed immediately by exactly 12 uppercase ASCII letters or digits. ' +
-  'Reviewer shall put the complete marker on a line of its own. ' +
+  'Reviewer shall put the complete marker on a line of its own and shall ' +
+  'not defer its invention or disclosure to nested REVIEW. ' +
   'Coder shall not invent, guess, or include a continuity marker in the ' +
-  'independent proposal or initial commit. The final ACCEPT-2 item shall ' +
-  "also contain Reviewer's exact marker, added only through REVIEW feedback.";
+  'independent proposal or initial commit. During nested REVIEW, Reviewer ' +
+  'shall remember the exact independently proposed marker and classify its ' +
+  'absence from the initial commit as an unsettled finding that remains open ' +
+  'until Coder adds that exact marker in one correction commit. The final ' +
+  'ACCEPT-2 item shall contain the same marker, introduced only by that ' +
+  'nested REVIEW correction.';
+const reviewerContinuityInstruction =
+  'For a DECIDE acceptance request that names a REVIEW_CONTINUITY_ marker, ' +
+  'your independent-proposal final response shall invent one concrete ' +
+  'marker with exactly 12 uppercase ASCII letters or digits after the ' +
+  'prefix and print it on its own final line. In every later REVIEW final ' +
+  'response for that request, print the same marker on its own final line ' +
+  'until the reviewed commit contains it. Do not defer, omit, replace, or ' +
+  'merely describe the marker.';
 const reviewTask =
   'Review the latest commit and resulting repository state against its ' +
   'documented requirements. Resolve only material findings.';
@@ -271,6 +285,13 @@ describe.sequential('installed playbook live acceptance', () => {
           firstEnvelope.sessionId,
         );
         expectSettledSessionBoundary(firstRecord, scenario);
+        expectCanonicalEffectSession(firstRecord, [
+          { playbookId: 'review', classification: 'unchanged' },
+          {
+            playbookId: 'review',
+            classification: 'one-descendant-commit',
+          },
+        ]);
         expectLiveRoleBindings(firstRecord);
         expectReviewApprovalReply(firstEnvelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
@@ -393,6 +414,13 @@ describe.sequential('installed playbook live acceptance', () => {
           firstEnvelope.sessionId,
         );
         expectSettledSessionBoundary(continuedRecord, scenario);
+        expectCanonicalEffectSession(continuedRecord, [
+          { playbookId: 'review', classification: 'unchanged' },
+          {
+            playbookId: 'review',
+            classification: 'one-descendant-commit',
+          },
+        ]);
         expect(continuedRecord.cwd).toBe(firstRecord.cwd);
         expectLiveRoleBindings(continuedRecord);
         expect(continuedRecord.structuralProjection).toEqual(
@@ -401,6 +429,7 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(continuedRecord.snapshot?.playerSessions).toEqual(
           firstRecord.snapshot?.playerSessions,
         );
+        expect(continuedRecord.effectLedger).toEqual(firstRecord.effectLedger);
         expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
         expect(existsSync(tmuxGuard.marker)).toBe(false);
       } catch (error) {
@@ -445,7 +474,17 @@ describe.sequential('installed playbook live acceptance', () => {
           `stdout:\n${diagnosticTail(result.stdout)}\n` +
           `stderr:\n${diagnosticTail(result.stderr)}`;
 
-        parseHeadlessEnvelope(result.stdout);
+        const envelope = parseHeadlessEnvelope(result.stdout);
+        const record = readDurableSession(scenario, envelope.sessionId);
+        expectSettledSessionBoundary(record, scenario);
+        expectCanonicalEffectSession(record, [
+          {
+            playbookId: 'code',
+            classification: 'one-descendant-commit',
+          },
+          { playbookId: 'review', classification: 'unchanged' },
+        ]);
+        expectLiveRoleBindings(record);
         expectMarkersExactlyOnceInOrder(result.stderr, [
           '◇ /code started',
           '◇ /review called by /code',
@@ -487,7 +526,9 @@ describe.sequential('installed playbook live acceptance', () => {
   it(
     'continues interactive DECIDE headlessly without replaying effects',
     async () => {
-      const scenario = createScenario('decide');
+      const scenario = createScenario('decide', {
+        reviewerInstruction: reviewerContinuityInstruction,
+      });
       let commandOutput = '';
       try {
         const sessionsBefore = [...listTmuxSessions()].sort();
@@ -523,10 +564,6 @@ describe.sequential('installed playbook live acceptance', () => {
               paneTitle: 'Acceptance.dev.reviewer · codex',
               text: 'A new review begins on the latest commit.',
             },
-            continuity: {
-              paneTitle: 'Acceptance.dev.reviewer · codex',
-              pattern: /REVIEW_CONTINUITY_[A-Z0-9]{12}/,
-            },
           },
         );
         const interactiveRecord = readDurableSession(
@@ -534,7 +571,22 @@ describe.sequential('installed playbook live acceptance', () => {
           observation.sessionId,
         );
         expectSettledSessionBoundary(interactiveRecord, scenario);
+        expectCanonicalEffectSession(interactiveRecord, [
+          { playbookId: 'decide', classification: 'unchanged' },
+          {
+            playbookId: 'decide',
+            classification: 'one-descendant-commit',
+          },
+          { playbookId: 'review', classification: 'unchanged' },
+          {
+            playbookId: 'review',
+            classification: 'one-descendant-commit',
+          },
+        ]);
         expectLiveRoleBindings(interactiveRecord);
+        const durableContinuityMarker = expectDecideContinuity(
+          interactiveRecord,
+        );
         const retunePath = join(scenario.root, 'decide-retune.yaml');
         writeFileSync(retunePath, liveRetuneOverlay());
         const acceptanceSpec = readFileSync(
@@ -549,14 +601,7 @@ describe.sequential('installed playbook live acceptance', () => {
         );
         expect(headAcceptanceSpec).toContain('### ACCEPT-2');
         expect(headAcceptanceSpec).toContain('DECIDE_ACCEPTANCE_OK');
-        const continuityMarker = observation.continuityMarker;
-        if (continuityMarker === undefined) {
-          throw new Error('DECIDE produced no Reviewer continuity marker');
-        }
-        expect(continuityMarker).toMatch(
-          /^REVIEW_CONTINUITY_[A-Z0-9]{12}$/,
-        );
-        expect(headAcceptanceSpec).toContain(continuityMarker);
+        expect(headAcceptanceSpec).toContain(durableContinuityMarker);
         expect(acceptanceSpec).not.toContain(captainMarker);
         expect(headAcceptanceSpec).not.toContain(captainMarker);
         expect(existsSync(join(scenario.repo, 'acceptance-decide.txt'))).toBe(
@@ -623,6 +668,14 @@ describe.sequential('installed playbook live acceptance', () => {
           observation.sessionId,
         );
         expectSettledSessionBoundary(continuedRecord, scenario);
+        expectCanonicalEffectSession(continuedRecord, [
+          { playbookId: 'decide', classification: 'unchanged' },
+          {
+            playbookId: 'decide',
+            classification: 'one-descendant-commit',
+          },
+          { playbookId: 'review', classification: 'unchanged' },
+        ]);
         expect(continuedRecord.cwd).toBe(interactiveRecord.cwd);
         expectLiveRoleBindings(continuedRecord);
         expect(continuedRecord.structuralProjection).toEqual(
@@ -630,6 +683,9 @@ describe.sequential('installed playbook live acceptance', () => {
         );
         expect(continuedRecord.snapshot?.playerSessions).toEqual(
           interactiveRecord.snapshot?.playerSessions,
+        );
+        expect(continuedRecord.effectLedger).toEqual(
+          interactiveRecord.effectLedger,
         );
         expect(continuedRecord.lastAppliedExecutionProjection?.captain?.effort)
           .toEqual({ kind: 'value', value: 'low' });
@@ -763,6 +819,10 @@ describe.sequential('installed playbook live acceptance', () => {
         );
 
         const envelope = parseHeadlessEnvelope(first.stdout);
+        const firstRecord = readDurableSession(scenario, envelope.sessionId);
+        expectCanonicalEffectSession(firstRecord, [
+          { playbookId: 'hermetic', classification: 'unchanged' },
+        ]);
         expectHermeticCompletionReply(envelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
           '◇ /hermetic started',
@@ -785,6 +845,13 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(second.stderr).not.toContain('provisioned');
         const secondEnvelope = parseHeadlessEnvelope(second.stdout);
         expect(secondEnvelope.sessionId).not.toBe(envelope.sessionId);
+        const secondRecord = readDurableSession(
+          scenario,
+          secondEnvelope.sessionId,
+        );
+        expectCanonicalEffectSession(secondRecord, [
+          { playbookId: 'hermetic', classification: 'unchanged' },
+        ]);
         expectHermeticCompletionReply(secondEnvelope.reply);
         expectMarkersExactlyOnceInOrder(second.stderr, [
           '◇ /hermetic started',
@@ -1078,15 +1145,10 @@ interface TurnExpectation {
     paneTitle: string;
     text: string;
   };
-  continuity?: {
-    paneTitle: string;
-    pattern: RegExp;
-  };
 }
 
 interface TurnObservation {
   sessionId: string;
-  continuityMarker?: string;
 }
 
 interface HeadlessEnvelope {
@@ -1095,11 +1157,14 @@ interface HeadlessEnvelope {
 }
 
 interface DurableSessionRecord {
+  schemaVersion?: unknown;
   state?: unknown;
   cwd?: unknown;
   structuralProjection?: unknown;
   lastAppliedExecutionProjection?: any;
   snapshot?: any;
+  effectLedger?: any;
+  unresolvedEffects?: unknown;
 }
 
 function readDurableSession(
@@ -1146,6 +1211,124 @@ function expectSettledSessionBoundary(
       }),
     }),
   );
+}
+
+function expectCanonicalEffectSession(
+  record: DurableSessionRecord,
+  expectedReceipts: readonly {
+    playbookId: string;
+    classification: string;
+  }[],
+): void {
+  expect(record.schemaVersion).toBe(5);
+  expect(record.snapshot?.schemaVersion).toBe(4);
+  expect(record.snapshot?.captain?.runtime?.schemaVersion).toBe(4);
+  expect(record.effectLedger).toEqual(record.snapshot?.effectLedger);
+  expect(record.effectLedger).toMatchObject({
+    schemaVersion: 1,
+    revision: expect.any(Number),
+    boundaries: expect.any(Array),
+    logicalOperations: expect.any(Array),
+  });
+  expect(record.unresolvedEffects).toEqual([]);
+
+  const catalog = (record.structuralProjection as any)?.catalog ?? {};
+  expect(Object.keys(catalog).length).toBeGreaterThan(0);
+  for (const entry of Object.values(catalog) as any[]) {
+    expect(entry.artifactSchema).toBe(3);
+  }
+
+  const boundaries = record.effectLedger.boundaries as any[];
+  expect(boundaries.length).toBeGreaterThan(0);
+  for (const expectedReceipt of expectedReceipts) {
+    expect(
+      boundaries.some(
+        (boundary) =>
+          boundary.playbookId === expectedReceipt.playbookId &&
+          boundary.physicalReceipt?.classification ===
+            expectedReceipt.classification,
+      ),
+    ).toBe(true);
+  }
+  for (const boundary of boundaries) {
+    expect(boundary.physicalReceipt).toEqual(
+      expect.objectContaining({ baseline: boundary.baseline }),
+    );
+    expect(boundary.physicalReceipt.after).toEqual(boundary.after);
+    if (boundary.physicalReceipt.classification === 'one-descendant-commit') {
+      expect(boundary.physicalReceipt.commitOid).toBe(
+        boundary.physicalReceipt.after?.head,
+      );
+    } else {
+      expect(boundary.physicalReceipt).not.toHaveProperty('commitOid');
+    }
+  }
+  const boundaryIds = new Set(
+    boundaries.map((boundary) => boundary.boundaryId),
+  );
+  for (const operation of record.effectLedger.logicalOperations as any[]) {
+    expect(operation.logicalReceipt).toEqual(expect.any(Object));
+    for (const boundaryId of operation.boundaryIds) {
+      expect(boundaryIds.has(boundaryId)).toBe(true);
+    }
+  }
+}
+
+function expectDecideContinuity(record: DurableSessionRecord): string {
+  const boundaries = record.effectLedger?.boundaries as any[];
+  const reviewerProposalBoundaries = boundaries.filter(
+    (boundary) =>
+      boundary.playbookId === 'decide' &&
+      boundary.sourceStateId === 'askReviewerProposal' &&
+      boundary.roleId === 'reviewer',
+  );
+  expect(reviewerProposalBoundaries).toHaveLength(1);
+  const proposalText = reviewerProposalBoundaries[0]?.finalText;
+  expect(proposalText).toEqual(expect.any(String));
+  const markers =
+    typeof proposalText === 'string'
+      ? (proposalText.match(/^REVIEW_CONTINUITY_[A-Z0-9]{12}$/gm) ?? [])
+      : [];
+  expect(markers).toHaveLength(1);
+  const marker = markers[0];
+  if (marker === undefined) {
+    throw new Error('DECIDE independent Reviewer proposal has no marker');
+  }
+
+  const nestedFindingBoundaries = boundaries.filter(
+    (boundary) =>
+      boundary.playbookId === 'review' &&
+      boundary.sourceStateId === 'reviewInitial' &&
+      boundary.roleId === 'reviewer',
+  );
+  expect(nestedFindingBoundaries).toHaveLength(1);
+  expect(nestedFindingBoundaries[0]?.semanticCandidate).toEqual({
+    guard: 'hasFindings',
+  });
+  expect(nestedFindingBoundaries[0]?.finalText).toContain(marker);
+
+  const correctionBoundaries = boundaries.filter(
+    (boundary) =>
+      boundary.playbookId === 'review' &&
+      boundary.sourceStateId === 'addressFindings' &&
+      boundary.physicalReceipt?.classification === 'one-descendant-commit',
+  );
+  expect(correctionBoundaries).toHaveLength(1);
+  expect(correctionBoundaries[0]?.semanticCandidate).toEqual({
+    guard: 'committed',
+  });
+
+  const approvalBoundaries = boundaries.filter(
+    (boundary) =>
+      boundary.playbookId === 'review' &&
+      boundary.sourceStateId === 'reviewAfterCommit' &&
+      boundary.roleId === 'reviewer',
+  );
+  expect(approvalBoundaries).toHaveLength(1);
+  expect(approvalBoundaries[0]?.semanticCandidate).toEqual({
+    guard: 'noFindings',
+  });
+  return marker;
 }
 
 function expectLiveRoleBindings(record: DurableSessionRecord): void {
@@ -1432,6 +1615,7 @@ async function installGlobalCandidate(): Promise<string> {
 
 function createScenario(
   name: 'review' | 'code' | 'decide' | 'hermetic' | 'conversation',
+  options: { readonly reviewerInstruction?: string } = {},
 ): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
   // silently build the fixture tree inside the real repository instead.
@@ -1559,7 +1743,7 @@ function createScenario(
   } else {
     writeFileSync(
       join(configHome, 'playbook/playbook.config.yaml'),
-      liveConfig(),
+      liveConfig(options),
     );
   }
   if (name === 'hermetic') {
@@ -1623,7 +1807,6 @@ async function drivePlaybookTurn(
   const launcher = spawnLauncher(scenario);
   let sessionName: string | undefined;
   let target: string | undefined;
-  let continuityMarker: string | undefined;
   let gracefulStopAttempted = false;
   try {
     sessionName = await waitForNewSession(sessionsBefore, launcher);
@@ -1658,15 +1841,6 @@ async function drivePlaybookTurn(
       startupTimeoutMs,
       launcher,
     );
-    if (expectation.continuity !== undefined) {
-      continuityMarker = await waitForPlayerPaneMatch(
-        sessionName,
-        expectation.continuity.paneTitle,
-        expectation.continuity.pattern,
-        remainingTime(liveDeadline),
-        launcher,
-      );
-    }
     await waitForPaneText(
       target,
       expectation.nestedCalled,
@@ -1722,9 +1896,7 @@ async function drivePlaybookTurn(
     );
     gracefulStopAttempted = true;
     await stopManagedInteractiveSession(sessionName, target, launcher);
-    return continuityMarker === undefined
-      ? { sessionId }
-      : { sessionId, continuityMarker };
+    return { sessionId };
   } catch (error) {
     writeFailureSnapshot(
       scenario.root,
@@ -2191,26 +2363,6 @@ async function waitForPlayerPaneText(
     timeoutMs,
     launcher,
     (pane) => (paneContains(pane, expected) ? true : undefined),
-  );
-}
-
-async function waitForPlayerPaneMatch(
-  sessionName: string,
-  paneTitle: string,
-  pattern: RegExp,
-  timeoutMs: number,
-  launcher: Launcher,
-): Promise<string> {
-  return waitForPlayerPaneValue(
-    sessionName,
-    paneTitle,
-    String(pattern),
-    timeoutMs,
-    launcher,
-    (pane) => {
-      pattern.lastIndex = 0;
-      return pattern.exec(pane.replace(/\s+/g, ''))?.[0];
-    },
   );
 }
 

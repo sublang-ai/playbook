@@ -141,14 +141,12 @@ export async function runPlaybookRun(options = {}) {
           await awaitWithAbort(
             store.latest({
               preferredCwd: invokingCwd,
-              onLegacyRecord: ({
-                sessionId: legacyId,
-                path,
-                schemaVersion,
-              }) =>
-                writeStream(
+              onLegacyRecord: (record) =>
+                reportSkippedCaptainSession(
                   stderr,
-                  `playbook run: skipping legacy Captain session ${JSON.stringify(legacyId)} at ${JSON.stringify(path)} because ${legacyCaptainSessionReason(schemaVersion)}; move it outside the sessions directory or remove it to silence this warning\n`,
+                  'playbook run',
+                  'legacy',
+                  record,
                 ),
             }),
             options.signal,
@@ -513,6 +511,20 @@ export async function runPlaybookRun(options = {}) {
                 onFreshRecord(record) {
                   freshLaunchRecord = record;
                 },
+                onLegacyRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    stderr,
+                    'playbook run',
+                    'legacy',
+                    record,
+                  ),
+                onInvalidRecord: (record) =>
+                  reportSkippedCaptainSession(
+                    stderr,
+                    'playbook run',
+                    'invalid',
+                    record,
+                  ),
               }
             : {}),
           retainedGenerations: priorRecord?.retainedGenerations ?? {},
@@ -1059,14 +1071,18 @@ export async function installRetainedGenerationsForLaunch({
   shell,
   freshBoundary,
   onFreshRecord,
+  onLegacyRecord,
+  onInvalidRecord,
   retainedGenerations,
   reconcileRepositoryEffects,
 }) {
   let authoritative = retainedGenerations;
   if (freshBoundary !== undefined) {
-    const record = await lease.initializeSettledWithPredecessor(
-      freshBoundary,
-    );
+    const record = await lease.initializeSettledWithPredecessor({
+      ...freshBoundary,
+      onLegacyRecord,
+      onInvalidRecord,
+    });
     authoritative = record.retainedGenerations ?? {};
   }
   await reconcileRepositoryEffects?.();
@@ -1517,7 +1533,26 @@ function legacyCaptainSessionReason(schemaVersion) {
   if (schemaVersion === 3 || schemaVersion === 4) {
     return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
   }
+  if (schemaVersion === 5) {
+    return 'schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable';
+  }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
+}
+
+export async function reportSkippedCaptainSession(
+  stderr,
+  commandName,
+  kind,
+  { sessionId, path, schemaVersion, reason },
+) {
+  const explanation =
+    kind === 'legacy'
+      ? legacyCaptainSessionReason(schemaVersion)
+      : reason;
+  await writeStream(
+    stderr,
+    `${commandName}: skipping ${kind} Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} because ${explanation}; move it outside the sessions directory or remove it to silence this warning\n`,
+  );
 }
 
 function replayInvocation(argv, args, input) {

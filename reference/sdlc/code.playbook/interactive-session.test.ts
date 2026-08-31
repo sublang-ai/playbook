@@ -425,6 +425,60 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     await held.release();
   });
 
+  it('starts fresh and diagnoses a pre-cutover predecessor without changing it', async () => {
+    const fixture = await lifecycleFixture();
+    await seedRetainedSettled(fixture, predecessorSessionId);
+    const predecessorPath = join(
+      fixture.sessionsDir,
+      `${predecessorSessionId}.json`,
+    );
+    const canonical = JSON.parse(await readFile(predecessorPath, 'utf8'));
+    const preCutoverBytes = `${JSON.stringify(
+      preUnresolvedEffectsRecord(canonical),
+    )}\n`;
+    await writeFile(predecessorPath, preCutoverBytes, 'utf8');
+    const diagnostics: string[] = [];
+    const installed: unknown[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      stderr: {
+        write(chunk: string) {
+          diagnostics.push(String(chunk));
+          return true;
+        },
+      },
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost([]),
+          shell: {
+            async installRetainedGenerations(value: unknown) {
+              installed.push(value);
+            },
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    expect(installed).toEqual([{}]);
+    expect(diagnostics.join('')).toContain(
+      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because schema 5 predates required unresolved-effect settlement evidence for the artifact-schema-3 effect-authority cutover and is not resumable; move it outside the sessions directory or remove it to silence this warning`,
+    );
+    expect(diagnostics.join('')).not.toContain(
+      'missing field "unresolvedEffects"',
+    );
+    expect(await readFile(predecessorPath, 'utf8')).toBe(preCutoverBytes);
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    await runtime.dispose();
+    await lifecycle.shutdown();
+  });
+
   it.each([
     { boundary: 'guarded initialization', transferPublished: false },
     { boundary: 'predecessor transfer', transferPublished: true },
@@ -1571,6 +1625,21 @@ function retainedGeneration() {
       },
     ],
   };
+}
+
+function preUnresolvedEffectsRecord(value: Record<string, any>) {
+  const record = structuredClone(value);
+  delete record.unresolvedEffects;
+  for (const projection of [
+    record.structuralProjection,
+    record.lastAppliedExecutionProjection,
+    record.uncertain?.attemptedExecutionProjection,
+  ]) {
+    for (const item of Object.values(projection?.catalog ?? {}) as any[]) {
+      item.artifactSchema = 2;
+    }
+  }
+  return record;
 }
 
 async function seedSettled(

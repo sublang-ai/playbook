@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// RELEASE-28 step 8 / RELEASE-29: the standing guard that an installed
+// RELEASE-28 step 9 / RELEASE-29: the standing guard that an installed
 // `@sublang/cligent` carries the complete public contract Playbook uses.
 //
 // The obligation is a member on an interface, so the check is a type check,
