@@ -1008,6 +1008,8 @@ describe('packed tarball contents (RELEASE-18)', () => {
   // an anchor that file renders. Other repositories remain ordinary external
   // citations; a foreign owner/repository naming a local path is a malformed
   // living pointer rather than an escape from this check.
+  // The dry-pack plus full Markdown/anchor scan exceeds Vitest's five-second
+  // default on slower Node 20 CI runners, so budget only this heavy case.
   it('resolves every living-pointer URL in packed markdown against the repository', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;
@@ -1129,7 +1131,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     // Both URL forms occur in the packed docs; pin both parser branches so a
     // blob-only matcher cannot silently wave through a broken tree pointer.
     expect([...forms].sort()).toEqual(['blob', 'tree']);
-  });
+  }, 30_000);
 });
 
 describe('public CLI and registry surface (RELEASE-21)', () => {
@@ -1818,6 +1820,8 @@ if (snapshot.mode === 'engaged.parked') {
     }
   });
 
+  // Building and diagnosing the complete consumer program can exceed Vitest's
+  // five-second default on Node 20 CI, so budget only this compiler-heavy case.
   it('discriminates schema-gated factory and registry construction types', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-schema-types-'));
     try {
@@ -1987,7 +1991,7 @@ void decideConstruction;
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it.each(BUNDLED_WORKFLOW_IDS)(
     '%s visibly re-exports PlayerSessionStore from the shared contract',
