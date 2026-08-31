@@ -25,6 +25,7 @@ import {
   stringify as stringifyYaml,
 } from 'yaml';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
+import { defaultCaptainSessionsDir } from './session-store.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = resolve(
@@ -45,6 +46,7 @@ const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
   'layout',
   'notifications',
   'theme',
+  'sessions',
 ]);
 const RESERVED_CAPTAIN_PLAYBOOK_ID = 'captain';
 const RESERVED_CAPTAIN_ROLE_ID = 'captain';
@@ -133,6 +135,61 @@ export function resolveConfigHome(env = process.env, home = homedir()) {
 
 export function resolveUserConfigPath(env = process.env, home = homedir()) {
   return join(resolveConfigHome(env, home), 'playbook', 'playbook.config.yaml');
+}
+
+// PBCLI-46/78: session selection needs this one root locator before the
+// complete launch plan can be selected and normalized. Read only that scalar
+// from each layer so an ordinary reopen does not inspect unrelated current
+// catalog members before its durable projection is known.
+export function resolveLaunchSessionsDir({
+  userConfigPath,
+  overlayPaths = [],
+  env = process.env,
+  homeDir = env.HOME ?? homedir(),
+  sessionsDir,
+  preparePrimary = false,
+  templatePath = DEFAULT_TEMPLATE_PATH,
+  onNotice = () => {},
+}) {
+  // The private injection used by tests and managed launch plumbing remains
+  // authoritative over configuration, just like an injected store.
+  if (sessionsDir !== undefined) return sessionsDir;
+
+  if (preparePrimary) {
+    seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
+    migrateUserConfigIfRetired(userConfigPath, onNotice);
+  }
+
+  let locator;
+  if (existsSync(userConfigPath)) {
+    const primary = parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {};
+    if (!isObject(primary)) {
+      throw new Error(
+        `the top-level config at ${userConfigPath} must be a YAML map`,
+      );
+    }
+    if (hasOwn(primary, 'sessions')) locator = primary.sessions;
+  }
+  for (const overlayPath of overlayPaths) {
+    const overlay = loadOverlayFragment(overlayPath);
+    if (hasOwn(overlay, 'sessions')) locator = overlay.sessions;
+  }
+
+  if (locator === undefined) {
+    return defaultCaptainSessionsDir(env, homeDir);
+  }
+  if (typeof locator !== 'string' || locator.length === 0) {
+    throw new Error('sessions must be a nonempty filesystem path');
+  }
+  if (locator === '~') return homeDir;
+  if (locator.startsWith('~/')) {
+    return join(homeDir, locator.slice(2));
+  }
+  if (locator.startsWith('~')) {
+    throw new Error('sessions does not support named-user tilde expansion');
+  }
+  if (isAbsolute(locator)) return locator;
+  return resolve(dirname(userConfigPath), locator);
 }
 
 // PBCLI-46: configured filesystem modules are anchored once to the primary

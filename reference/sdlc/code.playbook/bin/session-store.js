@@ -9,6 +9,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
+  access,
   chmod,
   link,
   lstat,
@@ -125,6 +126,7 @@ const PLAYBOOK_SESSION_NOT_FOUND = 'PLAYBOOK_SESSION_NOT_FOUND';
 const PLAYBOOK_SESSION_LEASE_ACTIVE = 'PLAYBOOK_SESSION_LEASE_ACTIVE';
 const ACTIVE_LEASE_ERROR = Symbol('active Playbook session lease');
 const DEFAULT_FS_OPERATIONS = Object.freeze({
+  access,
   chmod,
   link,
   lstat,
@@ -205,6 +207,45 @@ export function defaultCaptainSessionsDir(
 ) {
   const stateHome = env.XDG_STATE_HOME || join(home, '.local', 'state');
   return join(stateHome, 'playbook', 'sessions');
+}
+
+// PBCLI-78: front-end bootstrap checks the same private filesystem boundary
+// as later store operations without creating an otherwise-unused directory.
+// A missing leaf is usable because the first lease publication creates it.
+export async function assertCaptainSessionsDirectoryUsable(
+  sessionsDir,
+  options = {},
+) {
+  if (typeof sessionsDir !== 'string' || !isAbsolute(sessionsDir)) {
+    throw new Error('Captain session store path must be absolute');
+  }
+  const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
+  try {
+    await assertPrivateDirectory(sessionsDir, fs);
+    await fs.access(
+      sessionsDir,
+      constants.R_OK | constants.W_OK | constants.X_OK,
+    );
+    return;
+  } catch (cause) {
+    if (cause?.code !== 'ENOENT') throw cause;
+  }
+
+  // Reject a symlink or non-directory anywhere in an otherwise missing path;
+  // mode 0700 becomes mandatory once the sessions directory itself exists.
+  let cursor = sessionsDir;
+  for (;;) {
+    try {
+      await assertDirectoryNotLink(cursor, fs);
+      await fs.access(cursor, constants.W_OK | constants.X_OK);
+      return;
+    } catch (cause) {
+      if (cause?.code !== 'ENOENT') throw cause;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw cause;
+      cursor = parent;
+    }
+  }
 }
 
 // PBCLI-73: caller-shape rejection precedes the PBCLI-75 sanitizer so Task 3

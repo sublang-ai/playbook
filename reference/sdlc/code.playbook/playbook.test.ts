@@ -1612,6 +1612,156 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
   });
 
+  it('selects from the configured sessions directory before managed launch', async () => {
+    const id = '90000000-0000-4000-8000-000000000079';
+    const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-locator-'));
+    tempDirs.push(root);
+    await mkdir(join(root, 'through'));
+    await mkdir(join(root, 'sessions'), { mode: 0o700 });
+    const sessionsDir = join(root, 'through', '..', 'sessions');
+    const home = await makeTempHome();
+    const config = [
+      `sessions: ${JSON.stringify(sessionsDir)}`,
+      'captain: claude',
+      'players:',
+      '  dev.coder: codex',
+      'playbooks:',
+      '  code:',
+      '    from: "mod://code"',
+      '    roles: { coder: dev.coder }',
+      '',
+    ].join('\n');
+    await writeUserConfig(home, config);
+    const registry = {
+      ...fakeEntry,
+      requiredRoleIds: ['coder'],
+    };
+    const plan = await loadLaunchPlan({
+      userConfigPath: resolveUserConfigPath({}, home),
+      loadModule: loader({ 'mod://code': { default: registry } }),
+    });
+    const execution = executionConfigFromPlan(plan);
+    const record = validateCaptainSessionRecord({
+      schemaVersion: 6,
+      kind: 'captain-session',
+      state: 'settled',
+      sessionId: id,
+      createdAt: '2026-08-31T18:00:00.000Z',
+      updatedAt: '2026-08-31T18:00:00.001Z',
+      cwd: process.cwd(),
+      structuralProjection: projectCaptainSessionStructure(execution),
+      lastAppliedExecutionProjection: execution,
+      snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger: emptyEffectLedger(),
+      unresolvedEffects: [],
+      retainedGenerations: {},
+    });
+    const recordPath = join(root, 'sessions', `${id}.json`);
+    await writeFile(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    await chmod(recordPath, 0o600);
+    let descriptor: any;
+    let hostProjection: any;
+    let imports = 0;
+
+    const out = await managedCliHarness({
+      argv: ['--session', id],
+      config,
+      homeDir: home,
+      sessionId: id,
+      loadModule: async () => {
+        imports += 1;
+        throw new Error('selected outer process must not import a registry');
+      },
+      launchManagedTmuxPlay: async (options: any) => {
+        hostProjection = parseYaml(await readFile(options.configPath, 'utf8'));
+        const workDir = await requestManagedSessionCommand(options);
+        descriptor = JSON.parse(
+          await readFile(
+            join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE),
+            'utf8',
+          ),
+        );
+        return {
+          sessionId: id,
+          workDir,
+          async cancel() {},
+          async attach() {},
+        };
+      },
+    });
+
+    expect(out.result).toEqual({ code: 0 });
+    expect(imports).toBe(0);
+    expect(descriptor.sessionsDir).toBe(sessionsDir);
+    expect(hostProjection).not.toHaveProperty('sessions');
+    expect(descriptor.executionProjection).not.toHaveProperty('sessions');
+    expect(
+      projectCaptainSessionStructure(descriptor.executionProjection),
+    ).not.toHaveProperty('sessions');
+  });
+
+  it('gives an injected store precedence over an invalid config locator', async () => {
+    const id = '90000000-0000-4000-8000-000000000080';
+    const root = await mkdtemp(join(tmpdir(), 'playbook-injected-sessions-'));
+    tempDirs.push(root);
+    const injectedSessionsDir = join(root, 'injected');
+    await mkdir(injectedSessionsDir, { mode: 0o700 });
+    let descriptor: any;
+
+    const out = await managedCliHarness({
+      config: `sessions: "~another-user/sessions"\n${minimalConfig()}`,
+      sessionId: id,
+      sessionStore: { sessionsDir: injectedSessionsDir },
+      launchManagedTmuxPlay: async (options: any) => {
+        const workDir = await requestManagedSessionCommand(options);
+        descriptor = JSON.parse(
+          await readFile(
+            join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE),
+            'utf8',
+          ),
+        );
+        return {
+          sessionId: id,
+          workDir,
+          async cancel() {},
+          async attach() {},
+        };
+      },
+    });
+
+    expect(out.result).toEqual({ code: 0 });
+    expect(descriptor.sessionsDir).toBe(injectedSessionsDir);
+  });
+
+  it('fails an unusable sessions directory before import or managed launch', async () => {
+    const id = '90000000-0000-4000-8000-000000000081';
+    const root = await mkdtemp(join(tmpdir(), 'playbook-unusable-sessions-'));
+    tempDirs.push(root);
+    const sessionsDir = join(root, 'sessions');
+    await mkdir(sessionsDir, { mode: 0o700 });
+    await chmod(sessionsDir, 0o755);
+    let imports = 0;
+    let launches = 0;
+
+    const out = await managedCliHarness({
+      config: `sessions: ${JSON.stringify(sessionsDir)}\n${minimalConfig()}`,
+      sessionId: id,
+      loadModule: async () => {
+        imports += 1;
+        throw new Error('registry import must not begin');
+      },
+      launchManagedTmuxPlay: async () => {
+        launches += 1;
+        throw new Error('managed launch must not begin');
+      },
+    });
+
+    expect(out.result).toEqual({ code: 1 });
+    expect(out.stderr.text()).toMatch(/permissions must be 0700/);
+    expect(imports).toBe(0);
+    expect(launches).toBe(0);
+  });
+
   it('claims accepted child readiness before reporting and cancels a collision', async () => {
     const id = '90000000-0000-4000-8000-000000000062';
     let workDir: string;
@@ -2304,8 +2454,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
 });
 
 async function managedCliHarness(options: any) {
-  const home = await makeTempHome();
-  await writeUserConfig(home, minimalConfig());
+  const home = options.homeDir ?? (await makeTempHome());
+  await writeUserConfig(home, options.config ?? minimalConfig());
   const stderr = options.stderr ?? writer();
   const run = options.entry ? runPlaybookCliEntry : runPlaybookCli;
   const launchManagedTmuxPlay = async (launchOptions: any) => {
@@ -2334,6 +2484,8 @@ async function managedCliHarness(options: any) {
     createLogicalSessionId: () => options.sessionId,
     probeAdapterSdk: async () => true,
     launchManagedTmuxPlay,
+    ...(options.loadModule ? { loadModule: options.loadModule } : {}),
+    ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
     publishManagedReadinessWitness:
       options.publishManagedReadinessWitness ?? (async () => {}),
     ...(options.signal ? { signal: options.signal } : {}),

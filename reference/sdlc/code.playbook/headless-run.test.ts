@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -15,7 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   createEvent,
@@ -714,6 +715,8 @@ async function headlessHarness(
       | undefined) ?? ((entry: unknown) => entry);
   const runOptions = { ...extra };
   delete runOptions.entryTransform;
+  const injectSessionsDir = runOptions.injectSessionsDir !== false;
+  delete runOptions.injectSessionsDir;
   const events: string[] = [];
   const inputs: string[] = [];
   const entries = nestedEntries(events);
@@ -741,7 +744,7 @@ async function headlessHarness(
       '90000000-0000-4000-8000-000000000001',
     createCaptainSessionId: uuidSequence(),
     probeAdapterSdk: async () => true,
-    sessionsDir,
+    ...(injectSessionsDir ? { sessionsDir } : {}),
     stdout,
     stderr,
     spawn: () => {
@@ -765,6 +768,155 @@ function uuidSequence() {
   return () =>
     `10000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
 }
+
+describe('headless sessions locator (PBCLI-78/81)', () => {
+  it('selects and persists through a configured relative directory without projecting the locator', async () => {
+    const configPath = await writeConfig(
+      ['sessions: replay-sessions', sharedConfig()].join('\n'),
+    );
+    const configuredSessionsDir = join(
+      dirname(configPath),
+      'replay-sessions',
+    );
+    const first = await headlessHarness(['run', 'first turn'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+    });
+
+    expect(first.result.code, first.stderr).toBe(0);
+    const recordPath = join(
+      configuredSessionsDir,
+      `${first.result.sessionId}.json`,
+    );
+    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    expect(record.structuralProjection).not.toHaveProperty('sessions');
+    expect(record.lastAppliedExecutionProjection).not.toHaveProperty(
+      'sessions',
+    );
+
+    const hostFactory = vi.fn((options: any) =>
+      createTmuxPlayRuntime(options),
+    );
+    const continued = await headlessHarness(
+      ['run', '--continue', 'second turn'],
+      {
+        injectSessionsDir: false,
+        userConfigPath: configPath,
+        createHostRuntime: hostFactory,
+      },
+    );
+
+    expect(continued.result.code, continued.stderr).toBe(0);
+    expect(continued.result.sessionId).toBe(first.result.sessionId);
+    expect(continued.inputs).toEqual(['second turn']);
+    expect(hostFactory).toHaveBeenCalledOnce();
+  });
+
+  it('gives an injected store precedence over an invalid configured locator', async () => {
+    const configPath = await writeConfig(
+      ['sessions: "~another-user/replay"', sharedConfig()].join('\n'),
+    );
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-injected-session-store-'),
+    );
+    tempDirs.push(stateRoot);
+    const injectedSessionsDir = join(stateRoot, 'sessions');
+    const sessionStore = createCaptainSessionStore({
+      sessionsDir: injectedSessionsDir,
+    });
+    const out = await headlessHarness(['run', 'injected store'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+      sessionStore,
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    await expect(
+      stat(join(injectedSessionsDir, `${out.result.sessionId}.json`)),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects an unusable configured directory before agent or host work', async () => {
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-unusable-sessions-'),
+    );
+    tempDirs.push(stateRoot);
+    const unusablePath = join(stateRoot, 'not-a-directory');
+    await writeFile(unusablePath, 'occupied\n', 'utf8');
+    const configPath = await writeConfig(
+      [`sessions: ${JSON.stringify(unusablePath)}`, sharedConfig()].join(
+        '\n',
+      ),
+    );
+    const calls = { prepare: 0, load: 0, host: 0 };
+    const out = await headlessHarness(['run', 'must not run'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+      prepareRegistryModule: async ({ from }: any) => {
+        calls.prepare += 1;
+        return from;
+      },
+      loadModule: async () => {
+        calls.load += 1;
+        return {};
+      },
+      createHostRuntime: async () => {
+        calls.host += 1;
+        throw new Error('must not construct host');
+      },
+    });
+
+    expect(out.result.code).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(calls).toEqual({ prepare: 0, load: 0, host: 0 });
+    expect(out.stderr).toContain(
+      'Captain session store path is not a real directory',
+    );
+  });
+
+  it('rejects a missing directory below an unwritable parent before host work', async () => {
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-unwritable-sessions-'),
+    );
+    tempDirs.push(stateRoot);
+    const lockedParent = join(stateRoot, 'locked');
+    await mkdir(lockedParent, { mode: 0o700 });
+    const configPath = await writeConfig(
+      [
+        `sessions: ${JSON.stringify(join(lockedParent, 'sessions'))}`,
+        sharedConfig(),
+      ].join('\n'),
+    );
+    const calls = { prepare: 0, load: 0, host: 0 };
+    await chmod(lockedParent, 0o500);
+    let out;
+    try {
+      out = await headlessHarness(['run', 'must not run'], {
+        injectSessionsDir: false,
+        userConfigPath: configPath,
+        prepareRegistryModule: async ({ from }: any) => {
+          calls.prepare += 1;
+          return from;
+        },
+        loadModule: async () => {
+          calls.load += 1;
+          return {};
+        },
+        createHostRuntime: async () => {
+          calls.host += 1;
+          throw new Error('must not construct host');
+        },
+      });
+    } finally {
+      await chmod(lockedParent, 0o700);
+    }
+
+    expect(out.result.code).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(calls).toEqual({ prepare: 0, load: 0, host: 0 });
+    expect(out.stderr).toMatch(/permission denied|EACCES/);
+  });
+});
 
 describe('playbook run shared Captain host (PBCLI-48)', () => {
   it('runs configured CODE through nested REVIEW on the real headless host', async () => {

@@ -30,6 +30,7 @@ import {
   invalidRegistryEntryReason,
   loadLaunchPlan,
   projectHostAgent,
+  resolveLaunchSessionsDir,
   resolveUserConfigPath,
   snapshotRegistryEntry,
 } from './launch-config.js';
@@ -41,6 +42,7 @@ import {
 } from './repository-effects.js';
 import {
   assertCaptainSessionExecutionCompatible,
+  assertCaptainSessionsDirectoryUsable,
   captainSessionSelectedMembers,
   createCaptainSessionStore,
   projectCaptainSessionStructure,
@@ -104,6 +106,33 @@ export async function runPlaybookRun(options = {}) {
     input = resolvedInput.input;
   }
 
+  const userConfigPath =
+    options.userConfigPath ?? resolveUserConfigPath(env, home);
+  const bootstrapConfigNotices = [];
+  let resolvedSessionsDir;
+  if (options.sessionStore === undefined) {
+    try {
+      resolvedSessionsDir = resolveLaunchSessionsDir({
+        userConfigPath,
+        overlayPaths: args.withPaths,
+        env,
+        homeDir: home,
+        ...(options.sessionsDir !== undefined
+          ? { sessionsDir: options.sessionsDir }
+          : {}),
+        preparePrimary: !continuing,
+        onNotice: (line) => bootstrapConfigNotices.push(line),
+      });
+      await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
+    } catch (error) {
+      for (const line of bootstrapConfigNotices) {
+        await writeStream(stderr, line);
+      }
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      return { code: EXIT.argument };
+    }
+  }
+
   let store;
   try {
     store =
@@ -111,7 +140,7 @@ export async function runPlaybookRun(options = {}) {
       createCaptainSessionStore({
         env,
         homeDir: home,
-        ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+        sessionsDir: resolvedSessionsDir,
         ...(options.now ? { now: options.now } : {}),
         ...(options.createSessionTempId
           ? { createTempId: options.createSessionTempId }
@@ -271,10 +300,8 @@ export async function runPlaybookRun(options = {}) {
   }
 
   if (!continuing || !args.retryUncertain) {
-    const userConfigPath =
-      options.userConfigPath ?? resolveUserConfigPath(env, home);
     let plan;
-    const configNotices = [];
+    const configNotices = [...bootstrapConfigNotices];
     try {
       throwIfAborted(options.signal);
       plan = await loadLaunchPlan({

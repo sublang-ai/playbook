@@ -86,10 +86,7 @@ export function validateManagedInteractivePayload(value) {
   }
   assertUuid(value.sessionId, 'managed interactive session id');
   assertCanonicalAbsolutePath(value.cwd, 'managed interactive working directory');
-  assertCanonicalAbsolutePath(
-    value.sessionsDir,
-    'managed interactive sessions directory',
-  );
+  assertAbsolutePath(value.sessionsDir, 'managed interactive sessions directory');
   if (typeof value.noProvision !== 'boolean') {
     throw new Error('managed interactive noProvision must be a boolean');
   }
@@ -909,6 +906,12 @@ function assertCanonicalAbsolutePath(value, path) {
     resolve(value) !== value
   ) {
     throw new Error(`${path} must be a normalized absolute path`);
+  }
+}
+
+function assertAbsolutePath(value, path) {
+  if (typeof value !== 'string' || !isAbsolute(value)) {
+    throw new Error(`${path} must be an absolute path`);
   }
 }
 
