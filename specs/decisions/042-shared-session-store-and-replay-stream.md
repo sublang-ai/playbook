@@ -75,7 +75,7 @@ After the canonical store acquires a valid exclusive session lease, its replay w
 Failure to initialize that replay-only writer shall disable replay without invalidating the canonical lease or weakening strict reads; failure of the underlying private-directory, ownership, or independently requested manifest-read boundary remains fail-closed.
 A successfully initialized, unlatched writer shall await lease-bound appends in order, synchronize the directory when first publishing the stream pathname, advance readability on completed appends, and advance durability only at batched content checkpoints after private session-record settlement and before normal release.
 Replay initialization, sanitization, append, publication, or checkpoint failure shall latch and stop replay for that lease without failing or undoing the agent turn, successful private settlement, or otherwise valid release; intact complete lines remain readable and are not rolled back, while the live status declares the incomplete history.
-Each CLI front end shall signal the first such incomplete transition with one bounded best-effort stderr warning per acquired writer lease, outside replay and presentation; the facade itself remains silent and exposes the live status to its caller.
+Each CLI front end shall signal the first such incomplete transition once per acquired writer lease through its native ordered diagnostic channel, outside replay; the facade itself remains silent and exposes the live status to its caller.
 The latch is not durable, so each successor lease reconstructs state from the filesystem; a CLI front end warns anew if its successor lease encounters the persistent defect, and only a lease holder may repair a torn final line.
 
 ### 5. A `sessions` bootstrap locator
