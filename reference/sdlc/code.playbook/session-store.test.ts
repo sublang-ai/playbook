@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { writeFileSync } from 'node:fs';
 import {
   chmod,
   link,
@@ -146,6 +147,107 @@ function observedReplayFs(
         },
         close: () => handle.close(),
       };
+    },
+  };
+}
+
+type ReplayMutationEvent = {
+  call: number;
+  path: string;
+};
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
+function observedReplayMutationFs(
+  sessionsDir: string,
+  streamPath: string,
+  hooks: {
+    beforeReplayWrite?: (
+      event: ReplayMutationEvent,
+    ) => void | Promise<void>;
+    afterReplayWrite?: (
+      event: ReplayMutationEvent,
+    ) => void | Promise<void>;
+    beforeReplaySync?: (
+      event: ReplayMutationEvent,
+    ) => void | Promise<void>;
+    beforeSessionsSync?: (
+      event: ReplayMutationEvent,
+    ) => void | Promise<void>;
+  } = {},
+) {
+  let replayWrites = 0;
+  let replaySyncs = 0;
+  let sessionsSyncs = 0;
+  const observeWrite = async <T>(operation: () => Promise<T>) => {
+    replayWrites += 1;
+    const event = { call: replayWrites, path: streamPath };
+    await hooks.beforeReplayWrite?.(event);
+    const result = await operation();
+    await hooks.afterReplayWrite?.(event);
+    return result;
+  };
+  return {
+    counts: () => ({ replayWrites, replaySyncs, sessionsSyncs }),
+    fsOps: {
+      async open(path: string, flags: string | number, mode?: number) {
+        const handle = await open(path, flags as any, mode);
+        if (path === streamPath) {
+          return new Proxy(handle as any, {
+            get(target, property) {
+              if (property === 'write') {
+                return (...args: unknown[]) =>
+                  observeWrite(() => target.write(...args));
+              }
+              if (property === 'writeFile') {
+                return (...args: unknown[]) =>
+                  observeWrite(() => target.writeFile(...args));
+              }
+              if (property === 'appendFile') {
+                return (...args: unknown[]) =>
+                  observeWrite(() => target.appendFile(...args));
+              }
+              if (property === 'sync') {
+                return async () => {
+                  replaySyncs += 1;
+                  await hooks.beforeReplaySync?.({
+                    call: replaySyncs,
+                    path,
+                  });
+                  return target.sync();
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+        }
+        if (path === sessionsDir && flags === 'r') {
+          return new Proxy(handle as any, {
+            get(target, property) {
+              if (property === 'sync') {
+                return async () => {
+                  sessionsSyncs += 1;
+                  await hooks.beforeSessionsSync?.({
+                    call: sessionsSyncs,
+                    path,
+                  });
+                  return target.sync();
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+        }
+        return handle;
+      },
     },
   };
 }
@@ -5197,6 +5299,728 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     await expect(mutatingStore.readStream(sessionId)).rejects.toThrow();
     expect(replaced).toBe(true);
     expect(inReadEvents.some(({ position }) => position === 0)).toBe(true);
+  });
+});
+
+describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
+  it('seeds from byte zero and repairs each torn-tail branch exactly', async () => {
+    const empty = await fixtureDir();
+    const emptyLease = await fixedStore(
+      empty.sessionsDir,
+      tokenO,
+    ).acquire(sessionId);
+    expect(emptyLease.streamStatus()).toEqual({
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+    await emptyLease.release();
+
+    const retained = await fixtureDir();
+    const retainedLine = replayLine(
+      replayEnvelope(1, { type: 'complete-prefix' }),
+    );
+    await writeReplayStream(retained.sessionsDir, retainedLine);
+    const retainedLease = await fixedStore(
+      retained.sessionsDir,
+      tokenO,
+    ).acquire(sessionId);
+    expect(retainedLease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 1,
+      incomplete: false,
+    });
+    expect(await readFile(replayStreamPath(retained.sessionsDir), 'utf8'))
+      .toBe(retainedLine);
+    await retainedLease.release();
+
+    const valid = await fixtureDir();
+    const first = replayLine(replayEnvelope(1, { type: 'retained' }));
+    const validTail =
+      '{ "record": {"type":"valid-tail","bytes":"\u2603"}, "seq":2, "v":1, "role":"coder" }';
+    const validPath = await writeReplayStream(
+      valid.sessionsDir,
+      `${first}${validTail}`,
+    );
+    const validFs = observedReplayMutationFs(
+      valid.sessionsDir,
+      validPath,
+    );
+    const validLease = await fixedStore(valid.sessionsDir, tokenO, {
+      fsOps: validFs.fsOps,
+    }).acquire(sessionId);
+    expect(await readFile(validPath, 'utf8')).toBe(`${first}${validTail}\n`);
+    expect(validFs.counts().replaySyncs).toBe(1);
+    expect(validLease.streamStatus()).toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 2,
+      incomplete: false,
+    });
+    await expect(validLease.append({ type: 'after-valid-tail' })).resolves
+      .toBeUndefined();
+    expect(validLease.streamStatus()).toEqual({
+      lastReadableSeq: 3,
+      lastDurableSeq: 2,
+      incomplete: false,
+    });
+    await expect(validLease.release()).resolves.toEqual({
+      lastReadableSeq: 3,
+      lastDurableSeq: 3,
+      incomplete: false,
+    });
+    expect(
+      (await fixedStore(valid.sessionsDir, tokenN).readStream(sessionId))
+        .entries.map(({ seq }: any) => seq),
+    ).toEqual([1, 2, 3]);
+    const validSuccessor = await fixedStore(
+      valid.sessionsDir,
+      tokenN,
+    ).acquire(sessionId);
+    expect(validSuccessor.streamStatus()).toEqual({
+      lastReadableSeq: 3,
+      lastDurableSeq: 3,
+      incomplete: false,
+    });
+    await validSuccessor.append({ type: 'clean-successor' });
+    await expect(validSuccessor.release()).resolves.toEqual({
+      lastReadableSeq: 4,
+      lastDurableSeq: 4,
+      incomplete: false,
+    });
+    expect(
+      (await fixedStore(valid.sessionsDir, tokenR).readStream(sessionId))
+        .entries.map(({ seq }: any) => seq),
+    ).toEqual([1, 2, 3, 4]);
+
+    for (const [name, prefix, tail, expectedSeq] of [
+      [
+        'after-prefix',
+        first,
+        '{"v":1,"seq":2,"record":{"type":"partial"',
+        1,
+      ],
+      ['after-empty', '', '{"v":1,"seq":1,"record":', 0],
+    ] as const) {
+      const fixture = await fixtureDir();
+      const path = await writeReplayStream(
+        fixture.sessionsDir,
+        `${prefix}${tail}`,
+      );
+      const observed = observedReplayMutationFs(fixture.sessionsDir, path);
+      const lease = await fixedStore(fixture.sessionsDir, tokenO, {
+        fsOps: observed.fsOps,
+      }).acquire(sessionId);
+      expect(await readFile(path, 'utf8'), name).toBe(prefix);
+      expect(observed.counts().replaySyncs, name).toBe(1);
+      expect(lease.streamStatus(), name).toEqual({
+        lastReadableSeq: expectedSeq,
+        lastDurableSeq: expectedSeq,
+        incomplete: false,
+      });
+      await lease.append({ type: `after-${name}` });
+      expect(
+        (await lease.readStream()).entries.map(({ seq }: any) => seq),
+        name,
+      ).toEqual([
+        ...Array.from({ length: expectedSeq }, (_, i) => i + 1),
+        expectedSeq + 1,
+      ]);
+      await lease.release();
+    }
+  });
+
+  it('ignores follower cursor state and isolates invalid initialization', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const valid = replayLine(replayEnvelope(1, { type: 'valid' }));
+    const invalid = replayLine(replayEnvelope(2, { type: 'other' }));
+    expect(Buffer.byteLength(invalid)).toBe(Buffer.byteLength(valid));
+    const streamPath = await writeReplayStream(sessionsDir, valid);
+    const store = fixedStore(sessionsDir, tokenO);
+    await store.readStream(sessionId);
+    await writeFile(streamPath, invalid, 'utf8');
+
+    const lease = await store.acquire(sessionId);
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: null,
+      lastDurableSeq: null,
+      incomplete: true,
+    });
+    await expect(lease.append({ type: 'suppressed' })).resolves.toBeUndefined();
+    await expect(lease.readStream()).rejects.toThrow();
+    const execution = executionProjection();
+    await expect(
+      lease.initializeSettledWithPredecessor(freshBoundary(execution)),
+    ).resolves.toMatchObject({ state: 'settled' });
+    await expect(lease.release()).resolves.toEqual({
+      lastReadableSeq: null,
+      lastDurableSeq: null,
+      incomplete: true,
+    });
+    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+
+    const successor = await fixedStore(sessionsDir, tokenN).acquire(sessionId);
+    expect(successor.streamStatus()).toEqual({
+      lastReadableSeq: null,
+      lastDurableSeq: null,
+      incomplete: true,
+    });
+    await expect(successor.release()).resolves.toEqual({
+      lastReadableSeq: null,
+      lastDurableSeq: null,
+      incomplete: true,
+    });
+    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+  });
+
+  it('advances readability on append and durability on settlement and release', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const streamPath = replayStreamPath(sessionsDir);
+    const observed = observedReplayMutationFs(sessionsDir, streamPath);
+    const store = fixedStore(sessionsDir, tokenO, {
+      fsOps: observed.fsOps,
+    });
+    const lease = await store.acquire(sessionId);
+    const execution = executionProjection();
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    await lease.beginTurn({
+      input: 'checkpoint replay at settlement',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    const directorySyncsBeforePublication = observed.counts().sessionsSyncs;
+
+    await expect(
+      lease.append(
+        { type: 'player_event', resumeToken: 'removed', resume: false },
+        'coder',
+      ),
+    ).resolves.toBeUndefined();
+    expect(observed.counts().sessionsSyncs).toBe(
+      directorySyncsBeforePublication + 1,
+    );
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+    expect(await lease.readStream()).toEqual({
+      entries: [
+        replayEnvelope(
+          1,
+          { type: 'player_event', resume: false },
+          'coder',
+        ),
+      ],
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+
+    await expect(
+      lease.settle({
+        attemptId: attempt1,
+        snapshot: shellSnapshot(execution, 1),
+        unresolvedEffects: [],
+      }),
+    ).resolves.toMatchObject({ state: 'settled' });
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 1,
+      incomplete: false,
+    });
+    const settlementSyncs = observed.counts().replaySyncs;
+    expect(settlementSyncs).toBeGreaterThan(0);
+
+    await lease.append({ type: 'captain_reply', text: 'done' });
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
+      incomplete: false,
+    });
+    await expect(lease.release()).resolves.toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 2,
+      incomplete: false,
+    });
+    expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
+  });
+
+  it('serializes overlapping appends and makes release an admission barrier', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const streamPath = replayStreamPath(sessionsDir);
+    const entered = deferred();
+    const unblock = deferred();
+    const observed = observedReplayMutationFs(sessionsDir, streamPath, {
+      async beforeReplayWrite({ call }) {
+        if (call !== 1) return;
+        entered.resolve();
+        await unblock.promise;
+      },
+    });
+    const lease = await fixedStore(sessionsDir, tokenO, {
+      fsOps: observed.fsOps,
+    }).acquire(sessionId);
+
+    let secondSettled = false;
+    let releaseSettled = false;
+    const first = lease.append({ type: 'first' });
+    await entered.promise;
+    const second = lease.append({ type: 'second' }).finally(() => {
+      secondSettled = true;
+    });
+    const releasing = lease.release().finally(() => {
+      releaseSettled = true;
+    });
+    await expect(lease.append({ type: 'after-release' })).rejects.toThrow();
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    expect(releaseSettled).toBe(false);
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+
+    unblock.resolve();
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBeUndefined();
+    await expect(releasing).resolves.toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 2,
+      incomplete: false,
+    });
+    expect(
+      (await fixedStore(sessionsDir, tokenN).readStream(sessionId)).entries,
+    ).toEqual([
+      replayEnvelope(1, { type: 'first' }),
+      replayEnvelope(2, { type: 'second' }),
+    ]);
+  });
+
+  it('drains admitted work after a held pre-byte append failure', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const streamPath = replayStreamPath(sessionsDir);
+    const entered = deferred();
+    const fail = deferred();
+    const observed = observedReplayMutationFs(sessionsDir, streamPath, {
+      async beforeReplayWrite({ call }) {
+        if (call !== 1) return;
+        entered.resolve();
+        await fail.promise;
+        throw new Error('synthetic pre-byte replay failure');
+      },
+    });
+    const lease = await fixedStore(sessionsDir, tokenO, {
+      fsOps: observed.fsOps,
+    }).acquire(sessionId);
+    const first = lease.append({ type: 'fails' });
+    await entered.promise;
+    let successorSettled = false;
+    let releaseSettled = false;
+    const successor = lease.append({ type: 'queued' }).finally(() => {
+      successorSettled = true;
+    });
+    const releasing = lease.release().finally(() => {
+      releaseSettled = true;
+    });
+    await Promise.resolve();
+    expect(successorSettled).toBe(false);
+    expect(releaseSettled).toBe(false);
+
+    fail.resolve();
+    await expect(first).rejects.toThrow(/pre-byte replay failure/);
+    await expect(successor).resolves.toBeUndefined();
+    await expect(releasing).resolves.toEqual({
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(await fixedStore(sessionsDir, tokenN).readStream(sessionId)).toEqual({
+      entries: [],
+      lastReadableSeq: 0,
+    });
+    expect(observed.counts().replayWrites).toBe(1);
+    expect(observed.counts().replaySyncs).toBe(0);
+  });
+
+  it('classifies raw arguments before sanitization and leaves retry eligible', async () => {
+    const cases: readonly [string, unknown, unknown?][] = [
+      ['null', null],
+      ['number', 7],
+      ['string', 'record'],
+      ['callable', () => undefined],
+      ['array', [{ type: 'array-entry' }]],
+      ['empty role', { type: 'record' }, ''],
+      ['non-string role', { type: 'record' }, 7],
+    ];
+    for (const [name, value, role] of cases) {
+      const { sessionsDir } = await fixtureDir();
+      const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+      const before = lease.streamStatus();
+      await expect((lease.append as any)(value, role), name).rejects.toThrow();
+      expect(lease.streamStatus(), name).toEqual(before);
+      expect(await fixedStore(sessionsDir, tokenN).readStream(sessionId), name)
+        .toEqual({ entries: [], lastReadableSeq: 0 });
+      await expect(lease.append({ type: `corrected-${name}` }), name).resolves
+        .toBeUndefined();
+      expect(
+        (await lease.readStream()).entries.map(({ seq }: any) => seq),
+        name,
+      ).toEqual([1]);
+      await lease.release();
+    }
+  });
+
+  it('latches sanitizer failures only for the live lease', async () => {
+    const cyclic: Record<string, unknown> = { type: 'cyclic' };
+    cyclic.self = cyclic;
+    for (const [name, value] of [
+      ['date', new Date('2026-08-11T21:00:00.000Z')],
+      ['cycle', cyclic],
+      ['nested callable', { type: 'callable', nested: () => undefined }],
+    ] as const) {
+      const { sessionsDir } = await fixtureDir();
+      const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+      await expect(lease.append(value), name).rejects.toThrow();
+      expect(lease.streamStatus(), name).toEqual({
+        lastReadableSeq: 0,
+        lastDurableSeq: 0,
+        incomplete: true,
+      });
+      await expect(lease.append({ type: 'suppressed' }), name).resolves
+        .toBeUndefined();
+      expect(await fixedStore(sessionsDir, tokenN).readStream(sessionId), name)
+        .toEqual({ entries: [], lastReadableSeq: 0 });
+      await expect(lease.release(), name).resolves.toEqual({
+        lastReadableSeq: 0,
+        lastDurableSeq: 0,
+        incomplete: true,
+      });
+
+      const successor = await fixedStore(
+        sessionsDir,
+        tokenN,
+      ).acquire(sessionId);
+      expect(successor.streamStatus(), name).toEqual({
+        lastReadableSeq: 0,
+        lastDurableSeq: 0,
+        incomplete: false,
+      });
+      await successor.append({ type: `successor-${name}` });
+      await successor.release();
+      expect(
+        (await fixedStore(sessionsDir, tokenR).readStream(sessionId)).entries,
+        name,
+      ).toEqual([replayEnvelope(1, { type: `successor-${name}` })]);
+    }
+  });
+
+  it('isolates publication, visible-write, checkpoint, and repair failures', async () => {
+    const publication = await fixtureDir();
+    const publicationPath = replayStreamPath(publication.sessionsDir);
+    let failPublication = false;
+    const publicationFs = observedReplayMutationFs(
+      publication.sessionsDir,
+      publicationPath,
+      {
+        beforeSessionsSync() {
+          if (failPublication) {
+            failPublication = false;
+            throw new Error('synthetic replay publication sync failure');
+          }
+        },
+      },
+    );
+    const publicationLease = await fixedStore(
+      publication.sessionsDir,
+      tokenO,
+      { fsOps: publicationFs.fsOps },
+    ).acquire(sessionId);
+    failPublication = true;
+    await expect(publicationLease.append({ type: 'published' })).rejects
+      .toThrow(/publication sync failure/);
+    expect(publicationLease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    await publicationLease.append({ type: 'suppressed' });
+    expect((await publicationLease.readStream()).entries).toEqual([
+      replayEnvelope(1, { type: 'published' }),
+    ]);
+    await expect(publicationLease.release()).resolves.toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+
+    const visible = await fixtureDir();
+    const visiblePath = replayStreamPath(visible.sessionsDir);
+    let failAfterWrite = false;
+    const visibleFs = observedReplayMutationFs(
+      visible.sessionsDir,
+      visiblePath,
+      {
+        afterReplayWrite() {
+          if (failAfterWrite) {
+            throw new Error('synthetic post-write replay failure');
+          }
+        },
+      },
+    );
+    const visibleLease = await fixedStore(visible.sessionsDir, tokenO, {
+      fsOps: visibleFs.fsOps,
+    }).acquire(sessionId);
+    failAfterWrite = true;
+    await expect(visibleLease.append({ type: 'complete-but-failed' })).rejects
+      .toThrow(/post-write replay failure/);
+    expect(visibleLease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(await visibleLease.readStream()).toEqual({
+      entries: [replayEnvelope(1, { type: 'complete-but-failed' })],
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(
+      await fixedStore(visible.sessionsDir, tokenN).readStream(sessionId),
+    ).toEqual({
+      entries: [replayEnvelope(1, { type: 'complete-but-failed' })],
+      lastReadableSeq: 1,
+    });
+    await visibleLease.release();
+
+    const checkpoint = await fixtureDir();
+    const checkpointPath = replayStreamPath(checkpoint.sessionsDir);
+    let failCheckpoint = false;
+    const checkpointFs = observedReplayMutationFs(
+      checkpoint.sessionsDir,
+      checkpointPath,
+      {
+        beforeReplaySync() {
+          if (failCheckpoint) {
+            throw new Error('synthetic replay checkpoint failure');
+          }
+        },
+      },
+    );
+    const checkpointLease = await fixedStore(checkpoint.sessionsDir, tokenO, {
+      fsOps: checkpointFs.fsOps,
+    }).acquire(sessionId);
+    const execution = executionProjection();
+    await checkpointLease.initializeSettledWithPredecessor(
+      freshBoundary(execution),
+    );
+    await checkpointLease.beginTurn({
+      input: 'fail replay checkpoint only',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    await checkpointLease.append({ type: 'checkpointed' });
+    failCheckpoint = true;
+    await expect(
+      checkpointLease.settle({
+        attemptId: attempt1,
+        snapshot: shellSnapshot(execution, 1),
+        unresolvedEffects: [],
+      }),
+    ).resolves.toMatchObject({ state: 'settled' });
+    expect(checkpointLease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    const checkpointSyncs = checkpointFs.counts().replaySyncs;
+    await checkpointLease.append({ type: 'suppressed' });
+    await expect(checkpointLease.release()).resolves.toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(checkpointFs.counts().replaySyncs).toBe(checkpointSyncs);
+
+    const release = await fixtureDir();
+    const releasePath = replayStreamPath(release.sessionsDir);
+    let failRelease = false;
+    const releaseFs = observedReplayMutationFs(
+      release.sessionsDir,
+      releasePath,
+      {
+        beforeReplaySync() {
+          if (failRelease) {
+            throw new Error('synthetic replay release checkpoint failure');
+          }
+        },
+      },
+    );
+    const releaseLease = await fixedStore(release.sessionsDir, tokenO, {
+      fsOps: releaseFs.fsOps,
+    }).acquire(sessionId);
+    await releaseLease.append({ type: 'release-checkpoint' });
+    failRelease = true;
+    await expect(releaseLease.release()).resolves.toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+
+    const repair = await fixtureDir();
+    const repairFirst = replayLine(replayEnvelope(1, { type: 'first' }));
+    const repairTail = JSON.stringify(
+      replayEnvelope(2, { type: 'repaired-but-unsynced' }),
+    );
+    const repairPath = await writeReplayStream(
+      repair.sessionsDir,
+      `${repairFirst}${repairTail}`,
+    );
+    const repairFs = observedReplayMutationFs(
+      repair.sessionsDir,
+      repairPath,
+      {
+        beforeReplaySync() {
+          throw new Error('synthetic replay repair sync failure');
+        },
+      },
+    );
+    const repairLease = await fixedStore(repair.sessionsDir, tokenO, {
+      fsOps: repairFs.fsOps,
+    }).acquire(sessionId);
+    expect(await readFile(repairPath, 'utf8')).toBe(
+      `${repairFirst}${repairTail}\n`,
+    );
+    expect(repairLease.streamStatus()).toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
+      incomplete: true,
+    });
+    await repairLease.append({ type: 'suppressed' });
+    await expect(repairLease.release()).resolves.toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
+      incomplete: true,
+    });
+    const repairSuccessor = await fixedStore(
+      repair.sessionsDir,
+      tokenN,
+    ).acquire(sessionId);
+    expect(repairSuccessor.streamStatus()).toEqual({
+      lastReadableSeq: 2,
+      lastDurableSeq: 2,
+      incomplete: false,
+    });
+    await repairSuccessor.release();
+  });
+
+  it('refuses replay mutation without exact canonical ownership', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const ownerPath = join(
+      sessionsDir,
+      `.${sessionId}.lock`,
+      'owner.json',
+    );
+    const ownerBytes = await readFile(ownerPath, 'utf8');
+    const owner = JSON.parse(ownerBytes);
+    await writeFile(
+      ownerPath,
+      `${JSON.stringify({ ...owner, ownerToken: tokenN })}\n`,
+      'utf8',
+    );
+    await expect(lease.append({ type: 'not-owner' })).rejects.toThrow(
+      /different token|ownership/,
+    );
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+    expect(await fixedStore(sessionsDir, tokenR).readStream(sessionId)).toEqual({
+      entries: [],
+      lastReadableSeq: 0,
+    });
+    await writeFile(ownerPath, ownerBytes, 'utf8');
+
+    let changedDuringSanitization = false;
+    const record = new Proxy(
+      { type: 'owner-changes-during-sanitization' },
+      {
+        getPrototypeOf(target) {
+          if (!changedDuringSanitization) {
+            changedDuringSanitization = true;
+            writeFileSync(
+              ownerPath,
+              `${JSON.stringify({ ...owner, ownerToken: tokenN })}\n`,
+              'utf8',
+            );
+          }
+          return Reflect.getPrototypeOf(target);
+        },
+      },
+    );
+    await expect(lease.append(record)).rejects.toThrow(
+      /different token|ownership/,
+    );
+    expect(changedDuringSanitization).toBe(true);
+    expect(lease.streamStatus()).toEqual({
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: false,
+    });
+    expect(await fixedStore(sessionsDir, tokenR).readStream(sessionId)).toEqual({
+      entries: [],
+      lastReadableSeq: 0,
+    });
+    await writeFile(ownerPath, ownerBytes, 'utf8');
+    await lease.release();
+
+    const raced = await fixtureDir();
+    const racedStreamPath = replayStreamPath(raced.sessionsDir);
+    const racedOwnerPath = join(
+      raced.sessionsDir,
+      `.${sessionId}.lock`,
+      'owner.json',
+    );
+    let racedOwner: Record<string, unknown> = {};
+    const observed = observedReplayMutationFs(
+      raced.sessionsDir,
+      racedStreamPath,
+      {
+        async afterReplayWrite() {
+          await writeFile(
+            racedOwnerPath,
+            `${JSON.stringify({ ...racedOwner, ownerToken: tokenN })}\n`,
+            'utf8',
+          );
+        },
+      },
+    );
+    const racedLease = await fixedStore(raced.sessionsDir, tokenO, {
+      fsOps: observed.fsOps,
+    }).acquire(sessionId);
+    const racedOwnerBytes = await readFile(racedOwnerPath, 'utf8');
+    racedOwner = JSON.parse(racedOwnerBytes);
+    await expect(racedLease.append({ type: 'visible-before-owner-loss' }))
+      .rejects.toThrow(/different token|ownership/);
+    expect(racedLease.streamStatus()).toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
+    expect(
+      (await fixedStore(raced.sessionsDir, tokenR).readStream(sessionId))
+        .entries,
+    ).toEqual([
+      replayEnvelope(1, { type: 'visible-before-owner-loss' }),
+    ]);
+    await writeFile(racedOwnerPath, racedOwnerBytes, 'utf8');
+    await expect(racedLease.release()).resolves.toEqual({
+      lastReadableSeq: 1,
+      lastDurableSeq: 0,
+      incomplete: true,
+    });
   });
 });
 

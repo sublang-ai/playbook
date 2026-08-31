@@ -203,6 +203,299 @@ export function sanitizeReplayRecord(value) {
   return requireRecord(sanitized, 'replay record');
 }
 
+// PBCLI-75/76/83: one lease-owned writer repairs the retained prefix, queues
+// appends, and keeps replay durability fail-soft beside canonical settlement.
+async function createLeaseReplayWriter({
+  sessionsDir,
+  path,
+  fs,
+  assertOwner,
+  readStream,
+}) {
+  let lastReadableSeq = null;
+  let lastDurableSeq = null;
+  let incomplete = true;
+  let identity;
+  let completeOffset = 0;
+  let operationTail = Promise.resolve();
+  let appendAdmissionClosed = false;
+
+  const status = () =>
+    Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
+
+  const enqueue = (operation) => {
+    const result = operationTail.then(operation);
+    operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
+  const latch = () => {
+    if (lastReadableSeq !== null) incomplete = true;
+  };
+
+  const updateReadableFromDisk = async () => {
+    if (lastReadableSeq === null) return;
+    try {
+      const snapshot = await readReplayWriterSnapshot({
+        sessionsDir,
+        path,
+        identity,
+        fs,
+      });
+      if (snapshot.absent) return;
+      const parsed = parseReplayLines(
+        snapshot.bytes,
+        0,
+        EMPTY_REPLAY_PREFIX_DIGEST,
+      );
+      lastReadableSeq = parsed.sequence;
+      completeOffset = parsed.completeBytes;
+      identity = snapshot.identity;
+    } catch {
+      // The already-established boundary remains the only trustworthy one.
+    }
+  };
+
+  const initialize = async () => {
+    let snapshot;
+    await assertOwner();
+    try {
+      snapshot = await readReplayWriterSnapshot({
+        sessionsDir,
+        path,
+        fs,
+      });
+      if (snapshot.absent) {
+        lastReadableSeq = 0;
+        lastDurableSeq = 0;
+        incomplete = false;
+        completeOffset = 0;
+        return;
+      }
+
+      const parsed = parseReplayLines(
+        snapshot.bytes,
+        0,
+        EMPTY_REPLAY_PREFIX_DIGEST,
+      );
+      const prefixSequence = parsed.sequence;
+      lastReadableSeq = prefixSequence;
+      lastDurableSeq = prefixSequence;
+      incomplete = false;
+      identity = snapshot.identity;
+      completeOffset = parsed.completeBytes;
+      const tail = snapshot.bytes.subarray(parsed.completeBytes);
+      if (tail.length === 0) return;
+
+      let retainTail = false;
+      try {
+        parseReplayEnvelope(tail, prefixSequence + 1);
+        retainTail = true;
+      } catch {
+        // Every other torn tail is discarded at the complete-prefix boundary.
+      }
+
+      if (retainTail) {
+        try {
+          await mutateReplayWriterFile({
+            sessionsDir,
+            path,
+            identity,
+            expectedSize: snapshot.bytes.length,
+            expectedFinalSize: snapshot.bytes.length + 1,
+            fs,
+            operation: async (handle) => {
+              await writeReplayRange(
+                handle,
+                Buffer.from('\n'),
+                snapshot.bytes.length,
+              );
+              completeOffset = snapshot.bytes.length + 1;
+              lastReadableSeq = prefixSequence + 1;
+              await handle.sync();
+            },
+          });
+          lastDurableSeq = prefixSequence + 1;
+        } catch {
+          await updateReadableFromDisk();
+          latch();
+        }
+        return;
+      }
+
+      try {
+        await mutateReplayWriterFile({
+          sessionsDir,
+          path,
+          identity,
+          expectedSize: snapshot.bytes.length,
+          expectedFinalSize: parsed.completeBytes,
+          fs,
+          operation: async (handle) => {
+            await handle.truncate(parsed.completeBytes);
+            completeOffset = parsed.completeBytes;
+            await handle.sync();
+          },
+        });
+      } catch {
+        await updateReadableFromDisk();
+        latch();
+      }
+    } catch {
+      lastReadableSeq = null;
+      lastDurableSeq = null;
+      incomplete = true;
+      identity = undefined;
+      completeOffset = 0;
+    }
+  };
+
+  const appendAtQueueHead = async (record, role) => {
+    if (lastReadableSeq === null || incomplete) return undefined;
+    await assertOwner();
+
+    let sanitized;
+    try {
+      sanitized = sanitizeReplayRecord(record);
+    } catch (cause) {
+      latch();
+      throw cause;
+    }
+    await assertOwner();
+
+    if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) {
+      latch();
+      throw new Error('replay stream sequence exhausted its safe integer range');
+    }
+    const sequence = lastReadableSeq + 1;
+    const line = Buffer.from(
+      `${JSON.stringify({
+        v: RECORDS_STREAM_VERSION,
+        seq: sequence,
+        ...(role === undefined ? {} : { role }),
+        record: sanitized,
+      })}\n`,
+    );
+    const publishing = identity === undefined;
+    try {
+      if (publishing) {
+        const published = await publishReplayWriterFile({
+          sessionsDir,
+          path,
+          bytes: line,
+          fs,
+        });
+        identity = published.identity;
+        completeOffset = line.length;
+        lastReadableSeq = sequence;
+        await syncDirectory(sessionsDir, fs);
+      } else {
+        await mutateReplayWriterFile({
+          sessionsDir,
+          path,
+          identity,
+          expectedSize: completeOffset,
+          expectedFinalSize: completeOffset + line.length,
+          fs,
+          operation: (handle) =>
+            writeReplayRange(handle, line, completeOffset),
+        });
+        completeOffset += line.length;
+        lastReadableSeq = sequence;
+      }
+      await assertOwner();
+      return undefined;
+    } catch (cause) {
+      await updateReadableFromDisk();
+      latch();
+      throw cause;
+    }
+  };
+
+  const append = (record, role) => {
+    if (appendAdmissionClosed) {
+      return Promise.reject(
+        new Error('replay append admission is closed for release'),
+      );
+    }
+    if (lastReadableSeq === null || incomplete) return Promise.resolve();
+    try {
+      assertReplayAppendArguments(record, role);
+    } catch (cause) {
+      return Promise.reject(cause);
+    }
+    return enqueue(() => appendAtQueueHead(record, role));
+  };
+
+  const read = (options) => {
+    if (appendAdmissionClosed) {
+      return Promise.reject(new Error('replay writer is closing'));
+    }
+    return enqueue(async () => {
+      await assertOwner();
+      if (lastReadableSeq === null) {
+        throw new Error('replay stream is unavailable for this lease');
+      }
+      const result = await readStream(options);
+      lastReadableSeq = result.lastReadableSeq;
+      return freezeReplayLeaseReadResult(
+        result.entries,
+        lastReadableSeq,
+        lastDurableSeq,
+        incomplete,
+      );
+    });
+  };
+
+  const checkpointAtQueueHead = async () => {
+    if (
+      lastReadableSeq === null ||
+      incomplete ||
+      lastReadableSeq === lastDurableSeq
+    ) {
+      return;
+    }
+    try {
+      await assertOwner();
+      await mutateReplayWriterFile({
+        sessionsDir,
+        path,
+        identity,
+        expectedSize: completeOffset,
+        expectedFinalSize: completeOffset,
+        fs,
+        operation: (handle) => handle.sync(),
+      });
+      await assertOwner();
+      lastDurableSeq = lastReadableSeq;
+    } catch {
+      await updateReadableFromDisk();
+      latch();
+    }
+  };
+
+  const checkpoint = () => enqueue(checkpointAtQueueHead);
+
+  const closeAppendAdmission = () => {
+    appendAdmissionClosed = true;
+  };
+
+  const prepareRelease = () => enqueue(checkpointAtQueueHead);
+
+  await initialize();
+  return Object.freeze({
+    append,
+    read,
+    status,
+    checkpoint,
+    closeAppendAdmission,
+    prepareRelease,
+  });
+}
+
 export function createCaptainSessionStore(options = {}) {
   const env = options.env ?? process.env;
   const home = options.homeDir ?? env.HOME ?? homedir();
@@ -877,9 +1170,13 @@ export function createCaptainSessionStore(options = {}) {
       await publishLeaseStage(sessionId, stage, () => {
         stagePublished = true;
       });
-      return createLease({
+      return await createLease({
         sessionId,
         owner: stage.owner,
+        sessionsDir,
+        replayPath: recordsPathFor(sessionId),
+        replayFs: fs,
+        readReplayStream: (options) => readStream(sessionId, options),
         readRecord,
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
@@ -1143,6 +1440,195 @@ async function readReplayRange(handle, start, end) {
   return buffer;
 }
 
+async function writeReplayRange(handle, bytes, start) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const result = await handle.write(
+      bytes,
+      offset,
+      bytes.length - offset,
+      start + offset,
+    );
+    if (
+      result === null ||
+      typeof result !== 'object' ||
+      !Number.isSafeInteger(result.bytesWritten) ||
+      result.bytesWritten <= 0 ||
+      result.bytesWritten > bytes.length - offset
+    ) {
+      throw new Error('replay stream append did not write its complete bytes');
+    }
+    offset += result.bytesWritten;
+  }
+}
+
+async function readReplayWriterSnapshot({
+  sessionsDir,
+  path,
+  identity,
+  fs,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  let pathStat;
+  try {
+    pathStat = await assertPrivateRegularPath(path, 0o600, fs, 'replay stream');
+  } catch (cause) {
+    if (cause?.code === 'ENOENT' && identity === undefined) {
+      return { absent: true };
+    }
+    throw cause;
+  }
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(pathStat, openedStat) ||
+      (identity !== undefined && !sameReplayIdentity(identity, openedStat))
+    ) {
+      throw new Error('replay stream identity changed for its writer');
+    }
+    const size = requireReplayFileSize(openedStat.size);
+    const bytes = await readReplayRange(handle, 0, size);
+    const finalHandleStat = await handle.stat();
+    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalHandleStat) ||
+      requireReplayFileSize(finalHandleStat.size) !== size
+    ) {
+      throw new Error('replay stream changed during writer validation');
+    }
+    const finalPathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new Error('replay stream path changed during writer validation');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+    return {
+      absent: false,
+      bytes,
+      identity: replayFileIdentity(openedStat),
+    };
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function mutateReplayWriterFile({
+  sessionsDir,
+  path,
+  identity,
+  expectedSize,
+  expectedFinalSize,
+  fs,
+  operation,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  const pathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  if (!sameReplayIdentity(identity, pathStat)) {
+    throw new Error('replay stream identity changed for its writer');
+  }
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDWR |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(pathStat, openedStat) ||
+      !sameReplayIdentity(identity, openedStat) ||
+      requireReplayFileSize(openedStat.size) !== expectedSize
+    ) {
+      throw new Error('replay stream changed before writer mutation');
+    }
+    await operation(handle);
+    const finalStat = await handle.stat();
+    assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalStat) ||
+      (expectedFinalSize !== undefined &&
+        requireReplayFileSize(finalStat.size) !== expectedFinalSize)
+    ) {
+      throw new Error('replay stream changed during writer mutation');
+    }
+    const finalPathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new Error('replay stream path changed during writer mutation');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function publishReplayWriterFile({ sessionsDir, path, bytes, fs }) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDWR |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+      0o600,
+    );
+    await handle.chmod(0o600);
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (requireReplayFileSize(openedStat.size) !== 0) {
+      throw new Error('new replay stream is not empty');
+    }
+    await writeReplayRange(handle, bytes, 0);
+    const finalStat = await handle.stat();
+    assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalStat) ||
+      requireReplayFileSize(finalStat.size) !== bytes.length
+    ) {
+      throw new Error('new replay stream did not retain its complete append');
+    }
+    const pathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, pathStat)) {
+      throw new Error('new replay stream path changed during publication');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+    return { identity: replayFileIdentity(openedStat) };
+  } finally {
+    await handle?.close();
+  }
+}
+
 function parseReplayLines(bytes, initialSequence, initialDigest, observedSeq) {
   const entries = [];
   let sequence = initialSequence;
@@ -1271,6 +1757,20 @@ function freezeReplayReadResult(entries, lastReadableSeq) {
   return Object.freeze({
     entries: Object.freeze(entries),
     lastReadableSeq,
+  });
+}
+
+function freezeReplayLeaseReadResult(
+  entries,
+  lastReadableSeq,
+  lastDurableSeq,
+  incomplete,
+) {
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    lastReadableSeq,
+    lastDurableSeq,
+    incomplete,
   });
 }
 
@@ -1443,9 +1943,13 @@ function sanitizeReplayValue(value, path, ancestors) {
   return Object.freeze(copy);
 }
 
-function createLease({
+async function createLease({
   sessionId,
   owner,
+  sessionsDir,
+  replayPath,
+  replayFs,
+  readReplayStream,
   readRecord,
   writeRecord,
   syncRecordDirectory,
@@ -1488,6 +1992,19 @@ function createLease({
   };
 
   const assertOwner = () => runExclusive(assertOwnerUnchecked);
+
+  const replayWriter = await createLeaseReplayWriter({
+    sessionsDir,
+    path: replayPath,
+    fs: replayFs,
+    assertOwner: assertOwnerUnchecked,
+    readStream: readReplayStream,
+  });
+
+  const finishSettlement = async (record) => {
+    await replayWriter.checkpoint();
+    return record;
+  };
 
   const read = () =>
     runExclusive(async () => {
@@ -2232,7 +2749,7 @@ function createLease({
           await assertOwnerUnchecked();
           await syncRecordDirectory();
           await assertOwnerUnchecked();
-          return current;
+          return finishSettlement(current);
         }
         if (settledAbandonment.phase === 'final') {
           throw new Error(
@@ -2262,7 +2779,7 @@ function createLease({
         await assertOwnerUnchecked();
         await writeRecord(record, { noReplace: false });
         await assertOwnerUnchecked();
-        return record;
+        return finishSettlement(record);
       }
       if (Object.hasOwn(prior.uncertain, 'abandonment')) {
         const abandonment = prior.uncertain.abandonment;
@@ -2320,7 +2837,7 @@ function createLease({
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
-      return record;
+      return finishSettlement(record);
     });
 
   const writeEffectLedger = (authorityValue, commandsValue) =>
@@ -2441,16 +2958,23 @@ function createLease({
       return record;
     });
 
-  const release = () =>
-    runExclusive(async () => {
+  const release = () => {
+    replayWriter.closeAppendAdmission();
+    return runExclusive(async () => {
+      await replayWriter.prepareRelease();
       const current = await assertOwnerUnchecked();
       await retireObservedLease(sessionId, current);
       released = true;
+      return replayWriter.status();
     });
+  };
 
   return Object.freeze({
     sessionId,
     ownerToken: owner.ownerToken,
+    append: replayWriter.append,
+    readStream: replayWriter.read,
+    streamStatus: replayWriter.status,
     read,
     initializeSettledWithPredecessor,
     abandonFreshSettled,
