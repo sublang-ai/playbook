@@ -1339,15 +1339,21 @@ function pkgSelfSpec(): string {
 describe('playbook launcher — CLI surface (PBCLI-17)', () => {
   it('lists configured playbooks without launching', async () => {
     const home = await makeTempHome();
-    await writeUserConfig(home, minimalConfig());
+    const unusedSessionsPath = join(home, 'not-a-directory');
+    await writeFile(unusedSessionsPath, 'occupied\n', 'utf8');
+    await writeUserConfig(
+      home,
+      `sessions: ${JSON.stringify(unusedSessionsPath)}\n${minimalConfig()}`,
+    );
     const spawn = fakeSpawn();
     const stdout = writer();
+    const stderr = writer();
 
     const result = await runPlaybookCli({
       argv: ['--list'],
       env: {},
       homeDir: home,
-      stderr: writer(),
+      stderr,
       stdout,
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
@@ -1361,6 +1367,29 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('/code');
     expect(stdout.text()).toContain('code');
     expect(stdout.text()).toContain('coding intent');
+    expect(stderr.text()).toBe('');
+    expect(spawn.calls).toHaveLength(0);
+
+    await writeUserConfig(
+      home,
+      `sessions: "~another-user/sessions"\n${minimalConfig()}`,
+    );
+    const invalidStdout = writer();
+    const invalidStderr = writer();
+    const invalid = await runPlaybookCli({
+      argv: ['--list'],
+      env: {},
+      homeDir: home,
+      stderr: invalidStderr,
+      stdout: invalidStdout,
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+    });
+
+    expect(invalid).toEqual({ code: 1 });
+    expect(invalidStdout.text()).toBe('');
+    expect(invalidStderr.text()).toMatch(/named-user tilde expansion/);
     expect(spawn.calls).toHaveLength(0);
   });
 

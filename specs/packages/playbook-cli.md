@@ -777,7 +777,8 @@ Where the shared launch configuration carries an optional top-level `sessions` k
 | Relative path | every other non-absolute value, including bare `sessions/here` without `./`, is a filesystem path resolved against the primary config's directory |
 | Per-launch overlay | overrides the primary value under [[playbook-cli-25](#playbook-cli-25)] |
 | Explicitly injected store | takes precedence over the key |
-| Unusable directory | prints a diagnostic and fails closed, launching nothing |
+| Non-launching `playbook --list` | applies the same locator resolution and precedence, rejects an authoritative malformed locator value, and does not inspect the resolved directory's filesystem usability |
+| Launch with an unusable directory | prints a diagnostic and fails closed, launching nothing |
 
 The key shall never enter a persisted structural or execution projection ([[playbook-cli-23](#playbook-cli-23)]), and where the key is unset the resolved directory shall equal the previous default exactly.
 
@@ -1152,4 +1153,4 @@ Where the shared-session-store negative and recovery compatibility suite runs ag
 
 #### playbook-cli-81
 
-Where a config sets `sessions`, the suite shall fail unless both front ends resolve and use that one directory before selecting any record, every resolution case holds — unset default, `~` expansion with `~user` rejected, absolute, dot-relative and bare-relative against the primary config directory, overlay override, injected-store precedence, and fail-closed launch on an unusable directory — the existing managed-child sessions-directory descriptor carries the resolved value unchanged, and the persisted record's structural and execution projections carry no `sessions` member ([[playbook-cli-78](#playbook-cli-78)]).
+Where a config sets `sessions`, the suite shall fail unless both front ends resolve and use that one directory before selecting any record, every resolution case holds — unset default, `~` expansion with `~user` rejected, absolute, dot-relative and bare-relative against the primary config directory, overlay override, injected-store precedence, and fail-closed launch on an unusable directory — non-launching `playbook --list` rejects an authoritative malformed locator value yet prints the catalog without inspecting a syntactically valid locator's unusable resolved directory, the existing managed-child sessions-directory descriptor carries the resolved value unchanged, and the persisted record's structural and execution projections carry no `sessions` member ([[playbook-cli-78](#playbook-cli-78)]).

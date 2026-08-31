@@ -231,7 +231,10 @@ export async function runPlaybookCli(options = {}) {
         preparePrimary: interactiveArgs.sessionId === undefined,
         onNotice: (line) => stderr.write(line),
       });
-      await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
+      // PBCLI-78: listing validates the locator but never consumes the store.
+      if (!interactiveArgs.list) {
+        await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
+      }
     } catch (error) {
       stderr.write(`playbook: ${errorMessage(error)}\n`);
       return { code: COMPOSITION_FAILURE_EXIT_CODE };
