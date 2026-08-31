@@ -1,0 +1,55 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# IR-049: Shared session store and replay stream
+
+## Status
+
+Incomplete
+
+## Intent
+
+Implement [DR-042](../decisions/042-shared-session-store-and-replay-stream.md) so the interactive launcher, headless runner, and an external host share one sessions directory, one narrow published store facade, and one token-free replay stream without changing the settled capabilities or frozen stream ABI.
+The behavior and verification contracts already live in [[playbook-cli-4](../packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-23](../packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-46](../packages/playbook-cli.md#playbook-cli-46)], [[playbook-cli-73](../packages/playbook-cli.md#playbook-cli-73)] through [[playbook-cli-81](../packages/playbook-cli.md#playbook-cli-81)], [[release-18](../packages/release.md#release-18)], [[release-28](../packages/release.md#release-28)], and [[release-33](../packages/release.md#release-33)].
+Planning found completeness defects to fix before implementation: the semver-stable facade is frozen by subject but its JavaScript identifiers, signatures, declaration exports, and listing and stream result shapes are not yet exact enough to reimplement under [[meta-34](../meta.md#meta-34)], and its verification does not yet enumerate the frozen stream's negative version, sequence, and filesystem-safety cases.
+
+## Deliverables
+
+- [ ] The package specs name the exact narrow facade without adding a capability beyond [DR-042](../decisions/042-shared-session-store-and-replay-stream.md).
+- [ ] The internal store reads and writes the frozen version-1 replay stream, strips provider resume credentials, and keeps only a clean contiguous readable prefix.
+- [ ] Replay appends require the session lease, resume at the next durable sequence, and latch and stop without failing an agent turn.
+- [ ] The published JavaScript and declaration facade exposes only the decided module, store, and narrow lease surfaces, and both front ends open their store through it.
+- [ ] Both front ends tee every observed host record in order without changing presentation or turn outcomes.
+- [ ] The optional top-level `sessions` locator resolves before selection in both front ends and never enters a persisted projection.
+- [ ] A checked-in cross-repository fixture, focused integration coverage, packed-consumer smoke, documentation, changelog, and release gates verify the complete cutover without a version bump or release tag.
+
+## Tasks
+
+1. **Name the frozen facade exactly.**
+   One commit: amend [[playbook-cli-73](../packages/playbook-cli.md#playbook-cli-73)] to name the exact JavaScript identifiers, call signatures, declaration export set, listing report, incremental stream read, and live stream-status shapes required by the already-decided module, store, and narrow lease capabilities; extend [[playbook-cli-79](../packages/playbook-cli.md#playbook-cli-79)] and [[playbook-cli-80](../packages/playbook-cli.md#playbook-cli-80)] with the missing negative version, sequence, and filesystem-safety matrix; and leave [[release-33](../packages/release.md#release-33)] as the citation-bound release contract rather than a duplicate source of those shapes.
+2. **Implement the strict replay codec and reader.**
+   One commit: extend the private session store with recursive token sanitization, strict version-1 envelope and contiguous-sequence validation, a `0700` real non-symlink directory and `0600` regular non-symlink stream boundary, and lease-free newline-prefix reads that mutate nothing and ignore every unrelated host sidecar; check in the shared `.records.jsonl` fixture and focused store tests for the sanitizer, fixture, malformed-version, malformed-sequence, unsafe-filesystem, and byte-identical torn-prefix matrix of [[playbook-cli-79](../packages/playbook-cli.md#playbook-cli-79)] and [[playbook-cli-80](../packages/playbook-cli.md#playbook-cli-80)]; stop and report rather than normalize if that host fixture diverges in filename, envelope, contiguous sequence, newline termination, or sanitizer semantics; make the licensing checker recognize that no-comment format under [[licensing-5](../packages/licensing.md#licensing-5)]; and keep [[playbook-cli-74](../packages/playbook-cli.md#playbook-cli-74)], [[playbook-cli-75](../packages/playbook-cli.md#playbook-cli-75)], and their verification synchronized spec-first if a genuine defect appears.
+3. **Bind replay mutation to the lease.**
+   One commit: add held-lease torn-tail repair, writer-assigned ordered appends, resumed sequencing, content and directory durability before advancing the last durable sequence, live latch-and-stop status, append-failure isolation, and refusal without exact ownership; preserve unrelated host sidecars byte-for-byte; land focused store tests for repair, ownership, resumed sequencing, durability, latch reporting, and suppression of every later write; and keep [[playbook-cli-76](../packages/playbook-cli.md#playbook-cli-76)] and [[playbook-cli-80](../packages/playbook-cli.md#playbook-cli-80)] synchronized spec-first if needed.
+4. **Publish and consume the narrow facade.**
+   One commit: add the decided sibling JavaScript and declaration artifacts, runtime-narrow store and lease wrappers over the private implementation, one nonpublished opaque bridge through which the front ends drive lifecycle operations on facade-acquired handles, listing that reports every skipped canonical record, current-record reading, package `files` and `exports` entries, and exact public-surface and dry-pack tests; route every store open, list, read, and acquire path in both front ends, including selection and recovery, through the facade while every lifecycle, validator, effect-ledger, staging, and retirement operation remains unreachable from the published subpath; and keep [[playbook-cli-73](../packages/playbook-cli.md#playbook-cli-73)], [[release-18](../packages/release.md#release-18)], and [[release-33](../packages/release.md#release-33)] synchronized spec-first if needed.
+5. **Resolve the sessions locator at bootstrap.**
+   One commit: add the locator-only bootstrap operation to the host-neutral launch-config module, call it in the interactive launcher before provisional list, read, or selection and in the headless runner before store construction or selection, and pass the chosen directory through the managed-child descriptor; cover the exact unset, tilde, rejected `~user`, absolute, primary-relative, ordered-overlay, injected-store-precedence, and unusable-directory cases; exclude the locator from host, structural, and execution projections; keep the prior default path and existing Captain-record, config, stdout, and stderr bytes unchanged when unset, with the required replay sidecar as the sole intentional addition; and keep [[playbook-cli-4](../packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-23](../packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-46](../packages/playbook-cli.md#playbook-cli-46)], [[playbook-cli-78](../packages/playbook-cli.md#playbook-cli-78)], and [[playbook-cli-81](../packages/playbook-cli.md#playbook-cli-81)] synchronized spec-first if needed.
+6. **Tee both host record streams.**
+   One commit: register one awaited fail-soft replay observer outside each presentation gate, prove complete headless and managed streams including player prompts, hidden events, and two-turn contiguous sequencing, and prove sanitizer or append failure changes neither the agent turn nor buffered stdout and stderr while the latching store reports an incomplete clean prefix; keep [[playbook-cli-77](../packages/playbook-cli.md#playbook-cli-77)] through [[playbook-cli-80](../packages/playbook-cli.md#playbook-cli-80)] synchronized spec-first if needed.
+7. **Prove the packed external consumer.**
+   One commit: extend the packed release smoke with a tarball-only external TypeScript consumer that uses only the facade to list, read, lease, append, replay, and reject an old schema; cover the facade artifacts in package and smoke gates; and keep [[release-18](../packages/release.md#release-18)], [[release-28](../packages/release.md#release-28)], and [[release-33](../packages/release.md#release-33)] synchronized spec-first if needed.
+8. **Document, verify, and close the intent.**
+   One commit: update public configuration and CLI documentation plus `[Unreleased]` changelog entries; audit the package specs and `specs/map.md`; after every input has settled, run each expensive final gate once, including `vitest run --exclude src/cligent-release-capabilities.test.ts` with exactly the three named files and six documented unrelated failures and no others, the excluded capability suite separately, `pnpm smoke:release`, build, lint, licensing, links, and focused package tests; mark this record done; and stop without bumping the version, tagging, pushing, or publishing.
+
+## Verification
+
+- The facade's runtime and declaration export sets equal the exact names recorded in the package specs, and no internal lifecycle, validator, effect-ledger, staging, or retirement member is reachable through the published module, store, or lease.
+- The checked-in fixture round-trips through the facade reader and writer with `<sessionId>.records.jsonl`, version `1`, optional role, sequence numbers contiguous from `1`, and one line feed after every readable envelope.
+- A missing or unknown envelope version, malformed completed line, duplicate, missing, or noncontiguous sequence, symlink, non-regular stream, wrong file mode, or non-private or symlinked sessions directory fails closed without changing an unrelated host sidecar.
+- Recursive sanitization removes every `resumeToken` and string-valued `resume`, preserves `resume: false`, and latches rather than writes a value that cannot become safe JSON.
+- Lease-free reading returns the complete newline-terminated prefix without changing one byte, held-lease reading repairs only a torn final line, a resumed lease continues at the next sequence, an append becomes durable before status advances, and append without ownership fails closed.
+- After one injected append failure, no later record reaches the file, the file remains a clean contiguous prefix, the same live store reports incompleteness at the last durable sequence, and the turn and reply still complete.
+- Headless and managed sessions write every observed record through the same facade-backed store without changing their stdout, stderr, reply, settlement, or attachment behavior.
+- The locator matrix selects one directory before any record, keeps an injected store authoritative, rejects an unusable locator without host work, retains the exact prior default when unset, and persists no `sessions` member.
+- The packed external consumer type-checks and executes against only the candidate package, while `spex lint`, SPDX, links, focused suites, build, package surface, release smoke, and the allowed full suite meet their recorded gates.
