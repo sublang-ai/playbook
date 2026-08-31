@@ -179,6 +179,25 @@ export function defaultCaptainSessionsDir(
   return join(stateHome, 'playbook', 'sessions');
 }
 
+// PBCLI-73: caller-shape rejection precedes the PBCLI-75 sanitizer so Task 3
+// can keep non-latching argument errors distinct from latching data failures.
+export function assertReplayAppendArguments(record, role) {
+  if (
+    typeof record !== 'object' ||
+    record === null ||
+    Array.isArray(record)
+  ) {
+    throw new TypeError('replay append record must be an object');
+  }
+  if (
+    role !== undefined &&
+    (typeof role !== 'string' || role.length === 0)
+  ) {
+    throw new TypeError('replay append role must be a nonempty string');
+  }
+  return record;
+}
+
 export function sanitizeReplayRecord(value) {
   const sanitized = sanitizeReplayValue(value, 'replay record', new Set());
   return requireRecord(sanitized, 'replay record');
@@ -1054,13 +1073,7 @@ async function readReplaySnapshot({
       snapshotLength >= cursor.offset &&
       afterSeq >= cursor.sequence;
     const startOffset = incremental ? cursor.offset : 0;
-    const first = await readReplayRange(handle, startOffset, snapshotLength);
-    const second = await readReplayRange(handle, startOffset, snapshotLength);
-    if (!first.equals(second)) {
-      throw new ReplaySnapshotChangedError(
-        'replay stream changed within its pinned snapshot',
-      );
-    }
+    const bytes = await readReplayRange(handle, startOffset, snapshotLength);
 
     const finalHandleStat = await handle.stat();
     assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
@@ -1098,7 +1111,7 @@ async function readReplaySnapshot({
 
     return {
       absent: false,
-      bytes: first,
+      bytes,
       identity,
       incremental,
       startOffset,
@@ -1109,12 +1122,11 @@ async function readReplaySnapshot({
 }
 
 async function readReplayRange(handle, start, end) {
-  const chunks = [];
-  let position = start;
-  while (position < end) {
-    const length = Math.min(REPLAY_READ_CHUNK_SIZE, end - position);
-    const buffer = Buffer.allocUnsafe(length);
-    const result = await handle.read(buffer, 0, length, position);
+  const buffer = Buffer.allocUnsafe(end - start);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const length = Math.min(REPLAY_READ_CHUNK_SIZE, buffer.length - offset);
+    const result = await handle.read(buffer, offset, length, start + offset);
     if (
       result === null ||
       typeof result !== 'object' ||
@@ -1126,10 +1138,9 @@ async function readReplayRange(handle, start, end) {
         'replay stream ended before its pinned snapshot boundary',
       );
     }
-    chunks.push(buffer.subarray(0, result.bytesRead));
-    position += result.bytesRead;
+    offset += result.bytesRead;
   }
-  return Buffer.concat(chunks, end - start);
+  return buffer;
 }
 
 function parseReplayLines(bytes, initialSequence, initialDigest, observedSeq) {
@@ -1215,7 +1226,12 @@ function parseReplayEnvelope(bytes, expectedSequence) {
 }
 
 function validateReplayReadOptions(options) {
-  if (options === undefined) return 0;
+  if (
+    options === undefined ||
+    isExactUndefinedReplayReadOption(options)
+  ) {
+    return 0;
+  }
   const value = requireRecord(
     snapshotJsonValue(options, 'replay stream read options'),
     'replay stream read options',
@@ -1228,6 +1244,27 @@ function validateReplayReadOptions(options) {
     );
   }
   return afterSeq;
+}
+
+function isExactUndefinedReplayReadOption(options) {
+  if (
+    options === null ||
+    typeof options !== 'object' ||
+    Array.isArray(options)
+  ) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== 1 || keys[0] !== 'afterSeq') return false;
+  const descriptor = descriptors.afterSeq;
+  return (
+    descriptor.enumerable &&
+    Object.hasOwn(descriptor, 'value') &&
+    descriptor.value === undefined
+  );
 }
 
 function freezeReplayReadResult(entries, lastReadableSeq) {

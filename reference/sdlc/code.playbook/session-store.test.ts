@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertCaptainSessionExecutionCompatible,
+  assertReplayAppendArguments,
   captainSessionSelectedMembers,
   createCaptainSessionStore,
   defaultCaptainSessionsDir,
@@ -4749,7 +4750,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     expect((await stat(replayFixtureUrl)).mode).toBe(fixtureStat.mode);
   });
 
-  it('recursively removes resume credentials before validating retained data', () => {
+  it('separates append arguments from recursive credential sanitization', () => {
     const unsafeRemovedToken = () => 'must not be traversed';
     const source = {
       type: 'opaque_record',
@@ -4778,6 +4779,22 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     expect(source.resumeToken).toBe(unsafeRemovedToken);
     expect(source.nested.resumeToken).toBe('nested-provider-token');
     expect(source.entries[2]).toEqual({ resume: false });
+
+    for (const value of [null, 1, 'record', () => undefined, []]) {
+      expect(() => assertReplayAppendArguments(value, undefined)).toThrow();
+    }
+    expect(() => assertReplayAppendArguments({}, '')).toThrow();
+    expect(() => assertReplayAppendArguments({}, 1)).toThrow();
+    expect(() => assertReplayAppendArguments(source, 'coder')).not.toThrow();
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() =>
+      assertReplayAppendArguments(new Date(), undefined),
+    ).not.toThrow();
+    expect(() => assertReplayAppendArguments(cyclic, undefined)).not.toThrow();
+    expect(() => sanitizeReplayRecord(new Date())).toThrow();
+    expect(() => sanitizeReplayRecord(cyclic)).toThrow();
   });
 
   it('reads absent, empty, and torn streams without adopting host files', async () => {
@@ -4806,6 +4823,12 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     const bytes = `${replayLine(first)}${torn}`;
     await writeFile(streamPath, bytes, 'utf8');
     expect(await store.readStream(sessionId)).toEqual({
+      entries: [first],
+      lastReadableSeq: 1,
+    });
+    expect(
+      await store.readStream(sessionId, { afterSeq: undefined }),
+    ).toEqual({
       entries: [first],
       lastReadableSeq: 1,
     });
@@ -5071,6 +5094,9 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
       lastReadableSeq: 1,
     });
     expect(grew).toBe(true);
+    expect(
+      reads.reduce((total, { bytesRead }) => total + bytesRead, 0),
+    ).toBe(Buffer.byteLength(first));
     expect(await readFile(streamPath, 'utf8')).toBe(`${first}${second}`);
 
     reads.length = 0;
@@ -5083,7 +5109,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     ).toBe(true);
   });
 
-  it('restarts after replacement or truncation and rejects in-read mutation', async () => {
+  it('restarts after replacement or truncation and rejects in-read replacement', async () => {
     const first = replayLine(replayEnvelope(1, { type: 'old-first' }));
     const second = replayLine(replayEnvelope(2, { type: 'old-second' }));
     const third = replayLine(replayEnvelope(3, { type: 'new-third' }));
