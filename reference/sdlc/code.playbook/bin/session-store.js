@@ -6,9 +6,10 @@
 // PBCLI-53: a fresh lease may move its newest same-directory predecessor's
 // complete retained-generation map under guarded source-first publication.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
+  access,
   chmod,
   link,
   lstat,
@@ -39,6 +40,7 @@ import {
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
+export const RECORDS_STREAM_VERSION = 1;
 const LEGACY_CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 // The interrupted retention change emitted this required-member shape before
 // canonical writes returned to additive schema 3. Both pre-effect shapes and
@@ -120,7 +122,11 @@ const LEASE_OWNER_KEYS = [
   'hostname',
   'acquiredAt',
 ];
+const PLAYBOOK_SESSION_NOT_FOUND = 'PLAYBOOK_SESSION_NOT_FOUND';
+const PLAYBOOK_SESSION_LEASE_ACTIVE = 'PLAYBOOK_SESSION_LEASE_ACTIVE';
+const ACTIVE_LEASE_ERROR = Symbol('active Playbook session lease');
 const DEFAULT_FS_OPERATIONS = Object.freeze({
+  access,
   chmod,
   link,
   lstat,
@@ -131,6 +137,15 @@ const DEFAULT_FS_OPERATIONS = Object.freeze({
   rmdir,
   unlink,
 });
+const EMPTY_REPLAY_PREFIX_DIGEST = createHash('sha256').digest('hex');
+const REPLAY_READ_CHUNK_SIZE = 64 * 1024;
+
+class ReplaySnapshotChangedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ReplaySnapshotChangedError';
+  }
+}
 
 class CaptainSessionRecordSchemaError extends Error {
   constructor(schemaVersion, message, cause) {
@@ -150,15 +165,40 @@ class CaptainSessionRecordNonresumableError extends
   }
 }
 
+class CaptainSessionNotFoundError extends Error {
+  constructor(sessionId, path) {
+    super(
+      `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} does not exist`,
+    );
+    this.name = 'CaptainSessionNotFoundError';
+    this.code = PLAYBOOK_SESSION_NOT_FOUND;
+  }
+}
+
 class CaptainSessionLeaseActiveError extends Error {
   constructor(sessionId, pid) {
     super(
       `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: Captain session lease is active in process ${pid}`,
     );
     this.name = 'CaptainSessionLeaseActiveError';
+    this.code = PLAYBOOK_SESSION_LEASE_ACTIVE;
+    this[ACTIVE_LEASE_ERROR] = true;
     this.sessionId = sessionId;
     this.pid = pid;
   }
+}
+
+function foreignCaptainSessionLeaseActiveError(sessionId, hostname) {
+  const error = new Error(
+    `Captain session ${JSON.stringify(sessionId)} lease is owned by foreign host ${JSON.stringify(hostname)}`,
+  );
+  error.code = PLAYBOOK_SESSION_LEASE_ACTIVE;
+  error[ACTIVE_LEASE_ERROR] = true;
+  return error;
+}
+
+function isActiveLeaseError(value) {
+  return value?.[ACTIVE_LEASE_ERROR] === true;
 }
 
 export function defaultCaptainSessionsDir(
@@ -167,6 +207,398 @@ export function defaultCaptainSessionsDir(
 ) {
   const stateHome = env.XDG_STATE_HOME || join(home, '.local', 'state');
   return join(stateHome, 'playbook', 'sessions');
+}
+
+// PBCLI-78: front-end bootstrap checks the same private filesystem boundary
+// as later store operations without creating an otherwise-unused directory.
+// A missing leaf is usable because the first lease publication creates it.
+export async function assertCaptainSessionsDirectoryUsable(
+  sessionsDir,
+  options = {},
+) {
+  if (typeof sessionsDir !== 'string' || !isAbsolute(sessionsDir)) {
+    throw new Error('Captain session store path must be absolute');
+  }
+  const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
+  try {
+    await assertPrivateDirectory(sessionsDir, fs);
+    await fs.access(
+      sessionsDir,
+      constants.R_OK | constants.W_OK | constants.X_OK,
+    );
+    return;
+  } catch (cause) {
+    if (cause?.code !== 'ENOENT') throw cause;
+  }
+
+  // Reject a symlink or non-directory anywhere in an otherwise missing path;
+  // mode 0700 becomes mandatory once the sessions directory itself exists.
+  let cursor = sessionsDir;
+  for (;;) {
+    try {
+      await assertDirectoryNotLink(cursor, fs);
+      await fs.access(cursor, constants.W_OK | constants.X_OK);
+      return;
+    } catch (cause) {
+      if (cause?.code !== 'ENOENT') throw cause;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw cause;
+      cursor = parent;
+    }
+  }
+}
+
+// PBCLI-73: caller-shape rejection precedes the PBCLI-75 sanitizer so Task 3
+// can keep non-latching argument errors distinct from latching data failures.
+export function assertReplayAppendArguments(record, role) {
+  if (
+    typeof record !== 'object' ||
+    record === null ||
+    Array.isArray(record)
+  ) {
+    throw new TypeError('replay append record must be an object');
+  }
+  if (
+    role !== undefined &&
+    (typeof role !== 'string' || role.length === 0)
+  ) {
+    throw new TypeError('replay append role must be a nonempty string');
+  }
+  return record;
+}
+
+export function sanitizeReplayRecord(value) {
+  const sanitized = sanitizeReplayValue(value, 'replay record', new Set());
+  return requireRecord(sanitized, 'replay record');
+}
+
+// PBCLI-75/76/83: one lease-owned writer repairs the retained prefix, queues
+// appends, and keeps replay durability fail-soft beside canonical settlement.
+async function createLeaseReplayWriter({
+  sessionsDir,
+  path,
+  fs,
+  assertOwner,
+  readStream,
+}) {
+  let lastReadableSeq = null;
+  let lastDurableSeq = null;
+  let incomplete = true;
+  let identity;
+  let completeOffset = 0;
+  let writerHandle;
+  let operationTail = Promise.resolve();
+  let appendAdmissionClosed = false;
+
+  const status = () =>
+    Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
+
+  const enqueue = (operation) => {
+    const result = operationTail.then(operation);
+    operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
+  const latch = () => {
+    if (lastReadableSeq !== null) incomplete = true;
+  };
+
+  const updateReadableFromDisk = async () => {
+    if (lastReadableSeq === null) return;
+    try {
+      const snapshot = await readReplayWriterSnapshot({
+        sessionsDir,
+        path,
+        identity,
+        fs,
+      });
+      if (snapshot.absent) return;
+      const parsed = parseReplayLines(
+        snapshot.bytes,
+        0,
+        EMPTY_REPLAY_PREFIX_DIGEST,
+      );
+      lastReadableSeq = parsed.sequence;
+      completeOffset = parsed.completeBytes;
+      identity = snapshot.identity;
+    } catch {
+      // The already-established boundary remains the only trustworthy one.
+    }
+  };
+
+  const initialize = async () => {
+    let snapshot;
+    await assertOwner();
+    try {
+      snapshot = await readReplayWriterSnapshot({
+        sessionsDir,
+        path,
+        fs,
+      });
+      if (snapshot.absent) {
+        lastReadableSeq = 0;
+        lastDurableSeq = 0;
+        incomplete = false;
+        completeOffset = 0;
+        return;
+      }
+
+      const parsed = parseReplayLines(
+        snapshot.bytes,
+        0,
+        EMPTY_REPLAY_PREFIX_DIGEST,
+      );
+      const prefixSequence = parsed.sequence;
+      lastReadableSeq = prefixSequence;
+      lastDurableSeq = prefixSequence;
+      incomplete = false;
+      identity = snapshot.identity;
+      completeOffset = parsed.completeBytes;
+      const tail = snapshot.bytes.subarray(parsed.completeBytes);
+      if (tail.length === 0) return;
+
+      let retainTail = false;
+      try {
+        parseReplayEnvelope(tail, prefixSequence + 1);
+        retainTail = true;
+      } catch {
+        // Every other torn tail is discarded at the complete-prefix boundary.
+      }
+
+      if (retainTail) {
+        try {
+          writerHandle = await mutateReplayWriterFile({
+            sessionsDir,
+            path,
+            identity,
+            expectedSize: snapshot.bytes.length,
+            expectedFinalSize: snapshot.bytes.length + 1,
+            fs,
+            retainHandle: true,
+            operation: async (handle) => {
+              await writeReplayRange(
+                handle,
+                Buffer.from('\n'),
+                snapshot.bytes.length,
+              );
+              completeOffset = snapshot.bytes.length + 1;
+              lastReadableSeq = prefixSequence + 1;
+              await handle.sync();
+            },
+          });
+          lastDurableSeq = prefixSequence + 1;
+        } catch {
+          await updateReadableFromDisk();
+          latch();
+        }
+        return;
+      }
+
+      try {
+        writerHandle = await mutateReplayWriterFile({
+          sessionsDir,
+          path,
+          identity,
+          expectedSize: snapshot.bytes.length,
+          expectedFinalSize: parsed.completeBytes,
+          fs,
+          retainHandle: true,
+          operation: async (handle) => {
+            await handle.truncate(parsed.completeBytes);
+            completeOffset = parsed.completeBytes;
+            await handle.sync();
+          },
+        });
+      } catch {
+        await updateReadableFromDisk();
+        latch();
+      }
+    } catch {
+      lastReadableSeq = null;
+      lastDurableSeq = null;
+      incomplete = true;
+      identity = undefined;
+      completeOffset = 0;
+    }
+  };
+
+  const appendAtQueueHead = async (record, role) => {
+    if (lastReadableSeq === null || incomplete) return undefined;
+
+    let sanitized;
+    let sanitizationFailed = false;
+    let sanitizationFailure;
+    try {
+      sanitized = sanitizeReplayRecord(record);
+    } catch (cause) {
+      sanitizationFailed = true;
+      sanitizationFailure = cause;
+    }
+    // Sanitization may invoke caller-controlled Proxy traps. This one owner
+    // check is the append's cooperative-lease linearization point.
+    await assertOwner();
+    if (sanitizationFailed) {
+      latch();
+      throw sanitizationFailure;
+    }
+
+    if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) {
+      latch();
+      throw new Error('replay stream sequence exhausted its safe integer range');
+    }
+    const sequence = lastReadableSeq + 1;
+    const line = Buffer.from(
+      `${JSON.stringify({
+        v: RECORDS_STREAM_VERSION,
+        seq: sequence,
+        ...(role === undefined ? {} : { role }),
+        record: sanitized,
+      })}\n`,
+    );
+    const publishing = identity === undefined;
+    try {
+      if (publishing) {
+        const published = await publishReplayWriterFile({
+          sessionsDir,
+          path,
+          bytes: line,
+          fs,
+        });
+        identity = published.identity;
+        writerHandle = published.handle;
+        completeOffset = line.length;
+        lastReadableSeq = sequence;
+        await syncDirectory(sessionsDir, fs);
+      } else if (writerHandle === undefined) {
+        writerHandle = await mutateReplayWriterFile({
+          sessionsDir,
+          path,
+          identity,
+          expectedSize: completeOffset,
+          expectedFinalSize: completeOffset + line.length,
+          fs,
+          retainHandle: true,
+          operation: (handle) =>
+            writeReplayRange(handle, line, completeOffset),
+        });
+        completeOffset += line.length;
+        lastReadableSeq = sequence;
+      } else {
+        await appendReplayWriterFile({
+          handle: writerHandle,
+          identity,
+          expectedSize: completeOffset,
+          bytes: line,
+        });
+        completeOffset += line.length;
+        lastReadableSeq = sequence;
+      }
+      return undefined;
+    } catch (cause) {
+      await updateReadableFromDisk();
+      latch();
+      throw cause;
+    }
+  };
+
+  const append = (record, role) => {
+    if (appendAdmissionClosed) {
+      return Promise.reject(
+        new Error('replay append admission is closed for release'),
+      );
+    }
+    if (lastReadableSeq === null || incomplete) return Promise.resolve();
+    try {
+      assertReplayAppendArguments(record, role);
+    } catch (cause) {
+      return Promise.reject(cause);
+    }
+    return enqueue(() => appendAtQueueHead(record, role));
+  };
+
+  const read = (options) => {
+    if (appendAdmissionClosed) {
+      return Promise.reject(new Error('replay writer is closing'));
+    }
+    return enqueue(async () => {
+      await assertOwner();
+      if (lastReadableSeq === null) {
+        throw new Error('replay stream is unavailable for this lease');
+      }
+      const result = await readStream(options);
+      lastReadableSeq = result.lastReadableSeq;
+      return freezeReplayLeaseReadResult(
+        result.entries,
+        lastReadableSeq,
+        lastDurableSeq,
+        incomplete,
+      );
+    });
+  };
+
+  const checkpointAtQueueHead = async () => {
+    if (
+      lastReadableSeq === null ||
+      incomplete ||
+      lastReadableSeq === lastDurableSeq
+    ) {
+      return;
+    }
+    try {
+      await assertOwner();
+      if (writerHandle === undefined) {
+        throw new Error('replay stream checkpoint has no writer handle');
+      }
+      await checkpointReplayWriterFile({
+        sessionsDir,
+        path,
+        handle: writerHandle,
+        identity,
+        expectedSize: completeOffset,
+        fs,
+      });
+      await assertOwner();
+      lastDurableSeq = lastReadableSeq;
+    } catch {
+      await updateReadableFromDisk();
+      latch();
+    }
+  };
+
+  const checkpoint = () => enqueue(checkpointAtQueueHead);
+
+  const closeAppendAdmission = () => {
+    appendAdmissionClosed = true;
+  };
+
+  const prepareRelease = () =>
+    enqueue(async () => {
+      try {
+        await checkpointAtQueueHead();
+      } finally {
+        const handle = writerHandle;
+        writerHandle = undefined;
+        try {
+          await handle?.close();
+        } catch {
+          // A completed checkpoint owns durability; descriptor cleanup cannot
+          // broaden the latch trigger set or block canonical lease retirement.
+        }
+      }
+    });
+
+  await initialize();
+  return Object.freeze({
+    append,
+    read,
+    status,
+    checkpoint,
+    closeAppendAdmission,
+    prepareRelease,
+  });
 }
 
 export function createCaptainSessionStore(options = {}) {
@@ -182,6 +614,8 @@ export function createCaptainSessionStore(options = {}) {
   const probeProcess =
     options.probeProcess ?? ((pid) => process.kill(pid, 0));
   const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
+  const replayReadCursors = new Map();
+  const replayReadQueues = new Map();
 
   if (!isAbsolute(sessionsDir)) {
     throw new Error('Captain session store path must be absolute');
@@ -203,6 +637,10 @@ export function createCaptainSessionStore(options = {}) {
     assertSessionId(sessionId);
     return join(sessionsDir, `${sessionId}.json`);
   };
+  const recordsPathFor = (sessionId) => {
+    assertSessionId(sessionId);
+    return join(sessionsDir, `${sessionId}.records.jsonl`);
+  };
   const leasePathFor = (sessionId) => {
     assertSessionId(sessionId);
     return join(sessionsDir, `.${sessionId}.lock`);
@@ -222,9 +660,7 @@ export function createCaptainSessionStore(options = {}) {
     } catch (cause) {
       if (cause?.code === 'ENOENT' && missing === 'undefined') return undefined;
       if (cause?.code === 'ENOENT') {
-        throw new Error(
-          `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} does not exist`,
-        );
+        throw new CaptainSessionNotFoundError(sessionId, path);
       }
       throw new Error(
         `cannot read Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${errorMessage(cause)}`,
@@ -285,6 +721,40 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const read = (sessionId) => readRecord(sessionId);
+
+  const readStream = async (sessionId, options) => {
+    assertSessionId(sessionId);
+    const afterSeq = validateReplayReadOptions(options);
+    const previous = replayReadQueues.get(sessionId) ?? Promise.resolve();
+    const operation = previous.then(() =>
+      readReplayStream({
+        sessionsDir,
+        path: recordsPathFor(sessionId),
+        afterSeq,
+        cursor: replayReadCursors.get(sessionId),
+        fs,
+      }),
+    );
+    const drained = operation.then(
+      (result) => {
+        if (result.cursor === undefined) {
+          replayReadCursors.delete(sessionId);
+        } else {
+          replayReadCursors.set(sessionId, result.cursor);
+        }
+        return undefined;
+      },
+      () => undefined,
+    );
+    replayReadQueues.set(sessionId, drained);
+    void drained.then(() => {
+      if (replayReadQueues.get(sessionId) === drained) {
+        replayReadQueues.delete(sessionId);
+      }
+    });
+    const result = await operation;
+    return result.value;
+  };
 
   const listRecords = async ({
     onLegacyRecord,
@@ -379,6 +849,39 @@ export function createCaptainSessionStore(options = {}) {
       candidates.find((candidate) => candidate.cwd === preferredCwd) ??
       candidates[0]
     );
+  };
+
+  const readSummary = async (sessionId) =>
+    projectPlaybookSessionSummary(await readRecord(sessionId));
+
+  const listSummaries = async () => {
+    const skipped = [];
+    const records = await listRecords({
+      onLegacyRecord: ({ sessionId, schemaVersion }) => {
+        skipped.push(
+          Object.freeze({
+            sessionId,
+            reason:
+              `Captain session schema ${schemaVersion} is below current ` +
+              `schema ${CAPTAIN_SESSION_RECORD_SCHEMA_VERSION}`,
+          }),
+        );
+      },
+      onInvalidRecord: ({ sessionId, reason }) => {
+        skipped.push(Object.freeze({ sessionId, reason }));
+      },
+      skipInvalidRecords: true,
+    });
+    return Object.freeze({
+      sessions: Object.freeze(
+        sortCaptainSessionRecords(records).map(projectPlaybookSessionSummary),
+      ),
+      skipped: Object.freeze(
+        skipped.sort((left, right) =>
+          left.sessionId.localeCompare(right.sessionId),
+        ),
+      ),
+    });
   };
 
   const scanAdoptionPredecessor = async (
@@ -580,6 +1083,24 @@ export function createCaptainSessionStore(options = {}) {
   const readLeaseOwner = (sessionId, path = leasePathFor(sessionId)) =>
     readLeaseDirectory(sessionId, path, [LEASE_OWNER_FILE]);
 
+  const activeLeaseErrorFor = async (sessionId, owner) => {
+    if (owner.hostname !== localHostname) {
+      return foreignCaptainSessionLeaseActiveError(
+        sessionId,
+        owner.hostname,
+      );
+    }
+    try {
+      await probeProcess(owner.pid);
+      return new CaptainSessionLeaseActiveError(sessionId, owner.pid);
+    } catch (cause) {
+      if (cause?.code === 'ESRCH') return undefined;
+      throw new Error(
+        `Captain session lease owner process cannot be ruled dead: ${errorMessage(cause)}`,
+      );
+    }
+  };
+
   const readRetiredLease = async (sessionId, path, expectedToken) => {
     const owner = await readLeaseDirectory(
       sessionId,
@@ -732,18 +1253,27 @@ export function createCaptainSessionStore(options = {}) {
   const publishLeaseStage = async (sessionId, stage, onRenamed) => {
     const canonicalPath = leasePathFor(sessionId);
     await validateRetiredLeases(sessionId);
-    await assertPathMissing(
-      canonicalPath,
-      fs,
-      'Captain session lease became active before publication',
-    );
     try {
+      await assertPathMissing(
+        canonicalPath,
+        fs,
+        'Captain session lease became active before publication',
+      );
       // Program-created canonical lease directories are nonempty. Therefore a
       // racing rename cannot replace one; it fails closed instead. Static empty
       // or malformed destinations are rejected by the preflight above.
       await fs.rename(stage.stagePath, canonicalPath);
       onRenamed();
     } catch (cause) {
+      try {
+        const winner = await readLeaseOwner(sessionId);
+        const active = await activeLeaseErrorFor(sessionId, winner);
+        if (active !== undefined) throw active;
+      } catch (winnerCause) {
+        if (isActiveLeaseError(winnerCause)) {
+          throw winnerCause;
+        }
+      }
       throw new Error(
         `Captain session lease publication lost its race: ${errorMessage(cause)}`,
       );
@@ -774,25 +1304,8 @@ export function createCaptainSessionStore(options = {}) {
         if (existing.ownerToken === stage.owner.ownerToken) {
           throw new Error('Captain session lease owner token was reused');
         }
-        if (existing.hostname !== localHostname) {
-          throw new Error(
-            `Captain session lease is owned by foreign host ${JSON.stringify(existing.hostname)}`,
-          );
-        }
-        try {
-          await probeProcess(existing.pid);
-          throw new CaptainSessionLeaseActiveError(
-            sessionId,
-            existing.pid,
-          );
-        } catch (cause) {
-          if (cause?.code !== 'ESRCH') {
-            if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
-            throw new Error(
-              `Captain session lease owner process cannot be ruled dead: ${errorMessage(cause)}`,
-            );
-          }
-        }
+        const active = await activeLeaseErrorFor(sessionId, existing);
+        if (active !== undefined) throw active;
         await retireObservedLease(sessionId, existing);
       } else {
         // Preserve the explicit local solely for easier audit of the no-owner
@@ -803,9 +1316,13 @@ export function createCaptainSessionStore(options = {}) {
       await publishLeaseStage(sessionId, stage, () => {
         stagePublished = true;
       });
-      return createLease({
+      return await createLease({
         sessionId,
         owner: stage.owner,
+        sessionsDir,
+        replayPath: recordsPathFor(sessionId),
+        replayFs: fs,
+        readReplayStream: (options) => readStream(sessionId, options),
         readRecord,
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
@@ -837,19 +1354,840 @@ export function createCaptainSessionStore(options = {}) {
           `cannot acquire Captain session ${JSON.stringify(sessionId)} lease without leaving ownership uncertain`,
         );
       }
-      if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
+      if (isActiveLeaseError(cause)) throw cause;
       throw new Error(
         `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: ${errorMessage(cause)}`,
       );
     }
   };
 
-  return Object.freeze({ sessionsDir, read, latest, acquire });
+  return Object.freeze({
+    sessionsDir,
+    listSummaries,
+    readSummary,
+    read,
+    readStream,
+    latest,
+    acquire,
+  });
 }
 
-function createLease({
+async function readReplayStream({
+  sessionsDir,
+  path,
+  afterSeq,
+  cursor,
+  fs,
+}) {
+  let forceFullRead = false;
+  let snapshot;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      snapshot = await readReplaySnapshot({
+        sessionsDir,
+        path,
+        afterSeq,
+        cursor,
+        forceFullRead,
+        fs,
+      });
+      break;
+    } catch (cause) {
+      if (!(cause instanceof ReplaySnapshotChangedError) || attempt === 1) {
+        throw cause;
+      }
+      if (cursor !== undefined) cursor.reusable = false;
+      forceFullRead = true;
+    }
+  }
+
+  if (snapshot === undefined) {
+    throw new Error('replay stream changed during both read snapshots');
+  }
+  if (snapshot.absent) {
+    if (cursor !== undefined) cursor.reusable = false;
+    if (cursor !== undefined && cursor.sequence > 0) {
+      throw new Error('replay stream rolled back below its observed prefix');
+    }
+    if (afterSeq !== 0) {
+      throw new Error(
+        `replay stream afterSeq ${afterSeq} exceeds last readable sequence 0`,
+      );
+    }
+    return {
+      cursor: undefined,
+      value: freezeReplayReadResult([], 0),
+    };
+  }
+
+  const initialSequence = snapshot.incremental ? cursor.sequence : 0;
+  const initialDigest = snapshot.incremental
+    ? cursor.digest
+    : EMPTY_REPLAY_PREFIX_DIGEST;
+  const parsed = parseReplayLines(
+    snapshot.bytes,
+    initialSequence,
+    initialDigest,
+    snapshot.incremental ? undefined : cursor?.sequence,
+  );
+  const lastReadableSeq = parsed.sequence;
+
+  if (!snapshot.incremental && cursor !== undefined && cursor.sequence > 0) {
+    if (
+      lastReadableSeq < cursor.sequence ||
+      parsed.observedDigest !== cursor.digest
+    ) {
+      throw new Error('replay stream rolled back or changed its observed prefix');
+    }
+  }
+  if (afterSeq > lastReadableSeq) {
+    throw new Error(
+      `replay stream afterSeq ${afterSeq} exceeds last readable sequence ${lastReadableSeq}`,
+    );
+  }
+
+  const completeOffset = snapshot.startOffset + parsed.completeBytes;
+  const nextCursor = {
+    identity: snapshot.identity,
+    offset: completeOffset,
+    sequence: lastReadableSeq,
+    digest: parsed.digest,
+    reusable: true,
+  };
+  const entries = parsed.entries.filter((entry) => entry.seq > afterSeq);
+  return {
+    cursor: nextCursor,
+    value: freezeReplayReadResult(entries, lastReadableSeq),
+  };
+}
+
+async function readReplaySnapshot({
+  sessionsDir,
+  path,
+  afterSeq,
+  cursor,
+  forceFullRead,
+  fs,
+}) {
+  try {
+    await assertPrivateDirectory(sessionsDir, fs);
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return { absent: true };
+    throw cause;
+  }
+
+  let pathStat;
+  try {
+    pathStat = await assertPrivateRegularPath(path, 0o600, fs, 'replay stream');
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return { absent: true };
+    throw cause;
+  }
+
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') {
+      throw new ReplaySnapshotChangedError(
+        'replay stream disappeared while opening its snapshot',
+      );
+    }
+    throw cause;
+  }
+
+  try {
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (!sameFileIdentity(pathStat, openedStat)) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was replaced while opening its snapshot',
+      );
+    }
+    const snapshotLength = requireReplayFileSize(openedStat.size);
+    const identity = replayFileIdentity(openedStat);
+    const cursorBoundaryChanged =
+      cursor !== undefined &&
+      (!sameReplayIdentity(cursor.identity, identity) ||
+        snapshotLength < cursor.offset);
+    if (cursorBoundaryChanged) cursor.reusable = false;
+    const incremental =
+      !forceFullRead &&
+      cursor !== undefined &&
+      cursor.reusable &&
+      sameReplayIdentity(cursor.identity, identity) &&
+      snapshotLength >= cursor.offset &&
+      afterSeq >= cursor.sequence;
+    const startOffset = incremental ? cursor.offset : 0;
+    const bytes = await readReplayRange(handle, startOffset, snapshotLength);
+
+    const finalHandleStat = await handle.stat();
+    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalHandleStat) ||
+      requireReplayFileSize(finalHandleStat.size) < snapshotLength
+    ) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was truncated within its pinned snapshot',
+      );
+    }
+
+    let finalPathStat;
+    try {
+      finalPathStat = await assertPrivateRegularPath(
+        path,
+        0o600,
+        fs,
+        'replay stream',
+      );
+    } catch (cause) {
+      if (cause?.code === 'ENOENT') {
+        throw new ReplaySnapshotChangedError(
+          'replay stream disappeared within its pinned snapshot',
+        );
+      }
+      throw cause;
+    }
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream was replaced within its pinned snapshot',
+      );
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+
+    return {
+      absent: false,
+      bytes,
+      identity,
+      incremental,
+      startOffset,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readReplayRange(handle, start, end) {
+  const buffer = Buffer.allocUnsafe(end - start);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const length = Math.min(REPLAY_READ_CHUNK_SIZE, buffer.length - offset);
+    const result = await handle.read(buffer, offset, length, start + offset);
+    if (
+      result === null ||
+      typeof result !== 'object' ||
+      !Number.isSafeInteger(result.bytesRead) ||
+      result.bytesRead <= 0 ||
+      result.bytesRead > length
+    ) {
+      throw new ReplaySnapshotChangedError(
+        'replay stream ended before its pinned snapshot boundary',
+      );
+    }
+    offset += result.bytesRead;
+  }
+  return buffer;
+}
+
+async function writeReplayRange(handle, bytes, start) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const result = await handle.write(
+      bytes,
+      offset,
+      bytes.length - offset,
+      start + offset,
+    );
+    if (
+      result === null ||
+      typeof result !== 'object' ||
+      !Number.isSafeInteger(result.bytesWritten) ||
+      result.bytesWritten <= 0 ||
+      result.bytesWritten > bytes.length - offset
+    ) {
+      throw new Error('replay stream append did not write its complete bytes');
+    }
+    offset += result.bytesWritten;
+  }
+}
+
+async function readReplayWriterSnapshot({
+  sessionsDir,
+  path,
+  identity,
+  fs,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  let pathStat;
+  try {
+    pathStat = await assertPrivateRegularPath(path, 0o600, fs, 'replay stream');
+  } catch (cause) {
+    if (cause?.code === 'ENOENT' && identity === undefined) {
+      return { absent: true };
+    }
+    throw cause;
+  }
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(pathStat, openedStat) ||
+      (identity !== undefined && !sameReplayIdentity(identity, openedStat))
+    ) {
+      throw new Error('replay stream identity changed for its writer');
+    }
+    const size = requireReplayFileSize(openedStat.size);
+    const bytes = await readReplayRange(handle, 0, size);
+    const finalHandleStat = await handle.stat();
+    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalHandleStat) ||
+      requireReplayFileSize(finalHandleStat.size) !== size
+    ) {
+      throw new Error('replay stream changed during writer validation');
+    }
+    const finalPathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new Error('replay stream path changed during writer validation');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+    return {
+      absent: false,
+      bytes,
+      identity: replayFileIdentity(openedStat),
+    };
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function mutateReplayWriterFile({
+  sessionsDir,
+  path,
+  identity,
+  expectedSize,
+  expectedFinalSize,
+  fs,
+  retainHandle = false,
+  operation,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  const pathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  if (!sameReplayIdentity(identity, pathStat)) {
+    throw new Error('replay stream identity changed for its writer');
+  }
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDWR |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(pathStat, openedStat) ||
+      !sameReplayIdentity(identity, openedStat) ||
+      requireReplayFileSize(openedStat.size) !== expectedSize
+    ) {
+      throw new Error('replay stream changed before writer mutation');
+    }
+    await operation(handle);
+    const finalStat = await handle.stat();
+    assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalStat) ||
+      (expectedFinalSize !== undefined &&
+        requireReplayFileSize(finalStat.size) !== expectedFinalSize)
+    ) {
+      throw new Error('replay stream changed during writer mutation');
+    }
+    const finalPathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, finalPathStat)) {
+      throw new Error('replay stream path changed during writer mutation');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+    if (retainHandle) {
+      const retained = handle;
+      handle = undefined;
+      return retained;
+    }
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function appendReplayWriterFile({
+  handle,
+  identity,
+  expectedSize,
+  bytes,
+}) {
+  const openedStat = await handle.stat();
+  assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+  if (
+    !sameReplayIdentity(identity, openedStat) ||
+    requireReplayFileSize(openedStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed before writer append');
+  }
+  await writeReplayRange(handle, bytes, expectedSize);
+}
+
+async function checkpointReplayWriterFile({
+  sessionsDir,
+  path,
+  handle,
+  identity,
+  expectedSize,
+  fs,
+}) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  const pathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  const openedStat = await handle.stat();
+  assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+  if (
+    !sameFileIdentity(pathStat, openedStat) ||
+    !sameReplayIdentity(identity, openedStat) ||
+    requireReplayFileSize(openedStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed before writer checkpoint');
+  }
+  await handle.sync();
+  const finalStat = await handle.stat();
+  assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+  if (
+    !sameFileIdentity(openedStat, finalStat) ||
+    requireReplayFileSize(finalStat.size) !== expectedSize
+  ) {
+    throw new Error('replay stream changed during writer checkpoint');
+  }
+  const finalPathStat = await assertPrivateRegularPath(
+    path,
+    0o600,
+    fs,
+    'replay stream',
+  );
+  if (!sameFileIdentity(openedStat, finalPathStat)) {
+    throw new Error('replay stream path changed during writer checkpoint');
+  }
+  await assertPrivateDirectory(sessionsDir, fs);
+}
+
+async function publishReplayWriterFile({ sessionsDir, path, bytes, fs }) {
+  await assertPrivateDirectory(sessionsDir, fs);
+  let handle;
+  try {
+    handle = await fs.open(
+      path,
+      constants.O_RDWR |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+      0o600,
+    );
+    await handle.chmod(0o600);
+    const openedStat = await handle.stat();
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    if (requireReplayFileSize(openedStat.size) !== 0) {
+      throw new Error('new replay stream is not empty');
+    }
+    await writeReplayRange(handle, bytes, 0);
+    const finalStat = await handle.stat();
+    assertPrivateRegularStat(finalStat, 0o600, 'replay stream');
+    if (
+      !sameFileIdentity(openedStat, finalStat) ||
+      requireReplayFileSize(finalStat.size) !== bytes.length
+    ) {
+      throw new Error('new replay stream did not retain its complete append');
+    }
+    const pathStat = await assertPrivateRegularPath(
+      path,
+      0o600,
+      fs,
+      'replay stream',
+    );
+    if (!sameFileIdentity(openedStat, pathStat)) {
+      throw new Error('new replay stream path changed during publication');
+    }
+    await assertPrivateDirectory(sessionsDir, fs);
+    const retained = handle;
+    handle = undefined;
+    return {
+      handle: retained,
+      identity: replayFileIdentity(openedStat),
+    };
+  } finally {
+    await handle?.close();
+  }
+}
+
+function parseReplayLines(bytes, initialSequence, initialDigest, observedSeq) {
+  const entries = [];
+  let sequence = initialSequence;
+  let digest = initialDigest;
+  let observedDigest = observedSeq === 0 ? initialDigest : undefined;
+  let lineStart = 0;
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] !== 0x0a) continue;
+    const line = bytes.subarray(lineStart, index);
+    const entry = parseReplayEnvelope(line, sequence + 1);
+    sequence = entry.seq;
+    digest = digestReplayEntry(digest, entry);
+    if (sequence === observedSeq) observedDigest = digest;
+    entries.push(entry);
+    lineStart = index + 1;
+  }
+
+  return {
+    completeBytes: lineStart,
+    digest,
+    entries,
+    observedDigest,
+    sequence,
+  };
+}
+
+function parseReplayEnvelope(bytes, expectedSequence) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (cause) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} is not valid UTF-8: ${errorMessage(cause)}`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (cause) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} is not valid JSON: ${errorMessage(cause)}`,
+    );
+  }
+  const envelope = requireRecord(
+    snapshotJsonValue(parsed, `replay stream sequence ${expectedSequence}`),
+    `replay stream sequence ${expectedSequence}`,
+  );
+  exactOptionalKeys(
+    envelope,
+    ['v', 'seq', 'record'],
+    ['role'],
+    `replay stream sequence ${expectedSequence}`,
+  );
+  if (envelope.v !== RECORDS_STREAM_VERSION) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} version must be ${RECORDS_STREAM_VERSION}`,
+    );
+  }
+  if (!Number.isSafeInteger(envelope.seq) || envelope.seq <= 0) {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} seq must be a positive safe integer`,
+    );
+  }
+  if (envelope.seq !== expectedSequence) {
+    throw new Error(
+      `replay stream expected sequence ${expectedSequence}, received ${envelope.seq}`,
+    );
+  }
+  if (envelope.role !== undefined && typeof envelope.role !== 'string') {
+    throw new Error(
+      `replay stream sequence ${expectedSequence} role must be a string`,
+    );
+  }
+  requireRecord(
+    envelope.record,
+    `replay stream sequence ${expectedSequence} record`,
+  );
+  return envelope;
+}
+
+function validateReplayReadOptions(options) {
+  if (
+    options === undefined ||
+    isExactUndefinedReplayReadOption(options)
+  ) {
+    return 0;
+  }
+  const value = requireRecord(
+    snapshotJsonValue(options, 'replay stream read options'),
+    'replay stream read options',
+  );
+  exactOptionalKeys(value, [], ['afterSeq'], 'replay stream read options');
+  const afterSeq = Object.hasOwn(value, 'afterSeq') ? value.afterSeq : 0;
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+    throw new Error(
+      'replay stream read options afterSeq must be a nonnegative safe integer',
+    );
+  }
+  return afterSeq;
+}
+
+function isExactUndefinedReplayReadOption(options) {
+  if (
+    options === null ||
+    typeof options !== 'object' ||
+    Array.isArray(options)
+  ) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== 1 || keys[0] !== 'afterSeq') return false;
+  const descriptor = descriptors.afterSeq;
+  return (
+    descriptor.enumerable &&
+    Object.hasOwn(descriptor, 'value') &&
+    descriptor.value === undefined
+  );
+}
+
+function freezeReplayReadResult(entries, lastReadableSeq) {
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    lastReadableSeq,
+  });
+}
+
+function projectPlaybookSessionSummary(record) {
+  return Object.freeze({
+    schemaVersion: record.schemaVersion,
+    sessionId: record.sessionId,
+    state: record.state,
+    cwd: record.cwd,
+    updatedAt: record.updatedAt,
+  });
+}
+
+function freezeReplayLeaseReadResult(
+  entries,
+  lastReadableSeq,
+  lastDurableSeq,
+  incomplete,
+) {
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    lastReadableSeq,
+    lastDurableSeq,
+    incomplete,
+  });
+}
+
+function replayFileIdentity(stat) {
+  return Object.freeze({ dev: stat.dev, ino: stat.ino });
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameReplayIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function requireReplayFileSize(value) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error('replay stream size must be a nonnegative safe integer');
+  }
+  return value;
+}
+
+function assertPrivateRegularStat(stat, mode, label) {
+  if (!stat.isFile()) {
+    throw new Error(`${label} path is not a regular file`);
+  }
+  if ((stat.mode & 0o7777) !== mode) {
+    throw new Error(`${label} permissions must be ${octal(mode)}`);
+  }
+}
+
+function digestReplayEntry(previous, entry) {
+  return createHash('sha256')
+    .update(previous)
+    .update('\u0000')
+    .update(canonicalReplayJson(entry))
+    .digest('hex');
+}
+
+function canonicalReplayJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalReplayJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalReplayJson(value[key])}`,
+      )
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sanitizeReplayValue(value, path, ancestors) {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${path} must contain a finite JSON number`);
+    }
+    if (Object.is(value, -0)) {
+      throw new TypeError(`${path} must not contain negative zero`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new TypeError(`${path} must be a plain JSON array`);
+    }
+    if (ancestors.has(value)) {
+      throw new TypeError(`${path} must not contain a JSON cycle`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key === 'symbol')) {
+      throw new TypeError(`${path} must not contain symbol-keyed properties`);
+    }
+    const lengthDescriptor = descriptors.length;
+    if (
+      lengthDescriptor === undefined ||
+      !Object.hasOwn(lengthDescriptor, 'value') ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      throw new TypeError(`${path} must be a plain JSON array`);
+    }
+    const length = lengthDescriptor.value;
+    const nextAncestors = new Set(ancestors).add(value);
+    const copy = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !Object.hasOwn(descriptor, 'value')
+      ) {
+        throw new TypeError(`${path} must not be a sparse JSON array`);
+      }
+      copy.push(
+        sanitizeReplayValue(
+          descriptor.value,
+          `${path}[${index}]`,
+          nextAncestors,
+        ),
+      );
+    }
+    const extra = keys.find(
+      (key) =>
+        typeof key === 'string' &&
+        key !== 'length' &&
+        (!Number.isSafeInteger(Number(key)) ||
+          Number(key) < 0 ||
+          Number(key) >= length ||
+          String(Number(key)) !== key),
+    );
+    if (extra !== undefined) {
+      throw new TypeError(`${path}.${extra} is not a JSON array index`);
+    }
+    return Object.freeze(copy);
+  }
+  if (value === null || typeof value !== 'object') {
+    throw new TypeError(`${path} must be a JSON value`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${path} must be a JSON value`);
+  }
+  if (ancestors.has(value)) {
+    throw new TypeError(`${path} must not contain a JSON cycle`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.some((key) => typeof key === 'symbol')) {
+    throw new TypeError(`${path} must not contain symbol-keyed properties`);
+  }
+  const nextAncestors = new Set(ancestors).add(value);
+  const copy = {};
+  for (const key of keys) {
+    if (typeof key !== 'string') continue;
+    if (key === 'resumeToken') continue;
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, 'value')
+    ) {
+      throw new TypeError(
+        `${path}.${key} must be an enumerable JSON data property`,
+      );
+    }
+    if (key === 'resume' && typeof descriptor.value === 'string') continue;
+    if (descriptor.value === undefined) continue;
+    Object.defineProperty(copy, key, {
+      value: sanitizeReplayValue(
+        descriptor.value,
+        `${path}.${key}`,
+        nextAncestors,
+      ),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return Object.freeze(copy);
+}
+
+async function createLease({
   sessionId,
   owner,
+  sessionsDir,
+  replayPath,
+  replayFs,
+  readReplayStream,
   readRecord,
   writeRecord,
   syncRecordDirectory,
@@ -892,6 +2230,19 @@ function createLease({
   };
 
   const assertOwner = () => runExclusive(assertOwnerUnchecked);
+
+  const replayWriter = await createLeaseReplayWriter({
+    sessionsDir,
+    path: replayPath,
+    fs: replayFs,
+    assertOwner: assertOwnerUnchecked,
+    readStream: readReplayStream,
+  });
+
+  const finishSettlement = async (record) => {
+    await replayWriter.checkpoint();
+    return record;
+  };
 
   const read = () =>
     runExclusive(async () => {
@@ -1636,7 +2987,7 @@ function createLease({
           await assertOwnerUnchecked();
           await syncRecordDirectory();
           await assertOwnerUnchecked();
-          return current;
+          return finishSettlement(current);
         }
         if (settledAbandonment.phase === 'final') {
           throw new Error(
@@ -1666,7 +3017,7 @@ function createLease({
         await assertOwnerUnchecked();
         await writeRecord(record, { noReplace: false });
         await assertOwnerUnchecked();
-        return record;
+        return finishSettlement(record);
       }
       if (Object.hasOwn(prior.uncertain, 'abandonment')) {
         const abandonment = prior.uncertain.abandonment;
@@ -1724,7 +3075,7 @@ function createLease({
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
-      return record;
+      return finishSettlement(record);
     });
 
   const writeEffectLedger = (authorityValue, commandsValue) =>
@@ -1845,16 +3196,23 @@ function createLease({
       return record;
     });
 
-  const release = () =>
-    runExclusive(async () => {
+  const release = () => {
+    replayWriter.closeAppendAdmission();
+    return runExclusive(async () => {
+      await replayWriter.prepareRelease();
       const current = await assertOwnerUnchecked();
       await retireObservedLease(sessionId, current);
       released = true;
+      return replayWriter.status();
     });
+  };
 
   return Object.freeze({
     sessionId,
     ownerToken: owner.ownerToken,
+    append: replayWriter.append,
+    readStream: replayWriter.read,
+    streamStatus: replayWriter.status,
     read,
     initializeSettledWithPredecessor,
     abandonFreshSettled,

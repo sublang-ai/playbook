@@ -58,6 +58,16 @@ function oneRoleConfig() {
   };
 }
 
+async function writeSessionsConfig(configPath: string, sessions?: string) {
+  await mkdir(dirname(configPath), { recursive: true });
+  const source =
+    sessions === undefined
+      ? '{}\n'
+      : `sessions: ${JSON.stringify(sessions)}\n`;
+  await writeFile(configPath, source, 'utf8');
+  return source;
+}
+
 function structuralProjection(plan: any) {
   const fixed = (agent: any) => ({
     adapter: agent.adapter,
@@ -96,6 +106,192 @@ function structuralProjection(plan: any) {
     ),
   };
 }
+
+describe('sessions locator bootstrap (PBCLI-78)', () => {
+  it('keeps the unset locator on the XDG or home-state default', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-default-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'config', 'playbook.config.yaml');
+    await writeSessionsConfig(configPath);
+
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        env: { XDG_STATE_HOME: join(root, 'xdg-state') },
+        homeDir: join(root, 'home'),
+      }),
+    ).toBe(join(root, 'xdg-state', 'playbook', 'sessions'));
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        env: {},
+        homeDir: join(root, 'home'),
+      }),
+    ).toBe(
+      join(root, 'home', '.local', 'state', 'playbook', 'sessions'),
+    );
+  });
+
+  it('expands only the current-user tilde forms', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-tilde-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'config', 'playbook.config.yaml');
+    const homeDir = join(root, 'home');
+
+    await writeSessionsConfig(configPath, '~');
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        homeDir,
+      }),
+    ).toBe(homeDir);
+
+    await writeSessionsConfig(configPath, '~/shared/sessions');
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        homeDir,
+      }),
+    ).toBe(join(homeDir, 'shared', 'sessions'));
+
+    await writeSessionsConfig(configPath, '~//shared/sessions');
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        homeDir,
+      }),
+    ).toBe(join(homeDir, 'shared', 'sessions'));
+
+    for (const sessions of ['~peer', '~peer/sessions']) {
+      await writeSessionsConfig(configPath, sessions);
+      await expect(
+        Promise.resolve().then(() =>
+          launchConfig.resolveLaunchSessionsDir({
+            userConfigPath: configPath,
+            homeDir,
+          }),
+        ),
+      ).rejects.toThrow();
+    }
+  });
+
+  it(
+    'preserves absolute spelling and anchors every relative form to the primary config',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-paths-'));
+      tempDirs.push(root);
+      const configPath = join(root, 'config', 'playbook.config.yaml');
+      const primaryDir = dirname(configPath);
+      const absolute = `${root}/absolute/../sessions`;
+
+      await writeSessionsConfig(configPath, absolute);
+      expect(
+        await launchConfig.resolveLaunchSessionsDir({
+          userConfigPath: configPath,
+        }),
+      ).toBe(absolute);
+
+      for (const sessions of ['./dot-relative', 'bare-relative']) {
+        await writeSessionsConfig(configPath, sessions);
+        expect(
+          await launchConfig.resolveLaunchSessionsDir({
+            userConfigPath: configPath,
+          }),
+        ).toBe(join(primaryDir, sessions));
+      }
+    },
+  );
+
+  it(
+    'applies overlays in order from the primary anchor without rewriting inputs',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-overlay-'));
+      tempDirs.push(root);
+      const configPath = join(root, 'config', 'playbook.config.yaml');
+      const firstOverlayPath = join(root, 'overlays', 'first.yaml');
+      const lastOverlayPath = join(root, 'elsewhere', 'last.yaml');
+      const primary = await writeSessionsConfig(configPath, 'primary');
+      const firstOverlay = 'sessions: "first"\n';
+      const lastOverlay = 'sessions: "../last"\n';
+      await mkdir(dirname(firstOverlayPath), { recursive: true });
+      await mkdir(dirname(lastOverlayPath), { recursive: true });
+      await writeFile(firstOverlayPath, firstOverlay, 'utf8');
+      await writeFile(lastOverlayPath, lastOverlay, 'utf8');
+
+      expect(
+        await launchConfig.resolveLaunchSessionsDir({
+          userConfigPath: configPath,
+          overlayPaths: [firstOverlayPath, lastOverlayPath],
+        }),
+      ).toBe(join(root, 'last'));
+      expect(await readFile(configPath, 'utf8')).toBe(primary);
+      expect(await readFile(firstOverlayPath, 'utf8')).toBe(firstOverlay);
+      expect(await readFile(lastOverlayPath, 'utf8')).toBe(lastOverlay);
+    },
+  );
+
+  it('lets an injected directory precede an invalid configured locator', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-injected-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'config', 'playbook.config.yaml');
+    const sessionsDir = join(root, 'injected');
+    await writeSessionsConfig(configPath, '~peer');
+
+    expect(
+      await launchConfig.resolveLaunchSessionsDir({
+        userConfigPath: configPath,
+        sessionsDir,
+      }),
+    ).toBe(sessionsDir);
+  });
+
+  it(
+    'does not prepare or traverse unrelated roots for selected bootstrap',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-selected-'));
+      tempDirs.push(root);
+      const configPath = join(root, 'config', 'playbook.config.yaml');
+      await mkdir(dirname(configPath), { recursive: true });
+      const source = [
+        'sessions: selected-sessions',
+        'playbooks:',
+        '  poisoned: { players: { retired: missing-profile } }',
+        '',
+      ].join('\n');
+      await writeFile(configPath, source, 'utf8');
+      const onNotice = vi.fn();
+
+      expect(
+        await launchConfig.resolveLaunchSessionsDir({
+          userConfigPath: configPath,
+          preparePrimary: false,
+          onNotice,
+        }),
+      ).toBe(join(dirname(configPath), 'selected-sessions'));
+      expect(onNotice).not.toHaveBeenCalled();
+      expect(await readFile(configPath, 'utf8')).toBe(source);
+      await expect(access(`${configPath}.bak`)).rejects.toThrow();
+    },
+  );
+
+  it('keeps sessions out of normalized and host projections', async () => {
+    const plan = await launchConfig.normalizeLaunchPlan(
+      { ...oneRoleConfig(), sessions: './shared-sessions' },
+      {
+        loadModule: moduleLoader({
+          'mod://code': entry('code', ['coder']),
+        }),
+      },
+    );
+    const structural = structuralProjection(plan);
+    const tmux = launchConfig.projectTmuxConfig(plan);
+
+    expect(plan).not.toHaveProperty('sessions');
+    expect(structural).not.toHaveProperty('sessions');
+    expect(tmux).not.toHaveProperty('sessions');
+    expect(tmux.captain.options).not.toHaveProperty('sessions');
+  });
+});
 
 describe('shared launch-config plan (PBCLI-47)', () => {
   it('builds detached tagged session agents and an exact tmux projection', async () => {

@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -15,7 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   createEvent,
@@ -44,7 +45,7 @@ const { runPlaybookCli, runPlaybookCliEntry } = await import(
 const { installRetainedGenerationsForLaunch, parseRunArgs } = await import(
   new URL('./bin/run.js', import.meta.url).href
 );
-const { createCaptainSessionStore } = await import(
+const { createCaptainSessionStore, sanitizeReplayRecord } = await import(
   new URL('./bin/session-store.js', import.meta.url).href
 );
 const { createRepositoryEffectCapabilities } = await import(
@@ -714,6 +715,8 @@ async function headlessHarness(
       | undefined) ?? ((entry: unknown) => entry);
   const runOptions = { ...extra };
   delete runOptions.entryTransform;
+  const injectSessionsDir = runOptions.injectSessionsDir !== false;
+  delete runOptions.injectSessionsDir;
   const events: string[] = [];
   const inputs: string[] = [];
   const entries = nestedEntries(events);
@@ -741,7 +744,7 @@ async function headlessHarness(
       '90000000-0000-4000-8000-000000000001',
     createCaptainSessionId: uuidSequence(),
     probeAdapterSdk: async () => true,
-    sessionsDir,
+    ...(injectSessionsDir ? { sessionsDir } : {}),
     stdout,
     stderr,
     spawn: () => {
@@ -765,6 +768,559 @@ function uuidSequence() {
   return () =>
     `10000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
 }
+
+async function readReplayEntries(sessionsDir: string, sessionId: string) {
+  const text = await readFile(
+    join(sessionsDir, `${sessionId}.records.jsonl`),
+    'utf8',
+  );
+  expect(text.endsWith('\n')).toBe(true);
+  return text
+    .slice(0, -1)
+    .split('\n')
+    .map((line) => JSON.parse(line));
+}
+
+function headlessReplayWarning(sessionId: string) {
+  return (
+    `playbook run: warning: replay history for session ` +
+    `${JSON.stringify(sessionId)} may be incomplete; recording has stopped\n`
+  );
+}
+
+function warningCount(text: string, warning: string) {
+  return text.split(warning).length - 1;
+}
+
+describe('headless sessions locator (PBCLI-78/81)', () => {
+  it('selects and persists through a configured relative directory without projecting the locator', async () => {
+    const configPath = await writeConfig(
+      ['sessions: replay-sessions', sharedConfig()].join('\n'),
+    );
+    const configuredSessionsDir = join(
+      dirname(configPath),
+      'replay-sessions',
+    );
+    const first = await headlessHarness(['run', 'first turn'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+    });
+
+    expect(first.result.code, first.stderr).toBe(0);
+    const recordPath = join(
+      configuredSessionsDir,
+      `${first.result.sessionId}.json`,
+    );
+    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    expect(record.structuralProjection).not.toHaveProperty('sessions');
+    expect(record.lastAppliedExecutionProjection).not.toHaveProperty(
+      'sessions',
+    );
+
+    const hostFactory = vi.fn((options: any) =>
+      createTmuxPlayRuntime(options),
+    );
+    const continued = await headlessHarness(
+      ['run', '--continue', 'second turn'],
+      {
+        injectSessionsDir: false,
+        userConfigPath: configPath,
+        createHostRuntime: hostFactory,
+      },
+    );
+
+    expect(continued.result.code, continued.stderr).toBe(0);
+    expect(continued.result.sessionId).toBe(first.result.sessionId);
+    expect(continued.inputs).toEqual(['second turn']);
+    expect(hostFactory).toHaveBeenCalledOnce();
+  });
+
+  it('gives an injected store precedence over an invalid configured locator', async () => {
+    const configPath = await writeConfig(
+      ['sessions: "~another-user/replay"', sharedConfig()].join('\n'),
+    );
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-injected-session-store-'),
+    );
+    tempDirs.push(stateRoot);
+    const injectedSessionsDir = join(stateRoot, 'sessions');
+    const sessionStore = createCaptainSessionStore({
+      sessionsDir: injectedSessionsDir,
+    });
+    const out = await headlessHarness(['run', 'injected store'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+      sessionStore,
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    await expect(
+      stat(join(injectedSessionsDir, `${out.result.sessionId}.json`)),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects an unusable configured directory before agent or host work', async () => {
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-unusable-sessions-'),
+    );
+    tempDirs.push(stateRoot);
+    const unusablePath = join(stateRoot, 'not-a-directory');
+    await writeFile(unusablePath, 'occupied\n', 'utf8');
+    const configPath = await writeConfig(
+      [`sessions: ${JSON.stringify(unusablePath)}`, sharedConfig()].join(
+        '\n',
+      ),
+    );
+    const calls = { prepare: 0, load: 0, host: 0 };
+    const out = await headlessHarness(['run', 'must not run'], {
+      injectSessionsDir: false,
+      userConfigPath: configPath,
+      prepareRegistryModule: async ({ from }: any) => {
+        calls.prepare += 1;
+        return from;
+      },
+      loadModule: async () => {
+        calls.load += 1;
+        return {};
+      },
+      createHostRuntime: async () => {
+        calls.host += 1;
+        throw new Error('must not construct host');
+      },
+    });
+
+    expect(out.result.code).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(calls).toEqual({ prepare: 0, load: 0, host: 0 });
+    expect(out.stderr).toContain(
+      'Captain session store path is not a real directory',
+    );
+  });
+
+  it('rejects a missing directory below an unwritable parent before host work', async () => {
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-unwritable-sessions-'),
+    );
+    tempDirs.push(stateRoot);
+    const lockedParent = join(stateRoot, 'locked');
+    await mkdir(lockedParent, { mode: 0o700 });
+    const configPath = await writeConfig(
+      [
+        `sessions: ${JSON.stringify(join(lockedParent, 'sessions'))}`,
+        sharedConfig(),
+      ].join('\n'),
+    );
+    const calls = { prepare: 0, load: 0, host: 0 };
+    await chmod(lockedParent, 0o500);
+    let out;
+    try {
+      out = await headlessHarness(['run', 'must not run'], {
+        injectSessionsDir: false,
+        userConfigPath: configPath,
+        prepareRegistryModule: async ({ from }: any) => {
+          calls.prepare += 1;
+          return from;
+        },
+        loadModule: async () => {
+          calls.load += 1;
+          return {};
+        },
+        createHostRuntime: async () => {
+          calls.host += 1;
+          throw new Error('must not construct host');
+        },
+      });
+    } finally {
+      await chmod(lockedParent, 0o700);
+    }
+
+    expect(out.result.code).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(calls).toEqual({ prepare: 0, load: 0, host: 0 });
+    expect(out.stderr).toMatch(/permission denied|EACCES/);
+  });
+});
+
+describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
+  const replaySessionId = '90000000-0000-4000-8000-000000000071';
+
+  it('tees every hidden and visible record with roles across two turns', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-headless-replay-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const observed: any[] = [];
+    let traceSequence = 0;
+    let callSequence = 0;
+    const activeCalls = new Map<string, { callId: string; roleId: string }>();
+    const createHostRuntime = async (options: any) => {
+      const forward = async (record: any) => {
+        for (const observer of options.observers) {
+          await observer.onRecord(record);
+        }
+        observed.push(record);
+      };
+      const traceRecord = (
+        record: any,
+        type: 'player.call.started' | 'player.call.finished',
+        frame: { callId: string; roleId: string },
+      ) => ({
+        type: 'captain_telemetry',
+        turnId: record.turnId,
+        timestamp: record.timestamp,
+        topic: 'playbook.trace',
+        payload: {
+          schemaVersion: 4,
+          sessionId: 'headless-replay-role-session',
+          playbookId: 'headless-replay-role-playbook',
+          rootSessionId: 'headless-replay-role-session',
+          depth: 0,
+          sequence: ++traceSequence,
+          timestamp: record.timestamp,
+          type,
+          turnId: record.turnId,
+          callId: frame.callId,
+          payload: {
+            playerId: record.playerId,
+            roleId: frame.roleId,
+            resume: false,
+            ...(type === 'player.call.started'
+              ? { prompt: record.prompt }
+              : {
+                  status: 'ok',
+                  ...(typeof record.result?.finalText === 'string'
+                    ? { finalText: record.result.finalText }
+                    : {}),
+                }),
+          },
+        },
+      });
+      return createTmuxPlayRuntime({
+        ...options,
+        observers: [
+          {
+            async onRecord(record: any) {
+              if (record.type === 'player_prompt') {
+                const frame = {
+                  callId: `headless-player-${++callSequence}`,
+                  roleId:
+                    record.playerId === 'dev.reviewer' ? 'reviewer' : 'coder',
+                };
+                activeCalls.set(record.playerId, frame);
+                await forward(traceRecord(record, 'player.call.started', frame));
+              }
+              await forward(record);
+              if (record.type === 'player_finished') {
+                const frame = activeCalls.get(record.playerId);
+                if (frame !== undefined) {
+                  await forward(
+                    traceRecord(record, 'player.call.finished', frame),
+                  );
+                  activeCalls.delete(record.playerId);
+                }
+              }
+            },
+          },
+        ],
+      });
+    };
+
+    const first = await headlessHarness(['run', '/code record everything'], {
+      sessionsDir,
+      createLogicalSessionId: () => replaySessionId,
+      createHostRuntime,
+    });
+    expect(first.result.code).toBe(0);
+    expect(first.stdout).toBe('Nested CODE and REVIEW completed.\n');
+    expect(first.stderr).not.toContain('replay history');
+
+    const firstObservedCount = observed.length;
+    const firstEntries = await readReplayEntries(sessionsDir, replaySessionId);
+    expect(firstEntries).toHaveLength(firstObservedCount);
+    expect(firstEntries.map(({ seq }: any) => seq)).toEqual(
+      Array.from({ length: firstEntries.length }, (_, index) => index + 1),
+    );
+
+    const second = await headlessHarness(
+      ['run', '--session', replaySessionId, 'one more turn'],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        createHostRuntime,
+      },
+    );
+    expect(second.result.code).toBe(0);
+    expect(second.stdout).toBe('Captain acknowledged the message.\n');
+    expect(second.stderr).not.toContain('replay history');
+
+    const entries = await readReplayEntries(sessionsDir, replaySessionId);
+    expect(entries.length).toBeGreaterThan(firstEntries.length);
+    expect(entries.slice(0, firstEntries.length)).toEqual(firstEntries);
+    expect(entries.map(({ seq }: any) => seq)).toEqual(
+      Array.from({ length: entries.length }, (_, index) => index + 1),
+    );
+    expect(entries.map(({ record }: any) => record)).toEqual(
+      observed.map((record) => sanitizeReplayRecord(record)),
+    );
+
+    const types = new Set(entries.map(({ record }: any) => record.type));
+    for (const type of [
+      'turn_started',
+      'player_prompt',
+      'player_event',
+      'player_finished',
+      'captain_prompt',
+      'captain_event',
+      'captain_finished',
+      'captain_reply',
+      'captain_telemetry',
+      'turn_finished',
+    ]) {
+      expect(types.has(type), type).toBe(true);
+    }
+    expect(
+      entries.some(
+        ({ record }: any) =>
+          record.type === 'captain_prompt' && record.visibility === 'hidden',
+      ),
+    ).toBe(true);
+
+    const playerEntries = entries.filter(({ record }: any) =>
+      ['player_prompt', 'player_event', 'player_finished'].includes(record.type),
+    );
+    expect(playerEntries.length).toBeGreaterThan(0);
+    expect(new Set(playerEntries.map(({ role }: any) => role))).toEqual(
+      new Set(['coder', 'reviewer']),
+    );
+    for (const entry of entries) {
+      if (
+        !['player_prompt', 'player_event', 'player_finished'].includes(
+          entry.record.type,
+        )
+      ) {
+        expect(entry).not.toHaveProperty('role');
+      }
+    }
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain('resumeToken');
+    expect(serialized).toContain('"resume":false');
+  });
+
+  it('warns once and still completes against an unavailable initial stream', async () => {
+    const stateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-headless-invalid-replay-'),
+    );
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    await mkdir(sessionsDir, { mode: 0o700 });
+    const streamPath = join(sessionsDir, `${replaySessionId}.records.jsonl`);
+    const invalid = '{"v":1,"seq":1,"record":[]}\n';
+    await writeFile(streamPath, invalid, { mode: 0o600 });
+
+    const out = await headlessHarness(['run', 'continue without replay'], {
+      sessionsDir,
+      createLogicalSessionId: () => replaySessionId,
+    });
+    const warning = headlessReplayWarning(replaySessionId);
+    expect(out.result.code).toBe(0);
+    expect(out.stdout).toBe('Captain acknowledged the message.\n');
+    expect(warningCount(out.stderr, warning)).toBe(1);
+    expect(out.stderr.replace(warning, '')).toBe('');
+    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+
+    const successor = await headlessHarness(
+      ['run', '--session', replaySessionId, 'continue once more'],
+      {
+        sessionsDir,
+        userConfigPath: out.configPath,
+      },
+    );
+    expect(successor.result.code).toBe(0);
+    expect(successor.stdout).toBe('Captain acknowledged the message.\n');
+    expect(warningCount(successor.stderr, warning)).toBe(1);
+    expect(successor.stderr.replace(warning, '')).toBe('');
+    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+  });
+
+  it('keeps a sanitizer failure outside dispatch and swallows warning failure', async () => {
+    const run = async (failWarning: boolean) => {
+      const stateRoot = await mkdtemp(
+        join(tmpdir(), 'playbook-headless-replay-warning-'),
+      );
+      tempDirs.push(stateRoot);
+      const sessionsDir = join(stateRoot, 'sessions');
+      const baseStore = createCaptainSessionStore({ sessionsDir });
+      const sessionStore = {
+        ...baseStore,
+        async acquire(sessionId: string) {
+          const lease = await baseStore.acquire(sessionId);
+          let first = true;
+          return {
+            ...lease,
+            async append(record: any, role?: string) {
+              if (!first) return lease.append(record, role);
+              first = false;
+              return lease.append(new Date('2026-08-31T00:00:00.000Z'));
+            },
+          };
+        },
+      };
+      const warning = headlessReplayWarning(replaySessionId);
+      const stderrChunks: string[] = [];
+      let warningAttempts = 0;
+      let hostTurnActive = false;
+      let warningDuringHostTurn = false;
+      const out = await headlessHarness(['run', 'survive replay failure'], {
+        sessionsDir,
+        sessionStore,
+        createLogicalSessionId: () => replaySessionId,
+        stderr: {
+          write(chunk: string) {
+            const text = String(chunk);
+            if (text === warning) {
+              warningAttempts += 1;
+              warningDuringHostTurn ||= hostTurnActive;
+              if (failWarning) throw new Error('synthetic warning sink failure');
+            }
+            stderrChunks.push(text);
+            return true;
+          },
+        },
+        createHostRuntime: async (options: any) => {
+          const host = await createTmuxPlayRuntime(options);
+          return {
+            async runBossTurn(input: string) {
+              hostTurnActive = true;
+              try {
+                return await host.runBossTurn(input);
+              } finally {
+                hostTurnActive = false;
+              }
+            },
+            dispose: () => host.dispose(),
+          };
+        },
+      });
+      return {
+        out,
+        warning,
+        warningAttempts,
+        warningDuringHostTurn,
+        stderr: stderrChunks.join(''),
+      };
+    };
+
+    const writable = await run(false);
+    expect(writable.out.result.code).toBe(0);
+    expect(writable.out.stdout).toBe('Captain acknowledged the message.\n');
+    expect(writable.warningAttempts).toBe(1);
+    expect(writable.warningDuringHostTurn).toBe(false);
+    expect(writable.stderr).toBe(writable.warning);
+
+    const failed = await run(true);
+    expect(failed.out.result.code).toBe(0);
+    expect(failed.out.stdout).toBe('Captain acknowledged the message.\n');
+    expect(failed.warningAttempts).toBe(1);
+    expect(failed.warningDuringHostTurn).toBe(false);
+    expect(failed.stderr).toBe('');
+  });
+
+  it.each([
+    'initialization',
+    'sanitization',
+    'append',
+    'first-publication directory sync',
+    'torn-tail repair',
+    'settlement checkpoint',
+    'release checkpoint',
+  ] as const)(
+    'adds only the native warning for a %s failure',
+    async (boundary) => {
+      const stateRoot = await mkdtemp(
+        join(tmpdir(), 'playbook-headless-replay-boundary-'),
+      );
+      tempDirs.push(stateRoot);
+      const sessionsDir = join(stateRoot, 'sessions');
+      const baseStore = createCaptainSessionStore({ sessionsDir });
+      const sessionStore = {
+        ...baseStore,
+        async acquire(sessionId: string) {
+          const owned = await baseStore.acquire(sessionId);
+          let sourceFailurePending = [
+            'sanitization',
+            'append',
+            'first-publication directory sync',
+          ].includes(boundary);
+          let liveStatus = owned.streamStatus();
+          if (
+            boundary === 'initialization' ||
+            boundary === 'torn-tail repair'
+          ) {
+            liveStatus = { ...liveStatus, incomplete: true };
+          }
+          const latch = () => {
+            liveStatus = { ...liveStatus, incomplete: true };
+          };
+          const adopt = (status: typeof liveStatus) => {
+            if (!liveStatus.incomplete) liveStatus = status;
+            return liveStatus;
+          };
+          return {
+            ...owned,
+            async append(record: any, role?: string) {
+              if (liveStatus.incomplete) return;
+              if (sourceFailurePending) {
+                sourceFailurePending = false;
+                if (boundary === 'sanitization') {
+                  try {
+                    await owned.append(
+                      new Date('2026-08-31T00:00:00.000Z'),
+                    );
+                  } catch (error) {
+                    liveStatus = owned.streamStatus();
+                    throw error;
+                  }
+                }
+                if (boundary === 'first-publication directory sync') {
+                  await owned.append(record, role);
+                  liveStatus = owned.streamStatus();
+                }
+                latch();
+                throw new Error(`synthetic replay ${boundary} failure`);
+              }
+              await owned.append(record, role);
+              adopt(owned.streamStatus());
+            },
+            streamStatus: () => liveStatus,
+            async settle(value: any) {
+              const record = await owned.settle(value);
+              adopt(owned.streamStatus());
+              if (boundary === 'settlement checkpoint') latch();
+              return record;
+            },
+            async release() {
+              adopt(await owned.release());
+              if (boundary === 'release checkpoint') latch();
+              return liveStatus;
+            },
+          };
+        },
+      };
+      const out = await headlessHarness(
+        ['run', `${boundary} still succeeds`],
+        {
+          sessionsDir,
+          sessionStore,
+          createLogicalSessionId: () => replaySessionId,
+        },
+      );
+      const warning = headlessReplayWarning(replaySessionId);
+      expect(out.result.code).toBe(0);
+      expect(out.stdout).toBe('Captain acknowledged the message.\n');
+      expect(warningCount(out.stderr, warning)).toBe(1);
+      expect(out.stderr.replace(warning, '')).toBe('');
+    },
+  );
+});
 
 describe('playbook run shared Captain host (PBCLI-48)', () => {
   it('runs configured CODE through nested REVIEW on the real headless host', async () => {

@@ -27,6 +27,7 @@ import {
   loadLaunchPlan,
   loadSelectedLaunchPlanDataOnly,
   projectTmuxConfig,
+  resolveLaunchSessionsDir,
   resolveUserConfigPath,
   checkReadiness,
 } from './launch-config.js';
@@ -42,6 +43,7 @@ import {
 } from './run.js';
 import {
   assertCaptainSessionExecutionCompatible,
+  assertCaptainSessionsDirectoryUsable,
   createCaptainSessionStore,
   SESSION_ID_PATTERN,
   validateCaptainSessionRecord,
@@ -215,6 +217,29 @@ export async function runPlaybookCli(options = {}) {
     options.cwd ?? process.cwd(),
     interactiveArgs.cwd ?? '.',
   );
+  let resolvedSessionsDir;
+  if (options.sessionStore === undefined) {
+    try {
+      resolvedSessionsDir = resolveLaunchSessionsDir({
+        userConfigPath,
+        overlayPaths: withPaths,
+        env,
+        homeDir: home,
+        ...(options.sessionsDir !== undefined
+          ? { sessionsDir: options.sessionsDir }
+          : {}),
+        preparePrimary: interactiveArgs.sessionId === undefined,
+        onNotice: (line) => stderr.write(line),
+      });
+      // PBCLI-78: listing validates the locator but never consumes the store.
+      if (!interactiveArgs.list) {
+        await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
+      }
+    } catch (error) {
+      stderr.write(`playbook: ${errorMessage(error)}\n`);
+      return { code: COMPOSITION_FAILURE_EXIT_CODE };
+    }
+  }
   // PBCLI-49: selected planning is deliberately provisional. It narrows the
   // current config before preparation; the pane child later acquires the
   // lease and repeats the authoritative read before any host/import work.
@@ -222,7 +247,12 @@ export async function runPlaybookCli(options = {}) {
   let selectedRecord;
   if (interactiveArgs.sessionId !== undefined) {
     try {
-      store = createInteractiveStore(options, env, home);
+      store = createInteractiveStore(
+        options,
+        env,
+        home,
+        resolvedSessionsDir,
+      );
       selectedRecord = validateCaptainSessionRecord(
         await store.read(interactiveArgs.sessionId),
       );
@@ -369,7 +399,12 @@ export async function runPlaybookCli(options = {}) {
   }
 
   try {
-    store ??= createInteractiveStore(options, env, home);
+    store ??= createInteractiveStore(
+      options,
+      env,
+      home,
+      resolvedSessionsDir,
+    );
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -697,13 +732,13 @@ function optionValue(argv, index, name) {
   return value;
 }
 
-function createInteractiveStore(options, env, home) {
+function createInteractiveStore(options, env, home, sessionsDir) {
   return (
     options.sessionStore ??
     createCaptainSessionStore({
       env,
       homeDir: home,
-      ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+      sessionsDir,
       ...(options.now ? { now: options.now } : {}),
       ...(options.createSessionTempId
         ? { createTempId: options.createSessionTempId }

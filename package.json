@@ -67,12 +67,15 @@
     "reference/sdlc/code.playbook/playbook-captain.ts",
     "reference/sdlc/code.playbook/playbook-captain.js",
     "reference/sdlc/code.playbook/playbook-captain.d.ts",
+    "reference/sdlc/code.playbook/session-store.js",
+    "reference/sdlc/code.playbook/session-store.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
     "reference/sdlc/code.playbook/bin/launch-config.js",
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/interactive-session.js",
+    "reference/sdlc/code.playbook/bin/replay-observer.js",
     "reference/sdlc/code.playbook/bin/session-store.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",
@@ -126,6 +129,10 @@
     "./playbook-captain": {
       "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
       "default": "./reference/sdlc/code.playbook/playbook-captain.js"
+    },
+    "./session-store": {
+      "types": "./reference/sdlc/code.playbook/session-store.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-store.js"
     },
     "./slc/*": "./slc/*",
     "./review/playbook": {

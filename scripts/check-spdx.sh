@@ -32,7 +32,7 @@ is_excluded() {
 
   # No comment syntax / binary-equivalent.
   case "$f" in
-    *.json|*.ico|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.svg|*.woff|*.woff2|*.ttf|*.eot|*.pdf|*.zip|*.tar|*.tar.gz|*.tgz|*.gz) return 0 ;;
+    *.json|*.jsonl|*.ico|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.svg|*.woff|*.woff2|*.ttf|*.eot|*.pdf|*.zip|*.tar|*.tar.gz|*.tgz|*.gz) return 0 ;;
   esac
 
   # Config files (matched by basename so any depth applies).

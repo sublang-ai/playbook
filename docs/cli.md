@@ -231,12 +231,13 @@ module's directory is a git repository, add `node_modules/` to its
 
 ### Continuing a Captain session
 
-Interactive and headless commands write the same logical-session records under
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`. A fresh interactive
-child persists turn zero before printing `playbook: session <id>` and opening
-Boss input; a fresh headless turn returns the same kind of ID in `--json`.
-After the current writer exits or explicitly hands off, either presentation
-can reopen either origin:
+Interactive and headless commands write the same logical-session records in
+the configured [`sessions` directory](configuration.md#session-storage), whose
+default is `${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`. A fresh
+interactive child persists turn zero before printing `playbook: session <id>`
+and opening Boss input; a fresh headless turn returns the same kind of ID in
+`--json`. After the current writer exits or explicitly hands off, either
+presentation can reopen either origin:
 
 ```sh
 # Reopen the newest session stored for this working directory headlessly:
@@ -271,6 +272,47 @@ is never silently replaced by a fresh conversation if that selection is not
 supported
 ([[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
 [DR-032](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/032-explicit-roles-session-players.md)).
+
+### Following replay history
+
+Beside each `<session-id>.json` manifest, both front ends tee every observed
+host record in order to `<session-id>.records.jsonl`. Each complete line is a
+version-1 envelope with a writer-assigned sequence contiguous from `1`, the
+opaque record, and an optional local playbook role where the trace establishes
+one unambiguously. The stream is a mode-`0600` regular non-symlink file inside
+the private sessions directory. Readers consume only the complete
+newline-terminated prefix; a final partial line is not presented as a record.
+
+The replay projection recursively removes provider `resumeToken` fields and
+string-valued `resume` selections while preserving `resume: false`. It is
+therefore useful for following and presentation, but it cannot resume an agent
+conversation and does not replace the private canonical manifest. External
+hosts can follow this stream without taking the writer lease through the
+published [`@sublang/playbook/session-store`
+facade](embedding.md#sharing-the-cli-session-store).
+
+Streams are unbounded in this version: neither front end prunes them, and
+retention remains tied to the deferred session-deletion policy. Removing
+provider credentials does not make the remaining replay content non-sensitive;
+protect the prompts, replies, tool calls, events, and timestamps it contains as
+sensitive session data.
+
+Replay recording is fail-soft after the canonical session lease is valid. If
+initialization, sanitization, append, repair, publication synchronization, or a
+checkpoint fails, recording stops for that lease without changing the agent
+turn, durable session settlement, reply, or exit outcome. The headless command
+attempts this warning once on stderr:
+
+```text
+playbook run: warning: replay history for session "<session-id>" may be incomplete; recording has stopped
+```
+
+The interactive child instead presents one Captain status with the same
+`warning: replay history ...` text and writes no raw stderr diagnostic. A later
+lease gets its own warning only if its replay writer independently becomes
+incomplete. The public facade emits no warning; an embedding host decides how
+to present the `incomplete` status it receives
+([[playbook-cli-84](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-84)]).
 
 ### Reconciling possible repository effects
 

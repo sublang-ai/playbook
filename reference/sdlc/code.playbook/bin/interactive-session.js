@@ -36,6 +36,10 @@ import {
 } from './run.js';
 import { prepareConfiguredRegistries } from './provision.js';
 import {
+  createReplayRecordObserver,
+  replayIncompleteMessage,
+} from './replay-observer.js';
+import {
   assertCaptainSessionExecutionCompatible,
   createCaptainSessionStore,
   projectCaptainSessionStructure,
@@ -86,10 +90,7 @@ export function validateManagedInteractivePayload(value) {
   }
   assertUuid(value.sessionId, 'managed interactive session id');
   assertCanonicalAbsolutePath(value.cwd, 'managed interactive working directory');
-  assertCanonicalAbsolutePath(
-    value.sessionsDir,
-    'managed interactive sessions directory',
-  );
+  assertAbsolutePath(value.sessionsDir, 'managed interactive sessions directory');
   if (typeof value.noProvision !== 'boolean') {
     throw new Error('managed interactive noProvision must be a boolean');
   }
@@ -317,11 +318,19 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
   let activeTurn;
   let executionProjection;
   let freshLaunchRecord;
+  let replayChannel;
 
   const release = async () => {
     if (released || lease === undefined) return;
     const owned = lease;
-    await owned.release();
+    let status;
+    try {
+      status = await owned.release();
+    } catch (error) {
+      await replayChannel?.reportIfIncomplete();
+      throw error;
+    }
+    await replayChannel?.reportIfIncomplete(status);
     if (lease === owned) lease = undefined;
     released = true;
   };
@@ -369,6 +378,11 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       let host;
       try {
         lease = await store.acquire(payload.sessionId);
+        replayChannel = createManagedReplayChannel({
+          lease,
+          sessionId: payload.sessionId,
+          presentationGate: context.observers[0],
+        });
         const authoritative =
           typeof lease.recoverUnresolvedEffectAbandonment === 'function'
             ? await lease.recoverUnresolvedEffectAbandonment()
@@ -435,7 +449,12 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           cwd: payload.cwd,
           sessionLease: lease,
           loadModule,
-          observers: context.observers,
+          observers: [
+            ...context.observers,
+            ...(replayChannel === undefined
+              ? []
+              : [replayChannel.observer]),
+          ],
           ...(options.adapterImports
             ? { adapterImports: options.adapterImports }
             : {}),
@@ -491,6 +510,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           retainedGenerations,
           reconcileRepositoryEffects: created.reconcileRepositoryEffects,
         });
+        await replayChannel?.reportIfIncomplete();
         initialized = true;
         return {
           abortActiveTurn: (...args) => host.abortActiveTurn(...args),
@@ -600,6 +620,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
         unresolvedEffects: settlement.unresolvedEffects,
         retentionUpdates: settlement.retentionUpdates,
       });
+      await replayChannel?.reportIfIncomplete();
       activeTurn = undefined;
     },
 
@@ -627,6 +648,31 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           'managed interactive shutdown could not retract its unused fresh session and retire its lease',
         );
       }
+    },
+  });
+}
+
+function createManagedReplayChannel({
+  lease,
+  sessionId,
+  presentationGate,
+}) {
+  if (
+    typeof lease?.append !== 'function' ||
+    typeof lease?.streamStatus !== 'function'
+  ) {
+    return undefined;
+  }
+  return createReplayRecordObserver({
+    lease,
+    async onIncomplete() {
+      if (typeof presentationGate?.onRecord !== 'function') return;
+      await presentationGate.onRecord({
+        type: 'captain_status',
+        turnId: null,
+        timestamp: Date.now(),
+        message: replayIncompleteMessage(sessionId),
+      });
     },
   });
 }
@@ -909,6 +955,12 @@ function assertCanonicalAbsolutePath(value, path) {
     resolve(value) !== value
   ) {
     throw new Error(`${path} must be a normalized absolute path`);
+  }
+}
+
+function assertAbsolutePath(value, path) {
+  if (typeof value !== 'string' || !isAbsolute(value)) {
+    throw new Error(`${path} must be an absolute path`);
   }
 }
 

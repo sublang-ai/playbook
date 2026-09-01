@@ -58,7 +58,7 @@ afterEach(async () => {
   );
 });
 
-describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
+describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
   it('rejects a mismatched tmux snapshot before lease acquisition', async () => {
     const fixture = await lifecycleFixture();
     let acquired = 0;
@@ -79,6 +79,322 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     ).rejects.toThrow(/player roster does not match/);
     expect(acquired).toBe(0);
   });
+
+  it('presents a replay-source failure after the source without dispatcher re-entry', async () => {
+    const fixture = await lifecycleFixture();
+    const order: string[] = [];
+    const appended: Array<{ record: unknown; role: unknown }> = [];
+    const presentedWarnings: unknown[] = [];
+    const rawStderr: string[] = [];
+    let hostObservers: any[] = [];
+    let liveStatus = {
+      lastReadableSeq: 0,
+      lastDurableSeq: 0,
+      incomplete: false,
+    };
+    const presentationGate = {
+      async onRecord(record: any) {
+        if (record.type === 'captain_status') {
+          order.push('present:warning');
+          presentedWarnings.push(record);
+          return;
+        }
+        order.push(`present:${record.type}`);
+      },
+    };
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      stderr: {
+        write(value: unknown) {
+          rawStderr.push(String(value));
+          return true;
+        },
+      },
+      sessionStore: {
+        ...fixture.store,
+        async acquire(sessionId: string) {
+          const owned = await fixture.store.acquire(sessionId);
+          return {
+            ...owned,
+            async append(record: unknown, role: unknown) {
+              if (liveStatus.incomplete) return;
+              order.push(`append:${(record as any).type}`);
+              appended.push({ record, role });
+              liveStatus = { ...liveStatus, incomplete: true };
+              throw new Error('synthetic managed replay append failure');
+            },
+            streamStatus: () => liveStatus,
+            async release() {
+              await owned.release();
+              return liveStatus;
+            },
+          };
+        },
+      },
+      createSessionHost: async (options: any) => {
+        hostObservers = [...options.observers];
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost([]),
+          shell: {
+            async installRetainedGenerations() {},
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime({
+      ...fixture.context,
+      observers: [presentationGate],
+    });
+    expect(hostObservers).toHaveLength(2);
+    expect(hostObservers[0]).toBe(presentationGate);
+
+    const source = {
+      type: 'player_event',
+      turnId: 1,
+      timestamp: 1,
+      playerId: 'dev.coder',
+      event: { type: 'text_delta', role: 'reviewer', text: 'open block' },
+    };
+    for (const observer of hostObservers) await observer.onRecord(source);
+    const later = { type: 'turn_finished', turnId: 1, timestamp: 2 };
+    for (const observer of hostObservers) await observer.onRecord(later);
+
+    expect(order).toEqual([
+      'present:player_event',
+      'append:player_event',
+      'present:warning',
+      'present:turn_finished',
+    ]);
+    expect(appended).toEqual([{ record: source, role: undefined }]);
+    expect(presentedWarnings).toEqual([
+      {
+        type: 'captain_status',
+        turnId: null,
+        timestamp: expect.any(Number),
+        message:
+          `warning: replay history for session ` +
+          `${JSON.stringify(logicalSessionId)} may be incomplete; ` +
+          'recording has stopped',
+      },
+    ]);
+    expect(rawStderr).toEqual([]);
+
+    await runtime.dispose();
+    await lifecycle.shutdown();
+    expect(presentedWarnings).toHaveLength(1);
+  });
+
+  it.each([
+    'initialization',
+    'sanitization',
+    'append',
+    'first-publication directory sync',
+    'torn-tail repair',
+    'settlement checkpoint',
+    'release checkpoint',
+  ] as const)(
+    'attempts one presentation warning at the completed %s boundary',
+    async (boundary) => {
+      const fixture = await lifecycleFixture();
+      const events: string[] = [];
+      const warningAttempts: unknown[] = [];
+      const rawStderr: string[] = [];
+      let snapshot = shellSnapshot(fixture.execution, 0);
+      let liveStatus = {
+        lastReadableSeq: 0,
+        lastDurableSeq: 0,
+        incomplete:
+          boundary === 'initialization' || boundary === 'torn-tail repair',
+      };
+      const presentationGate = {
+        async onRecord(record: any) {
+          if (record.type !== 'captain_status') {
+            events.push(`source:${record.topic ?? record.type}`);
+            return;
+          }
+          events.push('warning');
+          warningAttempts.push(record);
+          throw new Error('synthetic managed warning presentation failure');
+        },
+      };
+      const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+        stderr: {
+          write(value: unknown) {
+            rawStderr.push(String(value));
+            return true;
+          },
+        },
+        sessionStore: {
+          ...fixture.store,
+          async acquire(sessionId: string) {
+            const owned = await fixture.store.acquire(sessionId);
+            let sourceFailurePending = [
+              'sanitization',
+              'append',
+              'first-publication directory sync',
+            ].includes(boundary);
+            const latch = () => {
+              liveStatus = { ...liveStatus, incomplete: true };
+            };
+            const adopt = (status: typeof liveStatus) => {
+              if (!liveStatus.incomplete) liveStatus = status;
+              return liveStatus;
+            };
+            return {
+              ...owned,
+              async append(record: unknown, role: unknown) {
+                if (liveStatus.incomplete) return;
+                if (sourceFailurePending) {
+                  sourceFailurePending = false;
+                  if (boundary === 'sanitization') {
+                    try {
+                      await owned.append(
+                        new Date('2026-08-31T00:00:00.000Z'),
+                      );
+                    } catch (error) {
+                      liveStatus = owned.streamStatus();
+                      throw error;
+                    }
+                  }
+                  if (boundary === 'first-publication directory sync') {
+                    await owned.append(record, role);
+                    liveStatus = owned.streamStatus();
+                  }
+                  latch();
+                  throw new Error(`synthetic replay ${boundary} failure`);
+                }
+                await owned.append(record, role);
+                adopt(owned.streamStatus());
+              },
+              streamStatus: () => liveStatus,
+              async settle(value: unknown) {
+                const record = await owned.settle(value);
+                events.push('settlement-complete');
+                adopt(owned.streamStatus());
+                if (boundary === 'settlement checkpoint') latch();
+                return record;
+              },
+              async release() {
+                const status = await owned.release();
+                events.push('release-complete');
+                adopt(status);
+                if (boundary === 'release checkpoint') latch();
+                return liveStatus;
+              },
+            };
+          },
+        },
+        createAttemptId: () => attemptId,
+        createSessionHost: async (options: any) => {
+          const initializationRecord = {
+            type: 'captain_telemetry',
+            turnId: null,
+            timestamp: 1,
+            topic: 'fixture.trigger',
+            payload: {},
+          };
+          for (const observer of options.observers) {
+            await observer.onRecord(initializationRecord);
+          }
+          const laterRecord = {
+            ...initializationRecord,
+            timestamp: 2,
+            topic: 'fixture.later',
+          };
+          for (const observer of options.observers) {
+            await observer.onRecord(laterRecord);
+          }
+          return {
+            host: fakeHost([]),
+            shell: {
+              async installRetainedGenerations() {
+                events.push('installation-complete');
+              },
+              exportSnapshot: () => snapshot,
+              exportSettlement: () => ({
+                snapshot,
+                unresolvedEffects: [],
+                retentionUpdates: [],
+              }),
+            },
+            snapshot,
+          };
+        },
+      });
+
+      const runtime = await lifecycle.initializeRuntime({
+        ...fixture.context,
+        observers: [presentationGate],
+      });
+      if (boundary === 'settlement checkpoint') {
+        await lifecycle.beforeNonEmptyTurn({
+          sessionId: logicalSessionId,
+          prompt: 'checkpoint replay',
+        });
+        snapshot = shellSnapshot(fixture.execution, 1);
+        await lifecycle.afterTurn({
+          sessionId: logicalSessionId,
+          prompt: 'checkpoint replay',
+          replies: [
+            { type: 'captain_reply', text: 'durable reply', turnId: 1 },
+          ],
+          terminal: { type: 'turn_finished', turnId: 1 },
+        });
+      }
+      await runtime.dispose();
+      await lifecycle.shutdown();
+
+      const warningMessage =
+        `warning: replay history for session ` +
+        `${JSON.stringify(logicalSessionId)} may be incomplete; ` +
+        'recording has stopped';
+      expect(warningAttempts).toEqual([
+        {
+          type: 'captain_status',
+          turnId: null,
+          timestamp: expect.any(Number),
+          message: warningMessage,
+        },
+      ]);
+      const sourceBoundary = [
+        'sanitization',
+        'append',
+        'first-publication directory sync',
+      ].includes(boundary);
+      if (sourceBoundary) {
+        expect(events.indexOf('source:fixture.trigger')).toBeLessThan(
+          events.indexOf('warning'),
+        );
+        expect(events.indexOf('warning')).toBeLessThan(
+          events.indexOf('source:fixture.later'),
+        );
+      } else {
+        const completedBoundary =
+          boundary === 'initialization' || boundary === 'torn-tail repair'
+            ? 'installation-complete'
+            : boundary === 'settlement checkpoint'
+              ? 'settlement-complete'
+              : 'release-complete';
+        expect(events).toContain(completedBoundary);
+        expect(events.indexOf(completedBoundary)).toBeLessThan(
+          events.indexOf('warning'),
+        );
+      }
+      expect(events.filter((event) => event === 'warning')).toHaveLength(1);
+      expect(rawStderr).toEqual([]);
+      const replay = await fixture.store.readStream(logicalSessionId);
+      expect(
+        replay.entries.some(
+          ({ record }: any) =>
+            record.type === 'captain_status' &&
+            record.message === warningMessage,
+        ),
+      ).toBe(false);
+    },
+  );
 
   it('assembles schema-3 capabilities under the managed child lease', async () => {
     const execution = executionProjection();
