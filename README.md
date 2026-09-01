@@ -64,7 +64,6 @@ Type a task, enter `/code <task>` for implementation, or enter
 `/decide <question>` for an independently proposed and reviewed decision.
 
 On first launch, Playbook writes its config to `${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml`. A config left at the former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` is moved there on the next launch, unless a relative primary locator would change targets; that case is rejected unchanged with absolute replacements.
-This relocation remains blocked from public release while its permanent compatibility alias, target-preserving relative-locator migration, and compatible public Spex release are unfinished; see [Configuring agents](docs/configuration.md) for the detailed warning.
 
 The same config, compiled Captain, enabled playbooks, stable players, and
 nested calls power headless turns. Both front ends create the same durable

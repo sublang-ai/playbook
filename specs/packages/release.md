@@ -460,7 +460,6 @@ Before tagging a release, the developer/agent shall verify, in this order:
       changes the declared or locked `@sublang/cligent` version, the
       conditional manual tmux UX smoke passes
       ([[release-26](release.md#release-26)]).
-- [ ] A public Spex app release compatible with the shared config accepts optional boolean `fastMode` in Captain, player, and role positions ([[playbook-cli-4](playbook-cli.md#playbook-cli-4)]), preserves it through settings edits and host calls ([[playbook-captain-10](playbook-captain.md#playbook-captain-10)], [[playbook-captain-31](playbook-captain.md#playbook-captain-31)]), delegates adapter capability validation, resolves the same canonical path ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), and seeds the exact same starter lineup ([[playbook-cli-11](playbook-cli.md#playbook-cli-11)]); its version, integration evidence, and full-gate evidence are recorded before Playbook publishes this grammar.
 - [ ] The compiled `.js` / `.d.ts` siblings are in sync with their
       `.ts` sources (the CI drift check from
       [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).

@@ -8,14 +8,7 @@ Fresh launches and ordinary reopens read one config at
 first launch seeds it from the bundled starter and prints the path;
 later launches reuse it untouched.
 
-This unreleased grammar is coordinated with the Spex app because both hosts
-edit the same file. No compatible public Spex version has yet been verified;
-Playbook release remains blocked until one accepts and preserves `fastMode`
-in Captain, player, and role settings, validates it through Cligent, and seeds
-the same lineup. Once that version is named in the release notes, upgrade Spex
-before authoring fast mode here.
-
-On the first launching command after upgrade, Playbook moves a config from the
+On the first launching command after upgrading Playbook, it moves a config from the
 former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` path
 when the canonical path is absent. The one-time move preserves bytes and
 permissions and leaves no compatibility alias, so running an older Spex host
@@ -25,8 +18,7 @@ The current guard rejects relocation when a legacy relative `sessions` value
 or relative filesystem `playbooks.<id>.from` would resolve differently below
 the new directory. It leaves the former file unchanged and names every
 target-preserving absolute replacement. Apply those replacements and retry;
-public release remains blocked while the automatic coordinated locator
-migration is unfinished.
+Playbook does not rewrite the user-authored file.
 
 ```sh
 $EDITOR "${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml"

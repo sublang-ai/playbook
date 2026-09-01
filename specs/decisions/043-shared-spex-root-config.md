@@ -37,8 +37,7 @@ Playbook relocates a config found at the former path to the canonical path on
 its next launch, before any read, seed, or plan work observes its absence.
 The move preserves the file's bytes and permissions, never overwrites a
 canonical file, and is a no-op once the former file is gone.
-Until the coordinated target-preserving locator rewrite is available, Playbook
-rejects before publication when that byte-preserving move would change the
+Playbook rejects before publication when that byte-preserving move would change the
 absolute target of a primary relative `sessions` or path-shaped relative
 `playbooks.<id>.from` value, naming every target-preserving absolute
 replacement while leaving the former file unchanged.
