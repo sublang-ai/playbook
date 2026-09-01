@@ -37,7 +37,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   CLIGENT_RELEASE_SPECIFIER,
@@ -1383,6 +1383,8 @@ async function main() {
     ['check compiled runtime integrity', () => stepCompiledRuntimeIntegrity(state)],
     ['check compiled-artifact fidelity', () => stepCompiledFidelity(state)],
     ['guard the nested cligent floor', () => stepCligentFloor(root, state)],
+    ['exercise the packed session-store facade', () =>
+      stepPackedSessionStore(root, state)],
   ];
 
   const startedAt = Date.now();
@@ -1943,6 +1945,33 @@ function stepHermetic(root, state) {
       }),
     );
   }
+
+  const credentials = [
+    finalRecord.snapshot?.captain?.conversation?.token,
+    ...Object.values(finalRecord.snapshot?.playerSessions ?? {}).map(
+      (entry) => entry?.resumeToken,
+    ),
+  ].filter((value) => typeof value === 'string' && value.length > 0);
+  if (credentials.length < 3) {
+    fail(
+      'the CLI-written session-store fixture is not credential-bearing',
+      JSON.stringify(credentials),
+    );
+  }
+  state.sessionStoreFixture = Object.freeze({
+    sessionsDir,
+    sessionId: firstEnvelope.sessionId,
+    oldSessionId: recoverEnvelope.sessionId,
+    oldSessionPath: recoverPath,
+    expectedSummary: Object.freeze({
+      schemaVersion: finalRecord.schemaVersion,
+      sessionId: finalRecord.sessionId,
+      state: finalRecord.state,
+      cwd: finalRecord.cwd,
+      updatedAt: finalRecord.updatedAt,
+    }),
+    credentials: Object.freeze(credentials),
+  });
 
   rmSync(driverPath);
   return [
@@ -2685,6 +2714,431 @@ function stepCligentFloor(root, state) {
   ];
 }
 
+// Step 10 — an external package whose only direct dependency is this exact
+// tarball. Its emitted strict TypeScript consumer imports only the public
+// session-store facade, so neither a repository source path nor the private
+// store can make the declaration or runtime proof pass by accident.
+function stepPackedSessionStore(root, state) {
+  const fixture = state.sessionStoreFixture;
+  if (fixture === undefined) {
+    fail('the installed CLI produced no session-store smoke fixture');
+  }
+  const oldManifest = readJson(fixture.oldSessionPath);
+  if (
+    oldManifest.schemaVersion !== 6 ||
+    oldManifest.sessionId !== fixture.oldSessionId
+  ) {
+    fail(
+      'the CLI-written old-schema source manifest is not current and valid',
+      JSON.stringify({
+        schemaVersion: oldManifest.schemaVersion,
+        sessionId: oldManifest.sessionId,
+      }),
+    );
+  }
+  const {
+    unresolvedEffects: _unresolvedEffects,
+    ...preUnresolvedEffectsManifest
+  } = oldManifest;
+  const oldSchemaBytes = `${JSON.stringify({
+    ...preUnresolvedEffectsManifest,
+    schemaVersion: 5,
+  })}\n`;
+  writeFileSync(fixture.oldSessionPath, oldSchemaBytes);
+
+  const consumerRoot = join(root, 'session-store-consumer');
+  mkdirSync(consumerRoot, { recursive: true });
+  const manifest = {
+    name: 'playbook-session-store-smoke',
+    private: true,
+    type: 'module',
+    dependencies: {
+      '@sublang/playbook': pathToFileURL(state.tarball).href,
+    },
+  };
+  writeFileSync(
+    join(consumerRoot, 'package.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+  run(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--prefer-offline',
+    ],
+    { cwd: consumerRoot },
+  );
+  const installedManifest = readJson(join(consumerRoot, 'package.json'));
+  if (
+    JSON.stringify(Object.keys(installedManifest.dependencies ?? {})) !==
+    JSON.stringify(['@sublang/playbook'])
+  ) {
+    fail(
+      'the external consumer declared more than @sublang/playbook',
+      JSON.stringify(installedManifest.dependencies ?? {}),
+    );
+  }
+
+  const installed = join(
+    consumerRoot,
+    'node_modules',
+    '@sublang',
+    'playbook',
+  );
+  if (
+    !existsSync(installed) ||
+    !lstatSync(installed).isDirectory() ||
+    lstatSync(installed).isSymbolicLink()
+  ) {
+    fail('the external consumer did not install a real candidate directory');
+  }
+  const installedReal = realpathSync(installed);
+  const consumerReal = `${realpathSync(consumerRoot)}${sep}`;
+  const repositoryReal = `${realpathSync(repoRoot)}${sep}`;
+  if (
+    !`${installedReal}${sep}`.startsWith(consumerReal) ||
+    `${installedReal}${sep}`.startsWith(repositoryReal)
+  ) {
+    fail(
+      'the external consumer resolved outside its tarball installation',
+      installedReal,
+    );
+  }
+  const candidateManifest = readJson(join(installed, 'package.json'));
+  if (
+    candidateManifest.name !== state.packedManifest.name ||
+    candidateManifest.version !== state.packedManifest.version
+  ) {
+    fail(
+      'the external consumer installed a different candidate',
+      JSON.stringify({
+        expected: {
+          name: state.packedManifest.name,
+          version: state.packedManifest.version,
+        },
+        actual: {
+          name: candidateManifest.name,
+          version: candidateManifest.version,
+        },
+      }),
+    );
+  }
+  for (const artifact of [
+    'reference/sdlc/code.playbook/session-store.js',
+    'reference/sdlc/code.playbook/session-store.d.ts',
+  ]) {
+    if (!existsSync(join(installed, artifact))) {
+      fail(`the packed session-store consumer is missing ${artifact}`);
+    }
+  }
+
+  writeFileSync(
+    join(consumerRoot, 'consumer.ts'),
+    sessionStoreConsumerSource(fixture),
+  );
+  writeFileSync(
+    join(consumerRoot, 'tsconfig.json'),
+    `${JSON.stringify(sessionStoreConsumerTsconfig(), null, 2)}\n`,
+  );
+  const compiler = join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (!existsSync(compiler)) {
+    fail('the release smoke development tree has no TypeScript compiler');
+  }
+  run(process.execPath, [compiler, '--project', 'tsconfig.json'], {
+    cwd: consumerRoot,
+  });
+  run(process.execPath, [join('dist', 'consumer.js')], {
+    cwd: consumerRoot,
+  });
+  if (readFileSync(fixture.oldSessionPath, 'utf8') !== oldSchemaBytes) {
+    fail('the external consumer migrated or rewrote the old-schema manifest');
+  }
+
+  return [
+    'one tarball-only dependency; no repository or private-store import',
+    'strict declaration check passed with skipLibCheck false',
+    'exact token-free summary listed and read from the CLI manifest',
+    'independent follower saw readable advancement without durability claims',
+    'release equalized replay durability; schema 5 stayed byte-identical',
+  ];
+}
+
+function sessionStoreConsumerTsconfig() {
+  return {
+    compilerOptions: {
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2022',
+      lib: ['ES2022'],
+      strict: true,
+      skipLibCheck: false,
+      types: [],
+      rootDir: '.',
+      outDir: 'dist',
+      noEmitOnError: true,
+    },
+    files: ['consumer.ts'],
+  };
+}
+
+function sessionStoreConsumerSource(fixture) {
+  return `import {
+  RECORDS_STREAM_VERSION,
+  openSessionStore,
+  type PlaybookSessionSummary,
+  type ReplayStreamEntry,
+} from '@sublang/playbook/session-store';
+
+const sessionsDir = ${JSON.stringify(fixture.sessionsDir)};
+const sessionId = ${JSON.stringify(fixture.sessionId)};
+const oldSessionId = ${JSON.stringify(fixture.oldSessionId)};
+const expectedSummary: PlaybookSessionSummary = ${JSON.stringify(fixture.expectedSummary)};
+const credentials: readonly string[] = ${JSON.stringify(fixture.credentials)};
+
+function check(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function exactKeys(value: object, expected: readonly string[], label: string) {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  check(
+    JSON.stringify(actual) === JSON.stringify(wanted),
+    label + ' keys: expected ' + JSON.stringify(wanted) +
+      ', got ' + JSON.stringify(actual),
+  );
+}
+
+function sameJson(actual: unknown, expected: unknown, label: string) {
+  check(
+    JSON.stringify(canonicalJson(actual)) ===
+      JSON.stringify(canonicalJson(expected)),
+    label + ': expected ' + JSON.stringify(expected) +
+      ', got ' + JSON.stringify(actual),
+  );
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalJson(nested)]),
+    );
+  }
+  return value;
+}
+
+function hasOwnKey(value: unknown, key: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasOwnKey(entry, key));
+  }
+  if (value === null || typeof value !== 'object') return false;
+  if (Object.hasOwn(value, key)) return true;
+  return Object.values(value).some((entry) => hasOwnKey(entry, key));
+}
+
+function hasStringOwnValue(value: unknown, key: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasStringOwnValue(entry, key));
+  }
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (Object.hasOwn(record, key) && typeof record[key] === 'string') {
+    return true;
+  }
+  return Object.values(record).some((entry) => hasStringOwnValue(entry, key));
+}
+
+check(RECORDS_STREAM_VERSION === 1, 'records stream version is not 1');
+const store = openSessionStore(sessionsDir);
+exactKeys(
+  store,
+  ['sessionsDir', 'list', 'read', 'readStream', 'acquire'],
+  'store',
+);
+const listed = await store.list();
+exactKeys(listed, ['sessions', 'skipped'], 'list result');
+const listedSummary = listed.sessions.find(
+  (summary) => summary.sessionId === sessionId,
+);
+check(listedSummary !== undefined, 'CLI-written session was not listed');
+exactKeys(
+  listedSummary,
+  ['cwd', 'schemaVersion', 'sessionId', 'state', 'updatedAt'],
+  'listed summary',
+);
+sameJson(listedSummary, expectedSummary, 'listed summary');
+const skipped = listed.skipped.find((entry) => entry.sessionId === oldSessionId);
+check(skipped !== undefined, 'schema-5 session was not reported as skipped');
+exactKeys(skipped, ['sessionId', 'reason'], 'skipped session');
+check(
+  skipped.reason.includes('5') && /schema|cutover|current/i.test(skipped.reason),
+  'schema-5 skip reason did not identify the cutover',
+);
+
+const direct = await store.read(sessionId);
+exactKeys(
+  direct,
+  ['cwd', 'schemaVersion', 'sessionId', 'state', 'updatedAt'],
+  'direct summary',
+);
+sameJson(direct, expectedSummary, 'direct summary');
+const summaryJson = JSON.stringify(direct);
+for (const credential of credentials) {
+  check(!summaryJson.includes(credential), 'summary exposed a resume credential');
+}
+
+const follower = openSessionStore(sessionsDir);
+const baselineRead = await follower.readStream(sessionId);
+exactKeys(baselineRead, ['entries', 'lastReadableSeq'], 'baseline follower');
+const baselineJson = JSON.stringify(baselineRead);
+for (const credential of credentials) {
+  check(
+    !baselineJson.includes(credential),
+    'CLI-written replay exposed a resume credential',
+  );
+}
+check(
+  !hasOwnKey(baselineRead, 'resumeToken'),
+  'CLI-written replay retained a resumeToken member',
+);
+check(
+  !hasStringOwnValue(baselineRead, 'resume'),
+  'CLI-written replay retained a string resume selection',
+);
+const baseline = baselineRead.lastReadableSeq;
+check(
+  Number.isSafeInteger(baseline) && baseline >= 0,
+  'baseline readable sequence was invalid',
+);
+check(
+  baselineRead.entries.length === baseline,
+  'baseline full-prefix entry count did not equal its final sequence',
+);
+
+const lease = await store.acquire(sessionId);
+exactKeys(
+  lease,
+  ['sessionId', 'ownerToken', 'append', 'readStream', 'streamStatus', 'release'],
+  'lease',
+);
+sameJson(
+  lease.streamStatus(),
+  {
+    lastReadableSeq: baseline,
+    lastDurableSeq: baseline,
+    incomplete: false,
+  },
+  'initial lease status',
+);
+
+interface ExternalObservedRecord {
+  readonly type: 'external_peer_record';
+  readonly content: string;
+  readonly resume: false;
+  readonly resumeToken?: string;
+  readonly nested: {
+    readonly resume: string;
+    readonly resumeToken: string;
+    readonly retained: { readonly resume: false };
+  };
+}
+const observed: ExternalObservedRecord = {
+  type: 'external_peer_record',
+  content: 'packed facade replay',
+  resume: false,
+  resumeToken: 'strip-top-level',
+  nested: {
+    resume: 'strip-selection',
+    resumeToken: 'strip-nested',
+    retained: { resume: false },
+  },
+};
+const appendResult = await lease.append(observed, 'external');
+check(appendResult === undefined, 'append did not resolve undefined');
+const nextSequence = baseline + 1;
+const expectedEntry: ReplayStreamEntry = {
+  v: 1,
+  seq: nextSequence,
+  role: 'external',
+  record: {
+    type: 'external_peer_record',
+    content: 'packed facade replay',
+    resume: false,
+    nested: { retained: { resume: false } },
+  },
+};
+sameJson(
+  lease.streamStatus(),
+  {
+    lastReadableSeq: nextSequence,
+    lastDurableSeq: baseline,
+    incomplete: false,
+  },
+  'readable-ahead-of-durable status',
+);
+const leaseRead = await lease.readStream({ afterSeq: baseline });
+exactKeys(
+  leaseRead,
+  ['entries', 'lastReadableSeq', 'lastDurableSeq', 'incomplete'],
+  'lease read',
+);
+sameJson(leaseRead.entries, [expectedEntry], 'lease replay');
+check(
+  !JSON.stringify(leaseRead).includes('strip-'),
+  'replay exposed a resume credential',
+);
+
+const followed = await follower.readStream(sessionId, { afterSeq: baseline });
+exactKeys(followed, ['entries', 'lastReadableSeq'], 'independent follower');
+sameJson(followed.entries, [expectedEntry], 'independent follower replay');
+check(
+  followed.lastReadableSeq === nextSequence,
+  'independent follower missed readable advancement',
+);
+// @ts-expect-error lease-free results cannot claim durability
+followed.lastDurableSeq;
+// @ts-expect-error lease-free results cannot claim incompleteness
+followed.incomplete;
+
+const finalStatus = await lease.release();
+exactKeys(
+  finalStatus,
+  ['lastReadableSeq', 'lastDurableSeq', 'incomplete'],
+  'release status',
+);
+sameJson(
+  finalStatus,
+  {
+    lastReadableSeq: nextSequence,
+    lastDurableSeq: nextSequence,
+    incomplete: false,
+  },
+  'equalized release status',
+);
+const replayed = await follower.readStream(sessionId, { afterSeq: baseline });
+sameJson(replayed.entries, [expectedEntry], 'post-release replay');
+
+let oldSchemaRejected = false;
+try {
+  await store.read(oldSessionId);
+} catch (error) {
+  check(error instanceof Error, 'old-schema read rejected with a non-Error');
+  check(
+    !Object.hasOwn(error, 'code'),
+    'old-schema rejection used a reserved facade code',
+  );
+  oldSchemaRejected = true;
+}
+check(oldSchemaRejected, 'schema-5 record was not rejected');
+`;
+}
+
 export const _testing = Object.freeze({
   stepHermetic,
   stepEffectReconciliation,
@@ -2695,6 +3149,8 @@ export const _testing = Object.freeze({
   installedEffectReconciliationDriverSource,
   compiledRuntimeImportProbeSource,
   cligentMessageBoundaryProbeSource,
+  sessionStoreConsumerSource,
+  sessionStoreConsumerTsconfig,
 });
 
 if (

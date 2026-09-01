@@ -75,6 +75,20 @@ const calls = [
   effort,
 }));
 
+const sessionStoreConsumerFixture = {
+  sessionsDir: '/tmp/packed-session-store-consumer/sessions',
+  sessionId: '11111111-1111-4111-8111-111111111111',
+  oldSessionId: '22222222-2222-4222-8222-222222222222',
+  expectedSummary: {
+    schemaVersion: 6,
+    sessionId: '11111111-1111-4111-8111-111111111111',
+    state: 'settled',
+    cwd: '/tmp/packed-session-store-consumer/repository',
+    updatedAt: '2026-08-31T12:34:56.789Z',
+  },
+  credentials: ['captain-resume-token', 'player-resume-token'],
+};
+
 describe('deterministic packed release lane smoke', () => {
   it('records forbidden effect calls before the fixture rejects them', () => {
     const source = _testing.installedEffectReconciliationDriverSource();
@@ -115,6 +129,94 @@ describe('deterministic packed release lane smoke', () => {
     expect(source).toContain('absentMembers: adoptionMembers');
     expect(source).not.toContain('coderLlm');
     expect(source).not.toContain('reviewerLlm');
+  });
+
+  it('keeps the packed session-store consumer on the public facade', () => {
+    const source = _testing.sessionStoreConsumerSource(
+      sessionStoreConsumerFixture,
+    );
+    const importSpecifiers = [
+      ...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g),
+      ...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g),
+      ...source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g),
+      ...source.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g),
+    ].map((match) => match[1]);
+
+    expect(importSpecifiers).toEqual(['@sublang/playbook/session-store']);
+    expect(source).not.toMatch(/(?:bin\/session-store|reference\/sdlc|src\/)/);
+
+    expect(source).toContain(
+      "['cwd', 'schemaVersion', 'sessionId', 'state', 'updatedAt']",
+    );
+    for (const value of [
+      sessionStoreConsumerFixture.sessionsDir,
+      sessionStoreConsumerFixture.sessionId,
+      sessionStoreConsumerFixture.oldSessionId,
+      sessionStoreConsumerFixture.expectedSummary.cwd,
+      sessionStoreConsumerFixture.expectedSummary.updatedAt,
+      ...sessionStoreConsumerFixture.credentials,
+    ]) {
+      expect(source).toContain(JSON.stringify(value));
+    }
+
+    expect(source).toContain('lastReadableSeq');
+    expect(source).toContain('lastDurableSeq');
+    expect(source).toContain('incomplete');
+    expect(source).toContain(
+      "sameJson(listedSummary, expectedSummary, 'listed summary')",
+    );
+    expect(source).toContain(
+      "sameJson(direct, expectedSummary, 'direct summary')",
+    );
+    expect(source).toContain(
+      "'CLI-written replay exposed a resume credential'",
+    );
+    expect(source).toContain(
+      "!hasOwnKey(baselineRead, 'resumeToken')",
+    );
+    expect(source).toContain(
+      "!hasStringOwnValue(baselineRead, 'resume')",
+    );
+    expect(source).toMatch(
+      /const followed = await follower\.readStream\(sessionId, \{ afterSeq: baseline \}\)/,
+    );
+    expect(source).toContain("'readable-ahead-of-durable status'");
+    expect(source).toContain("'equalized release status'");
+    expect(source).toMatch(/@ts-expect-error[^\n]*durab/i);
+    expect(source).toMatch(/@ts-expect-error[^\n]*incomplete/i);
+    expect(source).toMatch(/old[- ]schema[^\n]*(?:reject|migrat)/i);
+    expect(source).toContain('await store.read(oldSessionId)');
+    expect(source).toContain(
+      "check(oldSchemaRejected, 'schema-5 record was not rejected')",
+    );
+
+    const typedRecord =
+      /const\s+(\w+)\s*:\s*(\w*Record)\s*=/.exec(source);
+    expect(typedRecord).not.toBeNull();
+    expect(source).toMatch(
+      new RegExp(`interface\\s+${typedRecord![2]}\\b`),
+    );
+    expect(source).toMatch(
+      new RegExp(`\\.append\\(\\s*${typedRecord![1]}\\s*,`),
+    );
+  });
+
+  it('strictly compiles and emits the packed session-store consumer', () => {
+    const tsconfig = _testing.sessionStoreConsumerTsconfig();
+
+    expect(tsconfig.compilerOptions).toMatchObject({
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2022',
+      strict: true,
+      skipLibCheck: false,
+      types: [],
+      noEmitOnError: true,
+      outDir: 'dist',
+    });
+    expect(tsconfig.compilerOptions.noEmit).not.toBe(true);
+    expect(tsconfig.compilerOptions.emitDeclarationOnly).not.toBe(true);
+    expect(tsconfig.files).toEqual(['consumer.ts']);
   });
 
   it('keeps distinct segmented ids equal-configured and retunes both', () => {
