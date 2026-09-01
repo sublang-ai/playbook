@@ -1,10 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
 
 import { _testing } from '../scripts/release-smoke.mjs';
+
+const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
 const calls = [
   ['first', 'closing', null, null, 'release-smoke-captain-a', 'low'],
@@ -201,7 +215,7 @@ describe('deterministic packed release lane smoke', () => {
     );
   });
 
-  it('strictly compiles and emits the packed session-store consumer', () => {
+  it('configures the packed session-store consumer for strict emit', () => {
     const tsconfig = _testing.sessionStoreConsumerTsconfig();
 
     expect(tsconfig.compilerOptions).toMatchObject({
@@ -218,6 +232,53 @@ describe('deterministic packed release lane smoke', () => {
     expect(tsconfig.compilerOptions.emitDeclarationOnly).not.toBe(true);
     expect(tsconfig.files).toEqual(['consumer.ts']);
   });
+
+  it(
+    'strictly compiles and emits the packed session-store consumer',
+    () => {
+      const scratch = mkdtempSync(join(tmpdir(), 'playbook-release-consumer-'));
+      try {
+        mkdirSync(join(scratch, 'node_modules', '@sublang'), {
+          recursive: true,
+        });
+        symlinkSync(
+          repoRoot,
+          join(scratch, 'node_modules', '@sublang', 'playbook'),
+          'junction',
+        );
+        writeFileSync(join(scratch, 'package.json'), '{"type":"module"}\n');
+        writeFileSync(
+          join(scratch, 'consumer.ts'),
+          _testing.sessionStoreConsumerSource(sessionStoreConsumerFixture),
+        );
+
+        const configPath = join(scratch, 'tsconfig.json');
+        const parsed = ts.parseJsonConfigFileContent(
+          _testing.sessionStoreConsumerTsconfig(),
+          ts.sys,
+          scratch,
+          undefined,
+          configPath,
+        );
+        const program = ts.createProgram(parsed.fileNames, parsed.options);
+        const emit = program.emit();
+        const diagnostics = [
+          ...parsed.errors,
+          ...ts.getPreEmitDiagnostics(program),
+          ...emit.diagnostics,
+        ].map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        );
+
+        expect(diagnostics).toEqual([]);
+        expect(emit.emitSkipped).toBe(false);
+        expect(existsSync(join(scratch, 'dist', 'consumer.js'))).toBe(true);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 
   it('keeps distinct segmented ids equal-configured and retunes both', () => {
     const primary = parseYaml(_testing.smokeConfig('a'));
