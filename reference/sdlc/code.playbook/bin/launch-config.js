@@ -496,6 +496,11 @@ export async function normalizeSelectedLaunchPlanDataOnly(
                     binding.effort === undefined
                       ? agent.effort
                       : overrideTuningSelection(binding.effort),
+                  ...(binding.fastMode === undefined
+                    ? agent.fastMode === undefined
+                      ? {}
+                      : { fastMode: agent.fastMode }
+                    : { fastMode: binding.fastMode }),
                 },
               ];
             }),
@@ -925,6 +930,11 @@ export async function normalizeLaunchPlan(
               binding.effort === undefined
                 ? agent.effort
                 : overrideTuningSelection(binding.effort),
+            ...(binding.fastMode === undefined
+              ? agent.fastMode === undefined
+                ? {}
+                : { fastMode: agent.fastMode }
+              : { fastMode: binding.fastMode }),
           },
         ];
       }),
@@ -1728,7 +1738,7 @@ function resolveRoleBinding(value, path) {
   }
   const block = requireObject(value, path);
   const unknown = Object.keys(block).filter(
-    (key) => !['player', 'model', 'effort'].includes(key),
+    (key) => !['player', 'model', 'effort', 'fastMode'].includes(key),
   );
   if (unknown.length > 0) {
     throw new Error(`${path} has unknown ${formatKeyList(unknown)}`);
@@ -1745,10 +1755,17 @@ function resolveRoleBinding(value, path) {
       );
     }
   }
+  // Fast mode carries no provider-default sentinel: omission inherits the
+  // player's value and `false` is a literal request, so it is a plain boolean
+  // rather than the string-or-false tuning shape above.
+  if (block.fastMode !== undefined && typeof block.fastMode !== 'boolean') {
+    throw new Error(`${path}.fastMode must be a boolean`);
+  }
   return {
     playerId: block.player,
     ...(block.model === undefined ? {} : { model: block.model }),
     ...(block.effort === undefined ? {} : { effort: block.effort }),
+    ...(block.fastMode === undefined ? {} : { fastMode: block.fastMode }),
   };
 }
 
@@ -1761,6 +1778,7 @@ function applyTuningOverrides(agent, binding) {
     if (binding.effort === false) delete effective.effort;
     else effective.effort = binding.effort;
   }
+  if (binding.fastMode !== undefined) effective.fastMode = binding.fastMode;
   return effective;
 }
 
@@ -1772,6 +1790,9 @@ function sessionAgentFromHostAgent(agent, path) {
     adapter: agent.adapter,
     model: tuningSelection(agent.model, `${path}.model`),
     effort: tuningSelection(agent.effort, `${path}.effort`),
+    ...(agent.fastMode === undefined
+      ? {}
+      : { fastMode: fastModeSelection(agent.fastMode, `${path}.fastMode`) }),
     ...(agent.instruction === undefined
       ? {}
       : { instruction: agent.instruction }),
@@ -1794,6 +1815,9 @@ export function projectHostAgent(agent, path = 'agent') {
     ...(normalized.effort?.kind === 'value'
       ? { effort: normalized.effort.value }
       : {}),
+    ...(normalized.fastMode === undefined
+      ? {}
+      : { fastMode: normalized.fastMode }),
     ...(normalized.instruction === undefined
       ? {}
       : { instruction: normalized.instruction }),
@@ -1801,6 +1825,13 @@ export function projectHostAgent(agent, path = 'agent') {
       ? {}
       : { permissions: normalized.permissions }),
   };
+}
+
+function fastModeSelection(value, path) {
+  if (typeof value !== 'boolean') {
+    throw new Error(`${path} must be a boolean`);
+  }
+  return value;
 }
 
 function tuningSelection(value, path) {

@@ -165,7 +165,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@sublang/cligent": "^0.23.0",
+    "@sublang/cligent": "^0.24.0",
     "@sublang/spex": "^3.0.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",

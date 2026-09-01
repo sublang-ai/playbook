@@ -7,6 +7,9 @@ interface SessionAgent {
     readonly adapter: string;
     readonly model: TuningSelection;
     readonly effort: TuningSelection<Effort>;
+    /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
+     * literal request, so this carries no provider-default sentinel. */
+    readonly fastMode?: boolean;
     readonly instruction?: string;
     readonly permissions?: PermissionPolicy;
 }

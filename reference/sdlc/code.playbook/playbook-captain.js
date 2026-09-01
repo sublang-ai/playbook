@@ -1403,9 +1403,13 @@ function fixedAgent(agent) {
     };
 }
 function callSettings(agent, tuning = agent) {
+    // cligent treats supplied call settings as a complete replacement, so an
+    // omitted fastMode here is a request for the provider default, never an
+    // inheritance of whatever the previous call left behind.
     return {
         model: tuning.model,
         effort: tuning.effort,
+        ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
         ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
         ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
     };

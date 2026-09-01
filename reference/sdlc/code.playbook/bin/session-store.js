@@ -4821,7 +4821,9 @@ function validateCaptainSessionProjection(
       structural
         ? ['id', 'adapter']
         : ['id', 'adapter', 'model', 'effort'],
-      ['instruction', 'permissions'],
+      structural
+        ? ['instruction', 'permissions']
+        : ['instruction', 'permissions', 'fastMode'],
       playerPath,
     );
     assertPlayerId(player.id, `${playerPath}.id`);
@@ -4917,15 +4919,17 @@ function validateCaptainSessionProjection(
     for (const roleId of requiredRoleIds) {
       const bindingPath = `${itemPath}.roles.${roleId}`;
       const binding = requireRecord(roles[roleId], bindingPath);
-      rejectUnknownOrMissingKeys(
+      exactOptionalKeys(
         binding,
         structural
           ? ['playerId']
           : ['playerId', 'model', 'effort'],
+        structural ? [] : ['fastMode'],
         bindingPath,
       );
       assertPlayerId(binding.playerId, `${bindingPath}.playerId`);
       if (!structural) {
+        validateProjectedFastMode(binding, `${bindingPath}.fastMode`);
         validateTuningSelection(binding.model, `${bindingPath}.model`);
         const player = projection.players.find(
           (candidate) => candidate.id === binding.playerId,
@@ -4962,13 +4966,27 @@ function validateCaptainSessionProjection(
   }
 }
 
+// Absence is the canonical provider default, so the key stays optional and
+// the structural projection erases it beside model and effort.
+function validateProjectedFastMode(record, path) {
+  if (
+    Object.hasOwn(record, 'fastMode') &&
+    typeof record.fastMode !== 'boolean'
+  ) {
+    throw new Error(`${path} must be a boolean`);
+  }
+}
+
 function validateProjectedAgent(value, path, { structural, hasId = false }) {
   const agent = requireRecord(value, path);
+  if (!structural) validateProjectedFastMode(agent, `${path}.fastMode`);
   if (!hasId) {
     exactOptionalKeys(
       agent,
       structural ? ['adapter'] : ['adapter', 'model', 'effort'],
-      ['instruction', 'permissions'],
+      structural
+        ? ['instruction', 'permissions']
+        : ['instruction', 'permissions', 'fastMode'],
       path,
     );
   }

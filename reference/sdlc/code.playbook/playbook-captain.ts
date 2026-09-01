@@ -55,6 +55,9 @@ interface SessionAgent {
   readonly adapter: string;
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
+  /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
+   * literal request, so this carries no provider-default sentinel. */
+  readonly fastMode?: boolean;
   readonly instruction?: string;
   readonly permissions?: PermissionPolicy;
 }
@@ -377,6 +380,7 @@ interface EffectivePlayerBinding {
   readonly playerId: string;
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
+  readonly fastMode?: boolean;
   readonly agent: SessionAgent;
 }
 
@@ -2603,11 +2607,15 @@ function fixedAgent(agent: SessionAgent): Omit<SessionAgent, 'model' | 'effort'>
 
 function callSettings(
   agent: SessionAgent,
-  tuning: Pick<SessionAgent, 'model' | 'effort'> = agent,
+  tuning: Pick<SessionAgent, 'model' | 'effort' | 'fastMode'> = agent,
 ): AgentCallSettings {
+  // cligent treats supplied call settings as a complete replacement, so an
+  // omitted fastMode here is a request for the provider default, never an
+  // inheritance of whatever the previous call left behind.
   return {
     model: tuning.model,
     effort: tuning.effort,
+    ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
     ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
   };

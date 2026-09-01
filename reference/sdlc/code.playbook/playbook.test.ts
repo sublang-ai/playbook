@@ -747,8 +747,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/code/registry');
     expect(seeded).toContain('@sublang/playbook/review/registry');
     expect(seeded).toContain('@sublang/playbook/decide/registry');
-    expect(seeded).toContain('claude-opus-4-8[1m]');
-    expect(seeded).toContain('gpt-5.5');
+    expect(seeded).toContain('gpt-5.6-sol');
+    expect(seeded).toContain('claude-opus-5');
     expect(seeded).not.toContain('committer:');
     expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
@@ -758,22 +758,23 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seededParsed.profiles).toBeUndefined();
     expect(seededParsed.captain).toMatchObject({
       adapter: 'claude',
-      model: 'claude-opus-4-8',
+      model: 'claude-opus-5',
       effort: 'high',
       permissions: { mode: 'auto' },
     });
     expect(seededParsed.players).toEqual({
       'dev.coder': {
-        adapter: 'claude',
-        model: 'claude-opus-4-8[1m]',
-        effort: 'xhigh',
-        permissions: { mode: 'auto' },
+        adapter: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'ultra',
+        fastMode: true,
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
       'dev.reviewer': {
-        adapter: 'codex',
-        model: 'gpt-5.5',
+        adapter: 'claude',
+        model: 'claude-opus-5',
         effort: 'xhigh',
-        permissions: { mode: 'auto', writablePaths: ['.git'] },
+        permissions: { mode: 'auto' },
       },
     });
     expect(seededParsed.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
@@ -790,7 +791,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(composed.captain).toMatchObject({
       adapter: 'claude',
-      model: 'claude-opus-4-8',
+      model: 'claude-opus-5',
       effort: 'high',
       // PBCLI-11: every seeded agent, including the claude Captain, runs in
       // cligent's protected auto mode.
@@ -799,18 +800,19 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.players).toEqual([
       {
         id: 'dev.coder',
-        adapter: 'claude',
-        model: 'claude-opus-4-8[1m]',
-        effort: 'xhigh',
-        // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
-        permissions: { mode: 'auto' },
+        adapter: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'ultra',
+        fastMode: true,
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
       {
         id: 'dev.reviewer',
-        adapter: 'codex',
-        model: 'gpt-5.5',
+        adapter: 'claude',
+        model: 'claude-opus-5',
         effort: 'xhigh',
-        permissions: { mode: 'auto', writablePaths: ['.git'] },
+        // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
+        permissions: { mode: 'auto' },
       },
     ]);
     expect(composed.layout.initialVisible).toEqual(['dev.coder']);
@@ -822,9 +824,12 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
           playerId: 'dev.coder',
           model: {
             kind: 'value',
-            value: 'claude-opus-4-8[1m]',
+            value: 'gpt-5.6-sol',
           },
-          effort: { kind: 'value', value: 'xhigh' },
+          effort: { kind: 'value', value: 'ultra' },
+          // PBCLI-11: the role omits fastMode, so it inherits the seeded
+          // player default rather than falling back to the provider's.
+          fastMode: true,
         },
       },
       options: {},

@@ -1684,3 +1684,102 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     ]);
   });
 });
+
+describe('adapter-scoped fast mode', () => {
+  it('composes player and role fast mode, and erases it from structure', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(
+      {
+        captain: { adapter: 'claude', fastMode: true },
+        players: {
+          'dev.coder': { adapter: 'codex', fastMode: true },
+          'dev.reviewer': { adapter: 'claude' },
+        },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: {
+              // `false` is a literal request, not an inherited omission.
+              coder: { player: 'dev.coder', fastMode: false },
+              reviewer: 'dev.reviewer',
+            },
+          },
+        },
+      },
+      {
+        loadModule: moduleLoader({
+          'mod://code': entry('code', ['coder', 'reviewer']),
+        }),
+      },
+    );
+
+    expect(plan.captain.fastMode).toBe(true);
+    const coder = plan.players.find((p: any) => p.id === 'dev.coder');
+    expect(coder.agent.fastMode).toBe(true);
+    const reviewer = plan.players.find((p: any) => p.id === 'dev.reviewer');
+    expect(reviewer.agent).not.toHaveProperty('fastMode');
+
+    // The role override beats the player default; an omitted role inherits.
+    expect(plan.catalog.code.roles.coder.fastMode).toBe(false);
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty('fastMode');
+
+    // It reaches cligent through the host projection...
+    const tmux: any = launchConfig.projectTmuxConfig(plan);
+    expect(tmux.captain.fastMode).toBe(true);
+
+    // ...but never participates in structural identity, so toggling it
+    // cannot force a fresh Captain session.
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain(
+      'fastMode',
+    );
+  });
+
+  it('inherits the player default when a role omits fast mode', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(
+      {
+        captain: 'claude',
+        players: { 'dev.coder': { adapter: 'codex', fastMode: true } },
+        playbooks: {
+          code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+        },
+      },
+      {
+        loadModule: moduleLoader({ 'mod://code': entry('code', ['coder']) }),
+      },
+    );
+    expect(plan.catalog.code.roles.coder.fastMode).toBe(true);
+  });
+
+  it('refuses a non-boolean fast mode on a player or a role', async () => {
+    const load = {
+      loadModule: moduleLoader({ 'mod://code': entry('code', ['coder']) }),
+    };
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        {
+          captain: 'claude',
+          players: { 'dev.coder': { adapter: 'codex', fastMode: 'yes' } },
+          playbooks: {
+            code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+          },
+        },
+        load,
+      ),
+    ).rejects.toThrow(/fastMode/);
+
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        {
+          captain: 'claude',
+          players: { 'dev.coder': 'codex' },
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: { coder: { player: 'dev.coder', fastMode: 'yes' } },
+            },
+          },
+        },
+        load,
+      ),
+    ).rejects.toThrow(/fastMode must be a boolean/);
+  });
+});
