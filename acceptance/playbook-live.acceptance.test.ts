@@ -143,7 +143,12 @@ const decideCommand =
   'Reviewer shall include the complete marker verbatim and shall ' +
   'not defer its invention or disclosure to nested REVIEW. ' +
   'Coder shall not invent, guess, or include a continuity marker in the ' +
-  'independent proposal or initial commit. During nested REVIEW, Reviewer ' +
+  'independent proposal or initial commit, even though the marker is ' +
+  'visible in the relayed Reviewer proposal. The synthesis turn shall end ' +
+  'after exactly one commit — the initial commit without the marker; the ' +
+  'correction commit belongs to a later separate review-fix turn that ' +
+  'nested REVIEW will request, never to the synthesis turn itself. ' +
+  'During nested REVIEW, Reviewer ' +
   'shall remember the exact independently proposed marker and classify its ' +
   'absence from the initial commit as an unsettled finding that remains open ' +
   'until Coder adds that exact marker in a correction commit. The final ' +
@@ -209,7 +214,8 @@ const conversationRetryTurn = 'Retry and continue the iteration';
 const conversationStatusTurn =
   'Where do things stand with the checklist run, and what did you have to do along the way?';
 const conversationSwitchTurn =
-  'Drop this and discuss the release notes with me instead.';
+  'Drop this and start drafting the release notes for this repository ' +
+  'instead.';
 const conversationDismissTurn =
   'That is enough for now — stop what is running and stand by.';
 
@@ -564,7 +570,7 @@ describe.sequential('installed playbook live acceptance', () => {
             ],
             nestedActivity: {
               paneTitle: 'Acceptance.dev.reviewer · codex',
-              text: 'A new review begins on the latest commit.',
+              text: 'A new review begins for the review scope.',
             },
           },
         );
