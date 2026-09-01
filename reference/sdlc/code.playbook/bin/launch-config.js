@@ -6,15 +6,16 @@
 // control and stores no imported registry functions in the normalized plan.
 
 import {
+  chmodSync,
   constants,
   copyFileSync,
   existsSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -412,7 +413,11 @@ export async function normalizeSelectedLaunchPlanDataOnly(
         );
       }
       bindings[role] = binding;
-      if (binding.model !== undefined || binding.effort !== undefined) {
+      if (
+        binding.model !== undefined ||
+        binding.effort !== undefined ||
+        binding.fastMode !== undefined
+      ) {
         let checkId;
         do {
           checkId = `binding-check-${tuningCheckIndex}`;
@@ -753,7 +758,11 @@ export async function normalizeLaunchPlan(
         );
       }
       bindings[role] = binding;
-      if (binding.model !== undefined || binding.effort !== undefined) {
+      if (
+        binding.model !== undefined ||
+        binding.effort !== undefined ||
+        binding.fastMode !== undefined
+      ) {
         let checkId;
         do {
           checkId = `binding-check-${tuningCheckIndex}`;
@@ -1193,19 +1202,59 @@ export function relocateLegacyUserConfig(
   onNotice,
 ) {
   if (legacyUserConfigPath === undefined) return;
-  if (existsSync(userConfigPath) || !existsSync(legacyUserConfigPath)) return;
-  if (!statSync(legacyUserConfigPath).isFile()) return;
-  mkdirSync(dirname(userConfigPath), { recursive: true });
+  // Any canonical filesystem entry wins, including a dangling symlink. The
+  // relocation is considered only when that exact pathname is absent; this
+  // keeps an obsolete or malformed legacy entry from blocking a valid config.
   try {
-    renameSync(legacyUserConfigPath, userConfigPath);
+    lstatSync(userConfigPath);
+    return;
   } catch (error) {
-    if (error?.code !== "EXDEV") throw error;
-    // Across filesystems the move is copy-then-drop; an interruption leaves
-    // the legacy file in place, and the next launch finds the canonical one
-    // already present and simply ignores it.
-    copyFileSync(legacyUserConfigPath, userConfigPath, constants.COPYFILE_EXCL);
-    rmSync(legacyUserConfigPath, { force: true });
+    if (error?.code !== "ENOENT") throw error;
   }
+  let source;
+  try {
+    source = lstatSync(legacyUserConfigPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (!source.isFile()) {
+    throw new Error(
+      `cannot relocate legacy config at ${legacyUserConfigPath}: ` +
+        "the path is not a regular file",
+    );
+  }
+  mkdirSync(dirname(userConfigPath), { recursive: true });
+
+  // Stage complete bytes and the exact source permission bits beside the
+  // destination, then publish with an exclusive hard link. Unlike rename,
+  // link can never replace a canonical entry that appears after inspection.
+  const stagingDir = mkdtempSync(
+    join(dirname(userConfigPath), ".playbook-config-relocation-"),
+  );
+  const stagedPath = join(stagingDir, "playbook.config.yaml");
+  let published = false;
+  try {
+    copyFileSync(
+      legacyUserConfigPath,
+      stagedPath,
+      constants.COPYFILE_EXCL,
+    );
+    chmodSync(stagedPath, source.mode & 0o7777);
+    try {
+      linkSync(stagedPath, userConfigPath);
+      published = true;
+    } catch (error) {
+      // A pre-existing or concurrently published canonical config wins.
+      // Keep both it and the still-authoritative legacy source unchanged.
+      if (error?.code !== "EEXIST") throw error;
+    }
+  } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
+  }
+  if (!published) return;
+
+  rmSync(legacyUserConfigPath, { force: true });
   onNotice(
     `playbook: moved config from ${legacyUserConfigPath} to ${userConfigPath}\n`,
   );
@@ -1236,7 +1285,7 @@ function migrateUserConfigIfRetired(userConfigPath, onNotice) {
     throw new Error(
       `cannot migrate the retired profiles config at ${userConfigPath}: ` +
         `${errorMessage(error)} — edit it by hand: each agent takes its own ` +
-        "adapter, model, effort, and permissions",
+        "adapter, model, effort, fast mode, and permissions",
     );
   }
   if (migrated === undefined) return;
@@ -1372,7 +1421,7 @@ function assertNoRetiredProfiles(top, configPath) {
     throw new Error(
       `top-level "profiles" was removed${where}: write each agent's settings ` +
         "inline under captain and each top-level players.<player-id> " +
-        "(adapter, model, effort, permissions)",
+        "(adapter, model, effort, fast mode, permissions)",
     );
   }
   const legacyPath = findLegacyPlayersPath(top);
@@ -1387,7 +1436,7 @@ function assertNoRetiredProfiles(top, configPath) {
     if (isObject(block) && block.profile !== undefined) {
       throw new Error(
         `${path}.profile was removed${where}: write the agent's settings ` +
-          "inline in that block (adapter, model, effort, permissions)",
+          "inline in that block (adapter, model, effort, fast mode, permissions)",
       );
     }
   }

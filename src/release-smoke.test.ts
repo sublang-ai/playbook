@@ -21,7 +21,7 @@ import { _testing } from '../scripts/release-smoke.mjs';
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
 const calls = [
-  ['first', 'closing', null, null, 'release-smoke-captain-a', 'low'],
+  ['first', 'closing', null, null, 'release-smoke-captain-a', 'low', false],
   [
     'continued',
     'selection',
@@ -29,8 +29,9 @@ const calls = [
     'release-smoke:closing:first:1',
     'release-smoke-captain-a',
     'low',
+    false,
   ],
-  ['lane-a', 'player', 'first', null, 'release-player-a', 'high'],
+  ['lane-a', 'player', 'first', null, 'release-player-a', 'high', true],
   [
     'lane-a',
     'player',
@@ -38,8 +39,9 @@ const calls = [
     'release-lane:shared:1',
     'release-second-a',
     'low',
+    false,
   ],
-  ['lane-a', 'player', 'isolated', null, 'release-player-a', 'high'],
+  ['lane-a', 'player', 'isolated', null, 'release-player-a', 'high', null],
   [
     'lane-a',
     'closing',
@@ -47,6 +49,7 @@ const calls = [
     'release-smoke:selection:continued:1',
     'release-smoke-captain-a',
     'low',
+    false,
   ],
   [
     'lane-b',
@@ -55,6 +58,7 @@ const calls = [
     'release-lane:shared:2',
     null,
     null,
+    true,
   ],
   [
     'lane-b',
@@ -63,6 +67,7 @@ const calls = [
     'release-lane:shared:3',
     'release-player-b',
     'max',
+    false,
   ],
   [
     'lane-b',
@@ -71,6 +76,7 @@ const calls = [
     'release-lane:isolated:1',
     'release-player-b',
     'max',
+    true,
   ],
   [
     'lane-b',
@@ -79,14 +85,16 @@ const calls = [
     'release-smoke:closing:lane-a:4',
     'release-smoke-captain-b',
     'max',
+    true,
   ],
-].map(([process, kind, role, resume, model, effort]) => ({
+].map(([process, kind, role, resume, model, effort, fastMode]) => ({
   process,
   kind,
   role,
   resume,
   model,
   effort,
+  fastMode,
 }));
 
 const sessionStoreConsumerFixture = {
@@ -290,12 +298,16 @@ describe('deterministic packed release lane smoke', () => {
     expect(primary.captain).toMatchObject({
       model: 'release-smoke-captain-a',
       effort: 'low',
+      fastMode: false,
     });
     expect(primary.players['release.shared']).toMatchObject({
       model: 'release-player-a',
       effort: 'high',
     });
-    expect(primary.playbooks.lanes.roles.first).toBe('release.shared');
+    expect(primary.playbooks.lanes.roles.first).toEqual({
+      player: 'release.shared',
+      fastMode: true,
+    });
     expect(primary.playbooks.lanes.roles.isolated).toBe('release.isolated');
     expect(overlay.players['release.shared']).toEqual(
       overlay.players['release.isolated'],
@@ -303,21 +315,64 @@ describe('deterministic packed release lane smoke', () => {
     expect(overlay.captain).toMatchObject({
       model: 'release-smoke-captain-b',
       effort: 'max',
+      fastMode: true,
     });
     expect(overlay.players['release.shared']).toMatchObject({
       model: 'release-player-b',
       effort: 'max',
+      fastMode: false,
     });
     expect(primary.playbooks.lanes.roles.second).toMatchObject({
       player: 'release.shared',
       model: 'release-second-a',
       effort: 'low',
+      fastMode: false,
     });
     expect(overlay.playbooks.lanes.roles.second).toMatchObject({
       player: 'release.shared',
       model: false,
       effort: false,
+      fastMode: true,
     });
+    expect(overlay.playbooks.lanes.roles.first).toEqual({
+      player: 'release.shared',
+      fastMode: false,
+    });
+    expect(overlay.playbooks.lanes.roles.isolated).toEqual({
+      player: 'release.isolated',
+      fastMode: true,
+    });
+  });
+
+  it('packs both unsupported fast-mode literals behind every external hook', () => {
+    for (const fastMode of [false, true]) {
+      const config = parseYaml(_testing.unsupportedFastModeConfig(fastMode));
+      expect(config.playbooks.unsupported.roles.worker).toEqual({
+        player: 'release.unsupported',
+        fastMode,
+      });
+      expect(config.players['release.unsupported'].adapter).toBe(
+        _testing.unsupportedFastModeAdapterMarker,
+      );
+    }
+
+    const source = _testing.installedFastModeBoundaryDriverSource();
+    for (const hook of [
+      'prepareRegistryModule',
+      'loadModule',
+      'probeAdapterSdk',
+      'createCaptainRuntime',
+      'createHostRuntime',
+      'session-store',
+    ]) {
+      expect(source).toContain(hook);
+    }
+    expect(source).toContain('hooks.length !== 0');
+    expect(source).toContain("from '@sublang/cligent'");
+    expect(source).toContain('FAST_MODE_SUPPORT');
+    expect(source).toContain('capability.requestSupported === false');
+    expect(source).toContain('replaceAll(adapterMarker, unsupportedAdapter)');
+    expect(source).not.toContain('gemini');
   });
 
   it('pins both shared-role directions, isolated tokens, and current tuning', () => {
@@ -333,6 +388,13 @@ describe('deterministic packed release lane smoke', () => {
     for (const index of [3, 6, 7, 8, 9]) {
       const mutated = structuredClone(calls);
       mutated[index]!.model = 'mutated-model';
+      expect(() => _testing.assertSmokeCalls(mutated)).toThrow(
+        /shared\/isolated tokens and tuning/,
+      );
+    }
+    for (const index of [0, 2, 3, 4, 6, 7, 8, 9]) {
+      const mutated = structuredClone(calls);
+      mutated[index]!.fastMode = 'mutated-fast-mode';
       expect(() => _testing.assertSmokeCalls(mutated)).toThrow(
         /shared\/isolated tokens and tuning/,
       );

@@ -2350,6 +2350,28 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       },
     });
 
+    expect(validated.captain).not.toHaveProperty('fastMode');
+    const fastModeExecution: any = structuredClone(execution);
+    fastModeExecution.captain.fastMode = false;
+    fastModeExecution.players[0].fastMode = true;
+    fastModeExecution.catalog.code.roles.coder.fastMode = false;
+    const validatedFastMode = validateCaptainSessionExecutionProjection(
+      fastModeExecution,
+    );
+    expect(validatedFastMode).toMatchObject({
+      captain: { fastMode: false },
+      players: [{ fastMode: true }],
+      catalog: { code: { roles: { coder: { fastMode: false } } } },
+    });
+    const fastModeStructure = projectCaptainSessionStructure(
+      validatedFastMode,
+    );
+    expect(fastModeStructure.captain).not.toHaveProperty('fastMode');
+    expect(fastModeStructure.players[0]).not.toHaveProperty('fastMode');
+    expect(fastModeStructure.catalog.code.roles.coder).not.toHaveProperty(
+      'fastMode',
+    );
+
     const mutations: Array<[string, any, RegExp]> = [
       [
         'unknown field',
@@ -2360,6 +2382,40 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         'unknown adapter',
         { ...execution, captain: { ...execution.captain, adapter: 'other' } },
         /adapter.*not supported/,
+      ],
+      [
+        'non-boolean Captain fast mode',
+        {
+          ...execution,
+          captain: { ...execution.captain, fastMode: 'yes' },
+        },
+        /fastMode.*boolean/,
+      ],
+      [
+        'non-boolean player fast mode',
+        {
+          ...execution,
+          players: [{ ...execution.players[0], fastMode: 'yes' }],
+        },
+        /fastMode.*boolean/,
+      ],
+      [
+        'non-boolean role fast mode',
+        {
+          ...execution,
+          catalog: {
+            code: {
+              ...execution.catalog.code,
+              roles: {
+                coder: {
+                  ...execution.catalog.code.roles.coder,
+                  fastMode: 'yes',
+                },
+              },
+            },
+          },
+        },
+        /fastMode.*boolean/,
       ],
       [
         'adapter-incompatible effort',

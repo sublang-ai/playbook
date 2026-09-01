@@ -188,7 +188,7 @@ The former positional `<from>`, `resume`, `--player`, `--captain`,
 `--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:`
 config are removed from `playbook run`. Enable a registry under `playbooks`,
 declare provider agents once under top-level `players`, bind every local role
-under `playbooks.<id>.roles`, tune compatible model and effort in a `--with`
+under `playbooks.<id>.roles`, tune compatible model, effort, and fast mode in a `--with`
 overlay, invoke the effective `/command`, and run from the working directory
 you want agents to use. Legacy `playbooks.<id>.players` blocks are rejected and
 are not auto-migrated because choosing equal or distinct new player IDs chooses
@@ -266,10 +266,12 @@ competing front end fails closed instead of forking the history.
 An ordinary reopen reads current config and any opening `--with` fragments,
 projects them to the stored catalog and player roster, and requires the stored
 role bindings plus every structural setting to remain exact. Compatible
-current `model` and `effort` selections apply to the next call, including an
-explicit boolean `false` provider-default reset. The retained provider token
-is never silently replaced by a fresh conversation if that selection is not
-supported
+current `model`, `effort`, and optional `fastMode` settings apply to the next
+call. Boolean `false` explicitly resets model or effort to the provider
+default, but `fastMode: false` is a literal disabled request; omission selects
+the fast-mode provider default or inherits the player value at a role binding.
+The retained provider token is never silently replaced by a fresh conversation
+if a requested setting is not supported
 ([[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
 [DR-032](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/032-explicit-roles-session-players.md)).
 
@@ -349,8 +351,9 @@ playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 --discard-uncertain
 ```
 
 Retry reads no input and reuses the byte-exact recorded turn and its exact
-attempted Captain, player, and per-role model/effort selections; current config
-cannot retune that attempt, and retry may duplicate external effects. Discard
+attempted Captain, player, and per-role model, effort, and fast-mode settings;
+current config cannot retune that attempt, and retry may duplicate external
+effects. Discard
 reads no input and runs no model: it restores the exact prior settled boundary,
 or deletes a never-settled fresh session, while abandoning the attempted work.
 An interrupted interactive turn uses the same uncertain record and is

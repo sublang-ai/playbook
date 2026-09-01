@@ -10,8 +10,8 @@
 # an adapter shorthand (claude, codex) or a block with
 # adapter/model/effort/fastMode/permissions. A role may override only model,
 # effort, or fastMode.
-# Omit an override to inherit the player default; set it to false to select
-# that provider's current default explicitly.
+# Omit an override to inherit the player default. For model and effort, false
+# selects the provider default; fastMode false is a literal disabled request.
 
 # Each adapter needs its vendor SDK installed as its own top-level
 # install root — they are optional peer dependencies, so you pay only
@@ -49,8 +49,8 @@ players:
     adapter: codex
     model: gpt-5.6-sol
     effort: ultra
-    # Adapter-scoped fast mode: Claude and Codex accept it, and omitting it
-    # takes the provider default.
+    # Adapter-scoped fast mode is validated by the installed Cligent contract;
+    # omitting it takes the provider default.
     fastMode: true
     permissions:
       mode: auto

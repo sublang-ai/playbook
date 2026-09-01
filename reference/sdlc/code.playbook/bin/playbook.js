@@ -74,18 +74,13 @@ export async function runPlaybookCli(options = {}) {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const loadModule = options.loadModule ?? ((specifier) => import(specifier));
-  const home = options.homeDir ?? env.HOME ?? homedir();
+  const home =
+    options.homeDir ??
+    (typeof env.HOME === "string" && env.HOME.trim().length > 0
+      ? env.HOME
+      : homedir());
   const userConfigPath =
     options.userConfigPath ?? resolveUserConfigPath(env, home);
-  // DR-043: move a pre-relocation config to the canonical path before any
-  // read, seed, or plan work observes its absence.
-  if (options.userConfigPath === undefined) {
-    relocateLegacyUserConfig(
-      userConfigPath,
-      resolveLegacyUserConfigPath(env, home),
-      (line) => stderr.write(line),
-    );
-  }
 
   // PBCLI-18: `playbook run ...` is the non-interactive presentation of the
   // same generic-config Captain session. It never resolves or launches the
@@ -98,7 +93,7 @@ export async function runPlaybookCli(options = {}) {
       stderr,
       env,
       homeDir: home,
-      userConfigPath,
+      ...(options.userConfigPath === undefined ? {} : { userConfigPath }),
       ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(options.loadModule ? { loadModule: options.loadModule } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
@@ -211,6 +206,22 @@ export async function runPlaybookCli(options = {}) {
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
+
+  // DR-043: only a validated managed launch may relocate the legacy config.
+  // Help and raw --config return above without changing either config path;
+  // the delegated `run` front end applies the same boundary independently.
+  if (options.userConfigPath === undefined) {
+    try {
+      relocateLegacyUserConfig(
+        userConfigPath,
+        resolveLegacyUserConfigPath(env, home),
+        (line) => stderr.write(line),
+      );
+    } catch (error) {
+      stderr.write(`playbook: ${errorMessage(error)}\n`);
+      return { code: COMPOSITION_FAILURE_EXIT_CODE };
+    }
   }
 
   const launchCwd = resolve(
@@ -908,8 +919,9 @@ function helpText({
     "  - set the top-level captain and each stable players.<id> to an",
     "    adapter shorthand (claude, codex) or an inline agent block",
     "  - bind every playbooks.<id>.roles.<role> explicitly to a player id;",
-    "    a scalar names the id, while { player, model?, effort? } may retune",
-    "    one role; boolean false selects the provider default explicitly",
+    "    a scalar names the id, while { player, model?, effort?, fastMode? }",
+    "    may retune one role; false selects provider-default model/effort,",
+    "    while fastMode false is a literal disabled request",
     "  - reusing one id deliberately shares that provider conversation;",
     "    distinct ids stay isolated even when their agent blocks are equal",
     "  - the launcher injects captain.from and retains referenced player ids",

@@ -70,6 +70,8 @@ jobs:
             'reference/sdlc/review.playbook/review.*.d.ts' \
             'reference/sdlc/decide.playbook/decide.*.js' \
             'reference/sdlc/decide.playbook/decide.*.d.ts' \
+            'src/accepted-outcome.js' \
+            'src/accepted-outcome.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -81,6 +83,8 @@ jobs:
             'reference/sdlc/code.playbook' \
             'reference/sdlc/review.playbook' \
             'reference/sdlc/decide.playbook' \
+            'src/accepted-outcome.js' \
+            'src/accepted-outcome.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -92,6 +96,8 @@ jobs:
               'reference/sdlc/code.playbook' \
               'reference/sdlc/review.playbook' \
               'reference/sdlc/decide.playbook' \
+              'src/accepted-outcome.js' \
+              'src/accepted-outcome.d.ts' \
               'src/runtime.js' \
               'src/runtime.d.ts' \
               'src/xstate-runtime.js' \

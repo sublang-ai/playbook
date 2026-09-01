@@ -97,7 +97,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
 }
 
 type SnapshotAgentEnvelope = DeepReadonly<
-  Omit<SessionAgent, 'model' | 'effort'>
+  Omit<SessionAgent, 'model' | 'effort' | 'fastMode'>
 >;
 
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
@@ -2566,6 +2566,16 @@ function snapshotEffortSelection(
   return selection as TuningSelection<Effort>;
 }
 
+function snapshotFastMode(
+  value: JsonValue | undefined,
+  path: string,
+): boolean | undefined {
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new TypeError(`${path} must be a boolean`);
+  }
+  return value;
+}
+
 function snapshotSessionAgent(
   value: JsonValue | undefined,
   path: string,
@@ -2573,13 +2583,14 @@ function snapshotSessionAgent(
   const agent = snapshotRecord(value, path);
   rejectSnapshotKeys(
     agent,
-    ['adapter', 'model', 'effort', 'instruction', 'permissions'],
+    ['adapter', 'model', 'effort', 'fastMode', 'instruction', 'permissions'],
     path,
   );
   const fixed = snapshotFixedAgent(
     Object.fromEntries(
       Object.entries(agent).filter(
-        ([key]) => key !== 'model' && key !== 'effort',
+        ([key]) =>
+          key !== 'model' && key !== 'effort' && key !== 'fastMode',
       ),
     ) as JsonValue,
     path,
@@ -2594,10 +2605,15 @@ function snapshotSessionAgent(
       : { permissions: livePermissions(fixed.permissions) }),
     model: snapshotTuningSelection(agent.model, `${path}.model`),
     effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
+    ...(agent.fastMode === undefined
+      ? {}
+      : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
   };
 }
 
-function fixedAgent(agent: SessionAgent): Omit<SessionAgent, 'model' | 'effort'> {
+function fixedAgent(
+  agent: SessionAgent,
+): Omit<SessionAgent, 'model' | 'effort' | 'fastMode'> {
   return {
     adapter: agent.adapter,
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
@@ -2841,7 +2857,11 @@ async function buildEnablements(
     for (const role of entry.requiredRoleIds) {
       const path = `captain.options.playbooks.${id}.roles.${role}`;
       const rawBinding = snapshotRecord(roleRecord[role], path);
-      rejectSnapshotKeys(rawBinding, ['playerId', 'model', 'effort'], path);
+      rejectSnapshotKeys(
+        rawBinding,
+        ['playerId', 'model', 'effort', 'fastMode'],
+        path,
+      );
       const playerId = snapshotString(rawBinding.playerId, `${path}.playerId`);
       if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
         throw new Error(`${path}.playerId is not a canonical player id`);
@@ -2856,6 +2876,14 @@ async function buildEnablements(
         playerId,
         model: snapshotTuningSelection(rawBinding.model, `${path}.model`),
         effort: snapshotEffortSelection(rawBinding.effort, `${path}.effort`),
+        ...(rawBinding.fastMode === undefined
+          ? {}
+          : {
+              fastMode: snapshotFastMode(
+                rawBinding.fastMode,
+                `${path}.fastMode`,
+              ),
+            }),
         agent,
       });
     }

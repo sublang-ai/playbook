@@ -52,6 +52,10 @@ import {
 } from './code.registry.js';
 
 type CaptainCallOptions = Parameters<CaptainContext['callCaptain']>[1];
+type SnapshotCaptainAgent = PlaybookCaptainShellSnapshot['captain']['agent'];
+const SNAPSHOT_AGENT_HAS_FAST_MODE: 'fastMode' extends keyof SnapshotCaptainAgent
+  ? true
+  : false = false;
 
 interface StubSession {
   session: CaptainSession;
@@ -1043,6 +1047,7 @@ interface TestSessionAgent {
   readonly effort:
     | { readonly kind: 'value'; readonly value: 'low' | 'medium' | 'high' }
     | { readonly kind: 'provider-default' };
+  readonly fastMode?: boolean;
   readonly instruction?: string;
   readonly permissions?: { readonly fileWrite?: 'allow' | 'ask' | 'deny' };
 }
@@ -1129,7 +1134,12 @@ function makeShell(
     roleTunings?: Readonly<
       Record<
         string,
-        Readonly<Record<string, Pick<TestSessionAgent, 'model' | 'effort'>>>
+        Readonly<
+          Record<
+            string,
+            Pick<TestSessionAgent, 'model' | 'effort' | 'fastMode'>
+          >
+        >
       >
     >;
     playerAgents?: Readonly<Record<string, TestSessionAgent>>;
@@ -1165,6 +1175,12 @@ function makeShell(
             effort:
               opts.roleTunings?.[r.entry.id]?.[role]?.effort ??
               { kind: 'provider-default' },
+            ...(opts.roleTunings?.[r.entry.id]?.[role]?.fastMode === undefined
+              ? {}
+              : {
+                  fastMode:
+                    opts.roleTunings?.[r.entry.id]?.[role]?.fastMode,
+                }),
           },
         ];
       }),
@@ -3544,6 +3560,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           coder: {
             model: { kind: 'value', value: 'gpt-5.6-sol' },
             effort: { kind: 'value', value: 'high' },
+            fastMode: false,
           },
         },
       },
@@ -3552,6 +3569,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           adapter: 'codex',
           model: { kind: 'value', value: 'session-default-model' },
           effort: { kind: 'value', value: 'low' },
+          fastMode: true,
           instruction: 'Keep the implementation narrow.',
           permissions: { fileWrite: 'ask' },
         },
@@ -3573,6 +3591,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           settings: {
             model: { kind: 'value', value: 'gpt-5.6-sol' },
             effort: { kind: 'value', value: 'high' },
+            fastMode: false,
             instruction: 'Keep the implementation narrow.',
             permissions: { fileWrite: 'ask' },
           },
@@ -7619,6 +7638,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const validated = assertPlaybookCaptainShellSnapshot(input);
 
     expect(validated).toEqual(base);
+    expect(SNAPSHOT_AGENT_HAS_FAST_MODE).toBe(false);
     expect(Object.isFrozen(validated)).toBe(true);
     expect(Object.isFrozen(validated.captain)).toBe(true);
     expect(
@@ -7636,6 +7656,11 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       () => {
         const value = clone();
         value.captain.agent.model = { kind: 'value', value: 'forbidden' };
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.captain.agent.fastMode = true;
         return value;
       },
       () => {
@@ -8579,12 +8604,14 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         ...fixedCaptain,
         model: { kind: 'value', value: 'captain-a' },
         effort: { kind: 'value', value: 'low' },
+        fastMode: false,
       },
       roleTunings: {
         code: {
           coder: {
             model: { kind: 'value', value: 'role-a' },
             effort: { kind: 'value', value: 'low' },
+            fastMode: true,
           },
         },
       },
@@ -8593,6 +8620,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           ...fixedPlayer,
           model: { kind: 'value', value: 'player-default-a' },
           effort: { kind: 'value', value: 'low' },
+          fastMode: false,
         },
         'code-reviewer': {
           adapter: 'codex',
@@ -8623,6 +8651,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     );
     const snapshot = source.exportSnapshot()!;
     expect(JSON.stringify(snapshot)).not.toMatch(/captain-a|role-a|player-default-a/);
+    expect(snapshot.captain.agent).not.toHaveProperty('fastMode');
 
     const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
       const result = await runtime.ports!.callPlayer(
@@ -8639,12 +8668,14 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         ...fixedCaptain,
         model: { kind: 'value', value: 'captain-b' },
         effort: { kind: 'value', value: 'high' },
+        fastMode: true,
       },
       roleTunings: {
         code: {
           coder: {
             model: { kind: 'provider-default' },
             effort: { kind: 'value', value: 'high' },
+            fastMode: false,
           },
         },
       },
@@ -8653,6 +8684,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           ...fixedPlayer,
           model: { kind: 'value', value: 'player-default-b' },
           effort: { kind: 'value', value: 'high' },
+          fastMode: true,
         },
         'code-reviewer': {
           adapter: 'codex',
@@ -8685,6 +8717,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         settings: {
           model: { kind: 'provider-default' },
           effort: { kind: 'value', value: 'high' },
+          fastMode: false,
           instruction: fixedPlayer.instruction,
           permissions: fixedPlayer.permissions,
         },
@@ -8695,6 +8728,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       settings: {
         model: { kind: 'value', value: 'captain-b' },
         effort: { kind: 'value', value: 'high' },
+        fastMode: true,
         instruction: fixedCaptain.instruction,
         permissions: fixedCaptain.permissions,
       },

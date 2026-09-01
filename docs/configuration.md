@@ -8,6 +8,25 @@ Fresh launches and ordinary reopens read one config at
 first launch seeds it from the bundled starter and prints the path;
 later launches reuse it untouched.
 
+This unreleased grammar is coordinated with the Spex app because both hosts
+edit the same file. No compatible public Spex version has yet been verified;
+Playbook release remains blocked until one accepts and preserves `fastMode`
+in Captain, player, and role settings, validates it through Cligent, and seeds
+the same lineup. Once that version is named in the release notes, upgrade Spex
+before authoring fast mode here.
+
+On the first launching command after upgrade, Playbook moves a config from the
+former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` path
+when the canonical path is absent. The one-time move preserves bytes and
+permissions and leaves no compatibility alias, so running an older Spex host
+afterward could seed a second file at the former path.
+
+This implementation is not yet safe to release for a legacy file containing a
+relative `sessions` value or relative filesystem `playbooks.<id>.from`: those
+values are resolved against the primary config directory, so a byte-preserving
+move would silently change their targets. Use absolute paths only while the
+coordinated locator migration remains unfinished.
+
 ```sh
 $EDITOR "${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml"
 ```
@@ -30,11 +49,12 @@ names, nesting, and ancestry never infer a binding.
 
 Each `captain` or `players.<player-id>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`, `model`,
-`effort`, `instruction`, and `permissions`. Settings are inline per stable
-agent ([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)). Dots in a
-player ID are literal characters, not YAML hierarchy. Other adapter IDs pass
-through to `tmux-play` with a warning because `playbook` cannot preflight their
-auth.
+`effort`, `fastMode`, `instruction`, and `permissions`. Settings are inline per
+stable agent
+([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)).
+Dots in a player ID are literal characters, not YAML hierarchy. Other adapter
+IDs pass through to `tmux-play` with a warning because `playbook` cannot
+preflight their auth.
 
 Within a `playbooks.<id>` block, `from` (the registry module), `command` (an
 optional slash-command override), and `roles` are launcher-owned; every other
@@ -42,33 +62,34 @@ key is that playbook's option slice. Every manifest role must be present
 exactly once. The launcher injects the rest — you do not write host wiring by
 hand.
 
-The seeded config runs the stable Coder player on Claude Opus 4.8 1m and the
-stable Reviewer player on GPT-5.5:
+The seeded config runs the stable Coder player on GPT-5.6 Sol with fast mode
+enabled and the stable Reviewer player on Claude Opus 5:
 
 ```yaml
 captain:
   adapter: claude
-  model: claude-opus-4-8
+  model: claude-opus-5
   effort: high
   permissions:
     mode: auto # protected auto mode for the Claude Captain
 
 players:
   dev.coder:
-    adapter: claude
-    model: claude-opus-4-8[1m]
-    effort: xhigh
-    permissions:
-      mode: auto # protected auto mode for the Claude Coder
-
-  dev.reviewer:
     adapter: codex
-    model: gpt-5.5
-    effort: xhigh
+    model: gpt-5.6-sol
+    effort: ultra
+    fastMode: true
     permissions:
       mode: auto
       writablePaths:
         - .git # allow git metadata writes under Codex auto mode
+
+  dev.reviewer:
+    adapter: claude
+    model: claude-opus-5
+    effort: xhigh
+    permissions:
+      mode: auto # protected auto mode for the Claude Reviewer
 
 playbooks:
   code:
@@ -105,21 +126,26 @@ roles:
   coder: dev.coder
 ```
 
-Use a block to override only that role invocation's model or effort:
+Use a block to override only that role invocation's model, effort, or fast
+mode:
 
 ```yaml
 roles:
   coder:
     player: dev.coder
-    model: claude-opus-4-8[1m]
+    model: gpt-5.6-sol
     effort: false # explicitly reset to this provider's default
+    fastMode: false # literal disabled request, not a default sentinel
 ```
 
-Omitting `model` or `effort` inherits that player's top-level default. The
-boolean `false` is different: it selects the provider default explicitly, so a
-resumed conversation cannot accidentally retain an earlier selection. A role
-binding cannot override adapter, instruction, permissions, workspace, or tool
-posture; those define the stable player envelope.
+Omitting any override inherits that player's top-level default. For `model`
+and `effort`, boolean `false` selects the provider default explicitly, so a
+resumed conversation cannot accidentally retain an earlier selection. For
+`fastMode`, `false` is a literal request to disable fast mode; omitting the
+top-level setting selects the provider default. A present fast-mode boolean is
+accepted only for adapters Cligent reports as supporting it. A role binding
+cannot override adapter, instruction, permissions, workspace, or tool posture;
+those define the stable player envelope.
 
 ## Sharing, isolation, and concurrency
 
@@ -137,9 +163,9 @@ second top-level player and change only its binding:
 ```yaml
 players:
   review.coder:
-    adapter: claude
-    model: claude-opus-4-8[1m]
-    effort: xhigh
+    adapter: codex
+    model: gpt-5.6-sol
+    effort: ultra
 
 playbooks:
   review:
@@ -184,8 +210,9 @@ playbook run --with fast-lineup.yaml "/code implement the approved change"
 # fast-lineup.yaml — retune the shared Coder; nothing is written back.
 players:
   dev.coder:
-    model: claude-opus-4-8
+    model: gpt-5.6-sol
     effort: medium
+    fastMode: false
 ```
 
 Fragments merge into the agent block rather than replacing it, so
@@ -208,9 +235,10 @@ The global file is never modified, and `--with` is not forwarded to
 Overlays apply when creating a fresh session and as current-config input for a
 compatible ordinary reopen. A selected session keeps its stored catalog,
 player roster, role bindings, adapter, instruction, permissions, and working
-directory; only model and effort may change. The next call reapplies both
-complete selections. An uncertain retry accepts no tuning overlay and uses the
-exact attempted selections already stored with that turn.
+directory; only model, effort, and fast mode may change. The next call reapplies
+both complete model and effort selections and the optional effective fast-mode
+boolean. An uncertain retry accepts no tuning overlay and uses the exact
+attempted settings already stored with that turn.
 
 ## Session storage
 
@@ -251,9 +279,9 @@ public UUID. Presentation-only fields are inert headlessly.
 An ordinary reopen reads current config and opening overlays, but first
 projects them to the stored playbooks and referenced players. An unrelated new
 entry cannot enter or invalidate the session. Structural drift fails closed;
-compatible model or effort changes apply on the next provider call. Legacy
-record, shell, runtime-snapshot, and trace schemas are rejected rather than
-having role or player identity guessed.
+compatible model, effort, or fast-mode changes apply on the next provider
+call. Legacy record, shell, runtime-snapshot, and trace schemas are rejected
+rather than having role or player identity guessed.
 
 ## External playbooks
 

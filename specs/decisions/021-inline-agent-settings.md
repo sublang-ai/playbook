@@ -19,7 +19,7 @@ Tuning is per player: a user wants this Coder on a larger context window, that R
 Under `profiles`, changing one player means either editing a profile that other players share — silently retuning them too — or minting a new profile id for a single use, which is the common case and pure ceremony.
 
 The indirection also costs more than it saves at this size.
-A reader of `players.coder: claude-opus-1m` has to resolve an id in another block to learn the adapter, model, effort, and permissions; the profile ids exist only to be dereferenced once.
+A reader of `players.coder: claude-opus-1m` has to resolve an id in another block to learn the adapter, model, effort, fast mode, and permissions; the profile ids exist only to be dereferenced once.
 It adds its own failure modes — a `profile` key naming no known profile, and a profile id colliding with an adapter shorthand, which the launcher must reject specifically ([[playbook-cli-8](../packages/playbook-cli.md#playbook-cli-8)]).
 Duplication across two or three agents is cheaper than an indirection layer plus its validation.
 
@@ -28,13 +28,13 @@ Duplication across two or three agents is cheaper than an indirection layer plus
 ### 1. Agent settings are inline
 
 The top-level `profiles` map and the agent-block `profile` key are removed.
-Every `captain` and top-level `players.<player-id>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, and `permissions` as needed.
+Every `captain` and top-level `players.<player-id>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, `fastMode`, and `permissions` as needed.
 A scalar therefore has exactly one meaning — an adapter shorthand — and an agent block is self-contained, so a reader learns an agent's full settings from the block in front of them and retuning one player cannot move another.
 
 ### 2. The seeded config inlines its lineup
 
 The starter config ships its agents with settings written under `captain` and top-level `players`, while every playbook role binds explicitly under `playbooks.<id>.roles` per [DR-032](032-explicit-roles-session-players.md).
-The seeded lineup, models, efforts, and permissions are unchanged; only the indirection is gone.
+The seeded lineup and its current adapter, model, effort, fast-mode, and permission defaults are governed by the starter contract rather than by profile indirection.
 
 ### 3. An existing config migrates itself once
 

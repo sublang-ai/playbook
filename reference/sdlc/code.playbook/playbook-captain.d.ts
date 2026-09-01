@@ -32,7 +32,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
     readonly rootPlaybookId: string;
     readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, 'model' | 'effort'>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, 'model' | 'effort' | 'fastMode'>>;
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface PlaybookCaptainDeps {
     loadModule?: (specifier: string) => Promise<unknown>;

@@ -44,7 +44,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
    A nominated predecessor that disappears or is superseded by another newest valid boundary during authoritative reread likewise declines adoption without retrying or falling through.
    Adoption validates an exact envelope: working directory, root playbook id and its complete catalog-entry structure — registry module identity, manifest command, options, and role set — and the artifact schema of every frame in the generation.
    Deterministic envelope drift declines adoption and starts with an empty map rather than blocking unrelated fresh work.
-   A referenced player's own structural members may differ; such a role resumes with a fresh conversation, while model and effort retune exactly as ordinary continuation allows.
+   A referenced player's own structural members may differ; such a role resumes with a fresh conversation, while model, effort, and fast mode retune exactly as ordinary continuation allows.
 
 4. **The Captain-session player ledger is the sole conversation authority.**
    Adoption never restores the retained snapshots' role-token projections: a shared player may have advanced through another playbook after capture, so the adopting runtime binds each role from the current ledger, and a role the ledger cannot supply starts a fresh conversation and re-grounds from the procedure's externalized effects.

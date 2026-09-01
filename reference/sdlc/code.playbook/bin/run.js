@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { assertFastModeSupported } from "@sublang/cligent";
 import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
@@ -90,7 +91,11 @@ export async function runPlaybookRun(options = {}) {
   }
   if (args.help) {
     const env = options.env ?? process.env;
-    const home = options.homeDir ?? env.HOME ?? homedir();
+    const home =
+      options.homeDir ??
+      (typeof env.HOME === "string" && env.HOME.trim().length > 0
+        ? env.HOME
+        : homedir());
     const userConfigPath =
       options.userConfigPath ?? resolveUserConfigPath(env, home);
     // PBCLI-17: help resolves the path but writes nothing, so it neither
@@ -100,7 +105,11 @@ export async function runPlaybookRun(options = {}) {
   }
 
   const env = options.env ?? process.env;
-  const home = options.homeDir ?? env.HOME ?? homedir();
+  const home =
+    options.homeDir ??
+    (typeof env.HOME === "string" && env.HOME.trim().length > 0
+      ? env.HOME
+      : homedir());
   const recovering = args.retryUncertain || args.discardUncertain;
   const continuing = args.continue || args.sessionId !== undefined;
   let input = args.input;
@@ -120,11 +129,16 @@ export async function runPlaybookRun(options = {}) {
   // DR-043: move a pre-relocation config to the canonical path before any
   // read, seed, or plan work observes its absence.
   if (options.userConfigPath === undefined) {
-    relocateLegacyUserConfig(
-      userConfigPath,
-      resolveLegacyUserConfigPath(env, home),
-      (line) => stderr.write(line),
-    );
+    try {
+      relocateLegacyUserConfig(
+        userConfigPath,
+        resolveLegacyUserConfigPath(env, home),
+        (line) => stderr.write(line),
+      );
+    } catch (error) {
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      return { code: EXIT.argument };
+    }
   }
   const bootstrapConfigNotices = [];
   let resolvedSessionsDir;
@@ -1200,6 +1214,7 @@ export async function validateFrozenExecutionConfig(
     structuralProjection,
     executionProjection,
   );
+  assertFrozenFastModesSupported(config);
   const catalogItems = Object.entries(config.catalog);
 
   // Preserve the complete-catalog preparation transaction: prepare every
@@ -1254,6 +1269,44 @@ export async function validateFrozenExecutionConfig(
     }
   }
   return config;
+}
+
+function assertFrozenFastModesSupported(config) {
+  if (config.captain.fastMode !== undefined) {
+    assertFastModeSupported(
+      config.captain.adapter,
+      "stored Captain fastMode",
+    );
+  }
+
+  const playerAdapters = new Map();
+  for (const player of config.players) {
+    playerAdapters.set(player.id, player.adapter);
+    if (player.fastMode !== undefined) {
+      assertFastModeSupported(
+        player.adapter,
+        `stored player ${JSON.stringify(player.id)} fastMode`,
+      );
+    }
+  }
+
+  for (const [playbookId, item] of Object.entries(config.catalog)) {
+    for (const [roleId, binding] of Object.entries(item.roles)) {
+      if (binding.fastMode === undefined) continue;
+      const adapter = playerAdapters.get(binding.playerId);
+      if (adapter === undefined) {
+        throw new Error(
+          `stored playbook ${JSON.stringify(playbookId)} role ` +
+            `${JSON.stringify(roleId)} names an unknown player`,
+        );
+      }
+      assertFastModeSupported(
+        adapter,
+        `stored playbook ${JSON.stringify(playbookId)} role ` +
+          `${JSON.stringify(roleId)} fastMode`,
+      );
+    }
+  }
 }
 
 function adaptersFromExecutionConfig(config) {
@@ -1720,7 +1773,8 @@ function runHelpText(userConfigPath) {
     "Bare continuation prefers the newest session stored for the invoking",
     "working directory and reports when it uses the global newest fallback.",
     "An ordinary continued run restores that stored structure and working",
-    "directory, then reads current config and overlays for model and effort.",
+    "directory, then reads current config and overlays for model, effort,",
+    "and fast mode.",
     "Uncertain retry instead uses its exact recorded input and settings.",
     "",
     "Options:",
