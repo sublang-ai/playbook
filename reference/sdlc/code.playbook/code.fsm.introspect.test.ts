@@ -45,7 +45,8 @@ describe('CODE FSM introspection', () => {
         sourceItem: 'CODE-2',
         playbookId: 'review',
         text:
-          '> Initial intent: Implement the intent.\n' +
+          '> Original intent: Implement the intent.\n' +
+          '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
           '> Coder output: Committed the requested change.',
       },
       {
@@ -53,8 +54,10 @@ describe('CODE FSM introspection', () => {
         sourceItem: 'CODE-4',
         playbookId: 'review',
         text:
-          '> IR task: Implement task 1.\n' +
-          '> Coder output: Committed the requested change.',
+          '> Original intent: Implement the intent.\n' +
+          '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
+          '> Coder output: Committed the requested change.\n' +
+          '> Current IR task: Implement task 1.',
       },
     ]);
   });

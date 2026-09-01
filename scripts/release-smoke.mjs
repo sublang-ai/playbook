@@ -1323,7 +1323,7 @@ if (
 }
 
 // The installed package's own module scope: self-referencing imports resolve
-// exactly as consumer imports of the four public playbook subpaths do,
+// exactly as consumer imports of the five public playbook subpaths do,
 // exports map included.
 function compiledRuntimeImportProbeSource() {
   return `// RELEASE-28 step 7: every installed playbook subpath constructs.
@@ -1331,12 +1331,14 @@ import captainFactory from '@sublang/playbook/captain/playbook';
 import codeFactory from '@sublang/playbook/code/playbook';
 import reviewFactory from '@sublang/playbook/review/playbook';
 import decideFactory from '@sublang/playbook/decide/playbook';
+import devFactory from '@sublang/playbook/dev/playbook';
 import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
 
 const enabledPlaybooks = [
   { id: 'code', command: 'code', intent: 'implement a coding intent' },
   { id: 'review', command: 'review', intent: 'review the latest commit' },
   { id: 'decide', command: 'decide', intent: 'decide a spec design' },
+  { id: 'dev', command: 'dev', intent: 'plan a development request' },
 ];
 const controller = {
   async submit() {
@@ -1414,6 +1416,11 @@ const cases = [
     ),
     members: coreMembers,
     absentMembers: adoptionMembers,
+  },
+  {
+    id: 'dev',
+    runtime: devFactory(construction('dev', ['analyst'], [])),
+    members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
 ];
 
@@ -1625,6 +1632,7 @@ function stepInstalledCli(root, state) {
       'players:',
       '  release.coder: { adapter: claude }',
       '  release.reviewer: { adapter: codex }',
+      '  release.analyst: { adapter: claude }',
       'playbooks:',
       '  code:',
       '    from: "@sublang/playbook/code/registry"',
@@ -1635,6 +1643,9 @@ function stepInstalledCli(root, state) {
       '  decide:',
       '    from: "@sublang/playbook/decide/registry"',
       '    roles: { coder: release.coder, reviewer: release.reviewer }',
+      '  dev:',
+      '    from: "@sublang/playbook/dev/registry"',
+      '    roles: { analyst: release.analyst }',
       '',
     ].join('\n'),
   );
@@ -1659,6 +1670,7 @@ function stepInstalledCli(root, state) {
     '/code  code  —',
     '/review  review  —',
     '/decide  decide  —',
+    '/dev  dev  —',
   ]) {
     expectContains(list.stdout, expected, '--list output');
   }
@@ -2708,7 +2720,7 @@ function stepCompiledFidelity(state) {
     state.packedPackage,
   ]);
 
-  const workflows = ['code', 'review', 'decide'];
+  const workflows = ['code', 'review', 'decide', 'dev'];
   for (const id of workflows) {
     run(process.execPath, [
       join(repoRoot, 'scripts', 'check-slc-source-gears.mjs'),
@@ -2762,6 +2774,8 @@ function stepCompiledFidelity(state) {
     'review.playbook/review.playbook.test.ts',
     'decide.playbook/decide.gears-fsm.test.ts',
     'decide.playbook/decide.playbook.test.ts',
+    'dev.playbook/dev.gears-fsm.test.ts',
+    'dev.playbook/dev.playbook.test.ts',
   ];
   const absent = requiredSuites.filter((suite) => !output.includes(suite));
   if (absent.length > 0) {

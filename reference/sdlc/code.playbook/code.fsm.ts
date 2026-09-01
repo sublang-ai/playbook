@@ -44,7 +44,6 @@ export type PlayerInput = {
   readonly callerInput: string;
   readonly runResults: string;
   readonly irNumber?: string;
-  readonly irTask?: string;
   readonly pendingBossQuestion?: PendingBossQuestion;
   readonly bossReply?: string;
 };
@@ -60,18 +59,20 @@ export type PlayerOutput =
       readonly coderOutput: string;
       readonly latestCommit: string;
       readonly irNumber: string;
-      readonly irTask: string;
     }
   | {
       readonly guard: 'moreTasks';
       readonly coderOutput: string;
       readonly latestCommit: string;
+      readonly irNumber: string;
       readonly irTask: string;
     }
   | {
       readonly guard: 'finalTask';
       readonly coderOutput: string;
       readonly latestCommit: string;
+      readonly irNumber: string;
+      readonly irTask: string;
     }
   | {
       readonly guard: 'needsBossReply';
@@ -86,8 +87,13 @@ export type PlaybookInput = {
 };
 
 export type ReviewOutput = {
-  readonly approvedCommit: 'latest';
   readonly noUnsettledFindings: true;
+  /**
+   * Exact repository revision at which the review scope was evaluated:
+   * the last review-fix commit when one landed, otherwise the clean
+   * round's receipt-observed HEAD (DR-045). Always present.
+   */
+  readonly evaluatedRevision: string;
 };
 
 export type CompactError = {
@@ -98,17 +104,17 @@ export type CompactError = {
 export type CodePlaybookOutput =
   | {
       readonly status: 'complete';
-      /** Exact identity of the latest CODE-owned commit. */
+      /** Exact identity of the last CODE-owned commit. */
       readonly lastCodeCommit: string;
-      /** Exact Coder final text produced after that commit. */
-      readonly lastCodeOutput: string;
+      /** Exact repository revision the final passing review evaluated. */
+      readonly finalEvaluatedRevision: string;
+      /** Every phase's review passed with no unsettled findings. */
+      readonly allReviewsPassed: true;
     }
   | {
       readonly status: 'review-failed';
-      /** Exact identity of the latest CODE-owned commit. */
+      /** Exact identity of the last CODE-owned commit. */
       readonly lastCodeCommit: string;
-      /** Exact Coder final text produced after that commit. */
-      readonly lastCodeOutput: string;
       readonly error: CompactError;
     };
 
@@ -123,7 +129,7 @@ export type CodingContext = {
   readonly latestCommit?: string;
   readonly irNumber?: string;
   readonly irTask?: string;
-  readonly nextIrTask?: string;
+  readonly evaluatedRevision?: string;
   readonly phase?: CodePhase;
   readonly completion?: 'complete' | 'review-failed';
   readonly reviewError?: CompactError;
@@ -140,69 +146,86 @@ export type CodingEvent =
       readonly questionId?: 'runFirstPhase' | 'runIrTask';
     };
 
+const APPENDED_PHASE_PROMPT = [
+  'Keep to the original intent and follow what it asks.',
+  'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
+  "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
+  'Make the commit message explain concisely what changed and why, including relevant verification.',
+  'Identify every new commit you make.',
+  'Coder is <coder-llm>.',
+];
+
 const FIRST_PHASE_PROMPT = [
   '> <caller-input>',
   '> <run-results>',
   '',
-  'Assess whether the coding intent can be completed well in one commit.',
-  'If yes, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.',
-  'Otherwise, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.',
+  'First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.',
+  'If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.',
+  '',
+  'For a new coding intent, assess whether it can be completed well in one commit.',
+  'If it can, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.',
+  'If it cannot, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.',
   'Plan affected spec updates before, with, or after their corresponding code changes, either as standalone IR tasks or as explicit work within related tasks.',
   '',
-  'Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.',
-  '',
-  'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
-  "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
-  'Make the commit message explain concisely what changed and why, including relevant verification.',
-  'Coder is <coder-llm>; format the model token in conventional human form.',
-].join('\n');
-
-const IR_TASK_PROMPT = [
-  '> <ir-task>',
-  '> <run-results>',
-  '',
-  'Read IR-<#> and implement exactly the next unfinished task, including corresponding tests or specs if any.',
+  'For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
   'Do not implement a later task in this phase.',
   "Mark the IR's progress and deliverables when relevant.",
   'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
   '',
-  'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
-  "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
-  'Make the commit message explain concisely what changed and why, including relevant verification.',
-  'Coder is <coder-llm>; format the model token in conventional human form.',
+  'Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.',
+  '',
+  ...APPENDED_PHASE_PROMPT,
 ].join('\n');
+
+const IR_TASK_PROMPT = [
+  '> <caller-input>',
+  '> <ir-number>',
+  '> <run-results>',
+  '',
+  'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
+  'Do not implement a later task in this phase.',
+  "Mark the IR's progress and deliverables when relevant.",
+  'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
+  '',
+  ...APPENDED_PHASE_PROMPT,
+].join('\n');
+
+const NEEDS_BOSS_REPLY_RESULT =
+  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const FIRST_PHASE_RESULTS = {
   directCommit:
     'Coder completed and committed the direct implementation phase. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
   irCommit:
-    'Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber`, and `irTask` naming the exact next unfinished task.',
-  needsBossReply:
-    "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+    'Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irNumber` identifying the created IR.',
+  moreTasks:
+    'Coder continued an existing IR, completed and committed exactly its next unfinished task, and at least one task remains. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.',
+  finalTask:
+    'Coder continued an existing IR and completed and committed its final task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.',
+  needsBossReply: NEEDS_BOSS_REPLY_RESULT,
 } as const;
 
 const IR_TASK_RESULTS = {
   moreTasks:
-    'Coder completed and committed the current IR task and at least one task remains. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irTask` naming the exact next unfinished task.',
+    "Coder completed and committed exactly the IR's next unfinished task and at least one task remains. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.",
   finalTask:
-    'Coder completed and committed the final IR task. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
-  needsBossReply:
-    "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+    "Coder completed and committed the IR's final task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.",
+  needsBossReply: NEEDS_BOSS_REPLY_RESULT,
 } as const;
 
 const STATE_DESCRIPTIONS = {
   ready: 'Waiting for a coding intent.',
   runFirstPhase:
-    'Coder is implementing one direct phase or committing a new intent record.',
+    'Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
   reviewFirstCommit:
-    'The REVIEW playbook is checking the first phase commit.',
+    'The REVIEW playbook is checking the direct or new-IR phase commit.',
   runIrTask: 'Coder is implementing exactly one unfinished intent-record task.',
   reviewIrTask: 'The REVIEW playbook is checking the latest task commit.',
   awaitBossReply: 'Waiting for Boss to answer Coder.',
   failed: 'The coding workflow failed and is waiting for a new coding intent.',
   reportedReviewFailure:
     'The coding workflow reported a REVIEW failure and the last code-owned commit.',
-  done: 'The coding workflow completed after REVIEW found no unsettled findings.',
+  done: "The coding workflow completed after every phase's REVIEW passed with no unsettled findings.",
 } as const;
 
 function playbookMeta<StateId extends keyof typeof STATE_DESCRIPTIONS>(
@@ -251,6 +274,14 @@ function hasCommittedOutput(event: unknown): boolean {
   );
 }
 
+function hasIrTaskOutput(event: unknown): boolean {
+  return (
+    hasCommittedOutput(event) &&
+    outputString(event, 'irNumber') !== undefined &&
+    outputString(event, 'irTask') !== undefined
+  );
+}
+
 function isDirectCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'directCommit') &&
@@ -262,23 +293,21 @@ function isIrCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'irCommit') &&
     hasCommittedOutput(event) &&
-    outputString(event, 'irNumber') !== undefined &&
-    outputString(event, 'irTask') !== undefined
+    outputString(event, 'irNumber') !== undefined
   );
 }
 
 function isMoreTasks({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'moreTasks') &&
-    hasCommittedOutput(event) &&
-    outputString(event, 'irTask') !== undefined
+    hasIrTaskOutput(event)
   );
 }
 
 function isFinalTask({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'finalTask') &&
-    hasCommittedOutput(event)
+    hasIrTaskOutput(event)
   );
 }
 
@@ -294,12 +323,19 @@ function reviewOutput(event: unknown): unknown {
 }
 
 function isReviewApprovedValue(value: unknown): value is ReviewOutput {
+  if (!isRecord(value)) return false;
+  if (
+    Reflect.ownKeys(value).some(
+      (key) =>
+        typeof key !== 'string' ||
+        (key !== 'noUnsettledFindings' && key !== 'evaluatedRevision'),
+    )
+  ) {
+    return false;
+  }
   return (
-    isRecord(value) &&
-    Object.keys(value).sort().join('\0') ===
-      ['approvedCommit', 'noUnsettledFindings'].sort().join('\0') &&
-    value.approvedCommit === 'latest' &&
-    value.noUnsettledFindings === true
+    value.noUnsettledFindings === true &&
+    isNonEmptyString(value.evaluatedRevision)
   );
 }
 
@@ -485,17 +521,27 @@ function quoteRelay(label: string, value: string): string {
   );
 }
 
-function initialReviewText(context: CodingContext): string {
+function reviewScopeLine(context: CodingContext): string {
+  return (
+    `> Review scope: the commit ${context.latestCommit ?? ''} ` +
+    'from this coding phase and its resulting repository state.'
+  );
+}
+
+function newIntentReviewText(context: CodingContext): string {
   return [
-    quoteRelay('Initial intent', context.callerInput ?? ''),
+    quoteRelay('Original intent', context.callerInput ?? ''),
+    reviewScopeLine(context),
     quoteRelay('Coder output', context.coderOutput ?? ''),
   ].join('\n');
 }
 
 function irTaskReviewText(context: CodingContext): string {
   return [
-    quoteRelay('IR task', context.irTask ?? ''),
+    quoteRelay('Original intent', context.callerInput ?? ''),
+    reviewScopeLine(context),
     quoteRelay('Coder output', context.coderOutput ?? ''),
+    quoteRelay('Current IR task', context.irTask ?? ''),
   ].join('\n');
 }
 
@@ -556,7 +602,7 @@ const machineSetup = setup({
         latestCommit: undefined,
         irNumber: undefined,
         irTask: undefined,
-        nextIrTask: undefined,
+        evaluatedRevision: undefined,
         phase: undefined,
         completion: undefined,
         reviewError: undefined,
@@ -576,8 +622,7 @@ const machineSetup = setup({
       coderOutput: outputString(event, 'coderOutput'),
       latestCommit: outputString(event, 'latestCommit'),
       irNumber: outputString(event, 'irNumber'),
-      irTask: outputString(event, 'irTask'),
-      nextIrTask: undefined,
+      irTask: undefined,
       phase: 'ir-created' as const,
       pendingBossQuestion: undefined,
       bossReply: undefined,
@@ -585,7 +630,8 @@ const machineSetup = setup({
     rememberMoreTasks: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
       latestCommit: outputString(event, 'latestCommit'),
-      nextIrTask: outputString(event, 'irTask'),
+      irNumber: outputString(event, 'irNumber'),
+      irTask: outputString(event, 'irTask'),
       phase: 'ir-task-more' as const,
       pendingBossQuestion: undefined,
       bossReply: undefined,
@@ -593,14 +639,11 @@ const machineSetup = setup({
     rememberFinalTask: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
       latestCommit: outputString(event, 'latestCommit'),
-      nextIrTask: undefined,
+      irNumber: outputString(event, 'irNumber'),
+      irTask: outputString(event, 'irTask'),
       phase: 'ir-task-final' as const,
       pendingBossQuestion: undefined,
       bossReply: undefined,
-    })),
-    advanceToNextIrTask: assign(({ context }) => ({
-      irTask: context.nextIrTask,
-      nextIrTask: undefined,
     })),
     rememberPendingQuestion: assign(({ context, event }) => {
       const question = outputString(event, 'question');
@@ -629,9 +672,14 @@ const machineSetup = setup({
       pendingBossQuestion: undefined,
       bossReply: undefined,
     }),
-    completeSuccessfully: assign({
-      completion: 'complete',
-      reviewError: undefined,
+    completeSuccessfully: assign(({ event }) => {
+      const output = reviewOutput(event);
+      const approved = isReviewApprovedValue(output) ? output : undefined;
+      return {
+        completion: 'complete' as const,
+        evaluatedRevision: approved?.evaluatedRevision,
+        reviewError: undefined,
+      };
     }),
     completeWithReviewFailure: assign(({ event }) => ({
       completion: 'review-failed' as const,
@@ -669,12 +717,10 @@ export const codingMachine = machineSetup.createMachine({
     if (!isNonEmptyString(lastCodeCommit)) {
       throw new Error('CODE reached a final state without a commit identity');
     }
-    const lastCodeOutput = context.coderOutput ?? '';
     if (context.completion === 'review-failed') {
       return {
         status: 'review-failed',
         lastCodeCommit,
-        lastCodeOutput,
         error:
           context.reviewError ?? {
             name: 'Error',
@@ -682,7 +728,18 @@ export const codingMachine = machineSetup.createMachine({
           },
       };
     }
-    return { status: 'complete', lastCodeCommit, lastCodeOutput };
+    const finalEvaluatedRevision = context.evaluatedRevision;
+    if (!isNonEmptyString(finalEvaluatedRevision)) {
+      throw new Error(
+        'CODE completed without an evaluated repository revision',
+      );
+    }
+    return {
+      status: 'complete',
+      lastCodeCommit,
+      finalEvaluatedRevision,
+      allReviewsPassed: true,
+    };
   },
   states: {
     ready: {
@@ -748,6 +805,36 @@ export const codingMachine = machineSetup.createMachine({
             ],
           },
           {
+            guard: 'isMoreTasks',
+            target: 'reviewIrTask',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runFirstPhase',
+                  target: 'reviewIrTask',
+                  acceptedOutcome: 'moreTasks',
+                },
+              },
+              'rememberMoreTasks',
+            ],
+          },
+          {
+            guard: 'isFinalTask',
+            target: 'reviewIrTask',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'runFirstPhase',
+                  target: 'reviewIrTask',
+                  acceptedOutcome: 'finalTask',
+                },
+              },
+              'rememberFinalTask',
+            ],
+          },
+          {
             guard: 'needsBossReply',
             target: 'awaitBossReply',
             actions: [
@@ -781,7 +868,7 @@ export const codingMachine = machineSetup.createMachine({
           stateId: 'reviewFirstCommit',
           sourceItem: 'CODE-2',
           playbookId: 'review',
-          text: initialReviewText(context),
+          text: newIntentReviewText(context),
         }),
         onDone: [
           {
@@ -826,7 +913,6 @@ export const codingMachine = machineSetup.createMachine({
           ...(context.irNumber === undefined
             ? {}
             : { irNumber: context.irNumber }),
-          ...(context.irTask === undefined ? {} : { irTask: context.irTask }),
           ...(context.pendingBossQuestion === undefined
             ? {}
             : { pendingBossQuestion: context.pendingBossQuestion }),
@@ -905,7 +991,6 @@ export const codingMachine = machineSetup.createMachine({
           {
             guard: 'reviewApprovedMoreTasks',
             target: 'runIrTask',
-            actions: 'advanceToNextIrTask',
           },
           {
             guard: 'reviewApprovedFinalTask',

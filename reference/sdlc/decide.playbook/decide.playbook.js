@@ -123,7 +123,10 @@ const TRACE_TOPIC = 'playbook.trace';
 const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID = 'reconcile:unresolved-effect';
 const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
 const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
-const PLACEHOLDER_FIELDS = [['<caller-topic>', 'callerTopic']];
+const PLACEHOLDER_FIELDS = [
+    ['<caller-topic>', 'callerTopic'],
+    ['<reviewer-proposal>', 'reviewerProposal'],
+];
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     'coderProposal',
     'reviewerProposal',
@@ -151,12 +154,17 @@ function composePlayerPrompt(input, promptIdentity) {
     if (input.prompt.includes('<coder-llm>')) {
         replacements.set('<coder-llm>', promptIdentity('coder'));
     }
-    const body = input.prompt.replace(/<caller-topic>|<coder-llm>/g, (placeholder, offset, source) => {
+    if (input.prompt.includes('<reviewer-llm>')) {
+        replacements.set('<reviewer-llm>', promptIdentity('reviewer'));
+    }
+    const body = input.prompt.replace(/<caller-topic>|<reviewer-proposal>|<coder-llm>|<reviewer-llm>/g, (placeholder, offset, source) => {
         const value = replacements.get(placeholder);
         if (value === undefined)
             return placeholder;
+        // A labelled quoted relay keeps a multiline value inside its authored
+        // blockquote, so continuation lines re-enter the quote marker.
         const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-        return source.slice(lineStart, offset) === '> '
+        return source.slice(lineStart, offset).startsWith('> ')
             ? value.replaceAll('\n', '\n> ')
             : value;
     });

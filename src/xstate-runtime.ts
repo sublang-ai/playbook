@@ -1416,7 +1416,19 @@ export function reconcilePlaybookSemanticEvidence(
     } else if (authority === 'presentation') {
       value = finalText;
     } else if (authority === 'effect') {
-      value = field === 'latestCommit' ? receipt.commitOid : undefined;
+      // DR-045: effect injection selects by the accepted arm's declared
+      // repository disposition, never by the field's name. A
+      // one-descendant-commit arm's effect fields carry the qualifying
+      // receipt's exact new-descendant commit OID; an unchanged arm's effect
+      // fields carry the matching unchanged receipt's observed HEAD OID. A
+      // deferred arm declares no effect field, and any shape the validated
+      // receipt cannot prove fails closed as unresolved.
+      value =
+        disposition === 'one-descendant-commit'
+          ? receipt.commitOid
+          : disposition === 'unchanged'
+            ? receipt.after?.head
+            : undefined;
       if (value === undefined) {
         return unresolvedSemanticEvidence('missing-effect-evidence', evidence);
       }

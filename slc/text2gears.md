@@ -79,6 +79,9 @@ If Source supplies a blockquoted template for that relay, text2gears shall keep 
 If Source names the relayed value but supplies no template, text2gears shall emit its canonical typed placeholder on a line beginning with literal `> ` and shall not summarize, paraphrase, or invent a value in its place.
 An ordinary Source blockquote that specifies a complete acting prompt without requiring quoted relay retains the existing rule above: its one leading marker is Source syntax and is not prompt content.
 
+An acting prompt whose instructions refer to a runtime value the acting role cannot otherwise observe — for example the Boss input task that triggered the workflow — shall relay that value as a quoted `<placeholder>` line appended to the prompt even when Source states no explicit relay.
+A prompt that references an undelivered value asks its player to act on data it never received; omitting the relay is a compilation defect, not a faithful rendering of Source.
+
 Source statements that assign active-leaf routing, call identity, suspension,
 or return matching to the host describe execution preconditions rather than
 behaviors for Captain to perform. text2gears shall use such a statement only as

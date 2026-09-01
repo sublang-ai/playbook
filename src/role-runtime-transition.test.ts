@@ -1572,12 +1572,12 @@ describe('DR-032 shared role runtime transition', () => {
             work: {
               complete: {
                 fields: { latestCommit: 'effect' },
-                repositoryDisposition: 'unchanged',
+                repositoryDisposition: 'deferred',
               },
             },
           },
         },
-        'effect-owned fields only for one-descendant-commit',
+        'may not declare effect-owned fields for deferred',
       ],
       [
         {

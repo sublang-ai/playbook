@@ -46,7 +46,7 @@ The CODE registry shall require `coder`, and the REVIEW and DECIDE registries sh
 
 #### playbook-runtime-29
 
-The current CODE, REVIEW, and DECIDE registries accept no workflow-specific options and shall reject every nonempty option slice.
+The current CODE, REVIEW, DECIDE, and DEV registries accept no workflow-specific options and shall reject every nonempty option slice.
 Host-observable agent, layout, notification, permission, and presentation settings shall remain host configuration rather than workflow options.
 Every configured option slice shall be plain JSON and shall reject the reserved own key `hostCapabilities` before and after registry option validation under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)]; live host construction capabilities are not workflow options.
 
@@ -265,7 +265,7 @@ or `resumePlaybookCall` is called before `init`, the runtime shall throw.
 #### playbook-runtime-7
 
 When a runtime receives empty or whitespace-only Boss text, it shall record and settle the input trace but shall produce no event, judge call, player call, status emission, or FSM transition.
-When no Boss question is pending, the current CODE, REVIEW, and DECIDE runtimes shall use their deterministic initial event under [[playbook-runtime-1](#playbook-runtime-1)].
+When no Boss question is pending, the current CODE, REVIEW, DECIDE, and DEV runtimes shall use their deterministic initial event under [[playbook-runtime-1](#playbook-runtime-1)].
 When no Boss question is pending and the machine is parked outside [[playbook-runtime-1](#playbook-runtime-1)]'s deterministic entries — an authored mid-workflow checkpoint — the runtime shall classify nonempty ordinary and slash-prefixed text alike against that state's configured Boss-event contracts: through the artifact's own declared deterministic classifier where it supplies one, as the compiled Captain's parked mapping does ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]), and otherwise through `callJudge` with the exact, unmodified Boss message in a clearly labelled block of the classifier prompt.
 While one or more Boss questions are pending, the runtime shall call `callJudge` with the current structured state, every pending question and stable id, and the artifact-declared reply, interrupt, and no-action contracts.
 A question is pending here on the reply-wait terms of [[playbook-runtime-45](#playbook-runtime-45)]: outside an authored reply-wait state the classifier prompt shall carry no question context and offer no reply contract, however long the machine's context retains the answered question.
@@ -507,7 +507,7 @@ Each registry shall map a dispatched Boss turn to `runtime.handleBossInput({ tex
 
 #### playbook-runtime-30
 
-During shell initialization, each CODE, REVIEW, and DECIDE registry shall accept an absent or empty object as its option slice and shall reject a non-object or any unknown key with a diagnostic naming `captain.options.playbooks.<id>.options` and the offending key when present.
+During shell initialization, each CODE, REVIEW, DECIDE, and DEV registry shall accept an absent or empty object as its option slice and shall reject a non-object or any unknown key with a diagnostic naming `captain.options.playbooks.<id>.options` and the offending key when present.
 The registry shall validate only the option slice the shell passes it and shall retain the validated value for later runtime construction.
 
 ### Session trace and player continuation

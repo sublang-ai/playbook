@@ -69,6 +69,8 @@ meta.md       The spec of specs
 | [DR-041](decisions/041-working-directory-aware-continuation.md) | 041-working-directory-aware-continuation.md | Bare continuation prefers the newest same-working-directory Captain session, reports a global fallback, and preserves explicit selection and uncertain refusal |
 | [DR-042](decisions/042-shared-session-store-and-replay-stream.md) | 042-shared-session-store-and-replay-stream.md | One shared sessions home for every host: a narrow published session-store facade, a token-free per-session replay stream under a frozen ABI, lease-bound appends that latch and stop, and a `sessions` bootstrap locator |
 | [DR-043](decisions/043-shared-spex-root-config.md) | 043-shared-spex-root-config.md | Shared config moves under the Spex root, with guarded one-time relocation of the former path |
+| [DR-044](decisions/044-dev-planning-workflow.md) | 044-dev-planning-workflow.md | DEV joins the maintained set: one unchanged-governed Analyst planning role, standard Boss suspension, nested `code`/`decide` composition, distinct terminal meanings, and full host adoption with a seeded `dev.analyst` player |
+| [DR-045](decisions/045-unchanged-receipt-revision-authority.md) | 045-unchanged-receipt-revision-authority.md | An `unchanged` arm may declare effect-owned fields injected with the receipt's observed HEAD, so REVIEW always returns the exact evaluated revision and the clean-review happy path composes |
 
 ## Packages
 

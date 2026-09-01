@@ -117,6 +117,7 @@ function replayObservation(projection: Record<string, unknown> = {}) {
 
 const REPLAY_BASELINE = replayObservation();
 const DEFAULT_COMMIT_OID = `${'0'.repeat(39)}b`;
+const EVALUATED_REVISION = 'd'.repeat(40);
 
 function replayLedger(
   boundaries: readonly PlaybookEffectBoundary[],
@@ -1156,7 +1157,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         return {
           status: 'ok',
           resumeToken: 'coder-token-2',
-          finalText: 'Committed Coder proposal.',
+          finalText: 'Committed the synthesis with literal <decide-commit> token.',
         };
       },
       callJudge: async (prompt) => judgeReply(prompt),
@@ -1222,29 +1223,37 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       roleId: 'coder',
       options: { resume: 'coder-token-1' },
     });
-    expect(playerCalls[2].prompt).toContain('Coder is GPT-5.6 Sol');
+    // Both proposals are complete, so the synthesis call may now read
+    // Reviewer's proposal under its own label — and both prompt identities.
+    expect(playerCalls[2].prompt).toContain(
+      "Synthesize your independent proposal with Reviewer's proposal below.",
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'Coder is GPT-5.6 Sol and Reviewer is Claude Opus 5.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      '> Original topic: Choose <coder-llm> behavior.\n> Keep mapped roles shared.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      `> Reviewer's independent proposal: ${reviewerProposal}`,
+    );
     expect(playerCalls[2].prompt).not.toContain(
       'Include exactly one final-response line beginning `Commit: `, followed only by the exact commit identity; other final-response content may appear on other lines.',
     );
-    expect(playerCalls[2].prompt).not.toContain(reviewerProposal);
     expect(nestedRequests).toEqual([
       {
         callId: 'playbook-1',
         playbookId: 'review',
         text: [
-          'Review the latest commit as a spec-design change against the initial intent.',
-          'Compare it with your independent proposal and take the best of both.',
-          'Make your suggestions.',
-          '',
-          `Initial intent: ${callerTopic}.`,
-          `Coder's independent proposal: ${coderProposal}.`,
+          '> Original intent: Choose <coder-llm> behavior.',
+          '> Keep mapped roles shared.',
+          `> Review scope: the \`decide\`-owned commit ${DEFAULT_COMMIT_OID} and its resulting repository state.`,
+          '> Coder output: Committed the synthesis with literal <decide-commit> token.',
         ].join('\n'),
       },
     ]);
     expect(nestedRequests[0].text).not.toContain(reviewerProposal);
-    expect(nestedRequests[0].text).toContain(
-      'Coder proposal with literal <caller-topic> token.',
-    );
+    expect(nestedRequests[0].text).not.toContain(coderProposal);
     expect(Object.fromEntries(playerSessions.tokens)).toEqual({
       coder: 'coder-token-2',
       reviewer: 'reviewer-token-1',
@@ -1282,7 +1291,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       '⤷ Reviewer: Reviewer independently proposes a spec design.',
     );
     expect(statuses).toContain(
-      '⤷ Coder: Coder writes and commits Coder’s independent proposal.',
+      '⤷ Coder: Coder synthesizes both proposals and commits the design.',
     );
     expect(statuses).not.toContain('REVIEW examines the committed proposal.');
 
@@ -2438,7 +2447,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
       playbookId: 'review',
       childSessionId: 'review-child',
       output: {
-        approvedCommit: 'latest',
+        evaluatedRevision: EVALUATED_REVISION,
         noUnsettledFindings: true,
       },
     } satisfies PlaybookCallResult;
@@ -2703,7 +2712,7 @@ describe('DECIDE local-role continuation', () => {
 });
 
 describe('DECIDE terminal settlement from REVIEW', () => {
-  it('accepts only REVIEW\'s exact approved-latest/no-findings output', async () => {
+  it('completes only on the evaluated revision and no-unsettled-findings facts, returning the decide-owned commit and that revision', async () => {
     const { runtime, request } = await runToReview();
     await expect(
       runtime.resumePlaybookCall({
@@ -2713,7 +2722,7 @@ describe('DECIDE terminal settlement from REVIEW', () => {
           playbookId: 'review',
           childSessionId: 'review-child',
           output: {
-            approvedCommit: 'latest',
+            evaluatedRevision: EVALUATED_REVISION,
             noUnsettledFindings: true,
           },
         },
@@ -2723,7 +2732,8 @@ describe('DECIDE terminal settlement from REVIEW', () => {
       outcome: 'terminal',
       stateDescription: 'DECIDE completed with an approved commit.',
       output: {
-        approvedCommit: 'latest',
+        decideCommit: DEFAULT_COMMIT_OID,
+        evaluatedRevision: EVALUATED_REVISION,
         noUnsettledFindings: true,
       },
     });
@@ -2774,32 +2784,55 @@ describe('DECIDE terminal settlement from REVIEW', () => {
     },
   );
 
-  it('reports malformed REVIEW success as a terminal protocol failure', async () => {
-    const { runtime, request } = await runToReview();
-    const result = await runtime.resumePlaybookCall({
-      callId: request.callId,
-      result: {
-        status: 'ok',
-        playbookId: 'review',
-        childSessionId: 'review-child',
-        output: {
-          approvedCommit: 'abc123',
-          noUnsettledFindings: true,
+  it.each([
+    [
+      'the retired approved-latest shape',
+      { approvedCommit: 'latest', noUnsettledFindings: true },
+    ],
+    [
+      'a blank evaluated revision',
+      { evaluatedRevision: '   ', noUnsettledFindings: true },
+    ],
+    [
+      'a result missing the no-unsettled-findings fact',
+      { evaluatedRevision: EVALUATED_REVISION },
+    ],
+    [
+      'an extra undeclared member',
+      {
+        evaluatedRevision: EVALUATED_REVISION,
+        noUnsettledFindings: true,
+        approvedCommit: 'latest',
+      },
+    ],
+  ] as const)(
+    'reports %s as a terminal protocol failure',
+    async (_label, output) => {
+      const { runtime, request } = await runToReview();
+      const result = await runtime.resumePlaybookCall({
+        callId: request.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          output,
         },
-      },
-      signal: signal(),
-    });
-    expect(result).toMatchObject({
-      outcome: 'terminal',
-      output: {
-        lastDecideCommit: DEFAULT_COMMIT_OID,
-        noUnsettledFindings: false,
-        reviewStatus: 'error',
-        error: { name: 'ReviewProtocolError' },
-      },
-    } satisfies Partial<PlaybookRunResult>);
-    await runtime.dispose();
-  });
+        signal: signal(),
+      });
+      expect(result).toMatchObject({
+        outcome: 'terminal',
+        stateDescription:
+          'DECIDE reports REVIEW’s failure and its last commit.',
+        output: {
+          lastDecideCommit: DEFAULT_COMMIT_OID,
+          noUnsettledFindings: false,
+          reviewStatus: 'error',
+          error: { name: 'ReviewProtocolError' },
+        },
+      } satisfies Partial<PlaybookRunResult>);
+      await runtime.dispose();
+    },
+  );
 
   it('parks when the nested REVIEW call rejects outside its result contract', async () => {
     const transportError = new Error('REVIEW transport failed.');
@@ -2939,7 +2972,7 @@ describe('DECIDE abort classification', () => {
           playbookId: 'review',
           childSessionId: 'review-child',
           output: {
-            approvedCommit: 'latest',
+            evaluatedRevision: EVALUATED_REVISION,
             noUnsettledFindings: true,
           },
         },
@@ -2985,7 +3018,7 @@ describe('DECIDE abort classification', () => {
           playbookId: 'review',
           childSessionId: 'review-child',
           output: {
-            approvedCommit: 'latest',
+            evaluatedRevision: EVALUATED_REVISION,
             noUnsettledFindings: true,
           },
         },
@@ -3314,7 +3347,7 @@ describe('DECIDE abort classification', () => {
           playbookId: 'review',
           childSessionId: 'review-child',
           output: {
-            approvedCommit: 'latest',
+            evaluatedRevision: EVALUATED_REVISION,
             noUnsettledFindings: true,
           },
         },
@@ -3323,7 +3356,8 @@ describe('DECIDE abort classification', () => {
     ).resolves.toMatchObject({
       outcome: 'terminal',
       output: {
-        approvedCommit: 'latest',
+        decideCommit: DEFAULT_COMMIT_OID,
+        evaluatedRevision: EVALUATED_REVISION,
         noUnsettledFindings: true,
       },
     });

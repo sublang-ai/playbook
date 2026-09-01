@@ -6,7 +6,8 @@
 // Role metadata: Coder→coder (canonical local role)
 // Boss event:    deterministic START_CODE entry; exact Boss text becomes
 //                callerInput; pending Coder questions retain BOSS_REPLY
-// Adjudication:  LLM judge per player state; coderOutput is carried verbatim
+// Adjudication:  LLM judge per player state; coderOutput is carried verbatim;
+//                the first phase decides among four semantic outcomes
 // Nested call:   literal review target through the shared bridge
 // Compat:        artifact schema 3 / runtime ABI 1
 
@@ -195,7 +196,7 @@ const runtimeSpec = {
     runFirstPhase: {
       role: 'coder',
       label:
-        'Coder is implementing one direct phase or committing a new intent record.',
+        'Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
     },
     runIrTask: {
       role: 'coder',
@@ -217,6 +218,23 @@ const runtimeSpec = {
             coderOutput: 'presentation',
             latestCommit: 'effect',
             irNumber: 'semantic',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        moreTasks: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+            irNumber: 'semantic',
+            irTask: 'semantic',
+          },
+          repositoryDisposition: 'one-descendant-commit',
+        },
+        finalTask: {
+          fields: {
+            coderOutput: 'presentation',
+            latestCommit: 'effect',
+            irNumber: 'semantic',
             irTask: 'semantic',
           },
           repositoryDisposition: 'one-descendant-commit',
@@ -231,6 +249,7 @@ const runtimeSpec = {
           fields: {
             coderOutput: 'presentation',
             latestCommit: 'effect',
+            irNumber: 'semantic',
             irTask: 'semantic',
           },
           repositoryDisposition: 'one-descendant-commit',
@@ -239,6 +258,8 @@ const runtimeSpec = {
           fields: {
             coderOutput: 'presentation',
             latestCommit: 'effect',
+            irNumber: 'semantic',
+            irTask: 'semantic',
           },
           repositoryDisposition: 'one-descendant-commit',
         },

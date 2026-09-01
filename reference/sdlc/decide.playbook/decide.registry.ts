@@ -95,7 +95,7 @@ export const decidePlaybookRegistryEntry: DecidePlaybookRegistryEntry = {
   id: 'decide',
   command: 'decide',
   intent:
-    'turn independent Coder and Reviewer proposals into an approved spec-design commit',
+    'synthesize independent Coder and Reviewer proposals into an approved spec-design commit',
   artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'bespoke',

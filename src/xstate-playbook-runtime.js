@@ -1242,9 +1242,12 @@ function snapshotOutcomeAuthority(descriptor, label, playerStates, verbatimPaylo
                 !REPOSITORY_DISPOSITIONS.has(disposition)) {
                 throw new TypeError(`${outcomePath}.repositoryDisposition must be unchanged, one-descendant-commit, or deferred`);
             }
-            if (disposition !== 'one-descendant-commit' &&
+            // DR-045: an unchanged arm may declare effect-owned fields (injected
+            // from the matching unchanged receipt's observed HEAD); only deferred
+            // arms remain barred from effect ownership.
+            if (disposition === 'deferred' &&
                 Object.values(fields).includes('effect')) {
-                throw new TypeError(`${outcomePath} may declare effect-owned fields only for one-descendant-commit`);
+                throw new TypeError(`${outcomePath} may not declare effect-owned fields for deferred`);
             }
             outcomes[outcome] = Object.freeze({
                 fields: Object.freeze(fields),

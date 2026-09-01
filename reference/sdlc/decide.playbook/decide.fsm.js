@@ -15,30 +15,40 @@ const INDEPENDENT_PROPOSAL_PROMPT = [
     'Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.',
     'Do not change any files.',
 ].join('\n');
-const COMMIT_CODER_PROMPT = [
-    'Turn your proposal into the necessary spec items or DRs.',
+const SYNTHESIZE_COMMIT_PROMPT = [
+    "Synthesize your independent proposal with Reviewer's proposal below.",
+    'Keep to the original topic below and follow what it asks.',
+    'Keep the best, essential parts of either proposal and reject any point that is unsound, unnecessary, or outside the topic.',
+    'Turn the resulting design into the necessary DRs and/or spec items.',
     'Follow @specs/meta.md and update @specs/map.md when needed.',
-    "Do not inspect or incorporate Reviewer's proposal before this commit.",
-    'Do not change code or implement the proposal.',
+    'Do not change code or implement the design.',
     '',
     'Commit the result as one new commit, following @specs/packages/git.md.',
     'Make the commit message explain concisely what changed and why.',
-    'Coder is <coder-llm>; format the model token in conventional human form.',
+    'Identify every new commit you make.',
+    'Coder is <coder-llm> and Reviewer is <reviewer-llm>.',
+    '',
+    '> Original topic: <caller-topic>',
+    "> Reviewer's independent proposal: <reviewer-proposal>",
 ].join('\n');
 const REVIEW_INPUT_TEMPLATE = [
-    'Review the latest commit as a spec-design change against the initial intent.',
-    'Compare it with your independent proposal and take the best of both.',
-    'Make your suggestions.',
-    '',
-    'Initial intent: <caller-topic>.',
-    "Coder's independent proposal: <coder-proposal>.",
+    '> Original intent: <caller-topic>',
+    '> Review scope: the `decide`-owned commit <decide-commit> and its resulting repository state.',
+    '> Coder output: <coder-output>',
 ].join('\n');
-function composeReviewInput(callerTopic, coderProposal) {
+function composeReviewInput(callerTopic, decideCommit, coderOutput) {
     const fields = {
         '<caller-topic>': callerTopic ?? '',
-        '<coder-proposal>': coderProposal ?? '',
+        '<decide-commit>': decideCommit ?? '',
+        '<coder-output>': coderOutput ?? '',
     };
-    return REVIEW_INPUT_TEMPLATE.replace(/<caller-topic>|<coder-proposal>/g, (placeholder) => fields[placeholder]);
+    return REVIEW_INPUT_TEMPLATE.replace(/<caller-topic>|<decide-commit>|<coder-output>/g, (placeholder, offset, source) => {
+        const value = fields[placeholder];
+        const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+        return source.slice(lineStart, offset).startsWith('> ')
+            ? value.replaceAll('\n', '\n> ')
+            : value;
+    });
 }
 const outputOf = (event) => event.output;
 const playbookOutputOf = (event) => event.output;
@@ -170,19 +180,23 @@ function isPlaybookState(value) {
                 value.activeStateIds.length === 1 &&
                 value.activeStateIds[0] === value.stateId)));
 }
+// DECIDE supplied `review` a scope rooted at the `decide`-owned commit, so a
+// result applies to that scope only when it is the exact declared terminal
+// contract: the evaluated repository revision plus the affirmative
+// no-unsettled-findings fact. Any other shape does not establish those facts.
 function reviewSuccessFrom(event) {
     const output = playbookOutputOf(event);
     if (!isPlainRecord(output))
         return undefined;
-    if (!isExactKeys(output, ['approvedCommit', 'noUnsettledFindings'])) {
+    if (!isExactKeys(output, ['evaluatedRevision', 'noUnsettledFindings'])) {
         return undefined;
     }
-    if (output.approvedCommit !== 'latest' ||
+    if (!isNonEmptyString(output.evaluatedRevision) ||
         output.noUnsettledFindings !== true) {
         return undefined;
     }
     return {
-        approvedCommit: 'latest',
+        evaluatedRevision: output.evaluatedRevision,
         noUnsettledFindings: true,
     };
 }
@@ -303,6 +317,7 @@ export const decideMachine = setup({
             coderProposal: undefined,
             reviewerProposal: undefined,
             latestCommit: undefined,
+            coderOutput: undefined,
             reviewResult: undefined,
             reviewFailure: undefined,
             lastResult: undefined,
@@ -317,6 +332,7 @@ export const decideMachine = setup({
             coderProposal: undefined,
             reviewerProposal: undefined,
             latestCommit: undefined,
+            coderOutput: undefined,
             reviewResult: undefined,
             reviewFailure: undefined,
             lastResult: undefined,
@@ -346,6 +362,7 @@ export const decideMachine = setup({
         }),
         rememberCommit: assign({
             latestCommit: ({ event }) => outputOf(event).latestCommit,
+            coderOutput: ({ event }) => outputOf(event).coderOutput,
             lastResult: ({ event }) => outputOf(event),
             lastError: undefined,
         }),
@@ -364,7 +381,7 @@ export const decideMachine = setup({
                 playbookId: 'review',
                 error: {
                     name: 'ReviewProtocolError',
-                    message: 'REVIEW returned without an approved latest commit and a no-findings result.',
+                    message: 'REVIEW returned without the evaluated repository revision and a no-unsettled-findings result for the supplied scope.',
                 },
             },
             lastError: undefined,
@@ -429,8 +446,16 @@ export const decideMachine = setup({
     initial: 'ready',
     context: () => ({}),
     output: ({ context }) => {
-        if (context.reviewResult)
-            return context.reviewResult;
+        if (context.reviewResult) {
+            if (!context.latestCommit) {
+                throw new Error('DECIDE completed without its decide-owned commit');
+            }
+            return {
+                decideCommit: context.latestCommit,
+                evaluatedRevision: context.reviewResult.evaluatedRevision,
+                noUnsettledFindings: true,
+            };
+        }
         if (!context.latestCommit || !context.reviewFailure) {
             throw new Error('DECIDE reached a final state without a result');
         }
@@ -498,7 +523,7 @@ export const decideMachine = setup({
                                     role: 'coder',
                                     prompt: INDEPENDENT_PROPOSAL_PROMPT,
                                     result: withNeedsBossReply({
-                                        proposed: 'Coder completed an independent proposal. Output shall include `coderProposal: <verbatim final text>`.',
+                                        proposed: 'Coder affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome. Output shall include `coderProposal: <verbatim final text>`.',
                                     }),
                                     callerTopic: context.callerTopic,
                                     ...bossReplyFields(context, 'askCoderProposal'),
@@ -634,7 +659,7 @@ export const decideMachine = setup({
                                     role: 'reviewer',
                                     prompt: INDEPENDENT_PROPOSAL_PROMPT,
                                     result: withNeedsBossReply({
-                                        proposed: 'Reviewer completed an independent proposal. Output shall include `reviewerProposal: <verbatim final text>`.',
+                                        proposed: 'Reviewer affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome. Output shall include `reviewerProposal: <verbatim final text>`.',
                                     }),
                                     callerTopic: context.callerTopic,
                                     ...bossReplyFields(context, 'askReviewerProposal'),
@@ -757,11 +782,11 @@ export const decideMachine = setup({
         commitCoderProposal: {
             id: 'commitCoderProposal',
             tags: 'playbook.busy',
-            description: 'Coder writes and commits Coder’s independent proposal.',
+            description: 'Coder synthesizes both proposals and commits the design.',
             meta: {
                 playbook: {
                     stateId: 'commitCoderProposal',
-                    description: 'Coder writes and commits Coder’s independent proposal.',
+                    description: 'Coder synthesizes both proposals and commits the design.',
                     role: 'coder',
                 },
             },
@@ -771,10 +796,12 @@ export const decideMachine = setup({
                     stateId: 'commitCoderProposal',
                     sourceItem: 'DECIDE-3',
                     role: 'coder',
-                    prompt: COMMIT_CODER_PROMPT,
+                    prompt: SYNTHESIZE_COMMIT_PROMPT,
                     result: withNeedsBossReply({
-                        committed: "Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
+                        committed: 'Coder synthesized both proposals and committed the resulting design as one new commit. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
                     }),
+                    callerTopic: context.callerTopic,
+                    reviewerProposal: context.reviewerProposal,
                     ...bossReplyFields(context, 'commitCoderProposal'),
                 }),
                 onDone: [
@@ -881,7 +908,7 @@ export const decideMachine = setup({
                     stateId: 'reviewCommit',
                     sourceItem: 'DECIDE-4',
                     playbookId: 'review',
-                    text: composeReviewInput(context.callerTopic, context.coderProposal),
+                    text: composeReviewInput(context.callerTopic, context.latestCommit, context.coderOutput),
                 }),
                 onDone: [
                     {

@@ -181,6 +181,7 @@ function effectLedgerService() {
 
 async function harness(input: HarnessInput) {
   const repo = await initRepository();
+  const baseCommit = await git(repo, 'rev-parse', 'HEAD');
   const ledgerService = effectLedgerService();
   const telemetry: Array<{ topic: string; payload: unknown }> = [];
   const statuses: string[] = [];
@@ -274,6 +275,7 @@ async function harness(input: HarnessInput) {
     ports,
     telemetry,
     statuses,
+    baseCommit,
     commitOids,
     effectLedger: ledgerService,
     hostCapabilities: capabilities.review,
@@ -337,11 +339,13 @@ describe('linked REVIEW runtime', () => {
     expect(result.outcome).toBe('terminal');
     if (result.outcome === 'terminal') {
       expect(result.stateDescription).toBe(
-        'The latest commit is approved with no unsettled findings.',
+        'The requested review is complete: no unsettled findings remain within the review scope.',
       );
+      // The evaluated revision is the receipt-derived review-fix commit OID:
+      // the judge reply named no commit, so only the receipt can supply it.
       expect(result.output).toEqual({
-        approvedCommit: 'latest',
         noUnsettledFindings: true,
+        evaluatedRevision: host.commitOids[0],
       });
     }
     expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
@@ -358,22 +362,48 @@ describe('linked REVIEW runtime', () => {
       '> Review the feature.\n> Run result: focused suite passed.',
     );
     expect(playerCalls[0].prompt).toContain(
-      'read the commit message first for its intent, scope, and rationale.',
+      'A new review begins for the review scope.',
+    );
+    expect(playerCalls[0].prompt).toContain(
+      'Keep to the original intent and follow what it asks.',
+    );
+    expect(playerCalls[0].prompt).toContain(
+      'When the scope names commits, read each commit message for its context and rationale; otherwise use repository history and commit messages wherever they help establish that context.',
     );
     expect(playerCalls[0].prompt).toContain(
       'For any rebuttal, accept or challenge it.',
     );
     expect(playerCalls[1].prompt).toContain(
+      '> Review the feature.\n> Run result: focused suite passed.',
+    );
+    expect(playerCalls[1].prompt).toContain(
       '> 1. First finding\n>    Evidence.',
     );
     expect(playerCalls[1].prompt).toContain(
-      'Coder is GPT-5.6 Sol; Reviewer is Claude Opus 5;',
+      'Keep to the original intent and follow what it asks.',
     );
+    expect(playerCalls[1].prompt).toContain(
+      'Identify every new commit you make.',
+    );
+    expect(playerCalls[1].prompt).toContain(
+      'Coder is GPT-5.6 Sol; Reviewer is Claude Opus 5.',
+    );
+    expect(playerCalls[1].prompt).not.toContain(
+      'format model tokens in conventional human form',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'A new review round begins for the review scope in the cumulative committed state, with particular attention to the latest review-fix commit.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      "Read the latest review-fix commit's message and see Coder's feedback below.",
+    );
+    expect(playerCalls[2].prompt).toContain(
+      '> Review the feature.\n> Run result: focused suite passed.',
+    );
+    // The relayed evaluated revision is the exact receipt-derived commit OID.
+    expect(playerCalls[2].prompt).toContain(`> ${host.commitOids[0]}`);
     expect(playerCalls[2].prompt).toContain(
       '> Accepted; fixed in abc123.\n> Tests: focused pass.',
-    );
-    expect(playerCalls[2].prompt).toContain(
-      'read the commit message first for its intent, scope, and rationale.',
     );
     expect(playerCalls[2].prompt).toContain(
       'For any rebuttal, accept or challenge it.',
@@ -445,9 +475,12 @@ describe('linked REVIEW runtime', () => {
 
     expect(result.outcome).toBe('terminal');
     if (result.outcome === 'terminal') {
+      // No review-fix commit landed, so the closing clean round's unchanged
+      // receipt observes the caller-supplied scope revision as HEAD and the
+      // reconciler injects exactly that OID (DR-045).
       expect(result.output).toEqual({
-        approvedCommit: 'latest',
         noUnsettledFindings: true,
+        evaluatedRevision: host.baseCommit,
       });
     }
     expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
@@ -466,6 +499,10 @@ describe('linked REVIEW runtime', () => {
     expect(playerCalls[2].prompt).toContain(
       'No new commit was made because Coder rejected every finding.',
     );
+    expect(playerCalls[2].prompt).toContain("See Coder's feedback below.");
+    expect(playerCalls[2].prompt).toContain(
+      '> Review the latest contract commit.',
+    );
     expect(
       playerCalls[2].prompt.match(/For any rebuttal, accept or challenge it\./g),
     ).toHaveLength(1);
@@ -477,8 +514,9 @@ describe('linked REVIEW runtime', () => {
         '> No files changed and no commit was made.',
     );
     expect(playerCalls[2].prompt).not.toContain(
-      'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
+      'A new review round begins for the review scope in the cumulative committed state',
     );
+    expect(playerCalls[2].prompt).not.toContain('> <latest-commit>');
     expect(acceptedOutcomes(host)).toEqual([
       {
         source: 'reviewInitial',
@@ -602,6 +640,63 @@ describe('linked REVIEW runtime', () => {
     },
   );
 
+  it('rejects a judge-authored commit identity instead of trusting prose', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const host = await harness({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: '1. The contract is incomplete.',
+          resumeToken: 'reviewer-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'Accepted and committed as deadbeef.',
+          resumeToken: 'coder-1',
+          repositoryEffect: 'commit',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        // The candidate may carry only the guard plus semantic-owned fields;
+        // a judge-supplied latestCommit is a structural error, and the one
+        // corrective adjudication repeats it, so the boundary stays parked.
+        '{"guard":"committed","latestCommit":"deadbeef"}',
+        '{"guard":"committed","latestCommit":"deadbeef"}',
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Review the latest contract commit.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+      'reviewer',
+      'coder',
+    ]);
+    expect(acceptedOutcomes(host)).toEqual([
+      {
+        source: 'reviewInitial',
+        target: 'addressFindings',
+        acceptedOutcome: 'hasFindings',
+      },
+    ]);
+    expect(host.statuses).not.toContain('→ committed');
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'reconcile:unresolved-effect',
+      'abandon:unresolved-effect',
+    ]);
+    await runtime.dispose();
+  });
+
   it.each([
     {
       origin: 'reviewInitial',
@@ -626,6 +721,7 @@ describe('linked REVIEW runtime', () => {
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
       deferred: false,
+      expectsFixRevision: false,
     },
     {
       origin: 'addressFindings',
@@ -664,6 +760,7 @@ describe('linked REVIEW runtime', () => {
       resumedPlayer: 'coder',
       resumedToken: 'coder-question',
       deferred: true,
+      expectsFixRevision: true,
     },
     {
       origin: 'reviewAfterCommit',
@@ -701,6 +798,7 @@ describe('linked REVIEW runtime', () => {
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
       deferred: false,
+      expectsFixRevision: true,
     },
     {
       origin: 'reviewAfterRebuttal',
@@ -737,6 +835,7 @@ describe('linked REVIEW runtime', () => {
       resumedPlayer: 'reviewer',
       resumedToken: 'reviewer-question',
       deferred: false,
+      expectsFixRevision: false,
     },
   ])('resumes $origin after a Boss answer', async (scenario) => {
     const playerCalls: PlayerCall[] = [];
@@ -774,6 +873,17 @@ describe('linked REVIEW runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
+    if (completed.outcome === 'terminal') {
+      // DR-045: the closing clean round's unchanged receipt always observes
+      // the evaluated revision — the review-fix commit when one landed, the
+      // caller-supplied baseline otherwise.
+      expect(completed.output).toEqual({
+        noUnsettledFindings: true,
+        evaluatedRevision: scenario.expectsFixRevision
+          ? host.commitOids[0]
+          : host.baseCommit,
+      });
+    }
     const resumed = playerCalls[scenario.resumedCall];
     expect(resumed?.playerId).toBe(scenario.resumedPlayer);
     expect(resumed?.options.resume).toBe(scenario.resumedToken);

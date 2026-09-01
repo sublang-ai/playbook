@@ -2226,12 +2226,15 @@ function snapshotOutcomeAuthority(
           `${outcomePath}.repositoryDisposition must be unchanged, one-descendant-commit, or deferred`,
         );
       }
+      // DR-045: an unchanged arm may declare effect-owned fields (injected
+      // from the matching unchanged receipt's observed HEAD); only deferred
+      // arms remain barred from effect ownership.
       if (
-        disposition !== 'one-descendant-commit' &&
+        disposition === 'deferred' &&
         Object.values(fields).includes('effect')
       ) {
         throw new TypeError(
-          `${outcomePath} may declare effect-owned fields only for one-descendant-commit`,
+          `${outcomePath} may not declare effect-owned fields for deferred`,
         );
       }
       outcomes[outcome] = Object.freeze({

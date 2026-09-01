@@ -64,6 +64,7 @@ const CONTEXT: DecideContext = {
   coderProposal: 'Coder proposes package items.',
   reviewerProposal: 'Reviewer proposes one DR.',
   latestCommit: 'abc123',
+  coderOutput: 'Committed the synthesized design.',
 };
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
@@ -216,13 +217,15 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: 'validReviewSuccess',
       target: 'done',
       context: CONTEXT,
-      event: done({ approvedCommit: 'latest', noUnsettledFindings: true }),
+      event: done({ evaluatedRevision: 'def456', noUnsettledFindings: true }),
     },
     {
+      // The retired approved-latest shape gives no evaluated revision, so it
+      // no longer establishes the completion facts.
       guard: '<fallback>',
       target: 'reportedReviewFailure',
       context: CONTEXT,
-      event: done({ approvedCommit: 'abc123', noUnsettledFindings: true }),
+      event: done({ approvedCommit: 'latest', noUnsettledFindings: true }),
     },
   ],
   'reviewCommit.invoke.onError': [
@@ -490,7 +493,8 @@ describe('DECIDE GEARS to FSM compilation', () => {
         .get('DECIDE-4')
         ?.prompt.join('\n')
         .replaceAll('<caller-topic>', CONTEXT.callerTopic ?? '')
-        .replaceAll('<coder-proposal>', CONTEXT.coderProposal ?? ''),
+        .replaceAll('<decide-commit>', CONTEXT.latestCommit ?? '')
+        .replaceAll('<coder-output>', CONTEXT.coderOutput ?? ''),
     });
     expect(tagsOf(state ?? {})).toContain('playbook.suspended');
     expect(state?.meta).toEqual({
@@ -503,14 +507,19 @@ describe('DECIDE GEARS to FSM compilation', () => {
 
   it('pins every authored post-REVIEW outcome to its compiled route', () => {
     for (const clause of [
-      'When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `decide` shall report the failure and the last `decide`-owned commit to its caller.',
+      '`decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+      'It then returns the `decide`-owned commit and that evaluated revision to its caller.',
+      'When `review` returns an authored abort or failure, or a terminal result that does not establish those facts, `decide` shall report the failure and the last `decide`-owned commit to its caller.',
       'When the nested `review` call fails outside that authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
     ]) {
       expect(sourceText).toContain(clause);
     }
     const reviewSection = gearsText.slice(gearsText.indexOf('### DECIDE-4'));
     expect(reviewSection).toContain(
-      'An authored child abort, failure, or invalid approval terminates with the failure and `latestCommit` reported to the caller.',
+      '`decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain; `decide` then returns the `decide`-owned commit and that evaluated revision to the caller.',
+    );
+    expect(reviewSection).toContain(
+      'An authored `review` abort or failure, or a terminal result that does not establish those facts, terminates with the failure and the last `decide`-owned commit reported to the caller.',
     );
     expect(reviewSection).toContain(
       'Any other nested-call error parks `decide` as failed and retains the control-plane error.',

@@ -104,7 +104,7 @@ export const reviewPlaybookRegistryEntry: ReviewPlaybookRegistryEntry = {
   id: 'review',
   command: 'review',
   intent:
-    'review the latest commit until no material correctness or spec findings remain',
+    'review a supplied scope of committed work until no unsettled findings remain',
   artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'shared-factory',

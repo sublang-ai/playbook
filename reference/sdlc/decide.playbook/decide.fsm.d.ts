@@ -19,7 +19,12 @@ type PendingBossQuestions = Partial<Record<ResumableStateId, PendingBossQuestion
 type BossReplies = Partial<Record<ResumableStateId, string>>;
 type PendingBossQuestionParams = Omit<PendingBossQuestion, 'questionId'>;
 export interface ReviewSuccessOutput {
-    approvedCommit: 'latest';
+    evaluatedRevision: string;
+    noUnsettledFindings: true;
+}
+export interface DecideSuccessOutput {
+    decideCommit: string;
+    evaluatedRevision: string;
     noUnsettledFindings: true;
 }
 export interface DecideFailureOutput {
@@ -31,7 +36,7 @@ export interface DecideFailureOutput {
         message: string;
     };
 }
-export type DecideOutput = ReviewSuccessOutput | DecideFailureOutput;
+export type DecideOutput = DecideSuccessOutput | DecideFailureOutput;
 interface ChildFailure {
     status: 'aborted' | 'error';
     playbookId: 'review';
@@ -45,6 +50,7 @@ export interface DecideContext {
     coderProposal?: string;
     reviewerProposal?: string;
     latestCommit?: string;
+    coderOutput?: string;
     reviewResult?: ReviewSuccessOutput;
     reviewFailure?: ChildFailure;
     lastResult?: PlayerOutput;
@@ -74,6 +80,7 @@ export interface PlayerInput {
     result: Record<string, string>;
     role: Role;
     callerTopic?: string;
+    reviewerProposal?: string;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
@@ -140,9 +147,6 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     type: "rememberBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "clearBossReplyContext";
-    params: import("xstate").NonReducibleUnknown;
-} | {
     type: "copyInterruptedTopic";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -186,6 +190,9 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
 } | {
     type: "clearProposalRoundContext";
     params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "clearBossReplyContext";
+    params: import("xstate").NonReducibleUnknown;
 }, {
     type: "authoredReviewFailure";
     params: unknown;
@@ -212,7 +219,7 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
         coder: "complete" | "working" | "waiting";
         reviewer: "complete" | "working" | "waiting";
     };
-}, string, Readonly<Record<string, never>>, ReviewSuccessOutput | DecideFailureOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, string, Readonly<Record<string, never>>, DecideSuccessOutput | DecideFailureOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "decide";
     states: {
         readonly ready: {

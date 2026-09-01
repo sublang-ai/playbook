@@ -2617,7 +2617,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [code, review],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('Assess whether the coding intent')) {
+          if (prompt.includes('First determine whether the coding request')) {
             return {
               status: 'ok',
               finalText: 'Committed after the answer.\nCommit: abc123',
@@ -2697,7 +2697,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (!prompt.includes('Assess whether the coding intent')) {
+          if (!prompt.includes('First determine whether the coding request')) {
             throw new Error(`unexpected source player prompt: ${prompt}`);
           }
           return {
@@ -2842,7 +2842,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('Assess whether the coding intent')) {
+          if (prompt.includes('First determine whether the coding request')) {
             return {
               status: 'ok',
               finalText: 'Implemented the change.\nCommit: abc123',
@@ -2924,7 +2924,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
               resumeToken: 'target-coder-token',
             };
           }
-          if (prompt.includes('Review the latest commit and resulting')) {
+          if (prompt.includes('A new review round begins for the review scope')) {
             return {
               status: 'ok',
               finalText: 'No unsettled findings.',
@@ -3019,7 +3019,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     ]);
     expect(target.playerPrompts).not.toEqual(
       expect.arrayContaining([
-        expect.stringContaining('Assess whether the coding intent'),
+        expect.stringContaining('First determine whether the coding request'),
       ]),
     );
     expect(target.playerPrompts[1]).toContain(
@@ -3052,7 +3052,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('Assess whether the coding intent')) {
+          if (prompt.includes('First determine whether the coding request')) {
             return {
               status: 'ok',
               finalText: 'Implemented the change.\nCommit: abc123',
@@ -3351,7 +3351,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     await harness.turn('/code continue IR-036 task 4', 1);
     expect(harness.statuses).toContain('START_CODE');
     expect(harness.statuses).toContain(
-      '⤷ coder: Coder is implementing one direct phase or committing a new intent record.',
+      '⤷ coder: Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
     );
     expect(harness.statuses).toContain(
       '◆ workflow failed; awaiting Boss recovery.',
@@ -3414,7 +3414,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       'Last error: {"name":"Error","message":"coder exploded"}',
     );
     expect(decision!.prompt).toContain(
-      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
+      '- retry:START_CODE: Retry: Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
     );
     // The healthy path carries no journal-derived recap.
     expect(decision!.prompt).not.toContain('[Conversation recap]');
@@ -3524,7 +3524,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // the same label, as the process that reached the failure.
     const decision = continued.decisionPrompts().at(-1) ?? '';
     expect(decision).toContain(
-      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
+      '- retry:START_CODE: Retry: Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
     );
     // And it was applied for real: the coder ran again in this process, once.
     expect(continued.playerCalls).toHaveLength(1);
@@ -3751,7 +3751,11 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       reviewResult: 'approved' as const,
       terminalId: 'done',
       meaning: 'DECIDE completed with an approved commit.',
-      hiddenOutputKeys: ['approvedCommit', 'noUnsettledFindings'],
+      hiddenOutputKeys: [
+        'decideCommit',
+        'evaluatedRevision',
+        'noUnsettledFindings',
+      ],
     },
     {
       label: 'REVIEW failure report',
@@ -3785,7 +3789,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
                 status: 'done',
               },
               output: {
-                approvedCommit: 'latest',
+                evaluatedRevision: 'e'.repeat(40),
                 noUnsettledFindings: true,
               },
             }
@@ -3833,7 +3837,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     expect(runtime.describe).toBeTypeOf('function');
     expect(runtime.apply).toBeTypeOf('function');
     const commitPlayerPrompt = harness.playerPrompts.find((prompt) =>
-      prompt.includes('Turn your proposal into the necessary spec items or DRs.'),
+      prompt.includes('Turn the resulting design into the necessary DRs and/or spec items.'),
     );
     expect(commitPlayerPrompt).toBeDefined();
     expect(commitPlayerPrompt).not.toContain('Commit:');
@@ -4490,7 +4494,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     // event, so the prompt-reading controller selects `respond`.
     const digest = harness.decisionPrompts().at(-1) ?? '';
     expect(digest).toContain(
-      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
+      '- retry:START_CODE: Retry: Coder is running the first coding phase: a direct implementation, a new intent record, or an existing intent-record task.',
     );
     expect(digest).not.toContain('jump:');
     expect(harness.surfaced.at(-1)).toBe(

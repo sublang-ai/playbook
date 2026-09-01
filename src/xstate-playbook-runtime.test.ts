@@ -40,6 +40,7 @@ import {
   defaultExtractRequiredFields,
   emptyPlaybookEffectLedger,
   normalizePlaybookSnapshot,
+  reconcilePlaybookSemanticEvidence,
   resumableStateIdsFromMachine,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
@@ -52,6 +53,8 @@ import { codingMachine } from '../reference/sdlc/code.playbook/code.fsm.js';
 import createCodePlaybookRuntime, {
   _internal as codeArtifact,
 } from '../reference/sdlc/code.playbook/code.playbook.js';
+import { devMachine } from '../reference/sdlc/dev.playbook/dev.fsm.js';
+import { _internal as devArtifact } from '../reference/sdlc/dev.playbook/dev.playbook.js';
 import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
 import createDecidePlaybookRuntime, {
   _internal as decideArtifact,
@@ -113,6 +116,12 @@ const maintainedArtifactFinalMetadata = [
     artifactPath: 'reference/sdlc/decide.playbook/decide.playbook.ts',
     machine: decideMachine,
     unfinishedFinalStateIds: decideArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+  {
+    label: 'DEV',
+    artifactPath: 'reference/sdlc/dev.playbook/dev.playbook.ts',
+    machine: devMachine,
+    unfinishedFinalStateIds: devArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
   {
     label: 'REVIEW',
@@ -5099,8 +5108,8 @@ describe('nested playbook actor over the shared factory', () => {
         playbookId: 'review',
         childSessionId: snapshot.suspendedCall.childSessionId,
         output: {
-          approvedCommit: 'latest',
           noUnsettledFindings: true,
+          evaluatedRevision: '5'.repeat(40),
         },
       },
       signal: new AbortController().signal,
@@ -6759,6 +6768,143 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
   // exposes nothing, or, if the engine default ever regressed, everything.
   // Artifacts are discovered rather than listed, so the next one is covered
   // without anyone remembering this file.
+  describe('unchanged-receipt revision authority (DR-045)', () => {
+    const revisionOutcomes = {
+      complete: {
+        fields: { evaluatedRevision: 'effect' },
+        repositoryDisposition: 'unchanged',
+      },
+    } as const;
+
+    it('injects the matching unchanged receipt observed HEAD into effect fields', () => {
+      expect(
+        reconcilePlaybookSemanticEvidence({
+          outcomes: revisionOutcomes,
+          semanticCandidate: { guard: 'complete' },
+          finalText: 'Review complete with no unsettled findings.',
+          receipt: {
+            classification: 'unchanged',
+            baseline: CODE_EFFECT_OBSERVATION,
+            after: CODE_EFFECT_OBSERVATION,
+          },
+        }),
+      ).toMatchObject({
+        status: 'resolved',
+        output: {
+          guard: 'complete',
+          evaluatedRevision: CODE_EFFECT_OBSERVATION.head,
+        },
+      });
+    });
+
+    it('keeps one-descendant effect fields on the new commit OID by authority, not name', () => {
+      const after = { ...CODE_EFFECT_OBSERVATION, head: '2'.repeat(40) };
+      expect(
+        reconcilePlaybookSemanticEvidence({
+          outcomes: {
+            committed: {
+              fields: { evaluatedRevision: 'effect', latestCommit: 'effect' },
+              repositoryDisposition: 'one-descendant-commit',
+            },
+          },
+          semanticCandidate: { guard: 'committed' },
+          finalText: 'Committed the accepted fixes.',
+          receipt: {
+            classification: 'one-descendant-commit',
+            baseline: CODE_EFFECT_OBSERVATION,
+            after,
+            commitOid: after.head,
+          },
+        }),
+      ).toMatchObject({
+        status: 'resolved',
+        output: {
+          guard: 'committed',
+          evaluatedRevision: after.head,
+          latestCommit: after.head,
+        },
+      });
+    });
+
+    it('fails closed when the unchanged receipt cannot prove an observed HEAD', () => {
+      // An unborn or unreadable HEAD never validates as an observation, so
+      // the envelope stays unresolved instead of receiving a fabricated OID.
+      expect(
+        reconcilePlaybookSemanticEvidence({
+          outcomes: revisionOutcomes,
+          semanticCandidate: { guard: 'complete' },
+          finalText: 'Review complete.',
+          receipt: {
+            classification: 'unchanged',
+            baseline: CODE_EFFECT_OBSERVATION,
+            after: { ...CODE_EFFECT_OBSERVATION, head: 'null' },
+          },
+        }),
+      ).toMatchObject({
+        status: 'unresolved',
+        reason: 'invalid-repository-receipt',
+      });
+      expect(
+        reconcilePlaybookSemanticEvidence({
+          outcomes: revisionOutcomes,
+          semanticCandidate: { guard: 'complete' },
+          finalText: 'Review complete.',
+          receipt: {
+            classification: 'unchanged',
+            baseline: CODE_EFFECT_OBSERVATION,
+          },
+        }),
+      ).toMatchObject({
+        status: 'unresolved',
+        reason: 'invalid-repository-receipt',
+      });
+    });
+
+    it('accepts an unchanged-arm effect declaration and still rejects a deferred one', () => {
+      expect(() =>
+        createXStatePlaybookRuntime(workflowMachine, {
+          ...workflowSpec,
+          outcomeAuthority: {
+            governedPlayerStates: {
+              implement: {
+                implemented: {
+                  fields: { evaluatedRevision: 'effect' },
+                  repositoryDisposition: 'unchanged',
+                },
+                needsBossReply: {
+                  fields: { question: 'presentation' },
+                  repositoryDisposition: 'unchanged',
+                },
+              },
+            },
+          },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        createXStatePlaybookRuntime(workflowMachine, {
+          ...workflowSpec,
+          outcomeAuthority: {
+            governedPlayerStates: {
+              implement: {
+                implemented: {
+                  fields: { latestCommit: 'effect' },
+                  repositoryDisposition: 'one-descendant-commit',
+                },
+                needsBossReply: {
+                  fields: {
+                    question: 'presentation',
+                    evaluatedRevision: 'effect',
+                  },
+                  repositoryDisposition: 'deferred',
+                },
+              },
+            },
+          },
+        }),
+      ).toThrow(/may not declare effect-owned fields for deferred/);
+    });
+  });
+
   describe('linked artifacts declare their control-context projection', () => {
     const root = new URL('../', import.meta.url);
     const artifacts = readdirSync(new URL('reference/sdlc/', root), {
@@ -8092,8 +8238,9 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(view.actions[0]).toEqual({
       id: 'retry:START_CODE',
       label:
-        'Retry: Coder is implementing one direct phase or committing a new ' +
-        'intent record.',
+        'Retry: Coder is running the first coding phase: a direct ' +
+        'implementation, a new intent record, or an existing intent-record ' +
+        'task.',
     });
     expect(view.actions.map(({ id }) => id)).toEqual([
       'retry:START_CODE',

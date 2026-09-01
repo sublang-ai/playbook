@@ -342,15 +342,15 @@ access to `layout.initialVisible`
 
 Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
-config shall enable CODE, REVIEW, and DECIDE with their `playbooks.<id>.from` values set to the matching public registry modules.
-The starter shall define players `dev.coder` and `dev.reviewer`; CODE shall bind `coder` to `dev.coder`, while REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`.
+config shall enable CODE, REVIEW, DECIDE, and DEV with their `playbooks.<id>.from` values set to the matching public registry modules.
+The starter shall define players `dev.coder`, `dev.reviewer`, and `dev.analyst`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, and DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)).
 The seeded lineup shall configure Captain with adapter `claude`, model
 `claude-opus-5`, and reasoning effort `high`; Coder with adapter
 `codex`, model `gpt-5.6-sol`, reasoning effort `ultra`, and fast mode
-enabled; and Reviewer with adapter `claude`, model `claude-opus-5`, and
+enabled; and Reviewer and Analyst each with adapter `claude`, model `claude-opus-5`, and
 reasoning effort `xhigh`.
 The starter config shall carry no `profiles` map: Captain settings shall be inline under top-level `captain`, player settings shall be inline under top-level `players`, and each playbook shall contain only explicit role bindings ([DR-032](../decisions/032-explicit-roles-session-players.md)).
-Every seeded agent — the Captain and both players — shall set
+Every seeded agent — the Captain and the three players — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
 codex to on-request + auto_review) without routine in-session approval
@@ -926,7 +926,7 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; player `dev.reviewer` on `claude` / `claude-opus-5`; explicit CODE, REVIEW, and DECIDE role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, and DEV through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; players `dev.reviewer` and `dev.analyst` each on `claude` / `claude-opus-5`; explicit CODE, REVIEW, DECIDE, and DEV role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed.
 

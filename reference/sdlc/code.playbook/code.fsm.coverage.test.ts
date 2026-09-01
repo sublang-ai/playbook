@@ -39,7 +39,15 @@ interface TransitionFixture {
 }
 
 const APPROVED = {
-  approvedCommit: 'latest',
+  evaluatedRevision: 'rev123',
+  noUnsettledFindings: true,
+} as const;
+
+// A terminal REVIEW result without the DR-045 evaluated revision does not
+// establish the evaluated scope, so CODE must not accept it as approval.
+const APPROVED_WITHOUT_REVISION = { noUnsettledFindings: true } as const;
+const APPROVED_TASK4 = {
+  evaluatedRevision: 'task4rev',
   noUnsettledFindings: true,
 } as const;
 
@@ -96,7 +104,30 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
         coderOutput: 'Created IR-040.',
         latestCommit: 'ir040',
         irNumber: '040',
+      }),
+    },
+    {
+      guard: 'isMoreTasks',
+      target: 'reviewIrTask',
+      context: CONTEXT,
+      event: done({
+        guard: 'moreTasks',
+        coderOutput: 'Continued IR-040 with task 1.',
+        latestCommit: 'task1',
+        irNumber: '040',
         irTask: 'Implement task 1.',
+      }),
+    },
+    {
+      guard: 'isFinalTask',
+      target: 'reviewIrTask',
+      context: CONTEXT,
+      event: done({
+        guard: 'finalTask',
+        coderOutput: 'Finished IR-040.',
+        latestCommit: 'task2',
+        irNumber: '040',
+        irTask: 'Implement task 2.',
       }),
     },
     {
@@ -161,7 +192,8 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
         guard: 'moreTasks',
         coderOutput: 'Completed task 1.',
         latestCommit: 'task1',
-        irTask: 'Implement task 2.',
+        irNumber: '040',
+        irTask: 'Implement task 1.',
       }),
     },
     {
@@ -172,6 +204,8 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
         guard: 'finalTask',
         coderOutput: 'Completed the final task.',
         latestCommit: 'task2',
+        irNumber: '040',
+        irTask: 'Implement task 2.',
       }),
     },
     {
@@ -207,7 +241,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: '<fallback>',
       target: 'reportedReviewFailure',
       context: { ...CONTEXT, phase: 'ir-task-final' },
-      event: done({ approvedCommit: 'latest', noUnsettledFindings: false }),
+      event: done({ evaluatedRevision: 'rev123', noUnsettledFindings: false }),
     },
   ],
   'reviewIrTask.invoke.onError': [
@@ -398,7 +432,7 @@ describe('CODE FSM transition coverage', () => {
     }
   });
 
-  it('marks exactly the six accepted governed outcomes with stable identities', () => {
+  it('marks exactly the eight accepted governed outcomes with stable identities', () => {
     const states = (codingMachine as unknown as {
       config: { states: Record<string, RawState> };
     }).config.states;
@@ -415,6 +449,16 @@ describe('CODE FSM transition coverage', () => {
             source: 'runFirstPhase',
             target: 'reviewFirstCommit',
             acceptedOutcome: 'irCommit',
+          },
+          {
+            source: 'runFirstPhase',
+            target: 'reviewIrTask',
+            acceptedOutcome: 'moreTasks',
+          },
+          {
+            source: 'runFirstPhase',
+            target: 'reviewIrTask',
+            acceptedOutcome: 'finalTask',
           },
           {
             source: 'runFirstPhase',
@@ -478,10 +522,12 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'complete',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.',
+      finalEvaluatedRevision: 'rev123',
+      allReviewsPassed: true,
     });
     expect(workflow.reviewInputs[0]?.text).toBe(
-      '> Initial intent: Fix the bug.\n' +
+      '> Original intent: Fix the bug.\n' +
+        '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
         '> Coder output: Committed the change.',
     );
   });
@@ -494,18 +540,20 @@ describe('CODE FSM transition coverage', () => {
           coderOutput: 'Created IR-040.',
           latestCommit: 'ir040',
           irNumber: '040',
-          irTask: 'Implement task 1.',
         },
         {
           guard: 'moreTasks',
           coderOutput: 'Completed task 1.',
           latestCommit: 'task1',
-          irTask: 'Implement task 2.',
+          irNumber: '040',
+          irTask: 'Implement task 1.',
         },
         {
           guard: 'finalTask',
           coderOutput: 'Completed task 2.',
           latestCommit: 'task2',
+          irNumber: '040',
+          irTask: 'Implement task 2.',
         },
       ],
       [APPROVED, APPROVED, APPROVED],
@@ -518,20 +566,71 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'complete',
       lastCodeCommit: 'task2',
-      lastCodeOutput: 'Completed task 2.',
+      finalEvaluatedRevision: 'rev123',
+      allReviewsPassed: true,
     });
     expect(workflow.playerInputs.map(({ stateId }) => stateId)).toEqual([
       'runFirstPhase',
       'runIrTask',
       'runIrTask',
     ]);
+    expect(workflow.playerInputs[1]?.irNumber).toBe('040');
     expect(workflow.reviewInputs.map(({ stateId }) => stateId)).toEqual([
       'reviewFirstCommit',
       'reviewIrTask',
       'reviewIrTask',
     ]);
-    expect(workflow.reviewInputs[2]?.text).toContain(
-      '> IR task: Implement task 2.',
+    expect(workflow.reviewInputs[0]?.text).not.toContain('Current IR task:');
+    expect(workflow.reviewInputs[2]?.text).toBe(
+      '> Original intent: Large change.\n' +
+        '> Review scope: the commit task2 from this coding phase and its resulting repository state.\n' +
+        '> Coder output: Completed task 2.\n' +
+        '> Current IR task: Implement task 2.',
+    );
+  });
+
+  it('continues an existing IR from the first phase through the IR-task review', async () => {
+    const workflow = createWorkflow(
+      [
+        {
+          guard: 'moreTasks',
+          coderOutput: 'Continued IR-040 with task 3.',
+          latestCommit: 'task3',
+          irNumber: '040',
+          irTask: 'Implement task 3.',
+        },
+        {
+          guard: 'finalTask',
+          coderOutput: 'Finished IR-040.',
+          latestCommit: 'task4',
+          irNumber: '040',
+          irTask: 'Implement task 4.',
+        },
+      ],
+      [APPROVED, APPROVED_TASK4],
+    );
+    workflow.actor.send({ type: 'START_CODE', callerInput: 'Continue IR-040.' });
+    const snapshot = await waitFor(
+      workflow.actor,
+      (value) => value.status === 'done',
+    );
+    expect(snapshot.output).toEqual({
+      status: 'complete',
+      lastCodeCommit: 'task4',
+      finalEvaluatedRevision: 'task4rev',
+      allReviewsPassed: true,
+    });
+    expect(workflow.playerInputs.map(({ stateId }) => stateId)).toEqual([
+      'runFirstPhase',
+      'runIrTask',
+    ]);
+    expect(workflow.playerInputs[1]?.irNumber).toBe('040');
+    expect(workflow.reviewInputs.map(({ stateId }) => stateId)).toEqual([
+      'reviewIrTask',
+      'reviewIrTask',
+    ]);
+    expect(workflow.reviewInputs[0]?.text).toContain(
+      '> Current IR task: Implement task 3.',
     );
   });
 
@@ -563,7 +662,36 @@ describe('CODE FSM transition coverage', () => {
     );
   });
 
-  it('reports a terminal REVIEW result that does not prove approval', async () => {
+  it('reports a terminal REVIEW result that omits the evaluated revision', async () => {
+    const workflow = createWorkflow(
+      [
+        {
+          guard: 'directCommit',
+          coderOutput: 'Committed the change.',
+          latestCommit: 'abc123',
+        },
+      ],
+      [APPROVED_WITHOUT_REVISION],
+    );
+    workflow.actor.send({ type: 'START_CODE', callerInput: 'Fix it.' });
+    const snapshot = await waitFor(
+      workflow.actor,
+      (value) => value.status === 'done',
+    );
+    expect(snapshot.value).toBe('reportedReviewFailure');
+    expect(snapshot.output).toEqual({
+      status: 'review-failed',
+      lastCodeCommit: 'abc123',
+      error: {
+        name: 'ReviewContractError',
+        message:
+          'REVIEW returned an invalid approval result: ' +
+          '{"noUnsettledFindings":true}',
+      },
+    });
+  });
+
+  it('reports a terminal REVIEW result that does not prove scope-evaluated approval', async () => {
     const workflow = createWorkflow(
       [
         {
@@ -583,7 +711,6 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.',
       error: {
         name: 'ReviewContractError',
         message:
@@ -620,7 +747,6 @@ describe('CODE FSM transition coverage', () => {
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
-      lastCodeOutput: 'Committed the change.',
       error: { name: 'ReviewError', message: 'REVIEW failed.' },
     });
   });

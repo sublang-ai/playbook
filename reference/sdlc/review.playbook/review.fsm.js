@@ -6,12 +6,15 @@ import { assign, fromPromise, setup } from 'xstate';
 const NEEDS_BOSS_REPLY_DESCRIPTION = "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 const SHARED_REVIEW_INSTRUCTION = [
     'Understand the full picture and think systematically about the underlying design.',
-    'Continue to identify issues or improvements, if any (numbered; no duplication).',
+    'Continue to identify issues or improvements, if any, without duplication.',
+    'Number the findings consistently across rounds.',
+    'Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.',
+    'For specs, flag stale, missing, over-specified, or under-specified ones, if any.',
+    'Avoid unnecessary complexity in code or tests, but flag any fundamental design flaw when leaving it would cost more in later patches than fixing it now.',
+    '',
+    'If an issue represents a class of defect, find every instance within the review scope worth fixing rather than surfacing one or two per round, which drags out the review.',
     'For any rebuttal, accept or challenge it.',
     'Treat as settled, and do not raise again, any finding in this review rejected twice with reasoning.',
-    'Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.',
-    'For specs, flag stale, missing, over-specified, or under-specified ones.',
-    'Avoid unnecessary complexity in code or tests, but flag any fundamental design flaw when leaving it would cost more in later patches than fixing it now.',
     '',
     'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
     'Do not edit files or commit; report findings only.',
@@ -20,69 +23,79 @@ const SHARED_REVIEW_INSTRUCTION = [
     'Consult @specs/meta.md for spec requirements if needed; verify affected specs follow it.',
 ].join('\n');
 const INITIAL_REVIEW_PROMPT = [
-    'A new review begins on the latest commit.',
-    'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
+    'A new review begins for the review scope.',
+    'Keep to the original intent and follow what it asks.',
+    'When the scope names commits, read each commit message for its context and rationale; otherwise use repository history and commit messages wherever they help establish that context.',
     '',
     '> <caller-input>',
     '',
     SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
 const POST_COMMIT_REVIEW_PROMPT = [
-    'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
+    'A new review round begins for the review scope in the cumulative committed state, with particular attention to the latest review-fix commit.',
+    'Keep to the original intent and follow what it asks.',
+    "Read the latest review-fix commit's message and see Coder's feedback below.",
     '',
+    '> <caller-input>',
+    '> <latest-commit>',
     '> <coder-output>',
     '',
     SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
 const REBUTTAL_REVIEW_PROMPT = [
     'No new commit was made because Coder rejected every finding.',
+    "See Coder's feedback below.",
     '',
+    '> <caller-input>',
     '> <coder-output>',
     '',
     SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
 const CODER_DISPOSITION_PROMPT = [
+    '> <caller-input>',
     '> <reviewer-output>',
     '',
     'For each review item, accept or reject it.',
     'Before deciding, understand the full picture and think systematically about the underlying design.',
+    'Keep to the original intent and follow what it asks.',
     'Reject anything that is not essential or is not worth fixing now.',
-    'If you accept an item, fix its root cause, including any fundamental design flaw - do not patch around it.',
+    'If you accept an item, fix its root cause, including any fundamental design flaw — do not patch around it; if it represents a class of defect, find every instance within the review scope worth fixing rather than addressing one or two per round, which drags out the review.',
     'If you reject an item, give the reasoning and cite code or test output that supports it.',
     'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
     '',
-    'If you accept any item, make minimal changes and commit them as one new commit; never amend the reviewed commit.',
+    'If you accept any item, make minimal changes and add one new review-fix commit; never rewrite any existing commit.',
     'Follow @specs/packages/git.md.',
     'Make the commit message explain concisely what changed and why, including relevant verification.',
-    'Coder is <coder-llm>; Reviewer is <reviewer-llm>; format model tokens in conventional human form.',
+    'Identify every new commit you make.',
+    'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
     '',
     'If you reject every item, change nothing and make no commit.',
     'Report every disposition, all relevant run results, and every rebuttal.',
 ].join('\n');
 const REVIEW_RESULTS = {
     hasFindings: 'Reviewer raised one or more unsettled findings. Output shall include `reviewerOutput: <verbatim final text>`.',
-    noFindings: 'Reviewer raised no unsettled findings.',
+    noFindings: 'Reviewer affirmatively reported the requested review complete with no unsettled findings remaining; a progress report, status update, or promise of a later result supports no review outcome. Output shall include `evaluatedRevision: <repository revision>`.',
     needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
 };
 const REBUTTAL_RESULTS = {
     hasFindings: 'Reviewer kept one or more unsettled findings. Output shall include `reviewerOutput: <verbatim final text>`.',
-    noFindings: 'Reviewer accepted the rebuttals and no unsettled findings remain.',
+    noFindings: 'Reviewer accepted the rebuttals and affirmatively reported the requested review complete with no unsettled findings remaining; a progress report, status update, or promise of a later result supports no review outcome. Output shall include `evaluatedRevision: <repository revision>`.',
     needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
 };
 const CODER_RESULTS = {
-    committed: 'Coder accepted at least one item and made one new commit. Output shall include `coderOutput: <verbatim final text>`.',
+    committed: 'Coder accepted at least one item and added one new review-fix commit. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
     rejectedAll: 'Coder rejected every item and made no commit. Output shall include `coderOutput: <verbatim final text>`.',
     needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
 };
 const stateDescriptions = {
-    ready: 'Waits for a caller to start a committed-work review.',
-    reviewInitial: 'REVIEW-1: Reviewer examines the latest commit against the caller input.',
+    ready: 'Waits for a caller to start a scoped committed-work review.',
+    reviewInitial: "REVIEW-1: Reviewer reviews the caller's review scope against the original intent.",
     addressFindings: 'REVIEW-2: Coder accepts or rejects every current review finding.',
-    reviewAfterCommit: 'REVIEW-3: Reviewer examines the new review-fix commit and repository state.',
+    reviewAfterCommit: 'REVIEW-3: Reviewer reviews the cumulative committed state after a review-fix commit.',
     reviewAfterRebuttal: 'REVIEW-4: Reviewer adjudicates an all-rejected Coder disposition.',
     awaitBossReply: 'Waits for Boss to answer the active player question.',
     failed: 'Retains a recoverable REVIEW failure for the caller.',
-    done: 'The latest commit is approved with no unsettled findings.',
+    done: 'The requested review is complete: no unsettled findings remain within the review scope.',
 };
 const playbookMeta = (stateId, role) => ({
     playbook: {
@@ -130,10 +143,16 @@ export const reviewMachine = setup({
             return (output.guard === 'hasFindings' &&
                 isNonEmptyString(output.reviewerOutput));
         },
-        noFindings: ({ event }) => outputOf(event).guard === 'noFindings',
+        noFindings: ({ event }) => {
+            const output = outputOf(event);
+            return (output.guard === 'noFindings' &&
+                isNonEmptyString(output.evaluatedRevision));
+        },
         committed: ({ event }) => {
             const output = outputOf(event);
-            return (output.guard === 'committed' && isNonEmptyString(output.coderOutput));
+            return (output.guard === 'committed' &&
+                isNonEmptyString(output.coderOutput) &&
+                isNonEmptyString(output.latestCommit));
         },
         rejectedAll: ({ event }) => {
             const output = outputOf(event);
@@ -175,6 +194,8 @@ export const reviewMachine = setup({
             callerInput: ({ event }) => event.type === 'START_REVIEW' ? event.callerInput : undefined,
             reviewerOutput: undefined,
             coderOutput: undefined,
+            latestCommit: undefined,
+            evaluatedRevision: undefined,
             lastError: undefined,
             pendingBossQuestion: undefined,
             bossReply: undefined,
@@ -183,6 +204,8 @@ export const reviewMachine = setup({
             callerInput: ({ event }) => event.type === 'BOSS_INTERRUPT' ? event.bossIntent : undefined,
             reviewerOutput: undefined,
             coderOutput: undefined,
+            latestCommit: undefined,
+            evaluatedRevision: undefined,
             lastError: undefined,
             pendingBossQuestion: undefined,
             bossReply: undefined,
@@ -205,11 +228,29 @@ export const reviewMachine = setup({
                     ? output.coderOutput
                     : undefined;
             },
+            // The receipt-derived review-fix commit identity replaces the prior one
+            // only when Coder committed; an all-rejected round leaves the evaluated
+            // revision unchanged.
+            latestCommit: ({ context, event }) => {
+                const output = outputOf(event);
+                return output.guard === 'committed'
+                    ? output.latestCommit
+                    : context.latestCommit;
+            },
             lastError: undefined,
             pendingBossQuestion: undefined,
             bossReply: undefined,
         }),
-        clearBossReplyContext: assign({
+        rememberEvaluatedRevision: assign({
+            // DR-045: the closing clean round's unchanged receipt observes the
+            // exact revision the review scope was evaluated at.
+            evaluatedRevision: ({ context, event }) => {
+                const output = outputOf(event);
+                return output.guard === 'noFindings'
+                    ? output.evaluatedRevision
+                    : context.evaluatedRevision;
+            },
+            lastError: undefined,
             pendingBossQuestion: undefined,
             bossReply: undefined,
         }),
@@ -345,7 +386,7 @@ export const reviewMachine = setup({
                                     acceptedOutcome: 'noFindings',
                                 },
                             },
-                            'clearBossReplyContext',
+                            'rememberEvaluatedRevision',
                         ],
                     },
                     {
@@ -383,6 +424,7 @@ export const reviewMachine = setup({
                     role: 'coder',
                     prompt: CODER_DISPOSITION_PROMPT,
                     result: CODER_RESULTS,
+                    callerInput: context.callerInput,
                     reviewerOutput: context.reviewerOutput,
                     pendingBossQuestion: context.pendingBossQuestion,
                     bossReply: context.bossReply,
@@ -453,6 +495,8 @@ export const reviewMachine = setup({
                     role: 'reviewer',
                     prompt: POST_COMMIT_REVIEW_PROMPT,
                     result: REVIEW_RESULTS,
+                    callerInput: context.callerInput,
+                    latestCommit: context.latestCommit,
                     coderOutput: context.coderOutput,
                     pendingBossQuestion: context.pendingBossQuestion,
                     bossReply: context.bossReply,
@@ -485,7 +529,7 @@ export const reviewMachine = setup({
                                     acceptedOutcome: 'noFindings',
                                 },
                             },
-                            'clearBossReplyContext',
+                            'rememberEvaluatedRevision',
                         ],
                     },
                     {
@@ -523,6 +567,7 @@ export const reviewMachine = setup({
                     role: 'reviewer',
                     prompt: REBUTTAL_REVIEW_PROMPT,
                     result: REBUTTAL_RESULTS,
+                    callerInput: context.callerInput,
                     coderOutput: context.coderOutput,
                     pendingBossQuestion: context.pendingBossQuestion,
                     bossReply: context.bossReply,
@@ -555,7 +600,7 @@ export const reviewMachine = setup({
                                     acceptedOutcome: 'noFindings',
                                 },
                             },
-                            'clearBossReplyContext',
+                            'rememberEvaluatedRevision',
                         ],
                     },
                     {
@@ -644,8 +689,13 @@ export const reviewMachine = setup({
             type: 'final',
         },
     },
-    output: () => ({
-        approvedCommit: 'latest',
-        noUnsettledFindings: true,
-    }),
+    output: ({ context }) => {
+        if (!isNonEmptyString(context.evaluatedRevision)) {
+            throw new Error('REVIEW reached done without a receipt-observed evaluated revision');
+        }
+        return {
+            noUnsettledFindings: true,
+            evaluatedRevision: context.evaluatedRevision,
+        };
+    },
 });

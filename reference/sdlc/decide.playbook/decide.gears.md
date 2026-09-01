@@ -12,7 +12,8 @@
 
 The caller supplies a topic as `callerTopic`.
 Coder and Reviewer receive the complete topic concurrently and independently.
-Neither role's player receives the other role's proposal before both proposals finish and Coder commits Coder's own proposal.
+Neither role's player receives the other role's proposal before both proposals are complete.
+A proposal is complete only when its player affirmatively provides a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome.
 A Boss interrupt during the parallel proposal pair restarts the complete pair with the new `callerTopic`.
 
 ### DECIDE-1
@@ -30,7 +31,7 @@ When the caller gives a topic, Captain shall relay the complete topic to Coder i
 > Do not change any files.
 
 Results:
-- `proposed`: Coder completed an independent proposal. Output shall include `coderProposal: <verbatim final text>`.
+- `proposed`: Coder affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome. Output shall include `coderProposal: <verbatim final text>`.
 
 ### DECIDE-2
 
@@ -47,39 +48,44 @@ When the caller gives a topic, Captain shall relay the complete topic to Reviewe
 > Do not change any files.
 
 Results:
-- `proposed`: Reviewer completed an independent proposal. Output shall include `reviewerProposal: <verbatim final text>`.
+- `proposed`: Reviewer affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome. Output shall include `reviewerProposal: <verbatim final text>`.
 
-## Commit Coder's proposal
+## Synthesize and commit
 
 ### DECIDE-3
 
-When both independent proposals are complete, Captain shall prompt Coder:
+When both independent proposals are complete, Captain shall relay the complete topic and Reviewer's complete proposal to Coder under their own labels in quotes and prompt Coder:
 
-> Turn your proposal into the necessary spec items or DRs.
+> Synthesize your independent proposal with Reviewer's proposal below.
+> Keep to the original topic below and follow what it asks.
+> Keep the best, essential parts of either proposal and reject any point that is unsound, unnecessary, or outside the topic.
+> Turn the resulting design into the necessary DRs and/or spec items.
 > Follow @specs/meta.md and update @specs/map.md when needed.
-> Do not inspect or incorporate Reviewer's proposal before this commit.
-> Do not change code or implement the proposal.
+> Do not change code or implement the design.
 >
 > Commit the result as one new commit, following @specs/packages/git.md.
 > Make the commit message explain concisely what changed and why.
-> Coder is <coder-llm>; format the model token in conventional human form.
+> Identify every new commit you make.
+> Coder is <coder-llm> and Reviewer is <reviewer-llm>.
+>
+> > Original topic: <caller-topic>
+> > Reviewer's independent proposal: <reviewer-proposal>
 
 Results:
-- `committed`: Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.
+- `committed`: Coder synthesized both proposals and committed the resulting design as one new commit. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.
+
+No transition depends on a fixed presentation format of either player's reply; the repository-effect receipt is the authoritative identity of Coder's new `decide`-owned commit.
 
 ## Review
 
 ### DECIDE-4
 
-When Coder commits, Captain shall call playbook `review`:
+When Coder commits, Captain shall call playbook `review` with the following input in quotes:
 
-> Review the latest commit as a spec-design change against the initial intent.
-> Compare it with your independent proposal and take the best of both.
-> Make your suggestions.
->
-> Initial intent: <caller-topic>.
-> Coder's independent proposal: <coder-proposal>.
+> > Original intent: <caller-topic>
+> > Review scope: the `decide`-owned commit <decide-commit> and its resulting repository state.
+> > Coder output: <coder-output>
 
-The successful child output is DECIDE's terminal output.
-An authored child abort, failure, or invalid approval terminates with the failure and `latestCommit` reported to the caller.
+`decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain; `decide` then returns the `decide`-owned commit and that evaluated revision to the caller.
+An authored `review` abort or failure, or a terminal result that does not establish those facts, terminates with the failure and the last `decide`-owned commit reported to the caller.
 Any other nested-call error parks `decide` as failed and retains the control-plane error.

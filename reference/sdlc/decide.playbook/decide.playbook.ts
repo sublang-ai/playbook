@@ -284,7 +284,10 @@ const CONTINUATION_PREAMBLE =
   'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 
 const PLACEHOLDER_FIELDS: ReadonlyArray<readonly [string, keyof PlayerInput]> =
-  [['<caller-topic>', 'callerTopic']];
+  [
+    ['<caller-topic>', 'callerTopic'],
+    ['<reviewer-proposal>', 'reviewerProposal'],
+  ];
 
 const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'coderProposal',
@@ -322,13 +325,18 @@ function composePlayerPrompt(
   if (input.prompt.includes('<coder-llm>')) {
     replacements.set('<coder-llm>', promptIdentity('coder'));
   }
+  if (input.prompt.includes('<reviewer-llm>')) {
+    replacements.set('<reviewer-llm>', promptIdentity('reviewer'));
+  }
   const body = input.prompt.replace(
-    /<caller-topic>|<coder-llm>/g,
+    /<caller-topic>|<reviewer-proposal>|<coder-llm>|<reviewer-llm>/g,
     (placeholder, offset: number, source: string) => {
       const value = replacements.get(placeholder);
       if (value === undefined) return placeholder;
+      // A labelled quoted relay keeps a multiline value inside its authored
+      // blockquote, so continuation lines re-enter the quote marker.
       const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-      return source.slice(lineStart, offset) === '> '
+      return source.slice(lineStart, offset).startsWith('> ')
         ? value.replaceAll('\n', '\n> ')
         : value;
     },

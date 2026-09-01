@@ -84,6 +84,13 @@ players:
     permissions:
       mode: auto # protected auto mode for the Claude Reviewer
 
+  dev.analyst:
+    adapter: claude
+    model: claude-opus-5
+    effort: xhigh
+    permissions:
+      mode: auto # protected auto mode for the Claude Analyst
+
 playbooks:
   code:
     from: '@sublang/playbook/code/registry'
@@ -101,6 +108,11 @@ playbooks:
     roles:
       coder: dev.coder
       reviewer: dev.reviewer
+
+  dev:
+    from: '@sublang/playbook/dev/registry'
+    roles:
+      analyst: dev.analyst
 ```
 
 The current bundled workflows accept no workflow-specific options.
@@ -146,7 +158,9 @@ Two bindings that name the same player ID deliberately share one sequential
 provider conversation throughout the logical Captain session — across nested
 calls, returns, and later root engagements. CODE's and REVIEW's `coder` roles
 therefore share `dev.coder` in the starter, and DECIDE and its nested REVIEW
-share both starter players. Disposal of one playbook frame does not clear that
+share both starter players. DEV's `analyst` instead binds the distinct
+`dev.analyst` player, so planning context does not bleed into the shared
+review conversation. Disposal of one playbook frame does not clear that
 session ledger.
 
 Two distinct player IDs stay isolated even when their agent blocks are

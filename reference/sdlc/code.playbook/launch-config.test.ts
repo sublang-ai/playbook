@@ -1727,6 +1727,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(Object.keys(template.players)).toEqual([
       'dev.coder',
       'dev.reviewer',
+      'dev.analyst',
     ]);
     expect(template.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.review.roles).toEqual({
@@ -1736,6 +1737,15 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.decide.roles).toEqual(
       template.playbooks.review.roles,
     );
+    // DR-044: the DEV planner binds a distinct seeded player, so planning
+    // context cannot bleed into the shared review conversation.
+    expect(template.playbooks.dev.roles).toEqual({ analyst: 'dev.analyst' });
+    expect(template.players['dev.analyst']).toEqual({
+      adapter: 'claude',
+      model: 'claude-opus-5',
+      effort: 'xhigh',
+      permissions: { mode: 'auto' },
+    });
     for (const block of Object.values(template.playbooks)) {
       expect(block).not.toHaveProperty('players');
     }
@@ -1752,11 +1762,13 @@ describe('shared launch-config plan (PBCLI-47)', () => {
           'decide',
           [['coder', 'reviewer']],
         ),
+        '@sublang/playbook/dev/registry': entry('dev', ['analyst']),
       }),
     });
     expect(plan.players.map((player: { id: string }) => player.id)).toEqual([
       'dev.coder',
       'dev.reviewer',
+      'dev.analyst',
     ]);
   });
 });

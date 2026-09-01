@@ -41,17 +41,19 @@ interface RawReviewState {
 
 const CODE_2_OUTCOMES = [
   'Workflow outcomes:',
-  '- Exact approval after a direct implementation phase completes `code`.',
-  '- Exact approval after a new-IR phase continues with its next unfinished IR task.',
-  '- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.',
+  '- A nested `review` passes the phase only when its result applies to the supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+  '- A pass after a direct implementation phase completes `code` with the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
+  '- A pass after a new-IR phase continues with the next unfinished IR-task phase.',
+  '- An authored `review` abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, terminates `code` with the failure and the last `code`-owned commit.',
   '- Any other nested-call error parks `code` as failed and retains the control-plane error.',
 ].join('\n');
 
 const CODE_4_OUTCOMES = [
   'Workflow outcomes:',
-  '- Exact approval after a nonfinal IR-task phase continues with its next unfinished IR task.',
-  '- Exact approval after the final IR-task phase completes `code`.',
-  '- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.',
+  '- A nested `review` passes the phase only when its result applies to the supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+  '- A pass after a nonfinal IR-task phase continues with the next unfinished IR-task phase.',
+  '- A pass after the final IR-task phase completes `code` with the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
+  '- An authored `review` abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, terminates `code` with the failure and the last `code`-owned commit.',
   '- Any other nested-call error parks `code` as failed and retains the control-plane error.',
 ].join('\n');
 
@@ -146,8 +148,10 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       'When `review` passes a direct implementation phase, `code` is complete.',
       'When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.',
       'When `review` passes the final IR-task phase, `code` is complete.',
-      'When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.',
+      'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.',
       'When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
+      'A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+      'On successful completion, `code` returns the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
     ]) {
       expect(source).toContain(clause);
     }
@@ -199,7 +203,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       taskApprovedMore: {
         guard: 'reviewApprovedMoreTasks',
         target: 'runIrTask',
-        actions: 'advanceToNextIrTask',
+        actions: undefined,
       },
       taskApprovedFinal: {
         guard: 'reviewApprovedFinalTask',

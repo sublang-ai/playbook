@@ -7,7 +7,8 @@
 // Boss event:    deterministic START_REVIEW entry; exact Boss text becomes
 //                callerInput; pending player questions retain BOSS_REPLY
 // Adjudication:  LLM judge per state; coderOutput and reviewerOutput are
-//                carried verbatim
+//                carried verbatim; latestCommit is receipt-owned effect
+//                evidence, never taken from either player's prose
 // Compat:        artifact schema 3 / runtime ABI 1
 import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { reviewMachine, } from './review.fsm.js';
@@ -90,7 +91,7 @@ const runtimeSpec = {
     roleStates: {
         reviewInitial: {
             role: 'reviewer',
-            label: 'REVIEW-1: Reviewer examines the latest commit against the caller input.',
+            label: "REVIEW-1: Reviewer reviews the caller's review scope against the original intent.",
         },
         addressFindings: {
             role: 'coder',
@@ -98,7 +99,7 @@ const runtimeSpec = {
         },
         reviewAfterCommit: {
             role: 'reviewer',
-            label: 'REVIEW-3: Reviewer examines the new review-fix commit and repository state.',
+            label: 'REVIEW-3: Reviewer reviews the cumulative committed state after a review-fix commit.',
         },
         reviewAfterRebuttal: {
             role: 'reviewer',
@@ -113,7 +114,9 @@ const runtimeSpec = {
                     repositoryDisposition: 'unchanged',
                 },
                 noFindings: {
-                    fields: {},
+                    // DR-045: the clean round's unchanged receipt observes the exact
+                    // evaluated revision as HEAD; the reconciler injects it here.
+                    fields: { evaluatedRevision: 'effect' },
                     repositoryDisposition: 'unchanged',
                 },
                 needsBossReply: {
@@ -123,7 +126,10 @@ const runtimeSpec = {
             },
             addressFindings: {
                 committed: {
-                    fields: { coderOutput: 'presentation' },
+                    fields: {
+                        coderOutput: 'presentation',
+                        latestCommit: 'effect',
+                    },
                     repositoryDisposition: 'one-descendant-commit',
                 },
                 rejectedAll: {
@@ -141,7 +147,9 @@ const runtimeSpec = {
                     repositoryDisposition: 'unchanged',
                 },
                 noFindings: {
-                    fields: {},
+                    // DR-045: the clean round's unchanged receipt observes the exact
+                    // evaluated revision as HEAD; the reconciler injects it here.
+                    fields: { evaluatedRevision: 'effect' },
                     repositoryDisposition: 'unchanged',
                 },
                 needsBossReply: {
@@ -155,7 +163,9 @@ const runtimeSpec = {
                     repositoryDisposition: 'unchanged',
                 },
                 noFindings: {
-                    fields: {},
+                    // DR-045: the clean round's unchanged receipt observes the exact
+                    // evaluated revision as HEAD; the reconciler injects it here.
+                    fields: { evaluatedRevision: 'effect' },
                     repositoryDisposition: 'unchanged',
                 },
                 needsBossReply: {

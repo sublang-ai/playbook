@@ -46,7 +46,7 @@ const CAPTAIN_GENERATED_BUNDLE = [
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.js`,
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.d.ts`,
 ] as const;
-const BUNDLED_WORKFLOW_IDS = ['code', 'review', 'decide'] as const;
+const BUNDLED_WORKFLOW_IDS = ['code', 'review', 'decide', 'dev'] as const;
 const REQUIRED_WORKFLOW_ARTIFACT_SUFFIXES = [
   'gears.md',
   'fsm.ts',
@@ -770,7 +770,7 @@ describe('artifact schema cutover (RELEASE-15)', () => {
         ).not.toMatch(legacyDeclaration);
       }
       expect(runtimeDeclaration).not.toMatch(legacyDeclaration);
-      if (id === 'code' || id === 'review') {
+      if (id === 'code' || id === 'review' || id === 'dev') {
         expect(runtimeDeclaration).toMatch(
           /XStatePlaybookRuntimeFactory<[\s\S]*, 3>;/,
         );
@@ -1144,6 +1144,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   const CODE_BASE = 'reference/sdlc/code.playbook/';
   const REVIEW_BASE = 'reference/sdlc/review.playbook/';
   const DECIDE_BASE = 'reference/sdlc/decide.playbook/';
+  const DEV_BASE = 'reference/sdlc/dev.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toEqual({
@@ -1154,6 +1155,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./code/registry');
     expect(manifest.exports).toHaveProperty('./review/registry');
     expect(manifest.exports).toHaveProperty('./decide/registry');
+    expect(manifest.exports).toHaveProperty('./dev/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
@@ -1288,6 +1290,16 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'decideSummaryPolicy',
       'default',
       'validateDecideOptions',
+    ],
+    './dev/playbook': ['_internal', 'default'],
+    './dev/registry': [
+      'default',
+      'devCopyPasteGuardNames',
+      'devPlaybookRegistryEntry',
+      'devSavedCountsLine',
+      'devStateCountLabels',
+      'devSummaryPolicy',
+      'validateDevOptions',
     ],
   };
 
@@ -1623,6 +1635,47 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'decideSummaryPolicy',
       'default',
       'validateDecideOptions',
+    ],
+    './dev/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'DevPlaybookHostCapabilities',
+      'DevPlaybookOptions',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'PlayerSessionStore',
+      '_internal',
+      'default',
+    ],
+    './dev/registry': [
+      'DevOptions',
+      'DevPlaybookRegistryEntry',
+      'PlaybookSummaryPolicy',
+      'default',
+      'devCopyPasteGuardNames',
+      'devPlaybookRegistryEntry',
+      'devSavedCountsLine',
+      'devStateCountLabels',
+      'devSummaryPolicy',
+      'validateDevOptions',
     ],
   };
 
@@ -1980,6 +2033,8 @@ import type {
   DecidePlaybookHostCapabilities,
   DecidePlaybookRuntimeConstruction,
 } from '@sublang/playbook/decide/playbook';
+import { devPlaybookRegistryEntry } from '@sublang/playbook/dev/registry';
+import type { DevPlaybookHostCapabilities } from '@sublang/playbook/dev/playbook';
 
 interface Options { readonly mode: string }
 interface Capabilities {
@@ -2040,6 +2095,7 @@ declare const hostCapabilities: PlaybookHostConstructionCapabilities;
 declare const codeHostCapabilities: CodePlaybookHostCapabilities;
 declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
 declare const decideHostCapabilities: DecidePlaybookHostCapabilities;
+declare const devHostCapabilities: DevPlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
 // @ts-expect-error live construction capabilities are not runtime ports
@@ -2076,6 +2132,13 @@ decidePlaybookRegistryEntry.createRuntime(
 );
 // @ts-expect-error DECIDE is schema 3 and requires current-host capabilities
 decidePlaybookRegistryEntry.createRuntime({});
+const devSchema: 3 = devPlaybookRegistryEntry.artifactSchema;
+const devProfile: PlaybookCaptainRuntimeProfile = devPlaybookRegistryEntry.runtimeProfile;
+const devEntry: PlaybookCaptainRegistryEntryV3 = devPlaybookRegistryEntry;
+const devCapabilities: PlaybookHostConstructionCapabilities = devHostCapabilities;
+devPlaybookRegistryEntry.createRuntime({}, devHostCapabilities);
+// @ts-expect-error DEV is schema 3 and requires current-host capabilities
+devPlaybookRegistryEntry.createRuntime({});
 void canonicalFactorySchema;
 void v3FactorySchema;
 void v3Profile;
@@ -2092,6 +2155,10 @@ void decideProfile;
 void decideEntry;
 void decideCapabilities;
 void decideConstruction;
+void devSchema;
+void devProfile;
+void devEntry;
+void devCapabilities;
 `,
       );
       const program = ts.createProgram([fixture], {
@@ -2324,6 +2391,10 @@ void decideConstruction;
       `${DECIDE_BASE}decide.playbook.d.ts`,
       `${DECIDE_BASE}decide.registry.js`,
       `${DECIDE_BASE}decide.registry.d.ts`,
+      `${DEV_BASE}dev.playbook.js`,
+      `${DEV_BASE}dev.playbook.d.ts`,
+      `${DEV_BASE}dev.registry.js`,
+      `${DEV_BASE}dev.registry.d.ts`,
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }

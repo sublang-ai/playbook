@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { _internal as codeInternal } from '../reference/sdlc/code.playbook/code.playbook.js';
 import { _internal as decideInternal } from '../reference/sdlc/decide.playbook/decide.playbook.js';
+import { _internal as devInternal } from '../reference/sdlc/dev.playbook/dev.playbook.js';
 import { _internal as reviewInternal } from '../reference/sdlc/review.playbook/review.playbook.js';
 import {
   checkLinkedVerbatimContract,
@@ -106,6 +107,18 @@ const linkedWorkflows = [
     expectedFields: ['coderProposal', 'reviewerProposal', 'coderOutput'],
     unfinishedFinalStateIds: decideInternal.UNFINISHED_FINAL_STATE_IDS,
     expectedUnfinishedFinalStateIds: ['reportedReviewFailure'],
+  },
+  {
+    id: 'DEV',
+    sourceUrl: new URL('../reference/sdlc/dev.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/dev.playbook/dev.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: devInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['planningResult'],
+    unfinishedFinalStateIds: devInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: ['reportedChildFailure'],
   },
 ] as const;
 

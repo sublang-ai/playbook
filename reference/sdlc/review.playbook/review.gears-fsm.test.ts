@@ -62,6 +62,8 @@ const context: ReviewContext = {
   callerInput: 'Initial request',
   reviewerOutput: 'Reviewer findings',
   coderOutput: 'Coder disposition',
+  latestCommit: '1111111111111111111111111111111111111111',
+  evaluatedRevision: '3333333333333333333333333333333333333333',
 };
 
 const done = (output: unknown) => ({
@@ -100,7 +102,10 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: 'noFindings',
       target: '#done',
       context,
-      event: done({ guard: 'noFindings' }),
+      event: done({
+        guard: 'noFindings',
+        evaluatedRevision: '3333333333333333333333333333333333333333',
+      }),
     },
     {
       guard: 'needsBossReply',
@@ -114,7 +119,11 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: 'committed',
       target: '#reviewAfterCommit',
       context,
-      event: done({ guard: 'committed', coderOutput: 'Committed abc123' }),
+      event: done({
+        guard: 'committed',
+        coderOutput: 'Committed the accepted fixes.',
+        latestCommit: '2222222222222222222222222222222222222222',
+      }),
     },
     {
       guard: 'rejectedAll',
@@ -143,7 +152,10 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: 'noFindings',
       target: '#done',
       context,
-      event: done({ guard: 'noFindings' }),
+      event: done({
+        guard: 'noFindings',
+        evaluatedRevision: '3333333333333333333333333333333333333333',
+      }),
     },
     {
       guard: 'needsBossReply',
@@ -163,7 +175,10 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       guard: 'noFindings',
       target: '#done',
       context,
-      event: done({ guard: 'noFindings' }),
+      event: done({
+        guard: 'noFindings',
+        evaluatedRevision: '3333333333333333333333333333333333333333',
+      }),
     },
     {
       guard: 'needsBossReply',
@@ -439,11 +454,36 @@ describe('REVIEW GEARS to FSM compilation', () => {
     }
   });
 
-  it('keeps relayed fields quoted and owned by the preceding player result', () => {
+  it('keeps every round relay quoted, ordered, and receipt- or player-owned', () => {
+    // Every round relays the complete caller input (original intent, review
+    // scope, and context) before the round-specific evidence.
     expect(gears.get('REVIEW-1')?.prompt).toContain('> <caller-input>');
-    expect(gears.get('REVIEW-2')?.prompt).toContain('> <reviewer-output>');
-    expect(gears.get('REVIEW-3')?.prompt).toContain('> <coder-output>');
-    expect(gears.get('REVIEW-4')?.prompt).toContain('> <coder-output>');
+    expect(gears.get('REVIEW-2')?.prompt).toEqual(
+      expect.arrayContaining(['> <caller-input>', '> <reviewer-output>']),
+    );
+    expect(gears.get('REVIEW-3')?.prompt).toEqual(
+      expect.arrayContaining([
+        '> <caller-input>',
+        '> <latest-commit>',
+        '> <coder-output>',
+      ]),
+    );
+    expect(gears.get('REVIEW-4')?.prompt).toEqual(
+      expect.arrayContaining(['> <caller-input>', '> <coder-output>']),
+    );
+    // The evaluated revision relays only where a receipt-derived review-fix
+    // commit exists; no other round leaves a placeholder without a producer.
+    for (const [id, item] of gears) {
+      if (id === 'REVIEW-3') continue;
+      expect(item.prompt, id).not.toContain('> <latest-commit>');
+    }
+    const review3 = gears.get('REVIEW-3')?.prompt ?? [];
+    expect(review3.indexOf('> <caller-input>')).toBeLessThan(
+      review3.indexOf('> <latest-commit>'),
+    );
+    expect(review3.indexOf('> <latest-commit>')).toBeLessThan(
+      review3.indexOf('> <coder-output>'),
+    );
 
     const text = readFileSync(
       new URL('./review.gears.md', import.meta.url),
@@ -453,5 +493,74 @@ describe('REVIEW GEARS to FSM compilation', () => {
       '`reviewerOutput: <verbatim final text>`',
     );
     expect(text).toContain('`coderOutput: <verbatim final text>`');
+    // The review-fix commit identity is annotated as a commit identity, not
+    // verbatim player text: it is receipt-owned effect evidence.
+    expect(text).toContain('`latestCommit: <commit identity>`');
+    expect(text).not.toContain('`latestCommit: <verbatim final text>`');
+  });
+
+  it('requires receipt-derived identities before accepting commit or completion', () => {
+    const guards = reviewMachine.implementations.guards as unknown as Record<
+      string,
+      (
+        args: { context: ReviewContext; event: unknown },
+        params: unknown,
+      ) => boolean
+    >;
+    expect(
+      guards.committed(
+        {
+          context,
+          event: done({ guard: 'committed', coderOutput: 'Committed.' }),
+        },
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      guards.committed(
+        {
+          context,
+          event: done({
+            guard: 'committed',
+            coderOutput: 'Committed.',
+            latestCommit: '   ',
+          }),
+        },
+        undefined,
+      ),
+    ).toBe(false);
+    // DR-045: completion equally requires the receipt-observed revision.
+    expect(
+      guards.noFindings(
+        { context, event: done({ guard: 'noFindings' }) },
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      guards.noFindings(
+        {
+          context,
+          event: done({ guard: 'noFindings', evaluatedRevision: ' ' }),
+        },
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it('derives the terminal result from the receipt-observed revision only', () => {
+    const output = (
+      reviewMachine as unknown as {
+        config: { output: (args: { context: ReviewContext }) => unknown };
+      }
+    ).config.output;
+    expect(output({ context })).toEqual({
+      noUnsettledFindings: true,
+      evaluatedRevision: '3333333333333333333333333333333333333333',
+    });
+    // DR-045: completion without a receipt-observed revision is guarded out;
+    // the output derivation refuses to fabricate one.
+    expect(() =>
+      output({ context: { callerInput: 'Initial request' } }),
+    ).toThrow(/without a receipt-observed evaluated revision/);
   });
 });

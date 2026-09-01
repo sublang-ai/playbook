@@ -12,14 +12,24 @@ export interface PendingBossQuestion {
     question: string;
 }
 export interface ReviewOutput {
-    approvedCommit: 'latest';
     noUnsettledFindings: true;
+    /**
+     * Exact receipt-derived repository revision at which the review scope was
+     * evaluated: the closing clean round's `unchanged` receipt observes it as
+     * HEAD — the last review-fix commit when one landed, or the caller-supplied
+     * scope revision when none did (DR-045).
+     */
+    evaluatedRevision: string;
 }
 export type ReviewInput = Readonly<Record<string, never>>;
 export interface ReviewContext {
     callerInput?: string;
     reviewerOutput?: string;
     coderOutput?: string;
+    /** Receipt-derived OID of the latest review-fix commit (never player prose). */
+    latestCommit?: string;
+    /** Observed HEAD of the closing clean round's unchanged receipt (DR-045). */
+    evaluatedRevision?: string;
     lastError?: unknown;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
@@ -45,6 +55,7 @@ export interface PlayerInput {
     callerInput?: string;
     reviewerOutput?: string;
     coderOutput?: string;
+    latestCommit?: string;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
@@ -53,9 +64,11 @@ export type PlayerOutput = {
     reviewerOutput: string;
 } | {
     guard: 'noFindings';
+    evaluatedRevision: string;
 } | {
     guard: 'committed';
     coderOutput: string;
+    latestCommit: string;
 } | {
     guard: 'rejectedAll';
     coderOutput: string;
@@ -109,7 +122,7 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     type: "rememberCoderOutput";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "clearBossReplyContext";
+    type: "rememberEvaluatedRevision";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "setPendingReviewInitial";

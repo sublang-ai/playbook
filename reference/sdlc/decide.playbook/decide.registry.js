@@ -41,7 +41,7 @@ export function validateDecideOptions(optionSlice) {
 export const decidePlaybookRegistryEntry = {
     id: 'decide',
     command: 'decide',
-    intent: 'turn independent Coder and Reviewer proposals into an approved spec-design commit',
+    intent: 'synthesize independent Coder and Reviewer proposals into an approved spec-design commit',
     artifactSchema: 3,
     runtimeProfile: Object.freeze({
         kind: 'bespoke',

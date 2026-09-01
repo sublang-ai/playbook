@@ -80,27 +80,31 @@ describe('CODE player prompt composition', () => {
     expect(prompt).toContain('> line one\n> line two');
   });
 
-  it('substitutes IR task, IR number, and Coder identity once', () => {
+  it('substitutes caller input, IR number, and Coder identity once', () => {
     const input: PlayerInput = {
       stateId: 'runIrTask',
       role: 'coder',
       sourceItem: 'CODE-3',
       prompt: [
-        '> <ir-task>',
-        'Read IR-<#>.',
+        '> <caller-input>',
+        '> <ir-number>',
+        '> <run-results>',
+        '',
+        'Read the identified IR.',
         'Coder is <coder-llm>.',
       ].join('\n'),
       result: { finalTask: 'done' },
-      callerInput: 'unused',
+      callerInput: 'Use literal <coder-llm> and $&.\nThen finish.',
       runResults: '',
       irNumber: '040',
-      irTask: 'Use literal <coder-llm> and $&.\nThen finish.',
     };
     expect(composePlayerPrompt(input, promptIdentity)).toBe(
       [
         '> Use literal <coder-llm> and $&.',
         '> Then finish.',
-        'Read IR-040.',
+        '> 040',
+        '',
+        'Read the identified IR.',
         'Coder is GPT-5.6 Sol.',
       ].join('\n'),
     );

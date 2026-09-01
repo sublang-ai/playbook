@@ -788,6 +788,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/code/registry');
     expect(seeded).toContain('@sublang/playbook/review/registry');
     expect(seeded).toContain('@sublang/playbook/decide/registry');
+    expect(seeded).toContain('@sublang/playbook/dev/registry');
     expect(seeded).toContain('gpt-5.6-sol');
     expect(seeded).toContain('claude-opus-5');
     expect(seeded).not.toContain('committer:');
@@ -817,6 +818,12 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         effort: 'xhigh',
         permissions: { mode: 'auto' },
       },
+      'dev.analyst': {
+        adapter: 'claude',
+        model: 'claude-opus-5',
+        effort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
     });
     expect(seededParsed.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
     expect(seededParsed.playbooks.review.roles).toEqual({
@@ -826,6 +833,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seededParsed.playbooks.decide.roles).toEqual(
       seededParsed.playbooks.review.roles,
     );
+    expect(seededParsed.playbooks.dev.roles).toEqual({
+      analyst: 'dev.analyst',
+    });
 
     expect(spawn.calls).toHaveLength(1);
     const composed = parseYaml(spawn.configs[0].content);
@@ -855,6 +865,13 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
         permissions: { mode: 'auto' },
       },
+      {
+        id: 'dev.analyst',
+        adapter: 'claude',
+        model: 'claude-opus-5',
+        effort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
     ]);
     expect(composed.layout.initialVisible).toEqual(['dev.coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
@@ -882,6 +899,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(loaded.config.players.map((p: { id: string }) => p.id)).toEqual([
       'dev.coder',
       'dev.reviewer',
+      'dev.analyst',
     ]);
   });
 

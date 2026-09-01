@@ -23,7 +23,6 @@ export type PlayerInput = {
     readonly callerInput: string;
     readonly runResults: string;
     readonly irNumber?: string;
-    readonly irTask?: string;
     readonly pendingBossQuestion?: PendingBossQuestion;
     readonly bossReply?: string;
 };
@@ -36,16 +35,18 @@ export type PlayerOutput = {
     readonly coderOutput: string;
     readonly latestCommit: string;
     readonly irNumber: string;
-    readonly irTask: string;
 } | {
     readonly guard: 'moreTasks';
     readonly coderOutput: string;
     readonly latestCommit: string;
+    readonly irNumber: string;
     readonly irTask: string;
 } | {
     readonly guard: 'finalTask';
     readonly coderOutput: string;
     readonly latestCommit: string;
+    readonly irNumber: string;
+    readonly irTask: string;
 } | {
     readonly guard: 'needsBossReply';
     readonly question: string;
@@ -57,8 +58,13 @@ export type PlaybookInput = {
     readonly text: string;
 };
 export type ReviewOutput = {
-    readonly approvedCommit: 'latest';
     readonly noUnsettledFindings: true;
+    /**
+     * Exact repository revision at which the review scope was evaluated:
+     * the last review-fix commit when one landed, otherwise the clean
+     * round's receipt-observed HEAD (DR-045). Always present.
+     */
+    readonly evaluatedRevision: string;
 };
 export type CompactError = {
     readonly name: string;
@@ -66,16 +72,16 @@ export type CompactError = {
 };
 export type CodePlaybookOutput = {
     readonly status: 'complete';
-    /** Exact identity of the latest CODE-owned commit. */
+    /** Exact identity of the last CODE-owned commit. */
     readonly lastCodeCommit: string;
-    /** Exact Coder final text produced after that commit. */
-    readonly lastCodeOutput: string;
+    /** Exact repository revision the final passing review evaluated. */
+    readonly finalEvaluatedRevision: string;
+    /** Every phase's review passed with no unsettled findings. */
+    readonly allReviewsPassed: true;
 } | {
     readonly status: 'review-failed';
-    /** Exact identity of the latest CODE-owned commit. */
+    /** Exact identity of the last CODE-owned commit. */
     readonly lastCodeCommit: string;
-    /** Exact Coder final text produced after that commit. */
-    readonly lastCodeOutput: string;
     readonly error: CompactError;
 };
 export type CodingInput = {
@@ -88,7 +94,7 @@ export type CodingContext = {
     readonly latestCommit?: string;
     readonly irNumber?: string;
     readonly irTask?: string;
-    readonly nextIrTask?: string;
+    readonly evaluatedRevision?: string;
     readonly phase?: CodePhase;
     readonly completion?: 'complete' | 'review-failed';
     readonly reviewError?: CompactError;
@@ -145,9 +151,6 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberFinalTask";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "advanceToNextIrTask";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberPendingQuestion";
@@ -211,16 +214,16 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     params: unknown;
 }, never, "done" | "failed" | "awaitBossReply" | "ready" | "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask" | "reportedReviewFailure", string, CodingInput, {
     readonly status: "complete";
-    /** Exact identity of the latest CODE-owned commit. */
+    /** Exact identity of the last CODE-owned commit. */
     readonly lastCodeCommit: string;
-    /** Exact Coder final text produced after that commit. */
-    readonly lastCodeOutput: string;
+    /** Exact repository revision the final passing review evaluated. */
+    readonly finalEvaluatedRevision: string;
+    /** Every phase's review passed with no unsettled findings. */
+    readonly allReviewsPassed: true;
 } | {
     readonly status: "review-failed";
-    /** Exact identity of the latest CODE-owned commit. */
+    /** Exact identity of the last CODE-owned commit. */
     readonly lastCodeCommit: string;
-    /** Exact Coder final text produced after that commit. */
-    readonly lastCodeOutput: string;
     readonly error: CompactError;
 }, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "code";
