@@ -688,6 +688,82 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(loadModule).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    'rejects unsupported role fastMode=%s before registry work',
+    async (fastMode) => {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(
+          {
+            captain: 'claude',
+            players: { 'dev.coder': 'gemini' },
+            playbooks: {
+              code: {
+                from: 'mod://code',
+                roles: {
+                  coder: { player: 'dev.coder', fastMode },
+                },
+              },
+            },
+          },
+          { prepareRegistryModule, loadModule },
+        ),
+      ).rejects.toThrow(/fastMode.*not supported.*gemini/i);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    'rejects unsupported selected role fastMode=%s before registry work',
+    async (fastMode) => {
+      const initial = await launchConfig.normalizeLaunchPlan(
+        {
+          captain: 'claude',
+          players: { 'dev.coder': 'gemini' },
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: { coder: 'dev.coder' },
+            },
+          },
+        },
+        {
+          loadModule: moduleLoader({
+            'mod://code': entry('code', ['coder']),
+          }),
+        },
+      );
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeSelectedLaunchPlanDataOnly(
+          {
+            captain: 'claude',
+            players: { 'dev.coder': 'gemini' },
+            playbooks: {
+              code: {
+                from: 'mod://code',
+                roles: {
+                  coder: { player: 'dev.coder', fastMode },
+                },
+              },
+            },
+          },
+          {
+            configPath: '/tmp/playbook.config.yaml',
+            stored: structuralProjection(initial),
+            prepareRegistryModule,
+            loadModule,
+          },
+        ),
+      ).rejects.toThrow(/fastMode.*not supported.*gemini/i);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
+
   it('rejects configured host capabilities before registry preparation', async () => {
     const prepareRegistryModule = vi.fn();
     const loadModule = vi.fn();

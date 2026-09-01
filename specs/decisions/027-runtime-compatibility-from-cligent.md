@@ -18,7 +18,7 @@ It also left this repository holding three copies of knowledge that `@sublang/cl
 | Mirrored peer ranges | `peerDependencies` + the release-27 identity test | Every cligent floor move forces a playbook release; the mirror froze at `>=0.138.0` while cligent moved to `>=0.144.0` |
 | Boolean probe verdict | `isAvailable()` collapsed to "not installed" | An installed-but-stale SDK was reported absent; a stale Codex passed the gate and failed mid-turn on a current model |
 
-cligent now ships a runtime descriptor (`@sublang/cligent/runtime-targets`) declaring each adapter's runtimes, supported floors, tested versions, and pinned repairs; enforces the floors inside the loaders `isAvailable()` and `run()` share; and exports a structured verdict distinguishing missing from unsupported.
+cligent now ships a runtime descriptor (`@sublang/cligent/runtime-targets`) declaring each adapter's runtimes, supported floors, tested versions, and pinned repairs; enforces the floors inside the loaders `isAvailable()` and `run()` share; exports a structured verdict distinguishing missing from unsupported; and publishes adapter-scoped fast-mode capability metadata and validation.
 
 ## Decision
 
@@ -29,6 +29,8 @@ Playbook delegates all agent-runtime version knowledge to cligent and keeps none
 - The gate renders cligent's structured verdict.
   A runtime installed below cligent's floor is reported as unsupported with its installed and required versions, distinctly from absent; the two have different repairs and conflating them sends a user to install what is already present.
 - Remedies install cligent's pinned repair spec, so a printed repair can never install a version the gate would refuse again.
+- Agent-setting capability also remains cligent knowledge.
+  Whenever `fastMode` is present, Playbook shall use cligent's public capability contract to accept or reject that literal boolean before registry preparation, import, readiness, or host work, and shall keep no adapter support list of its own.
 - `gemini`'s exemption ends.
   Its rationale — no missing-SDK failure mode — was true but incomplete: its CLI can be absent or below cligent's floor, and the descriptor now names both.
   The gate covers every declared adapter for which cligent publishes runtime targets; adapters without targets keep the unknown-adapter warning.
@@ -40,6 +42,7 @@ Playbook delegates all agent-runtime version knowledge to cligent and keeps none
 ## Consequences
 
 A cligent upgrade alone moves playbook's compatibility policy: floors, verdicts, and repair pins arrive with the dependency, and no playbook release is forced by a cligent floor move.
+The same single-owner rule keeps Playbook's adapter-scoped fast-mode validation aligned with the runtime that enforces the call.
 Stale runtimes fail before launch with versions named instead of mid-turn with a vendor error.
 The npx re-run names pinned repair specs, so a re-run installs versions the gate accepts.
 Playbook's manifest carries no agent-SDK version literals; the release-27 identity test becomes an absence test.

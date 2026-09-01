@@ -1379,10 +1379,16 @@ function snapshotEffortSelection(value, path) {
     }
     return selection;
 }
+function snapshotFastMode(value, path) {
+    if (value !== undefined && typeof value !== 'boolean') {
+        throw new TypeError(`${path} must be a boolean`);
+    }
+    return value;
+}
 function snapshotSessionAgent(value, path) {
     const agent = snapshotRecord(value, path);
-    rejectSnapshotKeys(agent, ['adapter', 'model', 'effort', 'instruction', 'permissions'], path);
-    const fixed = snapshotFixedAgent(Object.fromEntries(Object.entries(agent).filter(([key]) => key !== 'model' && key !== 'effort')), path);
+    rejectSnapshotKeys(agent, ['adapter', 'model', 'effort', 'fastMode', 'instruction', 'permissions'], path);
+    const fixed = snapshotFixedAgent(Object.fromEntries(Object.entries(agent).filter(([key]) => key !== 'model' && key !== 'effort' && key !== 'fastMode')), path);
     return {
         adapter: fixed.adapter,
         ...(fixed.instruction === undefined
@@ -1393,6 +1399,9 @@ function snapshotSessionAgent(value, path) {
             : { permissions: livePermissions(fixed.permissions) }),
         model: snapshotTuningSelection(agent.model, `${path}.model`),
         effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
+        ...(agent.fastMode === undefined
+            ? {}
+            : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
     };
 }
 function fixedAgent(agent) {
@@ -1537,7 +1546,7 @@ async function buildEnablements(options, loadModule, hostCapabilities) {
         for (const role of entry.requiredRoleIds) {
             const path = `captain.options.playbooks.${id}.roles.${role}`;
             const rawBinding = snapshotRecord(roleRecord[role], path);
-            rejectSnapshotKeys(rawBinding, ['playerId', 'model', 'effort'], path);
+            rejectSnapshotKeys(rawBinding, ['playerId', 'model', 'effort', 'fastMode'], path);
             const playerId = snapshotString(rawBinding.playerId, `${path}.playerId`);
             if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
                 throw new Error(`${path}.playerId is not a canonical player id`);
@@ -1550,6 +1559,11 @@ async function buildEnablements(options, loadModule, hostCapabilities) {
                 playerId,
                 model: snapshotTuningSelection(rawBinding.model, `${path}.model`),
                 effort: snapshotEffortSelection(rawBinding.effort, `${path}.effort`),
+                ...(rawBinding.fastMode === undefined
+                    ? {}
+                    : {
+                        fastMode: snapshotFastMode(rawBinding.fastMode, `${path}.fastMode`),
+                    }),
                 agent,
             });
         }

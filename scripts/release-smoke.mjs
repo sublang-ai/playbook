@@ -50,6 +50,8 @@ const maxBuffer = 64 * 1024 * 1024;
 const smokeToken = 'RELEASE_SMOKE_OK';
 const smokeContinuedReply = 'RELEASE_SMOKE_CONTINUED';
 const smokeTask = 'Run the deterministic release smoke probe.';
+const unsupportedFastModeAdapterMarker =
+  '__PLAYBOOK_FAST_MODE_UNSUPPORTED_ADAPTER__';
 const sessionIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const adapterSdks = ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'];
@@ -917,6 +919,7 @@ class DeterministicAdapter {
         resume: options.resume === undefined ? null : options.resume,
         model: options.model ?? null,
         effort: options.effort ?? null,
+        fastMode: options.fastMode ?? null,
         resumeToken,
         advertised,
         selected,
@@ -964,6 +967,102 @@ const result = await runPlaybookCli({
   probeAdapterSdk: async () => true,
 });
 process.exitCode = result.code ?? 0;
+`;
+}
+
+// Exercise malformed fast-mode configuration through the packed public CLI
+// boundary. Both boolean literals are semantically meaningful, so an adapter
+// that does not support fast mode must reject either one before any external
+// registry, SDK-readiness, or runtime work begins.
+function installedFastModeBoundaryDriverSource() {
+  return `import { readFileSync, writeFileSync } from 'node:fs';
+import { FAST_MODE_SUPPORT } from '@sublang/cligent';
+import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
+
+const cases = process.argv.slice(2);
+if (cases.length !== 2) {
+  throw new Error('expected fastMode=false and fastMode=true config paths');
+}
+const unsupportedAdapter = Object.entries(FAST_MODE_SUPPORT).find(
+  ([, capability]) => capability.requestSupported === false,
+)?.[0];
+if (unsupportedAdapter === undefined) {
+  throw new Error('packed Cligent declares no unsupported fast-mode adapter');
+}
+const adapterMarker = ${JSON.stringify(unsupportedFastModeAdapterMarker)};
+
+function capture() {
+  let text = '';
+  return {
+    stream: {
+      write(chunk) {
+        text += String(chunk);
+        return true;
+      },
+    },
+    value: () => text,
+  };
+}
+
+for (const configPath of cases) {
+  const authoredConfig = readFileSync(configPath, 'utf8');
+  if (authoredConfig.split(adapterMarker).length !== 2) {
+    throw new Error('unsupported fast-mode config has the wrong adapter marker');
+  }
+  writeFileSync(
+    configPath,
+    authoredConfig.replaceAll(adapterMarker, unsupportedAdapter),
+  );
+  const hooks = [];
+  const forbidden = (name) => async () => {
+    hooks.push(name);
+    throw new Error(\`forbidden external hook: \${name}\`);
+  };
+  const stdout = capture();
+  const stderr = capture();
+  const result = await runPlaybookCli({
+    argv: ['run', '/unsupported'],
+    env: process.env,
+    userConfigPath: configPath,
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    prepareRegistryModule: forbidden('prepare'),
+    loadModule: forbidden('import'),
+    probeAdapterSdk: forbidden('readiness'),
+    createCaptainRuntime: forbidden('captain-runtime'),
+    createHostRuntime: forbidden('host-runtime'),
+    sessionStore: new Proxy({}, {
+      get() {
+        hooks.push('session-store');
+        throw new Error('forbidden external hook: session-store');
+      },
+    }),
+  });
+  if (result.code !== 1) {
+    throw new Error(
+      \`unsupported fastMode config exited \${String(result.code)} instead of 1\`,
+    );
+  }
+  if (stdout.value() !== '') {
+    throw new Error(\`unsupported fastMode config wrote stdout: \${stdout.value()}\`);
+  }
+  if (
+    !stderr.value().includes('fastMode') ||
+    !stderr.value().includes('not supported') ||
+    !stderr.value().includes(unsupportedAdapter)
+  ) {
+    throw new Error(
+      \`unsupported fastMode config reported the wrong error: \${stderr.value()}\`,
+    );
+  }
+  if (hooks.length !== 0) {
+    throw new Error(
+      \`unsupported fastMode config crossed external hooks: \${hooks.join(', ')}\`,
+    );
+  }
+}
+
+process.stdout.write('fastMode false/true rejected before external hooks\\n');
 `;
 }
 
@@ -1516,10 +1615,10 @@ function stepOptedIn(root, state) {
 // Step 4 — the installed executable's own non-launching surfaces.
 function stepInstalledCli(root, state) {
   const home = join(root, 'cli-home');
-  const configHome = join(home, '.config');
-  mkdirSync(join(configHome, 'playbook'), { recursive: true });
+  const spexHome = join(home, '.spex');
+  mkdirSync(join(spexHome, 'playbook'), { recursive: true });
   writeFileSync(
-    join(configHome, 'playbook', 'playbook.config.yaml'),
+    join(spexHome, 'playbook', 'playbook.config.yaml'),
     [
       'captain:',
       '  adapter: claude',
@@ -1541,7 +1640,8 @@ function stepInstalledCli(root, state) {
   );
   const env = smokeEnv({
     HOME: home,
-    XDG_CONFIG_HOME: configHome,
+    SPEX_HOME: spexHome,
+    XDG_CONFIG_HOME: join(home, '.config'),
     XDG_STATE_HOME: join(home, '.local', 'state'),
   });
   const help = run(state.optinBin, ['--help'], { cwd: root, env });
@@ -1593,6 +1693,14 @@ function stepHermetic(root, state) {
   writeFileSync(configPath, smokeConfig('a'));
   const retunePath = join(scenario, 'retune-b.yaml');
   writeFileSync(retunePath, smokeRetuneOverlay());
+  const unsupportedFastModePaths = [false, true].map((fastMode) => {
+    const path = join(
+      scenario,
+      `unsupported-fast-mode-${String(fastMode)}.yaml`,
+    );
+    writeFileSync(path, unsupportedFastModeConfig(fastMode));
+    return path;
+  });
   for (const args of [
     ['init', '-b', 'main'],
     ['config', 'user.name', 'Playbook Release Smoke'],
@@ -1627,7 +1735,8 @@ function stepHermetic(root, state) {
 
   const env = smokeEnv({
     HOME: join(scenario, 'home'),
-    XDG_CONFIG_HOME: join(scenario, 'xdg'),
+    SPEX_HOME: join(scenario, 'spex'),
+    XDG_CONFIG_HOME: join(scenario, 'xdg-config'),
     XDG_STATE_HOME: join(scenario, 'xdg-state'),
     ANTHROPIC_API_KEY: 'release-smoke-synthetic-readiness',
     OPENAI_API_KEY: 'release-smoke-synthetic-readiness',
@@ -1640,6 +1749,24 @@ function stepHermetic(root, state) {
     'release-smoke-headless.mjs',
   );
   writeFileSync(driverPath, installedHeadlessDriverSource());
+  const fastModeBoundaryDriverPath = join(
+    installedPackageRoot(state.optinPrefix),
+    'release-smoke-fast-mode-boundary.mjs',
+  );
+  writeFileSync(
+    fastModeBoundaryDriverPath,
+    installedFastModeBoundaryDriverSource(),
+  );
+  const fastModeBoundary = run(
+    process.execPath,
+    [fastModeBoundaryDriverPath, ...unsupportedFastModePaths],
+    { cwd: repo, env: processEnv('fast-mode-boundary') },
+  );
+  expectContains(
+    fastModeBoundary.stdout,
+    'fastMode false/true rejected before external hooks',
+    'packed fast-mode boundary probe',
+  );
 
   const first = run(process.execPath, [driverPath, 'run', '--json'], {
     cwd: repo,
@@ -1802,16 +1929,22 @@ function stepHermetic(root, state) {
       'release-smoke:closing:lane-b:4' ||
     finalExecution?.captain?.model?.value !== 'release-smoke-captain-b' ||
     finalExecution?.captain?.effort?.value !== 'max' ||
+    finalExecution?.captain?.fastMode !== true ||
     finalPlayers['release.shared']?.model?.value !== 'release-player-b' ||
     finalPlayers['release.shared']?.effort?.value !== 'max' ||
+    finalPlayers['release.shared']?.fastMode !== false ||
     finalPlayers['release.isolated']?.model?.value !== 'release-player-b' ||
     finalPlayers['release.isolated']?.effort?.value !== 'max' ||
+    finalPlayers['release.isolated']?.fastMode !== false ||
     finalRoles?.first?.model?.value !== 'release-player-b' ||
     finalRoles?.first?.effort?.value !== 'max' ||
+    finalRoles?.first?.fastMode !== false ||
     finalRoles?.second?.model?.kind !== 'provider-default' ||
     finalRoles?.second?.effort?.kind !== 'provider-default' ||
+    finalRoles?.second?.fastMode !== true ||
     finalRoles?.isolated?.model?.value !== 'release-player-b' ||
-    finalRoles?.isolated?.effort?.value !== 'max'
+    finalRoles?.isolated?.effort?.value !== 'max' ||
+    finalRoles?.isolated?.fastMode !== true
   ) {
     fail(
       'cross-process lane continuation lost identity or current tuning',
@@ -1974,13 +2107,15 @@ function stepHermetic(root, state) {
   });
 
   rmSync(driverPath);
+  rmSync(fastModeBoundaryDriverPath);
   return [
     'one provisioning line; both engine links resolve into the prefix',
     `stdin produced exact {sessionId,reply} with ${smokeToken}`,
     `four processes continued Captain session ${firstEnvelope.sessionId}`,
     'schema 3 retained two segmented player identities and frozen structure',
     'shared roles chained one token; the isolated player kept its own token',
-    'ordinary reopen applied current model and effort, including provider-default',
+    'ordinary reopen applied current model, effort, and literal fast mode',
+    'omitted fast mode kept the provider default; unsupported booleans ran no external hook',
     'continuation replayed no settled effect and invoked no tmux',
     'a second process advertised and applied the parked failure retry',
   ];
@@ -2031,6 +2166,7 @@ function stepEffectReconciliation(root, state) {
 
   const env = smokeEnv({
     HOME: home,
+    SPEX_HOME: join(home, '.spex'),
     XDG_CONFIG_HOME: join(home, '.config'),
     XDG_STATE_HOME: stateHome,
     ANTHROPIC_API_KEY: 'release-smoke-synthetic-readiness',
@@ -2385,7 +2521,7 @@ function stepEffectReconciliation(root, state) {
 function smokeConfig(tuning) {
   const suffix = tuning === 'a' ? 'a' : 'b';
   return [
-    `captain: { adapter: claude, model: release-smoke-captain-${suffix}, effort: low }`,
+    `captain: { adapter: claude, model: release-smoke-captain-${suffix}, effort: low, fastMode: false }`,
     'players:',
     `  release.shared: { adapter: codex, model: release-player-${suffix}, effort: high }`,
     `  release.isolated: { adapter: codex, model: release-player-${suffix}, effort: high }`,
@@ -2399,8 +2535,8 @@ function smokeConfig(tuning) {
     '  lanes:',
     '    from: ./lanes.playbook.mjs',
     '    roles:',
-    '      first: release.shared',
-    `      second: { player: release.shared, model: release-second-${suffix}, effort: low }`,
+    '      first: { player: release.shared, fastMode: true }',
+    `      second: { player: release.shared, model: release-second-${suffix}, effort: low, fastMode: false }`,
     '      isolated: release.isolated',
     '',
   ].join('\n');
@@ -2408,14 +2544,30 @@ function smokeConfig(tuning) {
 
 function smokeRetuneOverlay() {
   return [
-    'captain: { model: release-smoke-captain-b, effort: max }',
+    'captain: { model: release-smoke-captain-b, effort: max, fastMode: true }',
     'players:',
-    '  release.shared: { model: release-player-b, effort: max }',
-    '  release.isolated: { model: release-player-b, effort: max }',
+    '  release.shared: { model: release-player-b, effort: max, fastMode: false }',
+    '  release.isolated: { model: release-player-b, effort: max, fastMode: false }',
     'playbooks:',
     '  lanes:',
     '    roles:',
-    '      second: { player: release.shared, model: false, effort: false }',
+    '      first: { player: release.shared, fastMode: false }',
+    '      second: { player: release.shared, model: false, effort: false, fastMode: true }',
+    '      isolated: { player: release.isolated, fastMode: true }',
+    '',
+  ].join('\n');
+}
+
+function unsupportedFastModeConfig(fastMode) {
+  return [
+    'captain: { adapter: claude }',
+    'players:',
+    `  release.unsupported: { adapter: ${unsupportedFastModeAdapterMarker} }`,
+    'playbooks:',
+    '  unsupported:',
+    '    from: ./must-not-prepare.playbook.mjs',
+    '    roles:',
+    `      worker: { player: release.unsupported, fastMode: ${String(fastMode)} }`,
     '',
   ].join('\n');
 }
@@ -2441,7 +2593,7 @@ function expectOneOrderedLifecycle(stderr, id) {
 
 function assertSmokeCalls(calls) {
   const expected = [
-    ['first', 'closing', null, null, 'release-smoke-captain-a', 'low'],
+    ['first', 'closing', null, null, 'release-smoke-captain-a', 'low', false],
     [
       'continued',
       'selection',
@@ -2449,8 +2601,9 @@ function assertSmokeCalls(calls) {
       'release-smoke:closing:first:1',
       'release-smoke-captain-a',
       'low',
+      false,
     ],
-    ['lane-a', 'player', 'first', null, 'release-player-a', 'high'],
+    ['lane-a', 'player', 'first', null, 'release-player-a', 'high', true],
     [
       'lane-a',
       'player',
@@ -2458,8 +2611,9 @@ function assertSmokeCalls(calls) {
       'release-lane:shared:1',
       'release-second-a',
       'low',
+      false,
     ],
-    ['lane-a', 'player', 'isolated', null, 'release-player-a', 'high'],
+    ['lane-a', 'player', 'isolated', null, 'release-player-a', 'high', null],
     [
       'lane-a',
       'closing',
@@ -2467,6 +2621,7 @@ function assertSmokeCalls(calls) {
       'release-smoke:selection:continued:1',
       'release-smoke-captain-a',
       'low',
+      false,
     ],
     [
       'lane-b',
@@ -2475,6 +2630,7 @@ function assertSmokeCalls(calls) {
       'release-lane:shared:2',
       null,
       null,
+      true,
     ],
     [
       'lane-b',
@@ -2483,6 +2639,7 @@ function assertSmokeCalls(calls) {
       'release-lane:shared:3',
       'release-player-b',
       'max',
+      false,
     ],
     [
       'lane-b',
@@ -2491,6 +2648,7 @@ function assertSmokeCalls(calls) {
       'release-lane:isolated:1',
       'release-player-b',
       'max',
+      true,
     ],
     [
       'lane-b',
@@ -2499,6 +2657,7 @@ function assertSmokeCalls(calls) {
       'release-smoke:closing:lane-a:4',
       'release-smoke-captain-b',
       'max',
+      true,
     ],
   ];
   const actual = calls.map((call) => [
@@ -2508,6 +2667,7 @@ function assertSmokeCalls(calls) {
     call.resume,
     call.model,
     call.effort,
+    call.fastMode,
   ]);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     fail(
@@ -3144,9 +3304,12 @@ export const _testing = Object.freeze({
   stepEffectReconciliation,
   smokeConfig,
   smokeRetuneOverlay,
+  unsupportedFastModeAdapterMarker,
+  unsupportedFastModeConfig,
   assertSmokeCalls,
   effectArtifactSource,
   installedEffectReconciliationDriverSource,
+  installedFastModeBoundaryDriverSource,
   compiledRuntimeImportProbeSource,
   cligentMessageBoundaryProbeSource,
   sessionStoreConsumerSource,

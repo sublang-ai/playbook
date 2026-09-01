@@ -73,15 +73,18 @@ export function liveRetuneOverlay(): string {
   return [
     'captain:',
     '  effort: low',
+    '  fastMode: false',
     'players:',
     '  acceptance.dev.coder:',
     '    effort: high',
+    '    fastMode: true',
     '  acceptance.dev.reviewer:',
     '    effort: high',
+    '    fastMode: false',
     'playbooks:',
     '  decide:',
     '    roles:',
-    '      reviewer: { player: acceptance.dev.reviewer, model: false, effort: false }',
+    '      reviewer: { player: acceptance.dev.reviewer, model: false, effort: false, fastMode: true }',
     '',
   ].join('\n');
 }

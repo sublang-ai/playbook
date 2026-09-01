@@ -6,12 +6,12 @@
 ## Status
 
 Accepted as amended by [DR-031](031-shared-captain-session-front-ends.md).
-[DR-032](032-explicit-roles-session-players.md) supersedes the frozen-lineup and no-continuation-overlay rules for an ordinary settled reopen: current model and effort plus opening overlays may retune a stable player id, instruction and permissions remain structurally frozen, and uncertain retry retains its attempted settings.
+[DR-032](032-explicit-roles-session-players.md) supersedes the frozen-lineup and no-continuation-overlay rules for an ordinary settled reopen: current model, effort, and fast mode plus opening overlays may retune a stable player id, instruction and permissions remain structurally frozen, and uncertain retry retains its attempted settings.
 
 ## Context
 
 Tuning the agent lineup for one run currently means editing durable state.
-The interactive `playbook` command reads exactly one top-level config at `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` ([[playbook-cli-3](../packages/playbook-cli.md#playbook-cli-3)]); the only per-invocation alternative is `--config <path>`, a full raw tmux-play config that bypasses seeding, composition, and the readiness gate ([[playbook-cli-1](../packages/playbook-cli.md#playbook-cli-1)]) — far more than a lineup tweak wants, and in a different format.
+The interactive `playbook` command reads exactly one top-level config at `${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml` ([[playbook-cli-3](../packages/playbook-cli.md#playbook-cli-3)]); the only per-invocation alternative is `--config <path>`, a full raw tmux-play config that bypasses seeding, composition, and the readiness gate ([[playbook-cli-1](../packages/playbook-cli.md#playbook-cli-1)]) — far more than a lineup tweak wants, and in a different format.
 The released non-interactive `playbook run` introduced separate per-run agent flags, but [DR-031](031-shared-captain-session-front-ends.md) later replaced that split with the same configured Captain session used by interactive mode.
 
 Trying a stronger reviewer model, dropping the Coder's effort for a cheap smoke run, or swapping one playbook's lineup for a single launch should not require editing the global config and editing it back.
@@ -20,8 +20,8 @@ Trying a stronger reviewer model, dropping the Coder's effort for a cheap smoke 
 
 ### 1. Agent tuning uses the shared config
 
-Interactive and headless Captain sessions shall obtain each agent's adapter, model, effort, and permissions from the same inline top-level config and optional launch overlays.
-An ordinary settled continuation shall preserve the session's structural settings while re-reading current model and effort tuning plus opening overlays under [DR-032](032-explicit-roles-session-players.md); an uncertain retry shall use its exact attempted settings, and neither path shall accept run-only binding flags.
+Interactive and headless Captain sessions shall obtain each agent's adapter, model, effort, fast mode, and permissions from the same inline top-level config and optional launch overlays.
+An ordinary settled continuation shall preserve the session's structural settings while re-reading current model, effort, and fast-mode tuning plus opening overlays under [DR-032](032-explicit-roles-session-players.md); an uncertain retry shall use its exact attempted settings, and neither path shall accept run-only binding flags.
 
 ### 2. `--with` config overlays for a configured session launch
 

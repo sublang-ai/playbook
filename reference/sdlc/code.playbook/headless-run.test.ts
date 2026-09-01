@@ -42,9 +42,11 @@ import { emptyPlaybookEffectLedger } from '../../../src/xstate-runtime.js';
 const { runPlaybookCli, runPlaybookCliEntry } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
 );
-const { installRetainedGenerationsForLaunch, parseRunArgs } = await import(
-  new URL('./bin/run.js', import.meta.url).href
-);
+const {
+  installRetainedGenerationsForLaunch,
+  parseRunArgs,
+  validateFrozenExecutionConfig,
+} = await import(new URL('./bin/run.js', import.meta.url).href);
 const { createCaptainSessionStore, sanitizeReplayRecord } = await import(
   new URL('./bin/session-store.js', import.meta.url).href
 );
@@ -1548,6 +1550,9 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     let probes = 0;
     const home = await mkdtemp(join(tmpdir(), 'playbook-headless-help-'));
     tempDirs.push(home);
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, sharedConfig(), 'utf8');
     const stdout = writer();
     const stderr = writer();
     const help = await runPlaybookCli({
@@ -1580,8 +1585,10 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       'prefer this working directory, else global newest',
     );
     expect({ reads, loads, probes }).toEqual({ reads: 0, loads: 0, probes: 0 });
-    await expect(readFile(join(home, '.config', 'playbook', 'playbook.config.yaml')))
-      .rejects.toThrow();
+    expect(await readFile(legacy, 'utf8')).toBe(sharedConfig());
+    await expect(
+      readFile(join(home, '.spex', 'playbook', 'playbook.config.yaml')),
+    ).rejects.toThrow();
 
     let fallbackReads = 0;
     const empty = await headlessHarness(['run', '   '], {
@@ -1593,6 +1600,34 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(empty.result.code).toBe(1);
     expect(fallbackReads).toBe(0);
     expect(empty.stdout).toBe('');
+  });
+
+  it('relocates through default run delegation before config preparation', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'playbook-headless-relocate-'));
+    tempDirs.push(home);
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    const canonical = join(home, '.spex', 'playbook', 'playbook.config.yaml');
+    const source = `# delegated run relocation\n${sharedConfig()}`;
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, source, 'utf8');
+    await chmod(legacy, 0o600);
+
+    const out = await headlessHarness(['run', 'hello'], {
+      userConfigPath: undefined,
+      homeDir: home,
+      env: {
+        HOME: home,
+        ANTHROPIC_API_KEY: 'a',
+        OPENAI_API_KEY: 'o',
+      },
+    });
+
+    expect(out.result.code).toBe(0);
+    expect(await readFile(canonical, 'utf8')).toBe(source);
+    expect((await stat(canonical)).mode & 0o777).toBe(0o600);
+    await expect(readFile(legacy, 'utf8')).rejects.toThrow();
+    expect(out.stderr).toContain('moved config from');
+    expect(out.stderr).not.toContain('created config');
   });
 
   it('awaits stdout backpressure before reporting success', async () => {
@@ -1886,9 +1921,12 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     );
     const stdout = writer();
     const stderr = writer();
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-invalid-run-'));
+    tempDirs.push(stateRoot);
     const result = await runPlaybookCli({
       argv: ['run', 'hello'],
       userConfigPath: configPath,
+      sessionsDir: join(stateRoot, 'sessions'),
       stdout,
       stderr,
     });
@@ -1913,9 +1951,12 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     const calls = { prepare: 0, load: 0, host: 0 };
     const stdout = writer();
     const stderr = writer();
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-invalid-agent-'));
+    tempDirs.push(stateRoot);
     const result = await runPlaybookCli({
       argv: ['run', 'hello'],
       userConfigPath: configPath,
+      sessionsDir: join(stateRoot, 'sessions'),
       prepareRegistryModule: async ({ from }: any) => {
         calls.prepare += 1;
         return from;
@@ -3191,6 +3232,39 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(rejected.stderr).toContain(diagnostic);
   });
 
+  it('rejects frozen unsupported fast mode before prepare or import', async () => {
+    const first = await headlessHarness(['run', 'settled selection'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+
+    for (const fastMode of [false, true]) {
+      const structural = JSON.parse(
+        JSON.stringify(first.result.record.structuralProjection),
+      );
+      const execution = JSON.parse(
+        JSON.stringify(first.result.record.lastAppliedExecutionProjection),
+      );
+      const playerId = execution.catalog.code.roles.coder.playerId;
+      structural.players.find((player: any) => player.id === playerId).adapter =
+        'gemini';
+      execution.players.find((player: any) => player.id === playerId).adapter =
+        'gemini';
+      execution.catalog.code.roles.coder.fastMode = fastMode;
+
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        validateFrozenExecutionConfig(structural, execution, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+      ).rejects.toThrow(/fast.*gemini|gemini.*fast/i);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    }
+  });
+
   it('rereads the selected session under its lease before deciding whether to run', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-reread-'));
     tempDirs.push(stateRoot);
@@ -4266,10 +4340,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     const baselineA = first.result.record.lastAppliedExecutionProjection;
     const overlayB = await writeConfig(
       [
-        'captain: { model: captain-B }',
+        'captain: { model: captain-B, fastMode: true }',
         'players:',
-        '  dev.coder: { model: coder-B }',
-        '  dev.reviewer: { model: reviewer-B }',
+        '  dev.coder: { model: coder-B, fastMode: false }',
+        '  dev.reviewer: { model: reviewer-B, fastMode: true }',
+        'playbooks:',
+        '  code:',
+        '    roles:',
+        '      coder: { player: dev.coder, fastMode: true }',
         '',
       ].join('\n'),
     );
@@ -4309,10 +4387,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(failed.result.code).toBe(2);
     expect(failed.stdout).toBe('');
     expect(hostB).toMatchObject({
-      captainConfig: { model: 'captain-B' },
+      captainConfig: { model: 'captain-B', fastMode: true },
       players: [
-        { id: 'dev.coder', model: 'coder-B' },
-        { id: 'dev.reviewer', model: 'reviewer-B' },
+        { id: 'dev.coder', model: 'coder-B', fastMode: false },
+        { id: 'dev.reviewer', model: 'reviewer-B', fastMode: true },
       ],
     });
     expect(markerB.lastAppliedExecutionProjection).toEqual(baselineA);
@@ -4321,17 +4399,25 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       attemptId: secondId,
       attemptNumber: 1,
       attemptedExecutionProjection: {
-        captain: { model: { kind: 'value', value: 'captain-B' } },
+        captain: {
+          model: { kind: 'value', value: 'captain-B' },
+          fastMode: true,
+        },
         players: [
           {
             id: 'dev.coder',
             model: { kind: 'value', value: 'coder-B' },
+            fastMode: false,
           },
           {
             id: 'dev.reviewer',
             model: { kind: 'value', value: 'reviewer-B' },
+            fastMode: true,
           },
         ],
+        catalog: {
+          code: { roles: { coder: { fastMode: true } } },
+        },
       },
     });
     const attemptedB = markerB.uncertain.attemptedExecutionProjection;
@@ -4339,9 +4425,13 @@ describe('durable Captain continuation (PBCLI-24)', () => {
 
     const configC = await writeConfig(
       sharedConfig()
-        .replace('captain-model', 'captain-C')
-        .replace('coder-model', 'coder-C')
-        .replace('reviewer-model', 'reviewer-C'),
+        .replace('captain-model }', 'captain-C, fastMode: false }')
+        .replace('coder-model }', 'coder-C, fastMode: true }')
+        .replace('reviewer-model }', 'reviewer-C, fastMode: false }')
+        .replace(
+          'roles: { coder: dev.coder }',
+          'roles: { coder: { player: dev.coder, fastMode: false } }',
+        ),
     );
     let retryHost: any;
     const retried = await headlessHarness(
@@ -4360,10 +4450,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(retried.result.code).toBe(0);
     expect(retried.inputs).toEqual([attemptedInput]);
     expect(retryHost).toMatchObject({
-      captainConfig: { model: 'captain-B' },
+      captainConfig: { model: 'captain-B', fastMode: true },
       players: [
-        { id: 'dev.coder', model: 'coder-B' },
-        { id: 'dev.reviewer', model: 'reviewer-B' },
+        { id: 'dev.coder', model: 'coder-B', fastMode: false },
+        { id: 'dev.reviewer', model: 'reviewer-B', fastMode: true },
       ],
     });
     expect(retried.result.config).toEqual(attemptedB);
@@ -5025,11 +5115,16 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       queueMicrotask(() => child.emit('exit', 0, null));
       return child;
     };
+    const interactiveStateRoot = await mkdtemp(
+      join(tmpdir(), 'playbook-engine-interactive-state-'),
+    );
+    tempDirs.push(interactiveStateRoot);
     const launched = await runPlaybookCli({
       argv: [],
       userConfigPath: interactive.configPath,
       env: { ANTHROPIC_API_KEY: 'a' },
       hostRoots: roots,
+      sessionsDir: join(interactiveStateRoot, 'sessions'),
       probeAdapterSdk: async () => true,
       tmuxPlayBin: '/tmp/tmux-play.js',
       spawn,
@@ -5066,7 +5161,7 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       stdout: writer(),
       stderr: interactiveErr,
     });
-    expect(launched.code).toBe(0);
+    expect(launched.code, interactiveErr.text()).toBe(0);
     expect(spawnCalls).toHaveLength(1);
     expect(interactiveErr.text()).toContain('playbook: provisioned');
 

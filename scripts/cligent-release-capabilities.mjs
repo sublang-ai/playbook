@@ -309,6 +309,30 @@ export const exact: Exact = true;
 `,
   ),
   typeCapability(
+    'AgentCallSettings.fastMode',
+    'agent-call-settings-fast-mode.ts',
+    'Fast mode is an optional literal boolean in complete settings.',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<
+  {} extends Pick<AgentCallSettings, 'fastMode'> ? true : false
+>;
+type Exact = Assert<Equal<AgentCallSettings['fastMode'], boolean | undefined>>;
+export const disabled: AgentCallSettings['fastMode'] = false;
+export const enabled: AgentCallSettings['fastMode'] = true;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.instruction',
     'agent-call-settings-instruction.ts',
     'A complete replacement carries an explicit instruction selection.',
@@ -396,6 +420,18 @@ export const cause: unknown = new AgentCallSettingsError('unsupported').cause;
     `import { AgentCallSettingsError, isAgentCallSettingsError } from '${CLIGENT_RELEASE_SPECIFIER}';
 export function use(value: unknown): AgentCallSettingsError | undefined {
   return isAgentCallSettingsError(value) ? value : undefined;
+}
+`,
+  ),
+  typeCapability(
+    'assertFastModeSupported',
+    'assert-fast-mode-supported.ts',
+    'Playbook delegates adapter-scoped fast-mode capability to Cligent.',
+    `import { assertFastModeSupported } from '@sublang/cligent';
+import type { AgentType } from '@sublang/cligent';
+declare const adapter: AgentType | 'claude';
+export function use(): void {
+  assertFastModeSupported(adapter, 'configured fastMode');
 }
 `,
   ),
@@ -566,6 +602,7 @@ export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'loadTmuxPlayConfig segmented player id',
   'loadTmuxPlayConfig empty player roster',
   'createTmuxPlayRuntime empty player roster',
+  'assertFastModeSupported runtime semantics',
   'launchManagedTmuxPlay runtime export',
   'runManagedTmuxPlaySession runtime export',
 ]);
@@ -814,6 +851,70 @@ await runtime.dispose();
     args: [],
   });
 
+  const fastModeRunner = join(root, 'fast-mode-support-runtime.mjs');
+  writeFileSync(
+    fastModeRunner,
+    `import {
+  FAST_MODE_SUPPORT,
+  assertFastModeSupported,
+} from '@sublang/cligent';
+
+if (typeof assertFastModeSupported !== 'function') {
+  throw new Error('assertFastModeSupported is not a runtime function');
+}
+if (
+  typeof FAST_MODE_SUPPORT !== 'object' ||
+  FAST_MODE_SUPPORT === null ||
+  Array.isArray(FAST_MODE_SUPPORT)
+) {
+  throw new Error('FAST_MODE_SUPPORT is not a runtime descriptor');
+}
+const entries = Object.entries(FAST_MODE_SUPPORT);
+if (
+  entries.length === 0 ||
+  !entries.some(([, support]) => support?.requestSupported === true) ||
+  !entries.some(([, support]) => support?.requestSupported === false)
+) {
+  throw new Error('FAST_MODE_SUPPORT lacks supported and unsupported cases');
+}
+for (const [adapter, support] of entries) {
+  if (typeof support?.requestSupported !== 'boolean') {
+    throw new Error('FAST_MODE_SUPPORT carries an invalid requestSupported flag');
+  }
+  let rejected = false;
+  try {
+    assertFastModeSupported(adapter, 'configured fastMode');
+  } catch {
+    rejected = true;
+  }
+  if (rejected === support.requestSupported) {
+    throw new Error(
+      'assertFastModeSupported disagrees with FAST_MODE_SUPPORT for ' + adapter,
+    );
+  }
+}
+const claudeSupport = FAST_MODE_SUPPORT['claude-code'];
+if (typeof claudeSupport?.requestSupported !== 'boolean') {
+  throw new Error('FAST_MODE_SUPPORT lacks the claude-code alias target');
+}
+let claudeRejected = false;
+try {
+  assertFastModeSupported('claude', 'configured fastMode');
+} catch {
+  claudeRejected = true;
+}
+if (claudeRejected === claudeSupport.requestSupported) {
+  throw new Error('the claude alias disagrees with claude-code fast-mode support');
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[3],
+    why: 'Playbook imports the root runtime assertion and delegates the exact supported-versus-unsupported adapter boundary to it.',
+    runner: fastModeRunner,
+    args: [],
+  });
+
   const managedLaunchExportRunner = join(
     root,
     'managed-launch-runtime-export.mjs',
@@ -828,7 +929,7 @@ if (typeof launchManagedTmuxPlay !== 'function') {
 `,
   );
   probes.push({
-    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[3],
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[4],
     why: 'The installed public tmux-play entry point must expose the managed launch runtime value used by the outer interactive front end.',
     runner: managedLaunchExportRunner,
     args: [],
@@ -848,7 +949,7 @@ if (typeof runManagedTmuxPlaySession !== 'function') {
 `,
   );
   probes.push({
-    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[4],
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[5],
     why: 'The installed public tmux-play entry point must expose the managed session runtime value used by the pane child.',
     runner: managedSessionExportRunner,
     args: [],

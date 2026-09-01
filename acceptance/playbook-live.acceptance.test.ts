@@ -261,7 +261,8 @@ describe.sequential('installed playbook live acceptance', () => {
         const continuityMarker =
           `REVIEW_SESSION_${randomBytes(16).toString('hex').toUpperCase()}`;
         const runEnv = privateTmuxEnv({
-          XDG_CONFIG_HOME: scenario.configHome,
+          SPEX_HOME: scenario.spexHome,
+          XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
           XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
           PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
           PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
@@ -464,7 +465,8 @@ describe.sequential('installed playbook live acceptance', () => {
           ['run', '--json', codeCommand],
           scenario.repo,
           privateTmuxEnv({
-            XDG_CONFIG_HOME: scenario.configHome,
+            SPEX_HOME: scenario.spexHome,
+            XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
             XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
             PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
             PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
@@ -639,7 +641,8 @@ describe.sequential('installed playbook live acceptance', () => {
           ],
           scenario.root,
           privateTmuxEnv({
-            XDG_CONFIG_HOME: scenario.configHome,
+            SPEX_HOME: scenario.spexHome,
+            XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
             XDG_STATE_HOME: scenario.stateHome,
             PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
             PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
@@ -689,6 +692,9 @@ describe.sequential('installed playbook live acceptance', () => {
         );
         expect(continuedRecord.lastAppliedExecutionProjection?.captain?.effort)
           .toEqual({ kind: 'value', value: 'low' });
+        expect(
+          continuedRecord.lastAppliedExecutionProjection?.captain?.fastMode,
+        ).toBe(false);
         const { claude, codex } = liveModels();
         expect(continuedRecord.lastAppliedExecutionProjection?.captain?.model)
           .toEqual({ kind: 'value', value: claude });
@@ -705,6 +711,7 @@ describe.sequential('installed playbook live acceptance', () => {
           kind: 'value',
           value: claude,
         });
+        expect(selectedPlayers['acceptance.dev.coder']?.fastMode).toBe(true);
         expect(selectedPlayers['acceptance.dev.reviewer']?.effort).toEqual({
           kind: 'value',
           value: 'high',
@@ -713,6 +720,9 @@ describe.sequential('installed playbook live acceptance', () => {
           kind: 'value',
           value: codex,
         });
+        expect(selectedPlayers['acceptance.dev.reviewer']?.fastMode).toBe(
+          false,
+        );
         expect(
           continuedRecord.lastAppliedExecutionProjection?.catalog?.decide
             ?.roles,
@@ -721,11 +731,13 @@ describe.sequential('installed playbook live acceptance', () => {
             playerId: 'acceptance.dev.coder',
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
+            fastMode: true,
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
             model: { kind: 'provider-default' },
             effort: { kind: 'provider-default' },
+            fastMode: true,
           },
         });
         expect(
@@ -736,11 +748,13 @@ describe.sequential('installed playbook live acceptance', () => {
             playerId: 'acceptance.dev.coder',
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
+            fastMode: true,
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
             model: { kind: 'value', value: codex },
             effort: { kind: 'value', value: 'high' },
+            fastMode: false,
           },
         });
       } catch (error) {
@@ -787,7 +801,8 @@ describe.sequential('installed playbook live acceptance', () => {
           `/hermetic ${hermeticTask}`,
         ];
         const runEnv = privateTmuxEnv({
-          XDG_CONFIG_HOME: scenario.configHome,
+          SPEX_HOME: scenario.spexHome,
+          XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
           XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
           PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
           PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
@@ -1129,7 +1144,7 @@ describe.sequential('installed playbook live acceptance', () => {
 interface Scenario {
   root: string;
   repo: string;
-  configHome: string;
+  spexHome: string;
   stateHome: string;
   baselineCommit: string;
 }
@@ -1639,10 +1654,10 @@ function createScenario(
       ? join(suiteRoot, 'candidate', 'fixtures', name)
       : join(suiteRoot, name);
   const repo = join(root, 'repo');
-  const configHome = join(root, 'xdg');
+  const spexHome = join(root, 'spex');
   const stateHome = join(root, 'xdg-state');
   mkdirSync(join(repo, 'specs/packages'), { recursive: true });
-  mkdirSync(join(configHome, 'playbook'), { recursive: true });
+  mkdirSync(join(spexHome, 'playbook'), { recursive: true });
 
   writeFileSync(
     join(repo, 'AGENTS.md'),
@@ -1730,7 +1745,7 @@ function createScenario(
     // to dismiss. A command-mapped workflow switch stays a hermetic
     // A29-7 row; what is live here is the model-decided one.
     writeFileSync(
-      join(configHome, 'playbook/playbook.config.yaml'),
+      join(spexHome, 'playbook/playbook.config.yaml'),
       conversationConfig(repo),
     );
     writeFileSync(
@@ -1740,12 +1755,12 @@ function createScenario(
     writeFileSync(join(repo, 'notes.registry.mjs'), notesFixtureSource());
   } else if (name === 'hermetic') {
     writeFileSync(
-      join(configHome, 'playbook/playbook.config.yaml'),
+      join(spexHome, 'playbook/playbook.config.yaml'),
       hermeticConfig(repo),
     );
   } else {
     writeFileSync(
-      join(configHome, 'playbook/playbook.config.yaml'),
+      join(spexHome, 'playbook/playbook.config.yaml'),
       liveConfig(options),
     );
   }
@@ -1774,7 +1789,7 @@ function createScenario(
   execText('git', ['add', '.'], repo);
   execText('git', ['commit', '-m', 'Initialize acceptance fixture'], repo);
   const baselineCommit = headRevision(repo);
-  return { root, repo, configHome, stateHome, baselineCommit };
+  return { root, repo, spexHome, stateHome, baselineCommit };
 }
 
 // Installed headless children receive this PATH shim, while the gate's own
@@ -1937,7 +1952,8 @@ function spawnLauncher(scenario: Scenario, sessionId?: string): Launcher {
   // Keep the launched session on the gate's private tmux server, so it is
   // the only session this run can see, drive, or kill.
   const env = privateTmuxEnv({
-    XDG_CONFIG_HOME: scenario.configHome,
+    SPEX_HOME: scenario.spexHome,
+    XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
     XDG_STATE_HOME: scenario.stateHome,
     PLAYBOOK_ACCEPTANCE_BIN: candidateBin,
     PLAYBOOK_ACCEPTANCE_REPO: scenario.repo,
