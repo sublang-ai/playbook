@@ -28,10 +28,11 @@ Each proposal is complete only when its player affirmatively provides a complete
 A progress report, status update, or promise of a later proposal supports no proposal outcome.
 A Boss interrupt during the parallel proposal pair shall restart the whole pair so both players receive the same new topic and remain independent.
 
-When both proposals are complete, Captain shall give Coder the following instruction and relay Reviewer's complete proposal beneath it, quoting every proposal line with `>`:
+When both proposals are complete, Captain shall give Coder the following instruction and relay the complete topic and Reviewer's complete proposal beneath it, quoting every relayed line with `>`:
 
 ```markdown
 Synthesize your independent proposal with Reviewer's proposal below.
+Keep to the original topic and follow what it asks.
 Keep the best, essential parts of either proposal and reject any point that is unsound, unnecessary, or outside the topic.
 Turn the resulting design into the necessary DRs and/or spec items.
 Follow @specs/meta.md and update @specs/map.md when needed.
@@ -41,9 +42,6 @@ Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
 Identify every new commit you make.
 Coder is <coder-llm> and Reviewer is <reviewer-llm>.
-
-> Reviewer's independent proposal:
-> \<reviewer-proposal\>
 ```
 
 No transition shall depend on a fixed presentation format of either player's reply.
@@ -51,8 +49,8 @@ Captain shall use the repository-effect receipt as the authoritative identity of
 
 After Coder commits, Captain shall call playbook `review` with the following input in quotes (`>`):
 
+> Original intent: \<caller-topic\>
 > Review scope: the `decide`-owned commit \<decide-commit\> and its resulting repository state.
-> Original design request: \<caller-topic\>
 > Coder output: \<coder-output\>
 
 `decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.

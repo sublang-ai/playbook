@@ -42,7 +42,7 @@ If the IR will be finished after this phase, double-check that all acceptance cr
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
-At the start of every later IR-task phase, Captain shall relay to Coder the IR identity and any relevant run results in quotes (`>`), along with the following instruction:
+At the start of every later IR-task phase, Captain shall relay to Coder the original caller input, the IR identity, and any relevant run results in quotes (`>`), along with the following instruction:
 
 ```markdown
 Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
@@ -54,6 +54,7 @@ If the IR will be finished after this phase, double-check that all acceptance cr
 At the start of *every* phase, Captain shall append the following instruction:
 
 ```markdown
+Keep to the original intent and follow what it asks.
 Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
@@ -63,13 +64,14 @@ Coder is <coder-llm>.
 
 Every new-intent phase has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
 Every IR-task phase, including the first phase for an existing IR, identifies the implemented task and has two semantic outcomes: more tasks and final task.
+The first phase therefore has four semantic outcomes — direct implementation, new IR, more tasks, and final task — plus the Boss question when the continued IR is ambiguous.
 Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 
 At the end of every phase, Captain shall call playbook `review` and input the following in quotes (`>`):
 
+> Original intent: \<caller-input\>
 > Review scope: the commit \<code-commit\> from this coding phase and its resulting repository state.
-> Original coding intent: \<caller-input\>
 > Coder output: \<coder-output\>
 
 For an IR-task phase, Captain shall additionally input the following in quotes (`>`):
