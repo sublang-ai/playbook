@@ -6,44 +6,46 @@
 // in tmux. The core below uses cligent's ordinary tmux-play runtime without a
 // presenter; it does not construct a registry runtime or PlaybookPorts itself.
 
-import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
   emptyPlaybookEffectLedger,
-} from '../../../../src/xstate-runtime.js';
+} from "../../../../src/xstate-runtime.js";
 import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
-} from '../playbook-captain.js';
+} from "../playbook-captain.js";
 import {
   adapterSdkFailureLines,
   checkAdapterSdks,
   mappedSdksFor,
   probeAdapterSdk,
-} from './adapter-sdk.js';
+} from "./adapter-sdk.js";
 import {
   checkReadiness,
   invalidRegistryEntryReason,
   loadLaunchPlan,
   projectHostAgent,
   resolveLaunchSessionsDir,
+  relocateLegacyUserConfig,
+  resolveLegacyUserConfigPath,
   resolveUserConfigPath,
   snapshotRegistryEntry,
-} from './launch-config.js';
-import { prepareConfiguredRegistries } from './provision.js';
+} from "./launch-config.js";
+import { prepareConfiguredRegistries } from "./provision.js";
 import {
   createReplayRecordObserver,
   replayIncompleteMessage,
-} from './replay-observer.js';
+} from "./replay-observer.js";
 import {
   createRepositoryEffectCapabilities,
   refreshRepositoryEffectCapabilities,
   recoverIncompleteRepositoryEffects,
-} from './repository-effects.js';
+} from "./repository-effects.js";
 import {
   assertCaptainSessionExecutionCompatible,
   assertCaptainSessionsDirectoryUsable,
@@ -53,7 +55,7 @@ import {
   SESSION_ID_PATTERN,
   validateCaptainSessionExecutionProjection,
   validateCaptainSessionRecord,
-} from './session-store.js';
+} from "./session-store.js";
 
 const EXIT = { ok: 0, argument: 1, turn: 2 };
 const UUID_PATTERN = SESSION_ID_PATTERN;
@@ -61,17 +63,17 @@ const HEADLESS_REPLAY_CHANNELS = new WeakMap();
 class HeadlessHostSetupError extends Error {
   constructor(cause) {
     super(message(cause));
-    this.name = 'HeadlessHostSetupError';
+    this.name = "HeadlessHostSetupError";
     this.cause = cause;
   }
 }
 const RETIRED_FLAGS = new Set([
-  '--player',
-  '--captain',
-  '--option',
-  '--cwd',
-  '--last',
-  '--config',
+  "--player",
+  "--captain",
+  "--option",
+  "--cwd",
+  "--last",
+  "--config",
 ]);
 
 export async function runPlaybookRun(options = {}) {
@@ -91,6 +93,8 @@ export async function runPlaybookRun(options = {}) {
     const home = options.homeDir ?? env.HOME ?? homedir();
     const userConfigPath =
       options.userConfigPath ?? resolveUserConfigPath(env, home);
+    // PBCLI-17: help resolves the path but writes nothing, so it neither
+    // seeds nor relocates.
     await writeStream(stdout, runHelpText(userConfigPath));
     return { code: EXIT.ok };
   }
@@ -113,6 +117,15 @@ export async function runPlaybookRun(options = {}) {
 
   const userConfigPath =
     options.userConfigPath ?? resolveUserConfigPath(env, home);
+  // DR-043: move a pre-relocation config to the canonical path before any
+  // read, seed, or plan work observes its absence.
+  if (options.userConfigPath === undefined) {
+    relocateLegacyUserConfig(
+      userConfigPath,
+      resolveLegacyUserConfigPath(env, home),
+      (line) => stderr.write(line),
+    );
+  }
   const bootstrapConfigNotices = [];
   let resolvedSessionsDir;
   if (options.sessionStore === undefined) {
@@ -179,8 +192,8 @@ export async function runPlaybookRun(options = {}) {
               onLegacyRecord: (record) =>
                 reportSkippedCaptainSession(
                   stderr,
-                  'playbook run',
-                  'legacy',
+                  "playbook run",
+                  "legacy",
                   record,
                 ),
             }),
@@ -207,7 +220,7 @@ export async function runPlaybookRun(options = {}) {
       await reportHeadlessReplay(replayChannel);
       throwIfAborted(options.signal);
       const authoritative =
-        typeof lease.recoverUnresolvedEffectAbandonment === 'function'
+        typeof lease.recoverUnresolvedEffectAbandonment === "function"
           ? await lease.recoverUnresolvedEffectAbandonment()
           : await lease.read();
       throwIfAborted(options.signal);
@@ -231,7 +244,7 @@ export async function runPlaybookRun(options = {}) {
       return { code: EXIT.argument };
     }
 
-    if (priorRecord.state === 'uncertain') {
+    if (priorRecord.state === "uncertain") {
       if (args.discardUncertain) {
         try {
           throwIfAborted(options.signal);
@@ -355,7 +368,7 @@ export async function runPlaybookRun(options = {}) {
         );
       } else {
         sessionId = (options.createLogicalSessionId ?? randomUUID)();
-        if (typeof sessionId !== 'string' || !UUID_PATTERN.test(sessionId)) {
+        if (typeof sessionId !== "string" || !UUID_PATTERN.test(sessionId)) {
           throw new Error(
             `logical session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`,
           );
@@ -522,16 +535,11 @@ export async function runPlaybookRun(options = {}) {
         : {}),
       ...(options.createEffectLedgerWriteAhead
         ? {
-            createEffectLedgerWriteAhead:
-              options.createEffectLedgerWriteAhead,
+            createEffectLedgerWriteAhead: options.createEffectLedgerWriteAhead,
           }
         : {}),
-      ...(restoreSnapshot !== undefined
-        ? { restoreSnapshot }
-        : {}),
-      ...(args.retryUncertain
-        ? { reconcileUncertainTurnReplay: true }
-        : {}),
+      ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
+      ...(args.retryUncertain ? { reconcileUncertainTurnReplay: true } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       beforeBossTurn: async (
         baselineSnapshot,
@@ -549,8 +557,7 @@ export async function runPlaybookRun(options = {}) {
             ? {
                 freshBoundary: {
                   cwd,
-                  structuralProjection:
-                    projectCaptainSessionStructure(config),
+                  structuralProjection: projectCaptainSessionStructure(config),
                   executionProjection: config,
                   snapshot: baselineSnapshot,
                 },
@@ -560,15 +567,15 @@ export async function runPlaybookRun(options = {}) {
                 onLegacyRecord: (record) =>
                   reportSkippedCaptainSession(
                     stderr,
-                    'playbook run',
-                    'legacy',
+                    "playbook run",
+                    "legacy",
                     record,
                   ),
                 onInvalidRecord: (record) =>
                   reportSkippedCaptainSession(
                     stderr,
-                    'playbook run',
-                    'invalid',
+                    "playbook run",
+                    "invalid",
                     record,
                   ),
               }
@@ -613,7 +620,7 @@ export async function runPlaybookRun(options = {}) {
     if (cleanupIncomplete) {
       await writeStream(
         stderr,
-        'playbook run: writer lease retained until process exit because host cleanup was incomplete\n',
+        "playbook run: writer lease retained until process exit because host cleanup was incomplete\n",
       );
     }
     if (releaseError !== undefined) {
@@ -665,13 +672,10 @@ export async function runPlaybookRun(options = {}) {
         [error, cleanupError],
         `Captain session settlement failed (${message(error)}) and host cleanup also failed: ${message(cleanupError)}`,
       );
+      await writeStream(stderr, `playbook run: ${message(cleanupFailure)}\n`);
       await writeStream(
         stderr,
-        `playbook run: ${message(cleanupFailure)}\n`,
-      );
-      await writeStream(
-        stderr,
-        'playbook run: writer lease retained until process exit because host cleanup was incomplete\n',
+        "playbook run: writer lease retained until process exit because host cleanup was incomplete\n",
       );
       return { code: EXIT.turn };
     }
@@ -697,7 +701,7 @@ export async function runPlaybookRun(options = {}) {
   if (options.signal?.aborted) {
     await writeStream(
       stderr,
-      'playbook run: Captain turn was interrupted; reply withheld\n',
+      "playbook run: Captain turn was interrupted; reply withheld\n",
     );
     return { code: EXIT.turn, sessionId, record: durableRecord };
   }
@@ -767,11 +771,11 @@ export async function driveHeadlessCaptainTurn({
         observers: [
           {
             async onRecord(record) {
-              if (record.type === 'captain_reply') {
+              if (record.type === "captain_reply") {
                 replies.push(record.text);
-              } else if (record.type === 'captain_status') {
+              } else if (record.type === "captain_status") {
                 await writeStream(stderr, `${record.message}\n`);
-              } else if (verbose && record.type === 'captain_telemetry') {
+              } else if (verbose && record.type === "captain_telemetry") {
                 await writeStream(stderr, `\u00b7 ${record.topic}\n`);
               }
             },
@@ -802,13 +806,13 @@ export async function driveHeadlessCaptainTurn({
     }
     await assertBeforeBossTurn?.();
     if (signal?.aborted) {
-      throw signal.reason ?? new Error('Captain turn aborted');
+      throw signal.reason ?? new Error("Captain turn aborted");
     }
     await host.runBossTurn(input);
     throwIfAborted(signal);
     if (
       replies.length !== 1 ||
-      typeof replies[0] !== 'string' ||
+      typeof replies[0] !== "string" ||
       replies[0].trim().length === 0
     ) {
       throw new Error(
@@ -816,11 +820,13 @@ export async function driveHeadlessCaptainTurn({
       );
     }
     if (shell === undefined) {
-      throw new Error('Captain shell host initialized without a shell');
+      throw new Error("Captain shell host initialized without a shell");
     }
     const settlement = shell.exportSettlement();
     if (settlement === undefined) {
-      throw new Error('Captain turn settled without an exportable session settlement');
+      throw new Error(
+        "Captain turn settled without an exportable session settlement",
+      );
     }
     const { snapshot, unresolvedEffects, retentionUpdates } = settlement;
     if (
@@ -828,7 +834,7 @@ export async function driveHeadlessCaptainTurn({
       snapshot.issuedSessionIds?.includes(sessionId)
     ) {
       throw new Error(
-        'logical session id collided with an internal Captain session id',
+        "logical session id collided with an internal Captain session id",
       );
     }
     return {
@@ -867,8 +873,8 @@ export async function driveHeadlessCaptainTurn({
 export class CaptainSessionHostCleanupError extends AggregateError {
   constructor(errors, messageText) {
     super(errors, messageText);
-    this.name = 'CaptainSessionHostCleanupError';
-    this.code = 'PLAYBOOK_CAPTAIN_HOST_CLEANUP_INCOMPLETE';
+    this.name = "CaptainSessionHostCleanupError";
+    this.code = "PLAYBOOK_CAPTAIN_HOST_CLEANUP_INCOMPLETE";
   }
 }
 
@@ -907,7 +913,7 @@ function effectLedgerSnapshotFromCapabilities(hostCapabilities) {
       )
     ) {
       throw new Error(
-        'schema-3 current-host capabilities disagree on their effect ledger',
+        "schema-3 current-host capabilities disagree on their effect ledger",
       );
     }
   }
@@ -929,33 +935,29 @@ function reconcileWholeTurnReplaySnapshot(snapshot, ledger, catalog) {
   const currentPrefix = current.boundaries.slice(0, checkpointBoundaryCount);
   if (!isDeepStrictEqual(currentPrefix, checkpoint.boundaries)) {
     throw new Error(
-      'Captain uncertain turn repository-effect reconciliation cannot restore a changed pre-turn boundary',
+      "Captain uncertain turn repository-effect reconciliation cannot restore a changed pre-turn boundary",
     );
   }
   if (
-    !isDeepStrictEqual(
-      current.logicalOperations,
-      checkpoint.logicalOperations,
-    )
+    !isDeepStrictEqual(current.logicalOperations, checkpoint.logicalOperations)
   ) {
     throw new Error(
-      'Captain uncertain turn repository-effect reconciliation found deferred logical-operation progress and cannot replay the Boss turn',
+      "Captain uncertain turn repository-effect reconciliation found deferred logical-operation progress and cannot replay the Boss turn",
     );
   }
   const suffix = current.boundaries.slice(checkpointBoundaryCount);
   const blocking = suffix.find(
-    (boundary) =>
-      boundary.physicalReceipt?.classification !== 'unchanged',
+    (boundary) => boundary.physicalReceipt?.classification !== "unchanged",
   );
   if (blocking !== undefined) {
     const classification =
-      blocking.physicalReceipt?.classification ?? 'incomplete';
+      blocking.physicalReceipt?.classification ?? "incomplete";
     throw new Error(
       `Captain uncertain turn repository-effect boundary ${JSON.stringify(blocking.boundaryId)} is ${classification}; whole-turn replay remains parked for reconciliation`,
     );
   }
   const frames =
-    snapshot.mode !== 'engaged.parked'
+    snapshot.mode !== "engaged.parked"
       ? undefined
       : snapshot.frames.map((frame) => {
           if (catalog[frame.playbookId]?.artifactSchema !== 3) {
@@ -1025,20 +1027,17 @@ export async function createCaptainSessionHost({
     !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
   ) {
     const recovered =
-      typeof sessionLease.read === 'function'
+      typeof sessionLease.read === "function"
         ? await sessionLease.read()
         : undefined;
     if (
-      recovered?.state === 'settled' &&
+      recovered?.state === "settled" &&
       isDeepStrictEqual(recovered.snapshot.effectLedger, currentEffectLedger())
     ) {
       sourceSnapshot = recovered.snapshot;
     }
   }
-  if (
-    sourceSnapshot !== undefined &&
-    reconcileUncertainTurnReplay
-  ) {
+  if (sourceSnapshot !== undefined && reconcileUncertainTurnReplay) {
     sourceSnapshot = reconcileWholeTurnReplaySnapshot(
       sourceSnapshot,
       currentEffectLedger(),
@@ -1049,15 +1048,14 @@ export async function createCaptainSessionHost({
     !isDeepStrictEqual(sourceSnapshot.effectLedger, currentEffectLedger())
   ) {
     throw new Error(
-      'Captain session effect ledger requires reconciliation before source-state restoration',
+      "Captain session effect ledger requires reconciliation before source-state restoration",
     );
   }
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
     hostCapabilities,
     unresolvedEffectSettlement: {
-      begin: (input) =>
-        sessionLease.beginUnresolvedEffectAbandonment(input),
+      begin: (input) => sessionLease.beginUnresolvedEffectAbandonment(input),
       complete: (input) =>
         sessionLease.completeUnresolvedEffectAbandonment(input),
     },
@@ -1073,7 +1071,7 @@ export async function createCaptainSessionHost({
       captain,
       captainConfig: projectHostAgent(
         config.captain,
-        'Captain execution config.captain',
+        "Captain execution config.captain",
       ),
       players: config.players.map(({ id, ...agent }) => ({
         id,
@@ -1087,11 +1085,14 @@ export async function createCaptainSessionHost({
     const snapshot = shell.exportSnapshot();
     if (snapshot === undefined) {
       throw new Error(
-        'Captain shell initialized without an exportable session snapshot',
+        "Captain shell initialized without an exportable session snapshot",
       );
     }
-    if (sourceSnapshot !== undefined && !isDeepStrictEqual(snapshot, sourceSnapshot)) {
-      throw new Error('restored Captain snapshot changed before the Boss turn');
+    if (
+      sourceSnapshot !== undefined &&
+      !isDeepStrictEqual(snapshot, sourceSnapshot)
+    ) {
+      throw new Error("restored Captain snapshot changed before the Boss turn");
     }
     if (sessionId !== undefined) {
       assertLogicalSessionIdDistinct({ sessionId, snapshot });
@@ -1214,7 +1215,9 @@ export async function validateFrozenExecutionConfig(
         authoredFrom: item.from,
       });
     } catch (cause) {
-      throw new Error(`stored playbook ${JSON.stringify(id)} failed to prepare: ${message(cause)}`);
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} failed to prepare: ${message(cause)}`,
+      );
     }
     if (prepared !== undefined && prepared !== item.from) {
       throw new Error(
@@ -1228,10 +1231,14 @@ export async function validateFrozenExecutionConfig(
     try {
       entry = snapshotRegistryEntry((await loadModule(item.from))?.default);
     } catch (cause) {
-      throw new Error(`stored playbook ${JSON.stringify(id)} failed to import: ${message(cause)}`);
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} failed to import: ${message(cause)}`,
+      );
     }
     if (invalidRegistryEntryReason(entry) !== undefined) {
-      throw new Error(`stored playbook ${JSON.stringify(id)} exposes no valid registry entry`);
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} exposes no valid registry entry`,
+      );
     }
     if (
       entry.id !== id ||
@@ -1239,10 +1246,7 @@ export async function validateFrozenExecutionConfig(
       entry.intent !== item.intent ||
       entry.artifactSchema !== item.artifactSchema ||
       !isDeepStrictEqual(entry.requiredRoleIds, item.requiredRoleIds) ||
-      !isDeepStrictEqual(
-        entry.concurrentRoleSets,
-        item.concurrentRoleSets,
-      )
+      !isDeepStrictEqual(entry.concurrentRoleSets, item.concurrentRoleSets)
     ) {
       throw new Error(
         `stored playbook ${JSON.stringify(id)} no longer matches its recorded manifest identity`,
@@ -1268,7 +1272,7 @@ function assertLogicalSessionIdDistinct(record) {
       record.snapshot.issuedSessionIds.includes(record.sessionId))
   ) {
     throw new Error(
-      'logical session id collides with an internal Captain session id',
+      "logical session id collides with an internal Captain session id",
     );
   }
 }
@@ -1277,7 +1281,10 @@ function memoizedModuleLoader(loadModule) {
   const modules = new Map();
   return (specifier) => {
     if (!modules.has(specifier)) {
-      modules.set(specifier, Promise.resolve().then(() => loadModule(specifier)));
+      modules.set(
+        specifier,
+        Promise.resolve().then(() => loadModule(specifier)),
+      );
     }
     return modules.get(specifier);
   };
@@ -1302,7 +1309,7 @@ export function captainOptionsFromConfig(config) {
         config.players.map(({ id, ...agent }) => [id, cloneJson(agent)]),
       ),
     },
-    ...(typeof config.captain.adapter === 'string' &&
+    ...(typeof config.captain.adapter === "string" &&
     config.captain.adapter.length > 0
       ? { captainAdapter: config.captain.adapter }
       : {}),
@@ -1336,65 +1343,65 @@ export function parseRunArgs(argv) {
   const positionals = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--') {
+    if (arg === "--") {
       parsed.terminated = true;
       positionals.push(...argv.slice(index + 1));
       break;
     }
-    if (arg === '--help' || arg === '-h') parsed.help = true;
-    else if (arg === '--json') parsed.json = true;
-    else if (arg === '--verbose') parsed.verbose = true;
-    else if (arg === '--no-provision') parsed.noProvision = true;
-    else if (arg === '--retry-uncertain') {
+    if (arg === "--help" || arg === "-h") parsed.help = true;
+    else if (arg === "--json") parsed.json = true;
+    else if (arg === "--verbose") parsed.verbose = true;
+    else if (arg === "--no-provision") parsed.noProvision = true;
+    else if (arg === "--retry-uncertain") {
       if (parsed.retryUncertain) {
-        throw new Error('--retry-uncertain may be specified only once');
+        throw new Error("--retry-uncertain may be specified only once");
       }
       parsed.retryUncertain = true;
-    } else if (arg === '--discard-uncertain') {
+    } else if (arg === "--discard-uncertain") {
       if (parsed.discardUncertain) {
-        throw new Error('--discard-uncertain may be specified only once');
+        throw new Error("--discard-uncertain may be specified only once");
       }
       parsed.discardUncertain = true;
-    }
-    else if (arg === '--continue') {
-      if (parsed.continue) throw new Error('--continue may be specified only once');
+    } else if (arg === "--continue") {
+      if (parsed.continue)
+        throw new Error("--continue may be specified only once");
       parsed.continue = true;
-    } else if (arg === '--session') {
+    } else if (arg === "--session") {
       const value = argv[index + 1];
-      if (value === undefined || value === '') {
-        throw new Error('--session needs a UUID value');
+      if (value === undefined || value === "") {
+        throw new Error("--session needs a UUID value");
       }
       if (parsed.sessionId !== undefined) {
-        throw new Error('--session may be specified only once');
+        throw new Error("--session may be specified only once");
       }
       parsed.sessionId = value;
       index += 1;
-    } else if (arg.startsWith('--session=')) {
-      const value = arg.slice('--session='.length);
-      if (value === '') throw new Error('--session needs a UUID value');
+    } else if (arg.startsWith("--session=")) {
+      const value = arg.slice("--session=".length);
+      if (value === "") throw new Error("--session needs a UUID value");
       if (parsed.sessionId !== undefined) {
-        throw new Error('--session may be specified only once');
+        throw new Error("--session may be specified only once");
       }
       parsed.sessionId = value;
-    } else if (arg === '--with') {
+    } else if (arg === "--with") {
       const value = argv[index + 1];
-      if (value === undefined || value === '') {
-        throw new Error('--with needs a value');
+      if (value === undefined || value === "") {
+        throw new Error("--with needs a value");
       }
       parsed.withPaths.push(value);
       index += 1;
-    } else if (arg.startsWith('--with=')) {
-      const value = arg.slice('--with='.length);
-      if (value === '') throw new Error('--with needs a value');
+    } else if (arg.startsWith("--with=")) {
+      const value = arg.slice("--with=".length);
+      if (value === "") throw new Error("--with needs a value");
       parsed.withPaths.push(value);
     } else if (
       RETIRED_FLAGS.has(arg) ||
       [...RETIRED_FLAGS].some((flag) => arg.startsWith(`${flag}=`))
     ) {
       throw new Error(
-        `${arg.split('=')[0]} was removed; configure the shared Captain session in playbook.config.yaml or a --with overlay`,
+        `${arg.split("=")[0]} was removed; configure the shared Captain session in playbook.config.yaml or a --with overlay`,
       );
-    } else if (arg.startsWith('-')) {
+    } else if (arg.startsWith("-")) {
       throw new Error(`unknown option ${arg}`);
     } else {
       positionals.push(arg);
@@ -1402,15 +1409,15 @@ export function parseRunArgs(argv) {
   }
   if (positionals.length > 1) {
     throw new Error(
-      'expected at most one [input] argument; quote multi-word input as one shell argument',
+      "expected at most one [input] argument; quote multi-word input as one shell argument",
     );
   }
   if (parsed.continue && parsed.sessionId !== undefined) {
-    throw new Error('--continue and --session are mutually exclusive');
+    throw new Error("--continue and --session are mutually exclusive");
   }
   if (parsed.retryUncertain && parsed.discardUncertain) {
     throw new Error(
-      '--retry-uncertain and --discard-uncertain are mutually exclusive',
+      "--retry-uncertain and --discard-uncertain are mutually exclusive",
     );
   }
   if (
@@ -1418,7 +1425,7 @@ export function parseRunArgs(argv) {
     parsed.sessionId === undefined
   ) {
     throw new Error(
-      '--retry-uncertain and --discard-uncertain require --session <id>',
+      "--retry-uncertain and --discard-uncertain require --session <id>",
     );
   }
   if (
@@ -1426,7 +1433,7 @@ export function parseRunArgs(argv) {
     (parsed.continue || positionals.length > 0)
   ) {
     throw new Error(
-      'uncertain-turn recovery accepts only an explicit --session and no input',
+      "uncertain-turn recovery accepts only an explicit --session and no input",
     );
   }
   if (
@@ -1434,20 +1441,20 @@ export function parseRunArgs(argv) {
     (parsed.json || parsed.verbose || parsed.noProvision)
   ) {
     throw new Error(
-      '--discard-uncertain does not accept --json, --verbose, or --no-provision',
+      "--discard-uncertain does not accept --json, --verbose, or --no-provision",
     );
   }
   if (
     (parsed.retryUncertain || parsed.discardUncertain) &&
     parsed.withPaths.length > 0
   ) {
-    throw new Error('--with is unavailable during uncertain-turn recovery');
+    throw new Error("--with is unavailable during uncertain-turn recovery");
   }
   if (
     parsed.sessionId !== undefined &&
     !SESSION_ID_PATTERN.test(parsed.sessionId)
   ) {
-    throw new Error('--session needs a canonical UUID value');
+    throw new Error("--session needs a canonical UUID value");
   }
   parsed.input = positionals[0];
   return parsed;
@@ -1470,18 +1477,15 @@ async function reportReadinessFailure({
     const [first, ...rest] = lines;
     await writeStream(
       stderr,
-      [
-        ...(first ? [`playbook run: ${first}`] : []),
-        ...rest,
-      ]
+      [...(first ? [`playbook run: ${first}`] : []), ...rest]
         .map((line) => `${line}\n`)
-        .join(''),
+        .join(""),
     );
   }
   if (failingAdapters.length > 0) {
     await writeStream(
       stderr,
-      `playbook run: adapters not ready: ${failingAdapters.join(', ')}\n`,
+      `playbook run: adapters not ready: ${failingAdapters.join(", ")}\n`,
     );
   }
 }
@@ -1505,7 +1509,7 @@ async function resolveBossInput(input, options, stderr) {
   if (resolved.trim().length === 0) {
     await writeStream(
       stderr,
-      'playbook run: empty input; pass one argument or pipe a Boss message on stdin\n',
+      "playbook run: empty input; pass one argument or pipe a Boss message on stdin\n",
     );
     return { ok: false };
   }
@@ -1514,22 +1518,22 @@ async function resolveBossInput(input, options, stderr) {
 
 async function awaitWithAbort(value, signal) {
   if (signal === undefined) return value;
-  if (signal.aborted) throw signal.reason ?? new Error('operation aborted');
+  if (signal.aborted) throw signal.reason ?? new Error("operation aborted");
   let onAbort;
   const aborted = new Promise((_, reject) => {
-    onAbort = () => reject(signal.reason ?? new Error('operation aborted'));
-    signal.addEventListener('abort', onAbort, { once: true });
+    onAbort = () => reject(signal.reason ?? new Error("operation aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
     return await Promise.race([value, aborted]);
   } finally {
-    signal.removeEventListener('abort', onAbort);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
 function throwIfAborted(signal) {
   if (signal?.aborted) {
-    throw signal.reason ?? new Error('operation aborted');
+    throw signal.reason ?? new Error("operation aborted");
   }
 }
 
@@ -1540,14 +1544,14 @@ function registryPreparer(args, options, stderr) {
       enabled: !args.noProvision,
       stderr,
       hostRoots: options.hostRoots,
-      commandName: 'playbook run',
+      commandName: "playbook run",
     })
   );
 }
 
 function createAttemptId(options) {
   const attemptId = (options.createAttemptId ?? randomUUID)();
-  if (typeof attemptId !== 'string' || !UUID_PATTERN.test(attemptId)) {
+  if (typeof attemptId !== "string" || !UUID_PATTERN.test(attemptId)) {
     throw new Error(
       `uncertain turn attempt id generator returned a non-UUID value: ${JSON.stringify(attemptId)}`,
     );
@@ -1571,8 +1575,8 @@ async function releaseLease(lease) {
 
 function createHeadlessReplayChannel({ lease, sessionId, stderr }) {
   if (
-    typeof lease?.append !== 'function' ||
-    typeof lease?.streamStatus !== 'function'
+    typeof lease?.append !== "function" ||
+    typeof lease?.streamStatus !== "function"
   ) {
     return undefined;
   }
@@ -1614,23 +1618,23 @@ async function reportUncertainSession(stderr, sessionId) {
     stderr,
     [
       `playbook run: Captain session ${JSON.stringify(sessionId)} has an uncertain turn and will not be replayed automatically`,
-      'Retry may duplicate external effects from the interrupted attempt; discard abandons that attempted turn.',
+      "Retry may duplicate external effects from the interrupted attempt; discard abandons that attempted turn.",
       `playbook run --session ${sessionId} --retry-uncertain`,
       `playbook run --session ${sessionId} --discard-uncertain`,
-      '',
-    ].join('\n'),
+      "",
+    ].join("\n"),
   );
 }
 
 function legacyCaptainSessionReason(schemaVersion) {
   if (schemaVersion === 2) {
-    return 'schema 2 has incompatible player identity';
+    return "schema 2 has incompatible player identity";
   }
   if (schemaVersion === 3 || schemaVersion === 4) {
     return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
   }
   if (schemaVersion === 5) {
-    return 'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable';
+    return "schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable";
   }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
 }
@@ -1642,9 +1646,7 @@ export async function reportSkippedCaptainSession(
   { sessionId, path, schemaVersion, reason },
 ) {
   const explanation =
-    kind === 'legacy'
-      ? legacyCaptainSessionReason(schemaVersion)
-      : reason;
+    kind === "legacy" ? legacyCaptainSessionReason(schemaVersion) : reason;
   await writeStream(
     stderr,
     `${commandName}: skipping ${kind} Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} because ${explanation}; move it outside the sessions directory or remove it to silence this warning\n`,
@@ -1653,12 +1655,12 @@ export async function reportSkippedCaptainSession(
 
 function replayInvocation(argv, args, input) {
   if (args.retryUncertain || args.discardUncertain) {
-    return ['run', ...argv];
+    return ["run", ...argv];
   }
-  if (args.input !== undefined) return ['run', ...argv];
+  if (args.input !== undefined) return ["run", ...argv];
   return args.terminated
-    ? ['run', ...argv, input]
-    : ['run', ...argv, '--', input];
+    ? ["run", ...argv, input]
+    : ["run", ...argv, "--", input];
 }
 
 function cloneJson(value) {
@@ -1670,69 +1672,69 @@ async function readAllStdin() {
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function writeStream(stream, text) {
   const ready = stream.write(text);
-  if (ready !== false || typeof stream.once !== 'function') return;
+  if (ready !== false || typeof stream.once !== "function") return;
   await new Promise((resolvePromise, rejectPromise) => {
     const onDrain = () => {
-      stream.off?.('error', onError);
+      stream.off?.("error", onError);
       resolvePromise();
     };
     const onError = (error) => {
-      stream.off?.('drain', onDrain);
+      stream.off?.("drain", onDrain);
       rejectPromise(error);
     };
-    stream.once('drain', onDrain);
-    stream.once('error', onError);
+    stream.once("drain", onDrain);
+    stream.once("error", onError);
   });
 }
 
 function runHelpText(userConfigPath) {
   return [
-    'Usage:',
-    '  playbook run [--with <path>]... [--no-provision] [--json]',
-    '               [--verbose] [--] [input]',
-    '  playbook run (--continue | --session <id>) [--with <path>]...',
-    '               [--no-provision] [--json] [--verbose] [--] [reply]',
-    '  playbook run --session <id> --retry-uncertain [--no-provision]',
-    '  playbook run --session <id> --discard-uncertain',
-    '',
-    '  [input]  one exact Boss message; read verbatim from stdin when omitted',
-    '  --        end options so a flag-shaped input remains Boss text',
-    '',
+    "Usage:",
+    "  playbook run [--with <path>]... [--no-provision] [--json]",
+    "               [--verbose] [--] [input]",
+    "  playbook run (--continue | --session <id>) [--with <path>]...",
+    "               [--no-provision] [--json] [--verbose] [--] [reply]",
+    "  playbook run --session <id> --retry-uncertain [--no-provision]",
+    "  playbook run --session <id> --discard-uncertain",
+    "",
+    "  [input]  one exact Boss message; read verbatim from stdin when omitted",
+    "  --        end options so a flag-shaped input remains Boss text",
+    "",
     `Default config: ${userConfigPath}`,
-    '',
-    'A new run uses the same configured Captain, enabled playbooks, players,',
-    'options, overlays, provisioning, and readiness gate as interactive',
-    '`playbook`. Enable an external registry in that config, then invoke its',
-    'effective /command through Captain. The former positional registry,',
-    'resume, and run-only binding surfaces have been removed.',
-    'Stable agents live under top-level players; every playbook-local role',
-    'binds explicitly under playbooks.<id>.roles. Equal player ids share one',
-    'provider conversation; distinct ids remain isolated.',
-    'Legacy playbooks.<id>.players is rejected and is not auto-migrated,',
-    'because choosing new ids decides sharing versus isolation.',
-    'Bare continuation prefers the newest session stored for the invoking',
-    'working directory and reports when it uses the global newest fallback.',
-    'An ordinary continued run restores that stored structure and working',
-    'directory, then reads current config and overlays for model and effort.',
-    'Uncertain retry instead uses its exact recorded input and settings.',
-    '',
-    'Options:',
-    '  --with <path>    overlay a generic config fragment (repeatable)',
-    '  --no-provision   do not provision thin filesystem registry engines',
-    '  --continue       prefer this working directory, else global newest',
-    '  --session <id>   reply to one durable Captain session UUID',
-    '  --retry-uncertain retry that session\'s exact recorded uncertain input',
-    '  --discard-uncertain discard that session\'s uncertain attempt',
+    "",
+    "A new run uses the same configured Captain, enabled playbooks, players,",
+    "options, overlays, provisioning, and readiness gate as interactive",
+    "`playbook`. Enable an external registry in that config, then invoke its",
+    "effective /command through Captain. The former positional registry,",
+    "resume, and run-only binding surfaces have been removed.",
+    "Stable agents live under top-level players; every playbook-local role",
+    "binds explicitly under playbooks.<id>.roles. Equal player ids share one",
+    "provider conversation; distinct ids remain isolated.",
+    "Legacy playbooks.<id>.players is rejected and is not auto-migrated,",
+    "because choosing new ids decides sharing versus isolation.",
+    "Bare continuation prefers the newest session stored for the invoking",
+    "working directory and reports when it uses the global newest fallback.",
+    "An ordinary continued run restores that stored structure and working",
+    "directory, then reads current config and overlays for model and effort.",
+    "Uncertain retry instead uses its exact recorded input and settings.",
+    "",
+    "Options:",
+    "  --with <path>    overlay a generic config fragment (repeatable)",
+    "  --no-provision   do not provision thin filesystem registry engines",
+    "  --continue       prefer this working directory, else global newest",
+    "  --session <id>   reply to one durable Captain session UUID",
+    "  --retry-uncertain retry that session's exact recorded uncertain input",
+    "  --discard-uncertain discard that session's uncertain attempt",
     '  --json           print exactly {"sessionId", "reply"}',
-    '  --verbose        print Captain telemetry topics to stderr',
-    '  -h, --help       print this help without reading input or config',
-    '',
-  ].join('\n');
+    "  --verbose        print Captain telemetry topics to stderr",
+    "  -h, --help       print this help without reading input or config",
+    "",
+  ].join("\n");
 }
 
 function message(error) {

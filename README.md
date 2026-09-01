@@ -63,7 +63,7 @@ playbook
 Type a task, enter `/code <task>` for implementation, or enter
 `/decide <question>` for an independently proposed and reviewed decision.
 
-On first launch, Playbook writes its config to `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
+On first launch, Playbook writes its config to `${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml`. A config left at the former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` is moved there on the next launch.
 
 The same config, compiled Captain, enabled playbooks, stable players, and
 nested calls power headless turns. Both front ends create the same durable

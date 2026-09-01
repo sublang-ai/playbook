@@ -16,7 +16,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   AGENT_RUNTIME_TARGETS,
@@ -868,6 +869,52 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(stderr.text()).not.toContain('created config');
     const kept = await readFile(resolveUserConfigPath({}, home), 'utf8');
     expect(kept).toBe(minimalConfig());
+  });
+
+  // DR-043: the config moved under the shared Spex root, and a user-authored
+  // file cannot be regenerated, so it is relocated rather than reseeded.
+  it('relocates a pre-relocation config once and seeds nothing', async () => {
+    const home = await makeTempHome();
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, minimalConfig(), 'utf8');
+    const canonical = resolveUserConfigPath({}, home);
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    await runPlaybookCli({
+      argv: [],
+      env: { HOME: home, ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+    });
+
+    // The bytes move intact, the old path is gone, and no seed happened.
+    expect(await readFile(canonical, 'utf8')).toBe(minimalConfig());
+    expect(existsSync(legacy)).toBe(false);
+    expect(stderr.text()).toContain('moved config from');
+    expect(stderr.text()).not.toContain('created config');
+
+    // A second launch is a no-op: nothing left to relocate.
+    const again = writer();
+    await runPlaybookCli({
+      argv: [],
+      env: { HOME: home, ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr: again,
+      stdout: writer(),
+      spawn: fakeSpawn().fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+    });
+    expect(again.text()).not.toContain('moved config from');
+    expect(await readFile(canonical, 'utf8')).toBe(minimalConfig());
   });
 });
 
@@ -2601,8 +2648,9 @@ async function makeTempHome(): Promise<string> {
 }
 
 async function writeUserConfig(home: string, contents: string): Promise<void> {
-  await mkdir(join(home, '.config', 'playbook'), { recursive: true });
-  await writeFile(resolveUserConfigPath({}, home), contents, 'utf8');
+  const path = resolveUserConfigPath({}, home);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, contents, 'utf8');
 }
 
 async function loadComposedConfig(content: string) {
@@ -2752,7 +2800,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
   async function withHarness() {
     const home = await makeTempHome();
     const configPath = resolveUserConfigPath({}, home);
-    await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+    await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, GLOBAL_CONFIG, 'utf8');
     const overlayDir = await mkdtemp(join(tmpdir(), 'playbook-with-'));
     tempDirs.push(overlayDir);

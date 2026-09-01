@@ -4,12 +4,12 @@
 # Configuring agents
 
 Fresh launches and ordinary reopens read one config at
-`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`. The
+`${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml`. The
 first launch seeds it from the bundled starter and prints the path;
 later launches reuse it untouched.
 
 ```sh
-$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
+$EDITOR "${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml"
 ```
 
 ## Anatomy

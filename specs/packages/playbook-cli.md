@@ -30,7 +30,10 @@ When a managed attachment completes normally or the outer client detaches while 
 
 Where `playbook` is invoked without `--config`, the command shall
 resolve its top-level config path as
-`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
+`${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml`, resolving that root as the
+first nonempty `SPEX_HOME`, otherwise the first nonempty `HOME` joined
+with `.spex`, otherwise the process home directory joined with `.spex`
+([DR-043](../decisions/043-shared-spex-root-config.md)).
 Where `playbook` is invoked without `--config`, `--help`, or `-h`,
 when the file at the resolved path is absent, the command shall create
 it from the bundled starter generic config, creating parent
@@ -41,6 +44,14 @@ carry the default agent lineup defined by
 [[playbook-cli-11](playbook-cli.md#playbook-cli-11)].
 When the file at the resolved path is already present, the command
 shall use it unchanged and shall not reseed or overwrite it.
+
+#### playbook-cli-85
+
+Where `playbook` is invoked without `--config`, `--help`, or `-h`, when the resolved config path holds no file and the former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` holds a regular file, the command shall relocate that file to the resolved path before any read, seed, or plan work observes the resolved path's absence, preserving its exact bytes and permission mode, creating parent directories as needed, leaving no file at the former path, and printing one stderr line naming both paths ([DR-043](../decisions/043-shared-spex-root-config.md)):
+
+- the relocation shall never overwrite a file already at the resolved path, and shall do nothing once the former path holds no regular file, so a later launch neither relocates nor reports again;
+- where the move crosses filesystems, an interruption shall leave the former file readable and the next launch shall use the already-published resolved path;
+- the relocation shall precede the retired-`profiles` content migration [[playbook-cli-33](#playbook-cli-33)], and its notice shall stay distinct from the seed notice.
 
 #### playbook-cli-4
 
@@ -913,9 +924,10 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-4-8`; player `dev.coder` on `claude` / `claude-opus-4-8[1m]`; player `dev.reviewer` on `codex` / `gpt-5.5`; explicit CODE, REVIEW, and DECIDE role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Reviewer's additional `.git` writable path; and the notification defaults.
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; player `dev.reviewer` on `claude` / `claude-opus-5`; explicit CODE, REVIEW, and DECIDE role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
 When the file is already present, the test suite shall fail unless the
-command leaves it unchanged and does not reseed (verifying [[playbook-cli-3](#playbook-cli-3)], [[playbook-cli-11](#playbook-cli-11)]).
+command leaves it unchanged and does not reseed.
+Where only the former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` holds a config, the test suite shall fail unless the command moves those exact bytes to the resolved path, leaves no file at the former path, prints one stderr line naming both paths, seeds nothing, and reports nothing further on a second launch (verifying [[playbook-cli-3](#playbook-cli-3)], [[playbook-cli-11](#playbook-cli-11)], [[playbook-cli-85](#playbook-cli-85)]).
 
 ### Composition Coverage
 
