@@ -291,6 +291,12 @@ hosts can follow this stream without taking the writer lease through the
 published [`@sublang/playbook/session-store`
 facade](embedding.md#sharing-the-cli-session-store).
 
+Streams are unbounded in this version: neither front end prunes them, and
+retention remains tied to the deferred session-deletion policy. Removing
+provider credentials does not make the remaining replay content non-sensitive;
+protect the prompts, replies, tool calls, events, and timestamps it contains as
+sensitive session data.
+
 Replay recording is fail-soft after the canonical session lease is valid. If
 initialization, sanitization, append, repair, publication synchronization, or a
 checkpoint fails, recording stops for that lease without changing the agent

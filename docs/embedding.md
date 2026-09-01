@@ -271,13 +271,22 @@ const lease = await store.acquire(
 );
 try {
   await lease.append({ type: 'host_notice', message: 'attached' });
-  const replay = await lease.readStream();
-  console.log(replay.lastReadableSeq, replay.lastDurableSeq);
+  const status = lease.streamStatus();
+  console.log(status);
+  if (status.lastReadableSeq !== null) {
+    const replay = await lease.readStream();
+    console.log(replay.lastReadableSeq, replay.lastDurableSeq);
+  }
 } finally {
   const finalStatus = await lease.release();
   console.log(finalStatus);
 }
 ```
+
+`streamStatus()` synchronously returns the current live status. If initialization
+could not establish a trustworthy whole-stream boundary, it returns
+`{ lastReadableSeq: null, lastDurableSeq: null, incomplete: true }`, and
+`lease.readStream()` rejects rather than return partial history.
 
 Always release a successfully acquired lease. `release()` closes append
 admission, drains earlier appends, attempts the final checkpoint, retires the
