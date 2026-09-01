@@ -50,6 +50,7 @@ shall use it unchanged and shall not reseed or overwrite it.
 Where either front end has accepted a syntactically valid configured invocation that reaches config bootstrap — excluding help and a raw `--config` launch, and after a fresh headless invocation has obtained its required Boss input — when the resolved config path holds no file and the former `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` holds a regular file, the command shall relocate that file to the resolved path before any read, seed, or plan work observes the resolved path's absence, preserving its exact bytes and permission mode, creating parent directories as needed, leaving no file at the former path, and printing one stderr line naming both paths ([DR-043](../decisions/043-shared-spex-root-config.md); [[playbook-cli-86](#playbook-cli-86)]):
 
 - the relocation shall never overwrite or be blocked by any entry already at the resolved path, and shall do nothing once the former path is absent, so a later launch neither relocates nor reports again; when the resolved path is absent but the former path holds a symlink, directory, or other unexpected filesystem type, the command shall reject before seeding or host work without following, replacing, or removing that entry;
+- before canonical publication, when a primary relative `sessions` locator under [[playbook-cli-78](#playbook-cli-78)] or path-shaped relative `playbooks.<id>.from` locator under [[playbook-cli-46](#playbook-cli-46)] would resolve to a different absolute target after the byte-preserving move, the command shall reject before seeding or host work, leave the former file's bytes and permission mode unchanged, publish no resolved-path entry, and diagnose every affected config path with its target-preserving absolute replacement; path-independent locators and relative locators whose absolute target is unchanged shall not block relocation;
 - where the move crosses filesystems, an interruption shall leave the former file readable and the next launch shall use the already-published resolved path;
 - the relocation shall precede the retired-`profiles` content migration [[playbook-cli-33](#playbook-cli-33)], and its notice shall stay distinct from the seed notice.
 
@@ -933,7 +934,13 @@ command leaves it unchanged and does not reseed.
 
 #### playbook-cli-86
 
-Where the test suite exercises [[playbook-cli-85](#playbook-cli-85)] through both front ends, it shall fail unless a legacy regular file moves exactly once with byte-exact content and each of permission modes `0600` and `0644`, the canonical publication never overwrites or is blocked by an already present canonical entry, help and raw-config paths change neither location, an absent canonical path plus a legacy symlink or directory rejects without following or changing that entry, and only successful relocation emits the one move notice and prevents seeding.
+Where the test suite exercises [[playbook-cli-85](#playbook-cli-85)] through both front ends, it shall fail unless:
+
+- a legacy regular file moves exactly once with byte-exact content and each of permission modes `0600` and `0644`, only successful relocation emits one move notice naming both exact paths and prevents seeding, and the canonical publication never overwrites or is blocked by an already present canonical entry;
+- every target-changing primary relative `sessions` and path-shaped relative `playbooks.<id>.from` locator rejects before canonical publication, seeding, or host work with every affected config path and its prior absolute target named, while the former file's exact bytes and permission mode remain unchanged, and a relative locator whose absolute target is unchanged does not block relocation;
+- a legacy-only interruption state retries the relocation, while a post-publication canonical-plus-legacy state uses the canonical file and leaves the former file readable;
+- a former-path retired-`profiles` config relocates before its content migration, the canonical-path backup contains the exact former-path bytes, and the move notice precedes the distinct migration notice; and
+- help, raw-config, syntactically invalid interactive input, and rejected fresh headless Boss input change neither location, while an absent canonical path plus a legacy symlink or directory rejects without following or changing that entry.
 
 ### Composition Coverage
 

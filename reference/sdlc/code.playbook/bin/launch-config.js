@@ -218,16 +218,19 @@ export function resolveLaunchSessionsDir({
 // already-authored file URLs retain their module semantics.
 export function canonicalizeRegistrySpecifier(from, configPath) {
   if (configPath === undefined || from.startsWith("file:")) return from;
-  if (
-    isAbsolute(from) ||
+  if (isAbsolute(from) || isRelativeFilesystemRegistrySpecifier(from)) {
+    return pathToFileURL(resolve(dirname(configPath), from)).href;
+  }
+  return from;
+}
+
+function isRelativeFilesystemRegistrySpecifier(from) {
+  return (
     from.startsWith("./") ||
     from.startsWith("../") ||
     from.startsWith(".\\") ||
     from.startsWith("..\\")
-  ) {
-    return pathToFileURL(resolve(dirname(configPath), from)).href;
-  }
-  return from;
+  );
 }
 
 // PBCLI-46: seed, migrate, overlay, validate, and normalize through one path.
@@ -1241,6 +1244,11 @@ export function relocateLegacyUserConfig(
       constants.COPYFILE_EXCL,
     );
     chmodSync(stagedPath, source.mode & 0o7777);
+    assertLegacyRelocationLocatorsSafe(
+      readFileSync(stagedPath, "utf8"),
+      userConfigPath,
+      legacyUserConfigPath,
+    );
     try {
       linkSync(stagedPath, userConfigPath);
       published = true;
@@ -1257,6 +1265,69 @@ export function relocateLegacyUserConfig(
   rmSync(legacyUserConfigPath, { force: true });
   onNotice(
     `playbook: moved config from ${legacyUserConfigPath} to ${userConfigPath}\n`,
+  );
+}
+
+function assertLegacyRelocationLocatorsSafe(
+  source,
+  userConfigPath,
+  legacyUserConfigPath,
+) {
+  // PBCLI-85: byte-preserving relocation is safe only when it also preserves
+  // the absolute targets that primary-directory-relative locators denote.
+  let top;
+  try {
+    top = parseYaml(source) ?? {};
+  } catch {
+    // Invalid YAML cannot be consumed at either location. Preserve the
+    // relocation's existing byte-for-byte behavior and let config loading
+    // report the parse fault from the canonical pathname.
+    return;
+  }
+  if (!isObject(top)) return;
+
+  const affected = [];
+  const legacyDir = dirname(legacyUserConfigPath);
+  const canonicalDir = dirname(userConfigPath);
+  if (
+    typeof top.sessions === "string" &&
+    top.sessions.length > 0 &&
+    !top.sessions.startsWith("~") &&
+    !isAbsolute(top.sessions)
+  ) {
+    const formerTarget = resolve(legacyDir, top.sessions);
+    if (formerTarget !== resolve(canonicalDir, top.sessions)) {
+      affected.push({ path: "sessions", replacement: formerTarget });
+    }
+  }
+
+  if (isObject(top.playbooks)) {
+    for (const [id, block] of Object.entries(top.playbooks)) {
+      const from = isObject(block) ? block.from : undefined;
+      if (
+        typeof from !== "string" ||
+        !isRelativeFilesystemRegistrySpecifier(from)
+      ) {
+        continue;
+      }
+      const formerTarget = resolve(legacyDir, from);
+      if (formerTarget !== resolve(canonicalDir, from)) {
+        affected.push({
+          path: `playbooks.${id}.from`,
+          replacement: pathToFileURL(formerTarget).href,
+        });
+      }
+    }
+  }
+
+  if (affected.length === 0) return;
+  const replacements = affected
+    .map(({ path, replacement }) => `${path} = ${JSON.stringify(replacement)}`)
+    .join("; ");
+  throw new Error(
+    `cannot relocate legacy config at ${legacyUserConfigPath}: relative ` +
+      `locators would change targets under ${userConfigPath}; replace them ` +
+      `with target-preserving absolute values before retrying: ${replacements}`,
   );
 }
 

@@ -707,6 +707,29 @@ function sharedConfig() {
   ].join('\n');
 }
 
+function sharedProfilesConfig() {
+  return [
+    'profiles:',
+    '  captain-default: { adapter: claude, model: captain-model }',
+    '  coder-default: { adapter: claude, model: coder-model }',
+    '  reviewer-default: { adapter: codex, model: reviewer-model }',
+    'captain: captain-default',
+    'players:',
+    '  dev.coder: coder-default',
+    '  dev.reviewer: reviewer-default',
+    'playbooks:',
+    '  code:',
+    '    from: mod://code',
+    '    roles: { coder: dev.coder }',
+    '  review:',
+    '    from: mod://review',
+    '    roles:',
+    '      coder: { player: dev.coder, model: review-coder-fallback }',
+    '      reviewer: dev.reviewer',
+    '',
+  ].join('\n');
+}
+
 async function headlessHarness(
   argv: string[],
   extra: Record<string, unknown> = {},
@@ -1591,15 +1614,25 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     ).rejects.toThrow();
 
     let fallbackReads = 0;
-    const empty = await headlessHarness(['run', '   '], {
+    const emptyStdout = writer();
+    const empty = await runPlaybookCli({
+      argv: ['run', '   '],
+      env: { HOME: home },
+      homeDir: home,
       readStdin: async () => {
         fallbackReads += 1;
         return 'fallback';
       },
+      stdout: emptyStdout,
+      stderr: writer(),
     });
-    expect(empty.result.code).toBe(1);
+    expect(empty.code).toBe(1);
     expect(fallbackReads).toBe(0);
-    expect(empty.stdout).toBe('');
+    expect(emptyStdout.text()).toBe('');
+    expect(await readFile(legacy, 'utf8')).toBe(sharedConfig());
+    await expect(
+      readFile(join(home, '.spex', 'playbook', 'playbook.config.yaml')),
+    ).rejects.toThrow();
   });
 
   it('relocates through default run delegation before config preparation', async () => {
@@ -1607,7 +1640,9 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     tempDirs.push(home);
     const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
     const canonical = join(home, '.spex', 'playbook', 'playbook.config.yaml');
-    const source = `# delegated run relocation\n${sharedConfig()}`;
+    const source =
+      `# delegated run relocation\nsessions: ../../session-state\n` +
+      sharedConfig();
     await mkdir(dirname(legacy), { recursive: true });
     await writeFile(legacy, source, 'utf8');
     await chmod(legacy, 0o600);
@@ -1626,7 +1661,77 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(await readFile(canonical, 'utf8')).toBe(source);
     expect((await stat(canonical)).mode & 0o777).toBe(0o600);
     await expect(readFile(legacy, 'utf8')).rejects.toThrow();
-    expect(out.stderr).toContain('moved config from');
+    expect(out.stderr).toContain(
+      `playbook: moved config from ${legacy} to ${canonical}\n`,
+    );
+    expect(out.stderr).not.toContain('created config');
+  });
+
+  it('uses canonical and keeps legacy readable after interrupted publication', async () => {
+    const home = await mkdtemp(
+      join(tmpdir(), 'playbook-headless-relocate-interrupted-'),
+    );
+    tempDirs.push(home);
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    const canonical = join(home, '.spex', 'playbook', 'playbook.config.yaml');
+    const legacyBytes = 'unknown-legacy-key: must-not-load\n';
+    const canonicalBytes = `# already published\n${sharedConfig()}`;
+    await mkdir(dirname(legacy), { recursive: true });
+    await mkdir(dirname(canonical), { recursive: true });
+    await writeFile(legacy, legacyBytes, 'utf8');
+    await chmod(legacy, 0o600);
+    await writeFile(canonical, canonicalBytes, 'utf8');
+    await chmod(canonical, 0o644);
+
+    const out = await headlessHarness(['run', 'hello'], {
+      userConfigPath: undefined,
+      homeDir: home,
+      env: {
+        HOME: home,
+        ANTHROPIC_API_KEY: 'a',
+        OPENAI_API_KEY: 'o',
+      },
+    });
+
+    expect(out.result.code).toBe(0);
+    expect(await readFile(canonical, 'utf8')).toBe(canonicalBytes);
+    expect((await stat(canonical)).mode & 0o777).toBe(0o644);
+    expect(await readFile(legacy, 'utf8')).toBe(legacyBytes);
+    expect((await stat(legacy)).mode & 0o777).toBe(0o600);
+    expect(out.stderr).not.toMatch(/moved config|created config/);
+  });
+
+  it('relocates before migrating profiles through the headless front end', async () => {
+    const home = await mkdtemp(
+      join(tmpdir(), 'playbook-headless-relocate-profiles-'),
+    );
+    tempDirs.push(home);
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    const canonical = join(home, '.spex', 'playbook', 'playbook.config.yaml');
+    const source = `# move before content migration\n${sharedProfilesConfig()}`;
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, source, 'utf8');
+
+    const out = await headlessHarness(['run', 'hello'], {
+      userConfigPath: undefined,
+      homeDir: home,
+      env: {
+        HOME: home,
+        ANTHROPIC_API_KEY: 'a',
+        OPENAI_API_KEY: 'o',
+      },
+    });
+
+    expect(out.result.code).toBe(0);
+    await expect(readFile(legacy, 'utf8')).rejects.toThrow();
+    expect(await readFile(`${canonical}.bak`, 'utf8')).toBe(source);
+    expect(await readFile(canonical, 'utf8')).not.toContain('profiles:');
+    const moveNotice =
+      `playbook: moved config from ${legacy} to ${canonical}\n`;
+    expect(out.stderr).toContain(moveNotice);
+    expect(out.stderr.indexOf(moveNotice)).toBeLessThan(
+      out.stderr.indexOf(`playbook: migrated ${canonical}`),
+    );
     expect(out.stderr).not.toContain('created config');
   });
 

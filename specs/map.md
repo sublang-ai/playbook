@@ -68,7 +68,7 @@ meta.md       The spec of specs
 | [DR-040](decisions/040-outcome-authority-effect-reconciliation.md) | 040-outcome-authority-effect-reconciliation.md | CODE, REVIEW, and DECIDE field authority, per-arm repository dispositions, current-host construction capabilities, checkpoint-bound Boss continuation, durable no-replay reconciliation, and cleared evidence-grounded unresolved disposal |
 | [DR-041](decisions/041-working-directory-aware-continuation.md) | 041-working-directory-aware-continuation.md | Bare continuation prefers the newest same-working-directory Captain session, reports a global fallback, and preserves explicit selection and uncertain refusal |
 | [DR-042](decisions/042-shared-session-store-and-replay-stream.md) | 042-shared-session-store-and-replay-stream.md | One shared sessions home for every host: a narrow published session-store facade, a token-free per-session replay stream under a frozen ABI, lease-bound appends that latch and stop, and a `sessions` bootstrap locator |
-| [DR-043](decisions/043-shared-spex-root-config.md) | 043-shared-spex-root-config.md | Shared config moves under the Spex root, with a one-time relocation of the former path |
+| [DR-043](decisions/043-shared-spex-root-config.md) | 043-shared-spex-root-config.md | Shared config moves under the Spex root, with guarded one-time relocation of the former path |
 
 ## Packages
 

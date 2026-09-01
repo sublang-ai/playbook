@@ -21,11 +21,12 @@ when the canonical path is absent. The one-time move preserves bytes and
 permissions and leaves no compatibility alias, so running an older Spex host
 afterward could seed a second file at the former path.
 
-This implementation is not yet safe to release for a legacy file containing a
-relative `sessions` value or relative filesystem `playbooks.<id>.from`: those
-values are resolved against the primary config directory, so a byte-preserving
-move would silently change their targets. Use absolute paths only while the
-coordinated locator migration remains unfinished.
+The current guard rejects relocation when a legacy relative `sessions` value
+or relative filesystem `playbooks.<id>.from` would resolve differently below
+the new directory. It leaves the former file unchanged and names every
+target-preserving absolute replacement. Apply those replacements and retry;
+public release remains blocked while the automatic coordinated locator
+migration is unfinished.
 
 ```sh
 $EDITOR "${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml"

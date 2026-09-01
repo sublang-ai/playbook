@@ -37,6 +37,11 @@ Playbook relocates a config found at the former path to the canonical path on
 its next launch, before any read, seed, or plan work observes its absence.
 The move preserves the file's bytes and permissions, never overwrites a
 canonical file, and is a no-op once the former file is gone.
+Until the coordinated target-preserving locator rewrite is available, Playbook
+rejects before publication when that byte-preserving move would change the
+absolute target of a primary relative `sessions` or path-shaped relative
+`playbooks.<id>.from` value, naming every target-preserving absolute
+replacement while leaving the former file unchanged.
 This one-time relocation is a deliberate exception to the reject-don't-migrate
 posture, taken because the file is user-authored and unregenerable.
 
@@ -50,6 +55,8 @@ already holds the rest of the app's state.
 
 A user with an existing config keeps it without acting; a user with none is
 seeded at the canonical path as before.
+An existing config whose primary relative locators would be retargeted must
+first replace those values with the diagnosed absolute forms, then retry.
 
 The relocation is not a compatibility layer: no alias is left behind, and a
 host that still resolves the former path finds nothing there and seeds its

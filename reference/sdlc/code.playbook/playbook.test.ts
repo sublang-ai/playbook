@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   AGENT_RUNTIME_TARGETS,
@@ -280,6 +280,43 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
 
     // The backup is the pre-migration file, byte for byte.
     expect(await readFile(`${configPath}.bak`, 'utf8')).toBe(legacyConfig);
+  });
+
+  it('relocates before migrating profiles through the interactive front end', async () => {
+    const home = await makeTempHome();
+    const legacyPath = join(
+      home,
+      '.config',
+      'playbook',
+      'playbook.config.yaml',
+    );
+    const configPath = resolveUserConfigPath({}, home);
+    await mkdir(dirname(legacyPath), { recursive: true });
+    await writeFile(legacyPath, legacyConfig, 'utf8');
+    const stderr = writer();
+
+    const result = await runPlaybookCli({
+      argv: ['--list'],
+      env: { HOME: home, ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stdout: writer() as never,
+      stderr: stderr as never,
+      spawn: fakeSpawn().fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(existsSync(legacyPath)).toBe(false);
+    expect(parseYaml(await readFile(configPath, 'utf8')).profiles).toBeUndefined();
+    expect(await readFile(`${configPath}.bak`, 'utf8')).toBe(legacyConfig);
+    const output = stderr.text();
+    const moveNotice =
+      `playbook: moved config from ${legacyPath} to ${configPath}\n`;
+    expect(output).toContain(moveNotice);
+    expect(output.indexOf(moveNotice)).toBeLessThan(
+      output.indexOf(`playbook: migrated ${configPath}`),
+    );
+    expect(output).not.toContain('created config');
   });
 
   it('keeps comments attached to a scalar agent', async () => {
@@ -906,7 +943,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(await readFile(canonical, 'utf8')).toBe(source);
     expect((await lstat(canonical)).mode & 0o777).toBe(mode);
     expect(existsSync(legacy)).toBe(false);
-    expect(stderr.text()).toContain('moved config from');
+    expect(stderr.text()).toContain(
+      `playbook: moved config from ${legacy} to ${canonical}\n`,
+    );
     expect(stderr.text()).not.toContain('created config');
 
     // A second launch is a no-op: nothing left to relocate.
@@ -927,12 +966,141 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect((await lstat(canonical)).mode & 0o777).toBe(mode);
   });
 
-  it('preserves a canonical config that wins exclusive publication', async () => {
+  it('rejects every target-changing primary locator through both front ends', async () => {
     const home = await makeTempHome();
     const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
     const canonical = resolveUserConfigPath({}, home);
-    const legacyBytes = `# legacy must remain\n${minimalConfig()}`;
-    const canonicalBytes = `# canonical wins\n${minimalConfig()}`;
+    const overlay = join(home, 'absolute-overlay.yaml');
+    const relativeFrom = [
+      ['dot', './dot.registry.mjs'],
+      ['parent', '../parent.registry.mjs'],
+      ['backslash_dot', '.\\dot.registry.mjs'],
+      ['backslash_parent', '..\\parent.registry.mjs'],
+    ] as const;
+    const source = [
+      'sessions: session-state',
+      'captain: claude',
+      'players: {}',
+      'playbooks:',
+      ...relativeFrom.flatMap(([id, from]) => [
+        `  ${id}:`,
+        `    from: '${from}'`,
+        '    roles: {}',
+      ]),
+      '',
+    ].join('\n');
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, source, 'utf8');
+    await chmod(legacy, 0o600);
+    await writeFile(
+      overlay,
+      `sessions: ${JSON.stringify(join(home, 'shadow-sessions'))}\n`,
+      'utf8',
+    );
+    const spawn = fakeSpawn();
+    const replacements = [
+      ['sessions', resolve(dirname(legacy), 'session-state')],
+      ...relativeFrom.map(([id, from]) => [
+        `playbooks.${id}.from`,
+        pathToFileURL(resolve(dirname(legacy), from)).href,
+      ]),
+    ];
+    let imports = 0;
+    let hosts = 0;
+
+    for (const argv of [
+      ['--with', overlay],
+      ['run', '--with', overlay, 'hello'],
+    ]) {
+      const stderr = writer();
+      const result = await runPlaybookCli({
+        argv,
+        env: { HOME: home },
+        homeDir: home,
+        stderr,
+        stdout: writer(),
+        spawn: spawn.fn,
+        tmuxPlayBin: '/tmp/tmux-play.js',
+        loadModule: async () => {
+          imports += 1;
+          throw new Error('unsafe locator must reject before import');
+        },
+        createHostRuntime: async () => {
+          hosts += 1;
+          throw new Error('unsafe locator must reject before host work');
+        },
+      });
+
+      expect(result).toEqual({ code: 1 });
+      expect(stderr.text()).toContain(`legacy config at ${legacy}`);
+      expect(stderr.text()).toContain(`change targets under ${canonical}`);
+      for (const [configPath, replacement] of replacements) {
+        expect(stderr.text()).toContain(
+          `${configPath} = ${JSON.stringify(replacement)}`,
+        );
+      }
+      expect(stderr.text()).not.toMatch(/moved config|created config|migrated/);
+      expect(existsSync(canonical)).toBe(false);
+      expect(await readFile(legacy, 'utf8')).toBe(source);
+      expect((await lstat(legacy)).mode & 0o777).toBe(0o600);
+    }
+    expect(spawn.calls).toHaveLength(0);
+    expect({ imports, hosts }).toEqual({ imports: 0, hosts: 0 });
+  });
+
+  it('relocates relative locators whose absolute targets stay unchanged', async () => {
+    const home = await makeTempHome();
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    const canonical = resolveUserConfigPath({}, home);
+    const overlay = join(home, 'package-overlay.yaml');
+    const source =
+      `sessions: ../../session-state\n` +
+      minimalConfig().replace(
+        '"@sublang/playbook/code/registry"',
+        '"../../registry.mjs"',
+      );
+    await mkdir(dirname(legacy), { recursive: true });
+    await writeFile(legacy, source, 'utf8');
+    await writeFile(
+      overlay,
+      [
+        'playbooks:',
+        '  code:',
+        '    from: "@sublang/playbook/code/registry"',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const stderr = writer();
+
+    const result = await runPlaybookCli({
+      argv: ['--list', '--with', overlay],
+      env: { HOME: home, ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: fakeSpawn().fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(await readFile(canonical, 'utf8')).toBe(source);
+    expect(existsSync(legacy)).toBe(false);
+    expect(stderr.text()).toContain(
+      `playbook: moved config from ${legacy} to ${canonical}\n`,
+    );
+  });
+
+  it('uses canonical and keeps legacy readable after interrupted publication', async () => {
+    const home = await makeTempHome();
+    const legacy = join(home, '.config', 'playbook', 'playbook.config.yaml');
+    const canonical = resolveUserConfigPath({}, home);
+    const legacyBytes =
+      `# legacy must remain\nnotifications:\n  player_finished: off\n` +
+      minimalConfig();
+    const canonicalBytes =
+      `# canonical wins\nnotifications:\n  player_finished: bell\n` +
+      minimalConfig();
     await mkdir(dirname(legacy), { recursive: true });
     await mkdir(dirname(canonical), { recursive: true });
     await writeFile(legacy, legacyBytes, 'utf8');
@@ -960,6 +1128,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(await readFile(legacy, 'utf8')).toBe(legacyBytes);
     expect((await lstat(legacy)).mode & 0o777).toBe(0o600);
     expect(stderr.text()).not.toContain('moved config from');
+    expect(
+      parseYaml(spawn.configs[0].content).notifications.player_finished,
+    ).toBe('bell');
   });
 
   it.each(['live symlink', 'dangling symlink', 'directory'])(
@@ -1091,6 +1262,20 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       tmuxPlayBin: '/tmp/tmux-play.js',
     });
     expect(raw).toEqual({ code: 0 });
+    expect(await readFile(legacy, 'utf8')).toBe(source);
+    expect(existsSync(canonical)).toBe(false);
+    expect(spawn.calls).toHaveLength(1);
+
+    const invalid = await runPlaybookCli({
+      argv: ['--session'],
+      env: { HOME: home },
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+    expect(invalid).toEqual({ code: 1 });
     expect(await readFile(legacy, 'utf8')).toBe(source);
     expect(existsSync(canonical)).toBe(false);
     expect(spawn.calls).toHaveLength(1);
