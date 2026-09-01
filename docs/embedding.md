@@ -220,6 +220,82 @@ capability functions never enter Boss-visible status text or configured
 options. Because trace observers do receive opaque resume tokens, persisted
 traces should be protected as sensitive data.
 
+## Sharing the CLI session store
+
+An external host that needs the CLI's canonical session validation and
+token-free replay format can use the narrow, semver-stable
+`@sublang/playbook/session-store` facade. It shares the CLI's private store and
+validators by construction but exposes no canonical manifest, snapshot,
+provider credential, effect ledger, recovery operation, or turn-lifecycle
+operation:
+
+```ts
+import {
+  defaultSessionsDir,
+  openSessionStore,
+} from '@sublang/playbook/session-store';
+
+const store = openSessionStore(defaultSessionsDir());
+const { sessions, skipped } = await store.list();
+
+const sessionId = sessions[0]?.sessionId;
+if (sessionId !== undefined) {
+  const summary = await store.read(sessionId);
+  console.log(summary.sessionId, summary.state, summary.cwd);
+
+  const first = await store.readStream(sessionId);
+  const next = await store.readStream(sessionId, {
+    afterSeq: first.lastReadableSeq,
+  });
+  console.log(next.entries, skipped);
+}
+```
+
+`list()` reports valid summaries and separately reports skipped canonical
+manifests with their validation or cutover reason. A summary has exactly
+`schemaVersion`, `sessionId`, `state`, `cwd`, and `updatedAt`. A lease-free
+`readStream()` returns complete envelopes and `lastReadableSeq` only: it makes
+no claim that another process has durably checkpointed the observed bytes or
+that its live writer remains complete. An absent stream reads as empty, and
+acquiring its lease does not require a manifest; only `read()` requires a
+canonical session summary. Pass an absolute path to `openSessionStore()` when
+using a directory other than the environment-derived default.
+
+Writing requires the one exclusive session lease. The writer assigns envelope
+version and sequence, serializes overlapping appends in invocation order, and
+strips provider resume credentials from every accepted record:
+
+```ts
+const lease = await store.acquire(
+  '4f2c0000-0000-4000-8000-000000009ab1',
+);
+try {
+  await lease.append({ type: 'host_notice', message: 'attached' });
+  const replay = await lease.readStream();
+  console.log(replay.lastReadableSeq, replay.lastDurableSeq);
+} finally {
+  const finalStatus = await lease.release();
+  console.log(finalStatus);
+}
+```
+
+Always release a successfully acquired lease. `release()` closes append
+admission, drains earlier appends, attempts the final checkpoint, retires the
+lease, and returns the final `lastReadableSeq`, `lastDurableSeq`, and
+`incomplete` status. A replay initialization failure reports unavailable null
+boundaries; a later sanitization, repair, or persistence failure latches
+numeric `incomplete` status. Either state suppresses later replay work on that
+lease and remains isolated from canonical session lifecycle work. The facade
+writes no warning to stdout or stderr; the embedding host owns any presentation
+of that status.
+
+For control flow, a missing canonical manifest from `read()` uses
+`Error.code === 'PLAYBOOK_SESSION_NOT_FOUND'`, and a competing live or foreign
+lease uses `Error.code === 'PLAYBOOK_SESSION_LEASE_ACTIVE'`. Do not match error
+messages or assume those codes for malformed input, unsafe storage, an
+indeterminate owner probe, or another storage failure
+([[playbook-cli-73](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-73)]).
+
 See
 [`code.playbook.test.ts`](https://github.com/sublang-ai/playbook/blob/main/reference/sdlc/code.playbook/code.playbook.test.ts)
 for the full range of port shapes (classifier, judge, abort, interrupt,

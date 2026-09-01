@@ -16,10 +16,11 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 
 The config is top-level (no `config:` wrapper): a `captain` agent, one flat
 `players` map of stable Captain-session agents, a `playbooks` map of enabled
-workflows and their explicit role bindings, and optional `layout` /
-`notifications` / `theme`. The Captain runs hidden control and judge calls and
-writes the replies you see in the Captain pane or on headless stdout. The three
-presentation fields apply only to interactive tmux; headless runs ignore them.
+workflows and their explicit role bindings, an optional `sessions` storage
+locator, and optional `layout` / `notifications` / `theme`. The Captain runs
+hidden control and judge calls and writes the replies you see in the Captain
+pane or on headless stdout. The three presentation fields apply only to
+interactive tmux; headless runs ignore them.
 
 A **role** is local to a playbook artifact: CODE's `coder` and REVIEW's `coder`
 have the same semantic name but remain separate declarations. A **player** is
@@ -210,6 +211,33 @@ player roster, role bindings, adapter, instruction, permissions, and working
 directory; only model and effort may change. The next call reapplies both
 complete selections. An uncertain retry accepts no tuning overlay and uses the
 exact attempted selections already stored with that turn.
+
+## Session storage
+
+Both front ends select canonical session manifests and write replay streams in
+one directory, where external hosts may keep their own sidecars too. Set the
+optional top-level `sessions` key to move that shared store:
+
+```yaml
+sessions: ./state/playbook-sessions
+```
+
+The value must be a nonempty filesystem path. When the key is absent, the
+directory is
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions`. An absolute path is
+used as given; `~` and `~/...` expand from the home directory, while `~user`
+is rejected. Every other value, including a bare relative path such as the one
+above, resolves against the primary config file's directory rather than the
+invocation directory. A `sessions` value in a `--with` overlay replaces the
+primary value, with later overlays winning.
+
+Launch validates that the resolved path can serve as the mode-`0700`, real,
+non-symlink session store before selecting a record or starting agent work and
+fails closed when it cannot. The non-launching `playbook --list` command still
+validates the locator's syntax but does not inspect that directory's filesystem
+usability. The resolved locator is launch configuration only: it never enters
+a persisted structural or execution projection
+([[playbook-cli-78](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-78)]).
 
 ## Durable shared configuration
 

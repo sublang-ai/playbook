@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Both CLI presentations now write one token-free replay stream beside each canonical session.** The version-1 JSONL envelopes preserve every observed host record in contiguous writer-assigned order, add an unambiguous local role where trace evidence supports it, and recursively remove provider resume credentials. Replay failure latches and stops recording without failing the agent turn or canonical session settlement; headless and interactive hosts each attempt one native-channel warning, while readers return only a valid complete prefix and reject malformed content rather than normalize it ([DR-042](specs/decisions/042-shared-session-store-and-replay-stream.md), [IR-049](specs/intents/049-shared-session-store-and-replay-stream.md)).
+
+- **External hosts can share the CLI's canonical session validation and replay ABI through `@sublang/playbook/session-store`.** The narrow JavaScript and self-contained TypeScript facade lists and reads exact token-free session summaries, follows replay without a lease, and leases append ownership with a final release checkpoint without exposing the manifest, provider credentials, turn-lifecycle operations, or private validators. The optional top-level `sessions` config key points both CLI front ends at that same store, resolving relative values against the primary config and preserving the prior XDG/home default when absent ([DR-042](specs/decisions/042-shared-session-store-and-replay-stream.md), [[playbook-cli-73](specs/packages/playbook-cli.md#playbook-cli-73)], [[playbook-cli-78](specs/packages/playbook-cli.md#playbook-cli-78)]).
+
 ## [10.0.0] - 2026-08-30
 
 ### Added
