@@ -287,6 +287,9 @@ try {
 could not establish a trustworthy whole-stream boundary, it returns
 `{ lastReadableSeq: null, lastDurableSeq: null, incomplete: true }`, and
 `lease.readStream()` rejects rather than return partial history.
+An `append()` suppressed before release by either unavailable initialization or
+a numeric incomplete latch resolves `undefined` without recording the supplied
+record, so fulfillment alone does not prove persistence.
 
 Always release a successfully acquired lease. `release()` closes append
 admission, drains earlier appends, attempts the final checkpoint, retires the
