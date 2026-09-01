@@ -75,6 +75,7 @@
     "reference/sdlc/code.playbook/bin/launch-config.js",
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/interactive-session.js",
+    "reference/sdlc/code.playbook/bin/replay-observer.js",
     "reference/sdlc/code.playbook/bin/session-store.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",

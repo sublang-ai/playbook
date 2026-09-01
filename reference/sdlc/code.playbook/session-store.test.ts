@@ -4907,6 +4907,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
       nested: {
         resumeToken: 'nested-provider-token',
         resume: 'nested-provider-selection',
+        optional: undefined,
         retained: {
           resume: false,
           value: 7,
@@ -4943,6 +4944,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     expect(() => assertReplayAppendArguments(cyclic, undefined)).not.toThrow();
     expect(() => sanitizeReplayRecord(new Date())).toThrow();
     expect(() => sanitizeReplayRecord(cyclic)).toThrow();
+    expect(() => sanitizeReplayRecord({ entries: [undefined] })).toThrow();
   });
 
   it('reads absent, empty, and torn streams without adopting host files', async () => {

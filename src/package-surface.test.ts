@@ -2304,6 +2304,7 @@ void decideConstruction;
       `${CODE_BASE}bin/launch-config.js`,
       `${CODE_BASE}bin/run.js`,
       `${CODE_BASE}bin/interactive-session.js`,
+      `${CODE_BASE}bin/replay-observer.js`,
       `${CODE_BASE}bin/session-store.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,

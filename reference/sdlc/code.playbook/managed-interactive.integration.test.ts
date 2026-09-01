@@ -27,7 +27,10 @@ import type {
 } from '../../../src/runtime.js';
 import { executionConfigFromPlan, runPlaybookRun } from './bin/run.js';
 import { loadLaunchPlan, projectTmuxConfig } from './bin/launch-config.js';
-import { createCaptainSessionStore } from './bin/session-store.js';
+import {
+  createCaptainSessionStore,
+  sanitizeReplayRecord,
+} from './bin/session-store.js';
 
 const childFixture = fileURLToPath(
   new URL('./fixtures/managed-interactive-child.mjs', import.meta.url),
@@ -37,6 +40,7 @@ const sessionIds = [
   '92000000-0000-4000-8000-000000000002',
   '92000000-0000-4000-8000-000000000003',
   '92000000-0000-4000-8000-000000000004',
+  '92000000-0000-4000-8000-000000000005',
 ] as const;
 // Match Cligent's production managed-activation bound.
 const CROSS_PROCESS_BOUNDARY_TIMEOUT_MS = 30_000;
@@ -460,6 +464,94 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     await selected.waitFor('complete');
     selected.child.disconnect();
     await waitForExit(selected.child);
+
+    const observedRecords = [...first.messages, ...selected.messages]
+      .filter((message) => message.type === 'observed-record')
+      .map((message) => message.record);
+    const replay = await fixture.store.readStream(fixture.sessionId);
+    expect(replay.entries.map(({ seq }) => seq)).toEqual(
+      observedRecords.map((_, index) => index + 1),
+    );
+    expect(replay.entries.map(({ record }) => record)).toEqual(
+      observedRecords.map((record) => sanitizeReplayRecord(record)),
+    );
+    expect(
+      replay.entries.some(
+        ({ record }) => record.visibility === 'hidden',
+      ),
+    ).toBe(true);
+    const playerEntries = replay.entries.filter(({ record }) =>
+      ['player_prompt', 'player_event', 'player_finished'].includes(
+        String(record.type),
+      ),
+    );
+    expect(playerEntries.length).toBeGreaterThan(0);
+    expect(new Set(playerEntries.map(({ role }) => role))).toEqual(
+      new Set(['coder']),
+    );
+    expect(first.stdout()).toBe('');
+    expect(first.stderr()).toBe('');
+    expect(selected.stdout()).toBe('');
+    expect(selected.stderr()).toBe('');
+  }, CROSS_FRONT_TEST_TIMEOUT_MS);
+
+  it('flushes an open managed block before the direct replay warning', async () => {
+    const fixture = await crossFrontFixture(sessionIds[4]);
+    const child = await startManagedChild(fixture, {
+      mode: 'fresh',
+      executionProjection: fixture.executionA,
+      tmuxConfig: fixture.tmuxA,
+      namespace: 'interactive-replay-warning',
+      failReplayAppend: true,
+    });
+
+    await child.waitFor('initialized');
+    child.send({ type: 'release-readiness' });
+    await waitForFile(fixture.controls.readinessPath);
+    await publishInputGate(fixture.controls.inputGatePath);
+    await waitForFile(fixture.controls.inputActivePath);
+    child.send({ type: 'submit', text: '/code warn after source' });
+    const visible = await child.waitFor('reply-visible');
+    expect(visible.durableState).toBe('settled');
+
+    child.send({ type: 'close' });
+    await child.waitFor('complete');
+    child.child.disconnect();
+    await waitForExit(child.child);
+
+    const presentation = child.messages
+      .filter((message) => message.type === 'presentation-output')
+      .map((message) => message.text)
+      .join('');
+    const observedRecords = child.messages
+      .filter((message) => message.type === 'observed-record')
+      .map((message) => message.record);
+    expect(observedRecords).toContainEqual(
+      expect.objectContaining({
+        type: 'captain_event',
+        visibility: 'visible',
+        event: expect.objectContaining({ type: 'text_delta' }),
+      }),
+    );
+    const warning =
+      `warning: replay history for session ` +
+      `${JSON.stringify(fixture.sessionId)} may be incomplete; ` +
+      'recording has stopped';
+    expect(presentation).toContain('replay source before warning');
+    expect(presentation.indexOf('replay source before warning')).toBeLessThan(
+      presentation.indexOf(warning),
+    );
+    expect(presentation.split(warning)).toHaveLength(2);
+    expect(child.stdout()).toBe('');
+    expect(child.stderr()).toBe('');
+
+    const replay = await fixture.store.readStream(fixture.sessionId);
+    expect(
+      replay.entries.some(
+        ({ record }) =>
+          record.type === 'captain_status' && record.message === warning,
+      ),
+    ).toBe(false);
   }, CROSS_FRONT_TEST_TIMEOUT_MS);
 });
 
@@ -538,6 +630,7 @@ async function startManagedChild(
     tmuxConfig: unknown;
     namespace: string;
     failReplyObserver?: boolean;
+    failReplayAppend?: boolean;
     retainParked?: boolean;
     resumeArbitration?: boolean;
     sessionIdPrefix?: string;
@@ -566,6 +659,9 @@ async function startManagedChild(
       ...(options.failReplyObserver
         ? { PLAYBOOK_FAIL_REPLY_OBSERVER: '1' }
         : {}),
+      ...(options.failReplayAppend
+        ? { PLAYBOOK_FAIL_REPLAY_APPEND: '1' }
+        : {}),
       ...(options.retainParked ? { PLAYBOOK_RETAIN_PARKED: '1' } : {}),
       ...(options.resumeArbitration
         ? { PLAYBOOK_RESUME_ARBITRATION: '1' }
@@ -577,6 +673,10 @@ async function startManagedChild(
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   children.push(child);
+  let stdout = '';
+  child.stdout!.on('data', (chunk) => {
+    stdout += String(chunk);
+  });
   let stderr = '';
   child.stderr!.on('data', (chunk) => {
     stderr += String(chunk);
@@ -613,6 +713,8 @@ async function startManagedChild(
   return {
     child,
     messages,
+    stdout: () => stdout,
+    stderr: () => stderr,
     send: (message: unknown) => child.send(message),
     waitFor(type: string, predicate = (_value: any) => true) {
       const prior = messages.find(

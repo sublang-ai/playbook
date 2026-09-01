@@ -2166,6 +2166,7 @@ function sanitizeReplayValue(value, path, ancestors) {
       );
     }
     if (key === 'resume' && typeof descriptor.value === 'string') continue;
+    if (descriptor.value === undefined) continue;
     Object.defineProperty(copy, key, {
       value: sanitizeReplayValue(
         descriptor.value,

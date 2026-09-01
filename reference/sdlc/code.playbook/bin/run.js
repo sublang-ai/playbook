@@ -36,6 +36,10 @@ import {
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
 import {
+  createReplayRecordObserver,
+  replayIncompleteMessage,
+} from './replay-observer.js';
+import {
   createRepositoryEffectCapabilities,
   refreshRepositoryEffectCapabilities,
   recoverIncompleteRepositoryEffects,
@@ -53,6 +57,7 @@ import {
 
 const EXIT = { ok: 0, argument: 1, turn: 2 };
 const UUID_PATTERN = SESSION_ID_PATTERN;
+const HEADLESS_REPLAY_CHANNELS = new WeakMap();
 class HeadlessHostSetupError extends Error {
   constructor(cause) {
     super(message(cause));
@@ -157,6 +162,7 @@ export async function runPlaybookRun(options = {}) {
   let config;
   let cwd;
   let restoreSnapshot;
+  let replayChannel;
   const loadModule = memoizedModuleLoader(
     options.loadModule ?? ((specifier) => import(specifier)),
   );
@@ -193,6 +199,12 @@ export async function runPlaybookRun(options = {}) {
       }
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
+      replayChannel = createHeadlessReplayChannel({
+        lease,
+        sessionId,
+        stderr,
+      });
+      await reportHeadlessReplay(replayChannel);
       throwIfAborted(options.signal);
       const authoritative =
         typeof lease.recoverUnresolvedEffectAbandonment === 'function'
@@ -446,6 +458,12 @@ export async function runPlaybookRun(options = {}) {
     try {
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
+      replayChannel = createHeadlessReplayChannel({
+        lease,
+        sessionId,
+        stderr,
+      });
+      await reportHeadlessReplay(replayChannel);
       throwIfAborted(options.signal);
     } catch (error) {
       const releaseError = await releaseLease(lease);
@@ -486,6 +504,7 @@ export async function runPlaybookRun(options = {}) {
       sessionId,
       cwd,
       sessionLease: lease,
+      replayObserver: replayChannel?.observer,
       loadModule,
       stderr,
       verbose: args.verbose,
@@ -571,7 +590,9 @@ export async function runPlaybookRun(options = {}) {
       },
       assertBeforeBossTurn: () => lease.assertOwner(),
     });
+    await reportHeadlessReplay(replayChannel);
   } catch (error) {
+    await reportHeadlessReplay(replayChannel);
     const cleanupIncomplete = isCaptainSessionHostCleanupIncomplete(error);
     let abandonmentError;
     if (
@@ -626,7 +647,9 @@ export async function runPlaybookRun(options = {}) {
       unresolvedEffects: settled.unresolvedEffects,
       retentionUpdates: settled.retentionUpdates,
     });
+    await reportHeadlessReplay(replayChannel);
   } catch (error) {
+    await reportHeadlessReplay(replayChannel);
     let cleanupError;
     try {
       await settled.dispose();
@@ -713,6 +736,7 @@ export async function driveHeadlessCaptainTurn({
   sessionId,
   cwd,
   sessionLease,
+  replayObserver,
   loadModule,
   stderr,
   verbose = false,
@@ -752,6 +776,7 @@ export async function driveHeadlessCaptainTurn({
               }
             },
           },
+          ...(replayObserver === undefined ? [] : [replayObserver]),
         ],
         ...(signal ? { signal } : {}),
         ...(adapterImports ? { adapterImports } : {}),
@@ -1532,12 +1557,56 @@ function createAttemptId(options) {
 
 async function releaseLease(lease) {
   if (lease === undefined) return undefined;
+  const replayChannel = HEADLESS_REPLAY_CHANNELS.get(lease);
   try {
-    await lease.release();
+    const status = await lease.release();
+    await reportHeadlessReplay(replayChannel, status);
+    HEADLESS_REPLAY_CHANNELS.delete(lease);
     return undefined;
   } catch (error) {
+    await reportHeadlessReplay(replayChannel);
     return error;
   }
+}
+
+function createHeadlessReplayChannel({ lease, sessionId, stderr }) {
+  if (
+    typeof lease?.append !== 'function' ||
+    typeof lease?.streamStatus !== 'function'
+  ) {
+    return undefined;
+  }
+  let warningPending = false;
+  let warningAttempted = false;
+  const replay = createReplayRecordObserver({
+    lease,
+    onIncomplete() {
+      warningPending = true;
+    },
+  });
+  const channel = Object.freeze({
+    ...replay,
+    async flushWarning() {
+      if (!warningPending || warningAttempted) return;
+      warningAttempted = true;
+      try {
+        await writeStream(
+          stderr,
+          `playbook run: ${replayIncompleteMessage(sessionId)}\n`,
+        );
+      } catch {
+        // The bounded warning is best-effort and never changes run outcome.
+      }
+    },
+  });
+  HEADLESS_REPLAY_CHANNELS.set(lease, channel);
+  return channel;
+}
+
+async function reportHeadlessReplay(channel, status) {
+  if (channel === undefined) return;
+  await channel.reportIfIncomplete(status);
+  await channel.flushWarning();
 }
 
 async function reportUncertainSession(stderr, sessionId) {
