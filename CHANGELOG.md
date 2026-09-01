@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-09-01
+
 ### Added
 
 - **Captain, player, and role settings now support adapter-scoped fast mode through Cligent 0.24.** `fastMode` is an optional plain boolean: top-level omission selects the provider default, role omission inherits the player default, and explicit `false` is a literal disabled request rather than a provider-default sentinel. Both booleans reject before registry preparation or host work when Cligent reports the adapter unsupported; ordinary reopen refreshes the setting, uncertain retry preserves the exact attempt, and structural and retained-generation compatibility exclude it. The starter lineup now uses Claude Opus 5 for Captain and Reviewer and GPT-5.6 Sol at ultra effort with fast mode enabled for the Codex Coder ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-11](specs/packages/playbook-cli.md#playbook-cli-11)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
@@ -513,7 +515,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v10.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v11.0.0...HEAD
+[11.0.0]: https://github.com/sublang-ai/playbook/compare/v10.0.0...v11.0.0
 [10.0.0]: https://github.com/sublang-ai/playbook/compare/v9.0.0...v10.0.0
 [9.0.0]: https://github.com/sublang-ai/playbook/compare/v8.0.0...v9.0.0
 [8.0.0]: https://github.com/sublang-ai/playbook/compare/v7.0.0...v8.0.0
