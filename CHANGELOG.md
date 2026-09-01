@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.0.0] - 2026-09-01
+
+### Added
+
+- **A `/dev` planning workflow joins the maintained set.** `dev` is an optional repository-aware planner: one `unchanged`-governed Analyst role analyzes a development request through the standard Boss-question suspension, then acts on its own accepted outcome — discussion complete, a nested `code` call, or `decide` followed by `code` with the `decide`-owned commit and evaluated revision consumed only from canonical structured child results. The artifact set ships under `reference/sdlc/dev.playbook` with public `./dev/playbook` and `./dev/registry` subpaths, and the seeded starter config gains a `dev.analyst` player (`claude` / `claude-opus-5`) bound to the new enabled playbook — a distinct player, so planning context never bleeds into review conversations ([DR-044](specs/decisions/044-dev-planning-workflow.md), [[playbook-38](specs/packages/playbook.md#playbook-38)], [[playbook-39](specs/packages/playbook.md#playbook-39)], [[playbook-cli-11](specs/packages/playbook-cli.md#playbook-cli-11)]).
+
+- **An `unchanged` receipt now carries revision authority.** An outcome arm with the `unchanged` repository disposition may declare effect-owned fields, and the reconciler injects them with that receipt's observed HEAD OID — selected by declared authority, never by field name, and failing closed when no provable head exists. REVIEW uses it to publish the exact receipt-proven revision its final clean round evaluated, so the composed clean-review happy path settles with repository authority instead of omitting the revision its callers require ([DR-045](specs/decisions/045-unchanged-receipt-revision-authority.md), [[playbook-26](specs/packages/playbook.md#playbook-26)], [[playbook-34](specs/packages/playbook.md#playbook-34)]).
+
+- **The compile definition now forbids prompts that reference undelivered runtime values.** `slc/text2gears.md` requires an acting prompt that refers to a runtime value the acting role cannot otherwise observe — such as the triggering Boss task — to relay it as a quoted placeholder even when Source states no explicit relay, closing a recurring compile defect where a first player was asked to act on data it never received.
+
+### Changed
+
+- **Breaking: CODE, REVIEW, and DECIDE are recompiled to their current authored sources with receipt-proven terminal contracts.** CODE's first phase now decides between a new coding intent and an existing IR's next unfinished task (asking Boss before changing files when the continued IR is ambiguous), calls REVIEW at the end of every phase with the original intent, an exact-commit review scope, and the Coder output, and completes with `{ status: 'complete', lastCodeCommit, finalEvaluatedRevision, allReviewsPassed: true }`. REVIEW runs scope-cumulative rounds with three distinct round openings and an affirmative completion bar, and terminates with `{ noUnsettledFindings: true, evaluatedRevision }` — replacing `{ approvedCommit: 'latest', … }`. DECIDE reveals proposals only when both are complete, synthesizes them under labeled relays, and returns `{ decideCommit, evaluatedRevision, noUnsettledFindings: true }`. Callers validate the new shapes exactly; a terminal review result that does not establish the evaluated scope routes to the failure-relay terminal ([[playbook-20](specs/packages/playbook.md#playbook-20)] through [[playbook-27](specs/packages/playbook.md#playbook-27)], [[playbook-32](specs/packages/playbook.md#playbook-32)], [[playbook-34](specs/packages/playbook.md#playbook-34)], [IR-050](specs/intents/050-current-sources-and-dev-adoption.md)).
+
 ## [11.0.0] - 2026-09-01
 
 ### Added
