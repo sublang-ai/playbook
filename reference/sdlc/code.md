@@ -63,7 +63,7 @@ Coder is <coder-llm>.
 ```
 
 Every new-intent phase has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
-Every IR-task phase, including the first phase for an existing IR, identifies the implemented task and has two semantic outcomes: more tasks and final task.
+Every IR-task phase, including the first phase for an existing IR, identifies the IR and the implemented task, and has two semantic outcomes: more tasks and final task.
 The first phase therefore has four semantic outcomes — direct implementation, new IR, more tasks, and final task — plus the Boss question when the continued IR is ambiguous.
 Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
