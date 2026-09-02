@@ -575,8 +575,59 @@ describe('linked REVIEW runtime', () => {
     await runtime.dispose();
   });
 
+  // DR-040 §4 / PBRT-77: an `unchanged` receipt excludes any effect, so a
+  // claimed commit over it is an ordinary failure whose all-`unchanged`
+  // attempt keeps the ordinary retry — never a parked reconciliation whose
+  // abandonment would have no effect evidence to record.
+  it('fails Coder committed under unchanged evidence into the ordinary retryable failure', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const host = await harness({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: '1. The contract is incomplete.',
+          resumeToken: 'reviewer-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'Accepted and committed.',
+          resumeToken: 'coder-1',
+          repositoryEffect: 'unchanged',
+        },
+      ],
+      judgeReplies: ['{"guard":"hasFindings"}', '{"guard":"committed"}'],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(session(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Review the latest contract commit.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+      'reviewer',
+      'coder',
+    ]);
+    expect(
+      host.effectLedger
+        .snapshot()
+        .boundaries.map(({ physicalReceipt }) => physicalReceipt?.classification),
+    ).toEqual(['unchanged', 'unchanged']);
+    expect(host.statuses).not.toContain('→ committed');
+    expect(runtime.unresolvedEffectEnvelopes?.()).toEqual([]);
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'retry:START_REVIEW',
+    ]);
+    await runtime.dispose();
+  });
+
   it.each([
-    ['committed', 'unchanged', 'unchanged'],
     ['rejectedAll', 'commit', 'one-descendant-commit'],
     ['committed', 'residual', 'observation-ambiguous'],
   ] as const)(

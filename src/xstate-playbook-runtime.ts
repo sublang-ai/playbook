@@ -3570,11 +3570,28 @@ export function createXStatePlaybookRuntime<
       }
     }
 
+    // DR-040 §4 parks only an envelope whose evidence proves a repository
+    // delta or cannot exclude one. A standalone boundary whose complete
+    // physical receipt is exactly `unchanged` excludes any effect, so missing
+    // or unresolved semantics over it are an ordinary failure — the FSM's
+    // failure state with its fenced retry — never a parked reconciliation:
+    // that state's only exits, reconcile and abandon, project no effect
+    // evidence from an `unchanged` receipt, so parking it deadlocks the
+    // engagement. A boundary inside a deferred chain is judged by the chain's
+    // cumulative receipt from its original baseline, not by its own step.
+    function boundaryExcludesEffect(boundary: PlaybookEffectBoundary): boolean {
+      return (
+        boundary.logicalOperationId === undefined &&
+        boundary.physicalReceipt?.classification === 'unchanged'
+      );
+    }
+
     function boundaryNeedsSemanticReconciliation(
       candidate: PlaybookEffectBoundary,
       ledger: PlaybookEffectLedger,
     ): boolean {
       if (!runtimeBoundaryIsOwned(candidate)) return false;
+      if (boundaryExcludesEffect(candidate)) return false;
       if (governedOutcomesForBoundary(candidate) === undefined) return true;
       const persisted = persistedBoundaryReconciliation(candidate, ledger);
       if (persisted !== undefined) {
@@ -5099,7 +5116,13 @@ export function createXStatePlaybookRuntime<
       if (governedSettlement !== undefined) {
         governedSettlementsByBoundaryId.delete(boundaryId);
         governedPlayerSettlements.set(result, governedSettlement);
-        if (governedSettlement.status === 'unresolved') {
+        // An unresolved settlement over an `unchanged` standalone receipt
+        // still throws into the failure state through the player bridge; it
+        // just never becomes an effect-possible envelope.
+        if (
+          governedSettlement.status === 'unresolved' &&
+          !boundaryExcludesEffect(completed)
+        ) {
           unresolvedSemanticBoundaryIds.add(boundaryId);
         } else {
           unresolvedSemanticBoundaryIds.delete(boundaryId);
@@ -7235,6 +7258,10 @@ export function createXStatePlaybookRuntime<
         delivery: deferredValue<PlayerResult>(),
       };
       activeDeferredContinuation = continuation;
+      // Emissions are buffered only until the host durably starts the
+      // continuation: an exit that starts no player (checkpoint mismatch,
+      // ineligible operation) publishes nothing, so the bound wait it
+      // preserves is never contradicted by a classification line.
       deferInspectionEmissions = true;
       let continuationStarted = false;
       let deliverySettled = false;
@@ -7271,6 +7298,14 @@ export function createXStatePlaybookRuntime<
             continuation.playerContinuation = selectedContinuation;
             continuationStarted = true;
             actor!.send(event);
+            // The host has durably started this boundary and the FSM has
+            // moved: publish the buffered classification line and the
+            // authored transition now, and let every later transition,
+            // accepted outcome, and status emit inline. Holding them until
+            // the operation settled put the cause after its effects — the
+            // player call, the nested call a target state starts, and their
+            // finishes were traced and sequenced first (PBRT-37).
+            settleDeferredInspectionBuffer(true);
             // The invoked player remains gated inside boundary.callPlayer.
             // Return to the host only after the raw player call settles so it
             // can capture and persist the receipt before any actor output or

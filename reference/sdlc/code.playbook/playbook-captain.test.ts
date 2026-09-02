@@ -4944,6 +4944,65 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain('Progress counts: 1 rebuttal');
   });
 
+  // CAPTAIN-19/20: a Boss-question suspension parks on Boss — it is the
+  // interruption itself, not one saved — so a turn that only parked carries
+  // no saved-counts line.
+  it('counts no saved interruption for a Boss-question suspension', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'needsBossReply',
+          sequence: 1,
+        }),
+      );
+    });
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code park on a question'), context.context);
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain('"interruptions":0');
+    expect(summary?.prompt).toContain(
+      'No saved-counts line is supplied for this turn; append no saved-counts line.',
+    );
+    expect(summary?.prompt).not.toContain('Saved you');
+  });
+
+  it('still counts the handoffs around a Boss-question suspension', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry(stateTelemetry('adjudicateChallenges'));
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'needsBossReply',
+          sequence: 1,
+        }),
+      );
+      await runtime.ports.emitTelemetry(
+        acceptedOutcomeTelemetry(runtime, {
+          acceptedOutcome: 'accepted',
+          sequence: 2,
+        }),
+      );
+    });
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code answer then adjudicate'), context.context);
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain('"interruptions":1');
+    expect(summary?.prompt).toContain(
+      'Saved you 1 interruption and 1 copy-paste across 1 round of reviews/rebuttals.',
+    );
+  });
+
   // CAPTAIN-19/21: a do-nothing turn — a `respond` settle or a parse-resolved
   // `respond` — makes no result-phase call, so no `Saved you` line can follow.
   it('makes no result-phase call for a respond settle or a bare command', async () => {

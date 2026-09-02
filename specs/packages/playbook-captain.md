@@ -166,7 +166,9 @@ summary policy; for CODE that line has the format:
 The saved-counts line shall use natural singular forms when a count
 is one.
 In that line, `X`, `Y`, and `Z` are decimal counts for that turn.
-Interruptions are player replies that Boss did not have to relay,
+Interruptions are player replies that Boss did not have to relay —
+a player's Boss-question suspension (`needsBossReply`) parks on Boss
+instead and is never one —
 copy-pastes are inter-player handoffs — including reviews,
 rebuttals, revisions, approvals, and passes — that Boss did not
 have to transfer manually, and review/rebuttal rounds are the
@@ -703,7 +705,7 @@ under the provided label.
 When that frame's `summaryPolicy` does not provide a state-count label for a
 state id, the shell shall not count that state in the result-phase
 prompt and shall not derive a fallback label from the state id.
-Each distinct confirmed `outcome.accepted` event of [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)] carried by the schema-4 public trace of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)] that is successfully published through the host sink during the active action-counting window, matches the active frame and public trace identity, and carries a positive runtime-local turn id shall count one saved interruption; its `acceptedOutcome` shall count one saved copy-paste exactly when it appears in that frame registry entry's `summaryPolicy` copy-paste guard names, while an earlier trace schema, duplicate sequence, foreign frame or causality, missing or nonpositive runtime turn, rejected host emission, direct player return, and raw judge reply shall count nothing.
+Each distinct confirmed `outcome.accepted` event of [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)] carried by the schema-4 public trace of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)] that is successfully published through the host sink during the active action-counting window, matches the active frame and public trace identity, and carries a positive runtime-local turn id shall count one saved interruption unless its `acceptedOutcome` is the Boss-question suspension `needsBossReply`, which parks on Boss and counts nothing; its `acceptedOutcome` shall count one saved copy-paste exactly when it appears in that frame registry entry's `summaryPolicy` copy-paste guard names, while an earlier trace schema, duplicate sequence, foreign frame or causality, missing or nonpositive runtime turn, rejected host emission, direct player return, and raw judge reply shall count nothing.
 The shell shall count one saved copy-paste per adjudicated
 handoff, regardless of how many individual review findings or
 rebuttal items the handoff text contains.
@@ -1354,7 +1356,7 @@ result-phase call with no action effect; the literal substring
 `Saved you` shall appear nowhere on either zero-activity turn.
 A zero-activity accepted action and an entry without a `summaryPolicy`
 shall likewise produce no saved-counts line.
-The suite shall fail unless only distinct schema-4 `outcome.accepted` traces successfully published inside the active action window with matching frame identity and a positive runtime-local turn increment interruption counts, only their accepted-outcome names listed by the emitting frame's `summaryPolicy` increment copy-paste counts, and a direct player result, raw judge result, earlier trace schema, duplicate sequence, foreign frame or causality, invalid runtime turn, or host-rejected accepted trace increments neither even where prior shell turns make the runtime-local turn differ from the Boss-turn id.
+The suite shall fail unless only distinct schema-4 `outcome.accepted` traces successfully published inside the active action window with matching frame identity and a positive runtime-local turn increment interruption counts, a `needsBossReply` accepted outcome increments neither count so a turn that only parked on a Boss question carries no saved-counts line while the handoffs around it still count, only their accepted-outcome names listed by the emitting frame's `summaryPolicy` increment copy-paste counts, and a direct player result, raw judge result, earlier trace schema, duplicate sequence, foreign frame or causality, invalid runtime turn, or host-rejected accepted trace increments neither even where prior shell turns make the runtime-local turn differ from the Boss-turn id.
 Accepted outcomes absent from that list,
 classifier/event JSON, session-Captain decision and result-phase
 calls, and malformed adjudication replies shall not increment the copy-paste

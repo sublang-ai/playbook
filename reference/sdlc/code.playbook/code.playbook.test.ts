@@ -481,8 +481,41 @@ describe('linked CODE runtime', () => {
     await runtime.dispose();
   });
 
+  // DR-040 §4 / PBRT-77: an `unchanged` receipt excludes any effect, so a
+  // claimed commit over it is an ordinary failure with the ordinary retry —
+  // never a parked reconciliation, whose reconcile would be a no-op and
+  // whose abandonment would have no effect evidence to record.
+  it('fails a directCommit candidate over unchanged repository evidence into the ordinary retryable failure', async () => {
+    const host = await harness({
+      players: [
+        { status: 'ok', finalText: 'Finished.', repositoryEffect: 'unchanged' },
+      ],
+      judges: [{ guard: 'directCommit' }],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix it.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual([
+      'retry:START_CODE',
+    ]);
+    expect(runtime.unresolvedEffectEnvelopes?.()).toEqual([]);
+    expect(host.childRequests).toEqual([]);
+    expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt)
+      .toMatchObject({ classification: 'unchanged' });
+    expect(host.statuses).not.toContain('→ directCommit');
+    await runtime.dispose();
+  });
+
   it.each([
-    ['unchanged', 'unchanged'],
     ['worktree', 'worktree-only-change'],
     ['multiple', 'multiple-commits'],
     ['rewritten', 'rewritten-or-non-descendant'],

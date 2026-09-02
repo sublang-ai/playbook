@@ -843,6 +843,65 @@ const retryMachine = createMachine({
   },
 });
 
+// Two sequential governed player phases in one host attempt: a receipted
+// commit, then a phase whose adjudication is lost over an unchanged receipt.
+const twoPhaseMachine = createMachine({
+  id: 'role-two-phase',
+  context: { task: '' },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-1',
+          prompt: `Implement ${context.task}.`,
+          result: { complete: 'The task is complete.' },
+        }),
+        onDone: 'verify',
+        onError: 'failed',
+      },
+    },
+    verify: {
+      meta: roleMeta('verify', 'coder', 'Verify the task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'verify',
+          role: 'coder',
+          sourceItem: 'ROLE-2',
+          prompt: `Verify ${context.task}.`,
+          result: { complete: 'The verification is complete.' },
+        }),
+        onDone: 'ready',
+        onError: 'failed',
+      },
+    },
+    failed: {
+      meta: stateMeta('failed', 'The task failed.'),
+      tags: ['playbook.parked'],
+      on: { START: 'work' },
+    },
+  },
+});
+
 const deferredBossMachine = createMachine({
   id: 'role-deferred-boss',
   context: {
@@ -4292,6 +4351,128 @@ describe('DR-032 shared role runtime transition', () => {
     await runtime.dispose();
   });
 
+  // DR-040 §4 / PBRT-77: an `unchanged` receipt excludes any effect, so lost
+  // or unresolved semantics over it are an ordinary failure with the
+  // ordinary fenced retry — never a parked reconciliation whose reconcile
+  // would be a no-op and whose abandonment projects no effect evidence.
+  it('fails ordinarily when adjudication is lost over an unchanged receipt, keeping the retry', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities();
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'done',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockRejectedValueOnce(new Error('judge transport unavailable'))
+      .mockResolvedValue('{"guard":"complete"}');
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      retryMachine,
+      retrySchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    const failed = await runtime.handleBossInput(bossTurn('the task'));
+    expect(failed).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0]).toMatchObject({
+      finalText: 'done',
+      physicalReceipt: { classification: 'unchanged' },
+    });
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0])
+      .not.toHaveProperty('semanticCandidate');
+    expect(runtime.unresolvedEffectEnvelopes?.()).toEqual([]);
+    const view = runtime.describe?.();
+    expect(view?.stateDescription).toBe('The task failed.');
+    expect(view?.actions.map(({ id }) => id)).toEqual(['retry:START']);
+
+    const receipt = await runtime.apply?.({
+      actionId: 'retry:START',
+      key: 'retry-once',
+      signal: new AbortController().signal,
+    });
+    expect(receipt).toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'quiescent', state: { stateId: 'ready' } },
+    });
+    expect(callPlayer).toHaveBeenCalledTimes(2);
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    await runtime.dispose();
+  });
+
+  it('advertises neither retry nor unresolved-effect control when adjudication is lost over an unchanged receipt after a receipted commit', async () => {
+    const attemptId = '20000000-0000-4000-8000-000000000001';
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      attemptId,
+      classifications: ['one-descendant-commit', 'unchanged'],
+    });
+    const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+      status: 'ok',
+      finalText: 'done',
+    }));
+    const callJudge = vi
+      .fn<PlaybookPorts['callJudge']>()
+      .mockResolvedValueOnce('{"guard":"complete"}')
+      .mockRejectedValueOnce(new Error('judge transport unavailable'));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      twoPhaseMachine,
+      retrySchema3Spec({
+        roleStates: {
+          work: { role: 'coder', label: 'Implement the task.' },
+          verify: { role: 'coder', label: 'Verify the task.' },
+        },
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: {},
+                repositoryDisposition: 'one-descendant-commit',
+              },
+            },
+            verify: {
+              complete: { fields: {}, repositoryDisposition: 'unchanged' },
+            },
+          },
+        },
+      }),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+
+    const failed = await runtime.handleBossInput(bossTurn('the task'));
+    expect(failed).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(
+      hostCapabilities.effectLedger
+        .snapshot()
+        .boundaries.map(({ physicalReceipt }) => physicalReceipt?.classification),
+    ).toEqual(['one-descendant-commit', 'unchanged']);
+    // The receipted commit fences the entry-event retry (PBRT-71), and the
+    // lost adjudication over the unchanged boundary is no effect-possible
+    // episode: the view advertises nothing rather than a reconcile that
+    // cannot act and an abandonment that has no evidence to record.
+    expect(runtime.unresolvedEffectEnvelopes?.()).toEqual([]);
+    const view = runtime.describe?.();
+    expect(view?.stateDescription).toBe('The task failed.');
+    expect(view?.actions).toEqual([]);
+    expect(runtime.exportSnapshot?.()?.failedEffectAttempt).toEqual({
+      boundaryPrefix: 0,
+      attemptId,
+    });
+    await expect(
+      runtime.apply?.({
+        actionId: 'abandon:unresolved-effect',
+        key: 'not-advertised',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ disposition: 'rejected' });
+    expect(callPlayer).toHaveBeenCalledTimes(2);
+    await runtime.dispose();
+  });
+
   it('suppresses retry when a second empty result follows a nonzero receipt', async () => {
     const hostCapabilities = emptyLedgerHostCapabilities({
       classifications: ['unchanged', 'concurrent-or-foreign-change'],
@@ -4633,7 +4814,228 @@ describe('DR-032 shared role runtime transition', () => {
   });
 });
 
+// Deferred question chain whose final arm hands off to a nested playbook: the
+// continuation's transition must be traced before the nested call it causes.
+const deferredThenNestedMachine = createMachine({
+  id: 'role-deferred-then-nested',
+  context: {
+    task: '',
+    pendingBossQuestion: undefined as
+      | {
+          questionId: string;
+          resumeStateId: string;
+          sourceItem: string;
+          asker: { kind: 'role'; roleId: string };
+          question: string;
+        }
+      | undefined,
+    bossReply: undefined as string | undefined,
+  },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            pendingBossQuestion: () => undefined,
+            bossReply: () => undefined,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the governed task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-DEFERRED-1',
+          prompt: `Implement ${context.task}.`,
+          result: {
+            complete:
+              'The task is complete. Output shall include no additional fields.',
+            needsBossReply:
+              "The acting agent needs Boss input. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+          },
+          ...(context.pendingBossQuestion === undefined
+            ? {}
+            : { pendingBossQuestion: context.pendingBossQuestion }),
+          ...(context.bossReply === undefined
+            ? {}
+            : { bossReply: context.bossReply }),
+        }),
+        onDone: [
+          {
+            guard: ({ event }) =>
+              (event as { output?: { guard?: string } }).output?.guard ===
+              'needsBossReply',
+            target: 'awaitBossReply',
+            actions: assign({
+              pendingBossQuestion: ({ event }) => {
+                const output = (event as {
+                  output: { guard: string; question: string };
+                }).output;
+                return {
+                  questionId: 'work',
+                  resumeStateId: 'work',
+                  sourceItem: 'ROLE-DEFERRED-1',
+                  asker: { kind: 'role' as const, roleId: 'coder' },
+                  question: output.question,
+                };
+              },
+              bossReply: () => undefined,
+            }),
+          },
+          {
+            target: 'child',
+            actions: assign({
+              pendingBossQuestion: () => undefined,
+              bossReply: () => undefined,
+            }),
+          },
+        ],
+        onError: 'ready',
+      },
+    },
+    awaitBossReply: {
+      meta: stateMeta('awaitBossReply', 'Waiting for Boss to answer Coder.'),
+      tags: ['playbook.parked'],
+      on: {
+        BOSS_REPLY: {
+          guard: ({ context, event }) => {
+            const reply = event as { questionId?: string; answer?: string };
+            return (
+              typeof reply.answer === 'string' &&
+              reply.answer.trim().length > 0 &&
+              (reply.questionId === undefined ||
+                reply.questionId === context.pendingBossQuestion?.questionId)
+            );
+          },
+          target: 'work',
+          reenter: true,
+          actions: assign({
+            bossReply: ({ event }) =>
+              (event as { answer: string }).answer,
+          }),
+        },
+      },
+    },
+    child: {
+      meta: stateMeta('child', 'Waiting for the nested review.'),
+      tags: ['playbook.suspended'],
+      invoke: {
+        src: 'playbook',
+        input: ({ context }) => ({
+          stateId: 'child',
+          playbookId: 'review',
+          text: context.task,
+        }),
+        onDone: 'ready',
+        onError: 'ready',
+      },
+    },
+  },
+});
+
 describe('DR-040 deferred Boss continuation', () => {
+  it('traces a continued transition before the player and nested calls it causes', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'one-descendant-commit'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'Choose a format.',
+          resumeToken: 'thread-question',
+        },
+        {
+          status: 'ok',
+          finalText: 'Implemented and committed.',
+          resumeToken: 'thread-final',
+        },
+      ],
+      ['{"guard":"needsBossReply"}', '{"guard":"complete"}'],
+    );
+    const callPlaybook = vi.fn<PlaybookPorts['callPlaybook']>(async () => ({
+      state: 'suspended',
+      childSessionId: 'review-child',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredThenNestedMachine,
+      deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session({ ...harness.ports, callPlaybook }));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    harness.telemetry.length = 0;
+
+    await expect(
+      runtime.handleBossInput(bossTurn('markdown')),
+    ).resolves.toMatchObject({
+      outcome: 'suspended',
+      state: { stateId: 'child' },
+    });
+    expect(callPlaybook).toHaveBeenCalledOnce();
+
+    // PBRT-37: a trace precedes the boundary call it describes, and the
+    // sequence is the observed total order. Each cause must be sequenced
+    // ahead of its effect: the classification line and the authored
+    // transition before the continued player call, and the transition into
+    // the nested-call state before that call starts.
+    const traces = harness.telemetry
+      .filter(
+        (event): event is { topic: string; payload: Record<string, unknown> } =>
+          (event as { topic?: unknown }).topic === 'playbook.trace',
+      )
+      .map(({ payload }) => payload);
+    const sequences = traces.map(({ sequence }) => sequence as number);
+    expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+    const position = (
+      type: string,
+      matches: (payload: Record<string, unknown>) => boolean = () => true,
+    ): number =>
+      traces.findIndex(
+        (trace) =>
+          trace.type === type &&
+          matches(trace.payload as Record<string, unknown>),
+      );
+    const classification = position(
+      'status.emitted',
+      ({ message }) => message === 'BOSS_REPLY',
+    );
+    const resumed = position('fsm.transition', ({ to }) => to === 'work');
+    const playerStarted = position('player.call.started');
+    const playerFinished = position('player.call.finished');
+    const handedOff = position('fsm.transition', ({ to }) => to === 'child');
+    const nestedStarted = position('playbook.call.started');
+    expect([
+      classification,
+      resumed,
+      playerStarted,
+      playerFinished,
+      handedOff,
+      nestedStarted,
+    ]).not.toContain(-1);
+    expect(classification).toBeLessThan(resumed);
+    expect(resumed).toBeLessThan(playerStarted);
+    expect(playerStarted).toBeLessThan(playerFinished);
+    expect(playerFinished).toBeLessThan(handedOff);
+    expect(handedOff).toBeLessThan(nestedStarted);
+    await runtime.dispose();
+  });
+
   it('keeps a governed unchanged question outside the deferred protocol', async () => {
     const hostCapabilities = emptyLedgerHostCapabilities({
       classifications: ['unchanged', 'unchanged'],

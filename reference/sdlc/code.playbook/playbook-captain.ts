@@ -554,6 +554,10 @@ const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
   'reconcile:unresolved-effect';
 const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
+// The fixed machine-syntax guard of a player's Boss-question suspension
+// (slc/link.md §Boss-reply suspension): the accepted outcome that parks on
+// Boss rather than sparing Boss a relay.
+const BOSS_QUESTION_OUTCOME = 'needsBossReply';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING =
   'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 
@@ -4293,6 +4297,11 @@ export function createPlaybookCaptainShell(
     const traceKey = `${frame.sessionId}:${trace.sequence}`;
     if (summary.acceptedOutcomeTraceKeys.has(traceKey)) return;
     summary.acceptedOutcomeTraceKeys.add(traceKey);
+    // CAPTAIN-19/20: a saved interruption is a player reply Boss did not
+    // have to relay. A Boss-question suspension is the one accepted outcome
+    // that parks on Boss instead, so it saves nothing and counts nothing —
+    // a turn that only parked must not claim it saved an interruption.
+    if (receipt.acceptedOutcome === BOSS_QUESTION_OUTCOME) return;
     summary.counts.interruptions++;
     if (
       frame.entry.summaryPolicy?.copyPasteGuardNames.includes(
