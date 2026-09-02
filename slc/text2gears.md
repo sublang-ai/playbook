@@ -323,6 +323,7 @@ exact English form regardless of Source language.
 A Source may itself be the normative specification of a transformation — e.g., a compiler phase definition, as when a meta pipeline compiles this file.
 Such a Source declares no roles and prompts none; Captain performs the specified transformation on request.
 Where such a Source carries a `## Compiled execution` section, text2gears shall compile it from that section alone: the section is the Source's complete behavior — its acting item, prompt, and `Results:` contract — and the remaining definition text is relayed content, not behaviors to transcribe, so the composition below applies only to a Source without that section.
+That section's blockquote is complete as authored: text2gears shall emit it verbatim and shall append no relay line to it — the `<definition>` placeholder is its only runtime value, and the undelivered-value rule above does not add `<boss-intent>` or any other placeholder to it.
 Compose Captain-acting spec items for it: when a transformation request names the specification's source and target, Captain shall carry out the transformation as specified.
 Prompts shall carry the specification's normative requirements as instructions to Captain — deduplicated, one point per line — without inventing roles, triggers, or requirements the specification does not state.
 

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A definition's compiled-execution blockquote is emitted verbatim.** `slc/text2gears.md` now states that the `## Compiled execution` section's prompt is complete as authored — the `<definition>` placeholder is its only runtime value and the undelivered-value relay rule appends nothing to it — after a real meta-compile appended a spurious `> > <boss-intent>` line that the consumer's fidelity gate correctly refused ([DR-047](specs/decisions/047-compiled-execution-contract-in-definitions.md)).
+
 ## [12.1.0] - 2026-09-01
 
 ### Added
