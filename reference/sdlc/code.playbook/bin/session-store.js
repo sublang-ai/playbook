@@ -4080,7 +4080,10 @@ function validateEffectLedgerAuthority(value, record, owner) {
   return authority;
 }
 
-function applyEffectLedgerCommands(
+// Exported for the private worktree host-capability constructor in
+// repository-effects.js, so an external host's in-memory ledger applies the
+// exact command semantics the durable Captain record applies.
+export function applyEffectLedgerCommands(
   ledgerValue,
   authority,
   uncertain,

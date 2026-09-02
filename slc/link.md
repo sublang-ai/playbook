@@ -2451,6 +2451,22 @@ This spec is silent on the choice; the contract is the same in any location.
 
 New behavior in any of these areas requires a separate slc spec.
 
+## Compiled execution
+
+This section governs compiled execution of this phase; the rules above remain the transformation's normative content for both execution paths.
+
+Where the phase host supplies `<definition>` as the exact bytes of the definition file the request names, when a transformation request names an `fsm` Source (`.ts`) and a `playbook` Target (`.ts`), Captain shall carry out the FSM-to-runtime linking as specified:
+
+> Follow the definition relayed between the `--- DEFINITION ---` and `--- END DEFINITION ---` lines exactly, adding no rules of your own: read the named Source and write the named Target as the definition specifies.
+> If the Source cannot be transformed under the definition, do not guess: leave the Target unwritten and report the concrete reason.
+> --- DEFINITION ---
+> \<definition\>
+> --- END DEFINITION ---
+
+Results:
+- `compiled`: Captain wrote the named Target as the relayed definition specifies.
+- `rejected`: Captain reported that the Source cannot be transformed under the relayed definition and left the Target unwritten.
+
 ## References
 
 [1]: text2gears.md "First phase: text → GEARS spec items."

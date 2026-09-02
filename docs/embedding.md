@@ -153,7 +153,9 @@ const playbookSessionId = randomUUID();
 // session lease and resolving the canonical Git worktree. Their authority
 // must name this playbook/session/working directory and their repository and
 // effect-ledger operations must stay live; never put them in configuration,
-// machine input, or a persisted snapshot.
+// machine input, or a persisted snapshot. A host outside the CLI constructs
+// the repository and effect-ledger members through the facade described in
+// "Constructing worktree host capabilities" below.
 declare const hostCapabilities: ReviewPlaybookHostCapabilities;
 
 const runtime = createPlaybookRuntime({
@@ -219,6 +221,86 @@ from stale machine state. Trace data, tokens, repository projections, and
 capability functions never enter Boss-visible status text or configured
 options. Because trace observers do receive opaque resume tokens, persisted
 traces should be protected as sensitive data.
+
+## Constructing worktree host capabilities
+
+A schema-3 artifact takes live `{ repository, effectLedger }` capabilities
+beside its configured options. Rather than reimplementing the engine's
+observation, claim, receipt, and ledger contract, construct them through the
+narrow, semver-stable `@sublang/playbook/host-capabilities` facade. It is the
+CLI host's own implementation, re-exported: every classification the engine
+makes for `playbook run` is the one your host makes too.
+
+```ts
+import {
+  createFailClosedHostCapabilities,
+  createWorktreeHostCapabilities,
+} from '@sublang/playbook/host-capabilities';
+
+declare const workdir: string;
+declare const createPlaybookRuntime: (construction: {
+  configuredOptions: object;
+  hostCapabilities: object;
+}) => unknown;
+
+// One capability per playbook and Git worktree, constructed after the
+// working directory is resolved and before the runtime is. The roles are the
+// artifact's declared roles; an undeclared role is refused at boundary start.
+const hostCapabilities = await createWorktreeHostCapabilities({
+  cwd: workdir,
+  playbookId: 'workflow',
+  requiredRoleIds: ['coder', 'reviewer'],
+});
+const runtime = createPlaybookRuntime({
+  configuredOptions: {},
+  hostCapabilities,
+});
+
+// An artifact declaring no governed player state needs no worktree at all:
+// every repository operation and ledger write rejects, and the ledger stays
+// empty.
+const inert = createPlaybookRuntime({
+  configuredOptions: {},
+  hostCapabilities: createFailClosedHostCapabilities(),
+});
+```
+
+`createWorktreeHostCapabilities()` requires only that `cwd` exist and returns
+exactly `repository: { identity, observe, runExclusive, runDeferred }` and
+`effectLedger: { snapshot, writeAhead }`. The governed worktree is bound at
+every governed call and observation rather than fixed at construction: it is
+the canonical root of the nearest Git worktree containing `cwd`, or — when
+there is none — `cwd` itself as the prospective root `{ worktree, gitDir:
+worktree/.git }` that a later `git init` there binds unchanged. A directory
+that is not a repository yet observes as the null (all-zero) HEAD over its
+non-ignored content, exactly as `git init` would then see it, and an unborn
+HEAD observes as the null OID too; so a workflow whose first step runs
+`test -e .git || git init` in its working directory receives `unchanged`, and
+its first root commit receives `one-descendant-commit` with that commit's OID.
+`identity` is the binding at construction; each boundary records the binding
+its baseline observed. The ledger is in memory and starts from the optional
+`effectLedger` seed, so a host that wants durability keeps
+`effectLedger.snapshot()` at its own boundaries and seeds the next
+construction from it; each construction is one attempt over its seed.
+`runExclusive` and `runDeferred` hold the same cross-process worktree claim the
+CLI uses (process-local until the repository exists, since there is no `.git`
+to publish it in), observe before and after the operation, apply the engine's
+correction-budget `writeAhead` mid-completion, and bind, park, continue, and
+restore deferred Boss questions with the engine's exact checkpoint semantics.
+Overlapping calls on one worktree run one at a time, in no guaranteed order.
+A write the ledger rejects after a boundary has started leaves the worktree
+claim quarantined, exactly as it would under `playbook run`: treat that
+rejection as terminal for the worktree in this process.
+
+The module functions `observeGitRepository(cwd)`,
+`captureRepositoryReceipt(baseline, { allowedDispositions })`, and
+`classifyRepositoryReceipt(baseline, after, { allowedDispositions })` expose
+the same observation and receipt classification for a host that inspects a
+worktree outside a governed call. The declaration is self-contained — it
+re-declares the ledger, receipt, observation, and question types of
+`@sublang/playbook/runtime` name for name — and the facade carries no session
+lease, session record, resume credential, catalog, or recovery member
+([[playbook-cli-87](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-87)]).
 
 ## Sharing the CLI session store
 

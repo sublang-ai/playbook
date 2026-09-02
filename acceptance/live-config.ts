@@ -52,6 +52,17 @@ export function liveConfig(
     '    permissions:',
     '      mode: auto',
     "      writablePaths: ['.git']",
+    // DR-044: the DEV planner binds its one Analyst role to a player distinct
+    // from the coder and reviewer, so planning context never bleeds into the
+    // implementation or review conversations that share a player id.
+    // Planning is the light hop; the implementing and reviewing players keep
+    // their higher effort.
+    '  acceptance.dev.analyst:',
+    '    adapter: claude',
+    `    model: ${JSON.stringify(claudeModel)}`,
+    '    effort: high',
+    '    permissions:',
+    '      mode: auto',
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
@@ -62,6 +73,9 @@ export function liveConfig(
     '  decide:',
     '    from: "@sublang/playbook/decide/registry"',
     '    roles: { coder: acceptance.dev.coder, reviewer: acceptance.dev.reviewer }',
+    '  dev:',
+    '    from: "@sublang/playbook/dev/registry"',
+    '    roles: { analyst: acceptance.dev.analyst }',
     '',
   ].join('\n');
 }

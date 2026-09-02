@@ -64,6 +64,9 @@ const failureSnapshotName = 'acceptance-failure.txt';
 // runs and `afterAll` would delete the artifacts while the agents are
 // still live.
 const scenarioTimeoutMs = liveTimeoutMs + 6 * startupTimeoutMs + 60_000;
+// The headless DEV case spends the CODE case's whole budget on its nested
+// CODE → REVIEW path and adds one live Analyst planning hop ahead of it.
+const devLiveTimeoutMs = liveTimeoutMs + 5 * 60_000;
 const turnFailureMarkers = [
   '◆ failed',
   '[turn aborted]',
@@ -129,6 +132,17 @@ function adapterSdkSpecs(): string[] {
 const codeCommand =
   '/code Implement the existing ACCEPT-1 requirement exactly. ' +
   'This is one small complete change. Do not broaden the requirement.';
+// DR-044: the planner's sound path here is unambiguously `code` — the
+// requirement is already specified, so the Analyst has no decision to make
+// and no material question to ask. The request says so, and the case fails
+// if planning suspends for Boss or routes through DECIDE anyway.
+const devToken = 'DEV_ACCEPTANCE_OK';
+const devCommand =
+  '/dev Implement the existing ACCEPT-1 requirement exactly. ' +
+  'This is one small complete change that the existing specs already ' +
+  'settle, so planning must choose code directly: do not ask Boss any ' +
+  'question, and do not choose decide then code. Do not broaden the ' +
+  'requirement.';
 const decideCommand =
   '/decide Add one minimal packages-layout spec item named ACCEPT-2. ' +
   'It shall require the repository-root file acceptance-decide.txt to ' +
@@ -529,6 +543,94 @@ describe.sequential('installed playbook live acceptance', () => {
       }
     },
     liveTimeoutMs + 60_000,
+  );
+
+  // DR-044: the real planner in front of the real CODE → REVIEW chain, on the
+  // same installed candidate and shared config as the CODE case. What is
+  // live here beyond that case is the Analyst's own planning judgment — that
+  // an already-specified requirement is a `code` path, not a Boss question
+  // and not a durable decision — and the shell's three-deep nested lifecycle.
+  it(
+    'runs /dev headlessly through the planned CODE path with nested REVIEW',
+    async () => {
+      const scenario = createScenario('dev');
+      let commandOutput = '';
+      try {
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
+        const result = await execLiveTextAsync(
+          candidateBin,
+          ['run', '--json', devCommand],
+          scenario.repo,
+          privateTmuxEnv({
+            SPEX_HOME: scenario.spexHome,
+            XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
+            XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+          }),
+          undefined,
+          devLiveTimeoutMs,
+        );
+        commandOutput =
+          `stdout:\n${diagnosticTail(result.stdout)}\n` +
+          `stderr:\n${diagnosticTail(result.stderr)}`;
+
+        const envelope = parseHeadlessEnvelope(result.stdout);
+        const record = readDurableSession(scenario, envelope.sessionId);
+        expectSettledSessionBoundary(record, scenario, [
+          'acceptance.dev.analyst',
+          'acceptance.dev.coder',
+          'acceptance.dev.reviewer',
+        ]);
+        expectCanonicalEffectSession(record, [
+          { playbookId: 'dev', classification: 'unchanged' },
+          {
+            playbookId: 'code',
+            classification: 'one-descendant-commit',
+          },
+          { playbookId: 'review', classification: 'unchanged' },
+        ]);
+        expectLiveRoleBindings(record);
+        expectDevPlannedCodePath(record);
+        expectMarkersExactlyOnceInOrder(result.stderr, [
+          '◇ /dev started',
+          '◇ /code called by /dev',
+          '◇ /review called by /code',
+          '◇ /review returned to /code',
+          '◇ /code returned to /dev',
+          '◇ /dev finished',
+        ]);
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+        expect(
+          readFileSync(join(scenario.repo, 'acceptance-dev.txt'), 'utf8'),
+        ).toBe(`${devToken}\n`);
+        expect(headFile(scenario.repo, 'acceptance-dev.txt')).toBe(
+          `${devToken}\n`,
+        );
+        expect(changedPaths(scenario)).toEqual(['acceptance-dev.txt']);
+        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
+        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+      } catch (error) {
+        preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          detailed,
+          scenario,
+        );
+        throw withArtifactPath(detailed, scenario.root);
+      }
+    },
+    devLiveTimeoutMs + 60_000,
   );
 
   it(
@@ -1205,33 +1307,49 @@ function readDurableSession(
   ) as DurableSessionRecord;
 }
 
+// Every player `liveConfig` binds to an enabled playbook enters the session
+// roster and ledger; only the players the scenario's workflow actually
+// delegated to hold a conversation token. The roster ledger is exact on both
+// sides so a player that a case should never reach — the DEV Analyst in
+// REVIEW, CODE, and DECIDE — is proven idle rather than merely unasserted.
+const liveRosterPlayers = {
+  'acceptance.dev.analyst': 'claude',
+  'acceptance.dev.coder': 'claude',
+  'acceptance.dev.reviewer': 'codex',
+} as const;
+
 function expectSettledSessionBoundary(
   record: DurableSessionRecord,
   scenario: Scenario,
-): void {
-  expect(record.state).toBe('settled');
-  expect(realpathSync(record.cwd)).toBe(realpathSync(scenario.repo));
-  expect(Object.keys(record.snapshot?.playerSessions ?? {}).sort()).toEqual([
+  actedPlayers: readonly (keyof typeof liveRosterPlayers)[] = [
     'acceptance.dev.coder',
     'acceptance.dev.reviewer',
-  ]);
+  ],
+): void {
+  const rosterIds = Object.keys(liveRosterPlayers).sort();
+  expect(record.state).toBe('settled');
+  expect(realpathSync(record.cwd)).toBe(realpathSync(scenario.repo));
+  expect(Object.keys(record.snapshot?.playerSessions ?? {}).sort()).toEqual(
+    rosterIds,
+  );
   expect(
     (record.structuralProjection as any)?.players
       ?.map((player: any) => player.id)
       .sort(),
-  ).toEqual(['acceptance.dev.coder', 'acceptance.dev.reviewer']);
-  expect(record.snapshot?.playerSessions).toEqual(
-    expect.objectContaining({
-      'acceptance.dev.coder': expect.objectContaining({
-        adapter: 'claude',
-        resumeToken: expect.stringMatching(/\S/),
-      }),
-      'acceptance.dev.reviewer': expect.objectContaining({
-        adapter: 'codex',
-        resumeToken: expect.stringMatching(/\S/),
-      }),
-    }),
-  );
+  ).toEqual(rosterIds);
+  for (const [playerId, adapter] of Object.entries(liveRosterPlayers)) {
+    const entry = record.snapshot?.playerSessions?.[playerId];
+    expect(entry).toEqual(expect.objectContaining({ adapter }));
+    if (actedPlayers.includes(playerId as keyof typeof liveRosterPlayers)) {
+      expect(entry).toEqual(
+        expect.objectContaining({
+          resumeToken: expect.stringMatching(/\S/),
+        }),
+      );
+    } else {
+      expect(entry).not.toHaveProperty('resumeToken');
+    }
+  }
 }
 
 function expectCanonicalEffectSession(
@@ -1363,6 +1481,35 @@ function expectLiveRoleBindings(record: DurableSessionRecord): void {
       reviewer: { playerId: 'acceptance.dev.reviewer' },
     });
   }
+  expect(structural?.catalog?.dev?.roles).toEqual({
+    analyst: { playerId: 'acceptance.dev.analyst' },
+  });
+}
+
+// DR-044: DEV's only governed player state is the Analyst planning round,
+// every one of its receipts is `unchanged`, and the round that settled this
+// case selected `code` outright — never a Boss question, never DECIDE. A
+// corrective re-ask (DR-028) may add a planning boundary; a suspension or a
+// `decide then code` selection may not.
+function expectDevPlannedCodePath(record: DurableSessionRecord): void {
+  const boundaries = record.effectLedger?.boundaries as any[];
+  const planning = boundaries.filter(
+    (boundary) => boundary.playbookId === 'dev',
+  );
+  expect(planning.length).toBeGreaterThanOrEqual(1);
+  for (const boundary of planning) {
+    expect(boundary.sourceStateId).toBe('planAnalysis');
+    expect(boundary.roleId).toBe('analyst');
+    expect(boundary.physicalReceipt?.classification).toBe('unchanged');
+    expect(boundary.semanticCandidate?.guard).not.toBe('needsBossReply');
+    expect(boundary.semanticCandidate?.guard).not.toBe('decideThenCode');
+  }
+  expect(planning.at(-1)?.semanticCandidate).toEqual(
+    expect.objectContaining({ guard: 'code' }),
+  );
+  expect(
+    boundaries.some((boundary) => boundary.playbookId === 'decide'),
+  ).toBe(false);
 }
 
 interface Launcher {
@@ -1638,7 +1785,7 @@ async function installGlobalCandidate(): Promise<string> {
 }
 
 function createScenario(
-  name: 'review' | 'code' | 'decide' | 'hermetic' | 'conversation',
+  name: 'review' | 'code' | 'dev' | 'decide' | 'hermetic' | 'conversation',
   options: { readonly reviewerInstruction?: string } = {},
 ): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
@@ -1704,28 +1851,25 @@ function createScenario(
       '',
     ].join('\n'),
   );
+  // Each implementing case has its own ACCEPT-1 file and token, so a commit
+  // from one case can never satisfy another's assertions.
+  const [requiredFile, requiredToken] =
+    name === 'review'
+      ? ['acceptance-review.txt', reviewToken]
+      : name === 'dev'
+        ? ['acceptance-dev.txt', devToken]
+        : ['acceptance-code.txt', 'CODE_ACCEPTANCE_OK'];
   writeFileSync(
     join(repo, 'specs/packages/acceptance.md'),
-    (name === 'review'
-      ? [
-          '# ACCEPT: Live acceptance fixture',
-          '',
-          '### ACCEPT-1',
-          '',
-          'The repository root shall contain `acceptance-review.txt` whose',
-          `entire content is \`${reviewToken}\` followed by one newline.`,
-          '',
-        ]
-      : [
-          '# ACCEPT: Live acceptance fixture',
-          '',
-          '### ACCEPT-1',
-          '',
-          'The repository root shall contain `acceptance-code.txt` whose entire',
-          'content is `CODE_ACCEPTANCE_OK` followed by one newline.',
-          '',
-        ]
-    ).join('\n'),
+    [
+      '# ACCEPT: Live acceptance fixture',
+      '',
+      '### ACCEPT-1',
+      '',
+      `The repository root shall contain \`${requiredFile}\` whose entire`,
+      `content is \`${requiredToken}\` followed by one newline.`,
+      '',
+    ].join('\n'),
   );
   writeFileSync(
     join(repo, 'specs/packages/git.md'),
@@ -2754,6 +2898,7 @@ function execLiveTextAsync(
   cwd: string,
   env: NodeJS.ProcessEnv,
   stdin?: string,
+  timeoutMs: number = liveTimeoutMs,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolveCommand, rejectCommand) => {
     // A detached child is a new POSIX process group. That lets timeout
@@ -2815,8 +2960,8 @@ function execLiveTextAsync(
       }
     };
     const timeoutTimer = setTimeout(
-      () => stop(`timed out after ${liveTimeoutMs}ms`),
-      liveTimeoutMs,
+      () => stop(`timed out after ${timeoutMs}ms`),
+      timeoutMs,
     );
 
     child.stdout.setEncoding('utf8');

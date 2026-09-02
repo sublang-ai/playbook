@@ -540,6 +540,10 @@ The artifact shall not bake them into machine input, options, or context; model 
 Host-owned configuration such as an enabled-playbook catalog shall remain
 immutable machine input/context for the session. Boss events and actor outputs
 shall not carry, replace, append to, or otherwise overwrite that catalog.
+A placeholder whose value Source assigns to the host — for example the
+`<definition>` a phase host supplies to a compiled phase — is such host-owned
+configuration: a required machine `input` field carried into typed context and
+the acting actor's input, never a Boss-event or actor-output payload.
 Every machine with a dynamic call shall receive its own registered or authored
 playbook id as immutable machine input/context named `selfPlaybookId`, and its
 dynamic-call guard shall reject that target. The leaf-level `stateId` name is
@@ -775,6 +779,22 @@ TypeScript output type. In particular, a declared `{ response }` result shall
 compile as `{ response: string }`, not `{ response?: string }`; reaching the
 final state without a non-empty response shall be guarded out before the
 machine output is constructed.
+
+## Compiled execution
+
+This section governs compiled execution of this phase; the rules above remain the transformation's normative content for both execution paths.
+
+Where the phase host supplies `<definition>` as the exact bytes of the definition file the request names, when a transformation request names a `gears` Source (`.md`) and an `fsm` Target (`.ts`), Captain shall carry out the GEARS-to-FSM transformation as specified:
+
+> Follow the definition relayed between the `--- DEFINITION ---` and `--- END DEFINITION ---` lines exactly, adding no rules of your own: read the named Source and write the named Target as the definition specifies.
+> If the Source cannot be transformed under the definition, do not guess: leave the Target unwritten and report the concrete reason.
+> --- DEFINITION ---
+> \<definition\>
+> --- END DEFINITION ---
+
+Results:
+- `compiled`: Captain wrote the named Target as the relayed definition specifies.
+- `rejected`: Captain reported that the Source cannot be transformed under the relayed definition and left the Target unwritten.
 
 ## References
 

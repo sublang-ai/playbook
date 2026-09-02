@@ -71,6 +71,8 @@ meta.md       The spec of specs
 | [DR-043](decisions/043-shared-spex-root-config.md) | 043-shared-spex-root-config.md | Shared config moves under the Spex root, with guarded one-time relocation of the former path |
 | [DR-044](decisions/044-dev-planning-workflow.md) | 044-dev-planning-workflow.md | DEV joins the maintained set: one unchanged-governed Analyst planning role, standard Boss suspension, nested `code`/`decide` composition, distinct terminal meanings, and full host adoption with a seeded `dev.analyst` player |
 | [DR-045](decisions/045-unchanged-receipt-revision-authority.md) | 045-unchanged-receipt-revision-authority.md | An `unchanged` arm may declare effect-owned fields injected with the receipt's observed HEAD, so REVIEW always returns the exact evaluated revision and the clean-review happy path composes |
+| [DR-046](decisions/046-public-worktree-host-capabilities.md) | 046-public-worktree-host-capabilities.md | `@sublang/playbook/host-capabilities`: a typed facade over the CLI host's single repository-effect implementation, so every embedding host classifies receipts through the same code; it binds the governed worktree lazily and observes an unborn HEAD as the null OID |
+| [DR-047](decisions/047-compiled-execution-contract-in-definitions.md) | 047-compiled-execution-contract-in-definitions.md | Each phase definition declares its compiled-execution contract with a run-time `<definition>` relay, so compiled phase bundles are stable control shells and rule edits need no rebuild |
 
 ## Packages
 
@@ -82,6 +84,6 @@ meta.md       The spec of specs
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, and DECIDE source, GEARS, FSM, prompt, transition, nesting, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
-| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store and replay stream, and checks |
+| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |

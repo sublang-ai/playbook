@@ -1491,6 +1491,8 @@ async function main() {
     ['guard the nested cligent floor', () => stepCligentFloor(root, state)],
     ['exercise the packed session-store facade', () =>
       stepPackedSessionStore(root, state)],
+    ['exercise the packed host-capabilities facade', () =>
+      stepPackedHostCapabilities(root, state)],
   ];
 
   const startedAt = Date.now();
@@ -2892,38 +2894,14 @@ function stepCligentFloor(root, state) {
 // tarball. Its emitted strict TypeScript consumer imports only the public
 // session-store facade, so neither a repository source path nor the private
 // store can make the declaration or runtime proof pass by accident.
-function stepPackedSessionStore(root, state) {
-  const fixture = state.sessionStoreFixture;
-  if (fixture === undefined) {
-    fail('the installed CLI produced no session-store smoke fixture');
-  }
-  const oldManifest = readJson(fixture.oldSessionPath);
-  if (
-    oldManifest.schemaVersion !== 6 ||
-    oldManifest.sessionId !== fixture.oldSessionId
-  ) {
-    fail(
-      'the CLI-written old-schema source manifest is not current and valid',
-      JSON.stringify({
-        schemaVersion: oldManifest.schemaVersion,
-        sessionId: oldManifest.sessionId,
-      }),
-    );
-  }
-  const {
-    unresolvedEffects: _unresolvedEffects,
-    ...preUnresolvedEffectsManifest
-  } = oldManifest;
-  const oldSchemaBytes = `${JSON.stringify({
-    ...preUnresolvedEffectsManifest,
-    schemaVersion: 5,
-  })}\n`;
-  writeFileSync(fixture.oldSessionPath, oldSchemaBytes);
-
-  const consumerRoot = join(root, 'session-store-consumer');
+// Steps 10 and 11 — an external package declaring only the candidate tarball,
+// installed from it into its own throwaway root, with the facade artifacts it
+// consumes proven present in that installation.
+function installPackedConsumer(root, state, { name, artifacts }) {
+  const consumerRoot = join(root, `${name}-consumer`);
   mkdirSync(consumerRoot, { recursive: true });
   const manifest = {
-    name: 'playbook-session-store-smoke',
+    name: `playbook-${name}-smoke`,
     private: true,
     type: 'module',
     dependencies: {
@@ -3000,22 +2978,23 @@ function stepPackedSessionStore(root, state) {
       }),
     );
   }
-  for (const artifact of [
-    'reference/sdlc/code.playbook/session-store.js',
-    'reference/sdlc/code.playbook/session-store.d.ts',
-  ]) {
+  for (const artifact of artifacts) {
     if (!existsSync(join(installed, artifact))) {
-      fail(`the packed session-store consumer is missing ${artifact}`);
+      fail(`the packed ${name} consumer is missing ${artifact}`);
     }
   }
+  return consumerRoot;
+}
 
-  writeFileSync(
-    join(consumerRoot, 'consumer.ts'),
-    sessionStoreConsumerSource(fixture),
-  );
+// Type-check and emit the consumer with the development tree's compiler under
+// the consumer's own strict tsconfig, then run the emitted JavaScript from the
+// consumer's package scope so every import resolves through the installed
+// candidate's exports map.
+function compileAndRunPackedConsumer(consumerRoot, source, tsconfig) {
+  writeFileSync(join(consumerRoot, 'consumer.ts'), source);
   writeFileSync(
     join(consumerRoot, 'tsconfig.json'),
-    `${JSON.stringify(sessionStoreConsumerTsconfig(), null, 2)}\n`,
+    `${JSON.stringify(tsconfig, null, 2)}\n`,
   );
   const compiler = join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
   if (!existsSync(compiler)) {
@@ -3027,6 +3006,48 @@ function stepPackedSessionStore(root, state) {
   run(process.execPath, [join('dist', 'consumer.js')], {
     cwd: consumerRoot,
   });
+}
+
+function stepPackedSessionStore(root, state) {
+  const fixture = state.sessionStoreFixture;
+  if (fixture === undefined) {
+    fail('the installed CLI produced no session-store smoke fixture');
+  }
+  const oldManifest = readJson(fixture.oldSessionPath);
+  if (
+    oldManifest.schemaVersion !== 6 ||
+    oldManifest.sessionId !== fixture.oldSessionId
+  ) {
+    fail(
+      'the CLI-written old-schema source manifest is not current and valid',
+      JSON.stringify({
+        schemaVersion: oldManifest.schemaVersion,
+        sessionId: oldManifest.sessionId,
+      }),
+    );
+  }
+  const {
+    unresolvedEffects: _unresolvedEffects,
+    ...preUnresolvedEffectsManifest
+  } = oldManifest;
+  const oldSchemaBytes = `${JSON.stringify({
+    ...preUnresolvedEffectsManifest,
+    schemaVersion: 5,
+  })}\n`;
+  writeFileSync(fixture.oldSessionPath, oldSchemaBytes);
+
+  const consumerRoot = installPackedConsumer(root, state, {
+    name: 'session-store',
+    artifacts: [
+      'reference/sdlc/code.playbook/session-store.js',
+      'reference/sdlc/code.playbook/session-store.d.ts',
+    ],
+  });
+  compileAndRunPackedConsumer(
+    consumerRoot,
+    sessionStoreConsumerSource(fixture),
+    sessionStoreConsumerTsconfig(),
+  );
   if (readFileSync(fixture.oldSessionPath, 'utf8') !== oldSchemaBytes) {
     fail('the external consumer migrated or rewrote the old-schema manifest');
   }
@@ -3313,6 +3334,345 @@ check(oldSchemaRejected, 'schema-5 record was not rejected');
 `;
 }
 
+// Step 11 — RELEASE-28 / DR-046: an external consumer of the packed
+// `@sublang/playbook/host-capabilities` facade constructs live capabilities on
+// a fresh Git worktree, drives one exclusive governed operation that commits,
+// spends the correction budget through `writeAhead` mid-completion, classifies
+// one unchanged operation, observes and classifies through the module
+// functions, and proves the fail-closed constructor — all under
+// `skipLibCheck: false` against the packed declaration.
+function stepPackedHostCapabilities(root, state) {
+  const repo = join(root, 'host-capabilities-worktree');
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(
+    join(repo, 'README.md'),
+    'Release smoke host-capabilities fixture.\n',
+  );
+  for (const args of [
+    ['init', '-b', 'main'],
+    ['config', 'user.name', 'Playbook Release Smoke'],
+    ['config', 'user.email', 'smoke@sublang.invalid'],
+    ['config', 'commit.gpgsign', 'false'],
+    ['add', '.'],
+    ['commit', '-m', 'Initialize host-capabilities fixture'],
+  ]) {
+    run('git', args, { cwd: repo });
+  }
+  const head = () =>
+    run('git', ['rev-parse', 'HEAD'], { cwd: repo }).stdout.trim();
+  const baselineHead = head();
+  const fixture = Object.freeze({ repo: realpathSync(repo), baselineHead });
+
+  const consumerRoot = installPackedConsumer(root, state, {
+    name: 'host-capabilities',
+    artifacts: [
+      'reference/sdlc/code.playbook/host-capabilities.js',
+      'reference/sdlc/code.playbook/host-capabilities.d.ts',
+      'reference/sdlc/code.playbook/bin/repository-effects.js',
+    ],
+  });
+  compileAndRunPackedConsumer(
+    consumerRoot,
+    hostCapabilitiesConsumerSource(fixture),
+    hostCapabilitiesConsumerTsconfig(),
+  );
+
+  const afterHead = head();
+  if (afterHead === baselineHead) {
+    fail('the external consumer created no governed commit');
+  }
+  run('git', ['merge-base', '--is-ancestor', baselineHead, afterHead], {
+    cwd: repo,
+  });
+  const count = run(
+    'git',
+    ['rev-list', '--count', `${baselineHead}..${afterHead}`],
+    { cwd: repo },
+  ).stdout.trim();
+  if (count !== '1') {
+    fail('the external consumer did not create exactly one descendant commit', count);
+  }
+  const status = run('git', ['status', '--porcelain'], { cwd: repo });
+  if (status.stdout.trim() !== '') {
+    fail('the external consumer left repository residue', status.stdout);
+  }
+  if (existsSync(join(repo, '.git', 'playbook-effect-claims', 'active'))) {
+    fail('the external consumer left the worktree claim active');
+  }
+
+  return [
+    'one tarball-only dependency; no repository or private-module import',
+    'strict declaration check passed with skipLibCheck false',
+    'exclusive governed commit classified one-descendant-commit with its OID',
+    'mid-completion correction-budget spend retained through writeAhead',
+    'unchanged operation classified; module observation and classification agree',
+    'fail-closed capabilities rejected every operation; worktree claim released',
+  ];
+}
+
+function hostCapabilitiesConsumerTsconfig() {
+  return {
+    compilerOptions: {
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2022',
+      lib: ['ES2022'],
+      strict: true,
+      skipLibCheck: false,
+      // The consumer's own Git and filesystem work needs Node's globals; the
+      // facade declaration itself imports nothing.
+      types: ['node'],
+      typeRoots: [join(repoRoot, 'node_modules', '@types')],
+      rootDir: '.',
+      outDir: 'dist',
+      noEmitOnError: true,
+    },
+    files: ['consumer.ts'],
+  };
+}
+
+function hostCapabilitiesConsumerSource(fixture) {
+  return `import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  REPOSITORY_RECEIPT_CLASSIFICATIONS,
+  captureRepositoryReceipt,
+  classifyRepositoryReceipt,
+  createFailClosedHostCapabilities,
+  createWorktreeHostCapabilities,
+  observeGitRepository,
+  type EffectBoundarySeed,
+  type PlaybookEffectLedger,
+  type PlaybookRepositoryDisposition,
+  type RepositoryCompletionEvidence,
+  type WorktreeHostCapabilities,
+} from '@sublang/playbook/host-capabilities';
+
+const repo = ${JSON.stringify(fixture.repo)};
+const baselineHead = ${JSON.stringify(fixture.baselineHead)};
+
+function check(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function exactKeys(value: object, expected: readonly string[], label: string) {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  check(
+    JSON.stringify(actual) === JSON.stringify(wanted),
+    label + ' keys: expected ' + JSON.stringify(wanted) +
+      ', got ' + JSON.stringify(actual),
+  );
+}
+
+function git(...args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function seed(
+  dispositions: readonly PlaybookRepositoryDisposition[],
+): EffectBoundarySeed {
+  return {
+    boundaryId: randomUUID(),
+    runtimeSessionId: randomUUID(),
+    turnId: 1,
+    callId: 'player-1',
+    roleId: 'coder',
+    sourceStateId: 'work',
+    sourceOutcomeSchema: {},
+    dispositions,
+    correctionBudget: { limit: 1, spent: false },
+  };
+}
+
+function assertLedger(
+  ledger: PlaybookEffectLedger,
+  revision: number,
+  boundaries: number,
+  label: string,
+) {
+  check(ledger.schemaVersion === 1, label + ': ledger schema is not 1');
+  check(ledger.revision === revision, label + ': revision ' + ledger.revision + ' is not ' + revision);
+  check(ledger.boundaries.length === boundaries, label + ': boundary count is not ' + boundaries);
+  ledger.boundaries.forEach((boundary, index) => {
+    check(boundary.sequence === index + 1, label + ': boundary sequence is not contiguous');
+  });
+  check(ledger.logicalOperations.length === 0, label + ': unexpected logical operation');
+}
+
+check(
+  REPOSITORY_RECEIPT_CLASSIFICATIONS.length === 7 &&
+    REPOSITORY_RECEIPT_CLASSIFICATIONS.includes('unchanged') &&
+    REPOSITORY_RECEIPT_CLASSIFICATIONS.includes('one-descendant-commit') &&
+    REPOSITORY_RECEIPT_CLASSIFICATIONS.includes('observation-ambiguous'),
+  'receipt classifications are not the seven declared values',
+);
+
+const capabilities: WorktreeHostCapabilities =
+  await createWorktreeHostCapabilities({
+    cwd: repo,
+    playbookId: 'smoke',
+    requiredRoleIds: ['coder'],
+  });
+exactKeys(capabilities, ['repository', 'effectLedger'], 'capabilities');
+exactKeys(
+  capabilities.repository,
+  ['identity', 'observe', 'runExclusive', 'runDeferred'],
+  'repository',
+);
+exactKeys(capabilities.effectLedger, ['snapshot', 'writeAhead'], 'effect ledger');
+check(
+  capabilities.repository.identity.worktree === repo,
+  'canonical worktree differs from the fixture',
+);
+assertLedger(capabilities.effectLedger.snapshot(), 0, 0, 'initial ledger');
+
+const baseline = await capabilities.repository.observe();
+check(baseline.head === baselineHead, 'baseline observation did not report HEAD');
+check(
+  Object.keys(baseline.projection).length === 0,
+  'clean fixture reported a dirty projection',
+);
+
+let spentInsideCompletion = false;
+const committed = await capabilities.repository.runExclusive({
+  signal: new AbortController().signal,
+  effectBoundary: seed(['one-descendant-commit']),
+  operation: async ({ baseline: observed, identity }) => {
+    check(observed.head === baselineHead, 'operation baseline is not HEAD');
+    check(identity.worktree === repo, 'operation identity is not the fixture');
+    writeFileSync(join(repo, 'change.txt'), 'packed facade change\\n');
+    git('add', '--', 'change.txt');
+    git('commit', '-m', 'Record packed facade change');
+    return 'committed';
+  },
+  completeEffectBoundary: async ({
+    boundary,
+    operation,
+    receipt,
+    outcomeReceipt,
+  }): Promise<RepositoryCompletionEvidence> => {
+    check(
+      operation.status === 'fulfilled' && operation.value === 'committed',
+      'completion did not receive the fulfilled operation',
+    );
+    check(
+      receipt.classification === outcomeReceipt.classification,
+      'exclusive completion receipts disagree',
+    );
+    check(boundary.correctionBudget.spent === false, 'budget was spent early');
+    const spent = await capabilities.effectLedger.writeAhead([
+      {
+        kind: 'replace-boundaries',
+        replacements: [
+          {
+            expected: boundary,
+            next: { ...boundary, correctionBudget: { limit: 1, spent: true } },
+          },
+        ],
+      },
+    ]);
+    spentInsideCompletion =
+      spent.boundaries[0]?.correctionBudget.spent === true;
+    return { finalText: 'committed', semanticCandidate: { guard: 'complete' } };
+  },
+});
+const afterHead = git('rev-parse', 'HEAD');
+check(afterHead !== baselineHead, 'the governed operation did not commit');
+check(
+  committed.receipt.classification === 'one-descendant-commit',
+  'commit classified as ' + committed.receipt.classification,
+);
+check(
+  committed.receipt.commitOid === afterHead &&
+    committed.receipt.after?.head === afterHead,
+  'receipt did not carry the observed commit OID',
+);
+check(spentInsideCompletion, 'mid-completion writeAhead did not spend the budget');
+assertLedger(committed.effectLedger, 3, 1, 'committed ledger');
+const settled = committed.effectLedger.boundaries[0];
+check(
+  settled !== undefined &&
+    settled.correctionBudget.spent === true &&
+    settled.finalText === 'committed' &&
+    settled.physicalReceipt?.classification === 'one-descendant-commit' &&
+    settled.physicalReceipt.commitOid === afterHead,
+  'settled boundary lost its receipt or completion evidence',
+);
+check(
+  JSON.stringify(settled.semanticCandidate) === JSON.stringify({ guard: 'complete' }),
+  'settled boundary lost its semantic candidate',
+);
+
+const idle = await capabilities.repository.runExclusive({
+  effectBoundary: seed(['unchanged']),
+  operation: async () => 'idle',
+  completeEffectBoundary: () => ({ finalText: 'idle' }),
+});
+check(
+  idle.receipt.classification === 'unchanged' && idle.receipt.commitOid === undefined,
+  'idle operation classified as ' + idle.receipt.classification,
+);
+assertLedger(idle.effectLedger, 5, 2, 'idle ledger');
+check(
+  JSON.stringify(capabilities.effectLedger.snapshot()) ===
+    JSON.stringify(idle.effectLedger),
+  'snapshot diverged from the acknowledged ledger',
+);
+
+const observation = await observeGitRepository(repo);
+check(
+  observation.head === afterHead &&
+    observation.gitDir === capabilities.repository.identity.gitDir,
+  'module observation disagrees with the capability',
+);
+const captured = await captureRepositoryReceipt(observation, {
+  allowedDispositions: ['unchanged'],
+});
+check(captured.classification === 'unchanged', 'capture classified as ' + captured.classification);
+const classified = await classifyRepositoryReceipt(
+  committed.receipt.baseline,
+  observation,
+  { allowedDispositions: ['one-descendant-commit'] },
+);
+check(
+  classified.classification === 'one-descendant-commit' &&
+    classified.commitOid === afterHead,
+  'module classification disagrees with the exclusive receipt',
+);
+
+const closed = createFailClosedHostCapabilities();
+exactKeys(closed, ['repository', 'effectLedger'], 'fail-closed capabilities');
+exactKeys(closed.repository, ['runExclusive', 'runDeferred'], 'fail-closed repository');
+let closedRejected = false;
+try {
+  await closed.repository.runExclusive({
+    effectBoundary: seed(['unchanged']),
+    operation: async () => undefined,
+    completeEffectBoundary: () => ({}),
+  });
+} catch {
+  closedRejected = true;
+}
+check(closedRejected, 'fail-closed repository ran a governed operation');
+assertLedger(closed.effectLedger.snapshot(), 0, 0, 'fail-closed ledger');
+check(
+  !existsSync(join(repo, '.git', 'playbook-effect-claims', 'active')),
+  'the worktree claim was not released',
+);
+// @ts-expect-error the facade carries no lease acquisition
+capabilities.repository.acquire;
+// @ts-expect-error the facade carries no cohort transaction
+capabilities.repository.runCohort;
+`;
+}
+
 export const _testing = Object.freeze({
   stepHermetic,
   stepEffectReconciliation,
@@ -3328,6 +3688,8 @@ export const _testing = Object.freeze({
   cligentMessageBoundaryProbeSource,
   sessionStoreConsumerSource,
   sessionStoreConsumerTsconfig,
+  hostCapabilitiesConsumerSource,
+  hostCapabilitiesConsumerTsconfig,
 });
 
 if (

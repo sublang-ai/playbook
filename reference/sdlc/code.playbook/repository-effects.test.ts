@@ -396,6 +396,51 @@ describe('repository-relevant Git observations (PBRT-68)', () => {
     );
   });
 
+  it('observes an unborn HEAD as the null OID and proves its first root commit', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'playbook-effects-unborn-'));
+    tempDirs.push(repo);
+    await git(repo, 'init', '--quiet');
+    await git(repo, 'config', 'user.name', 'Repository Effect Test');
+    await git(repo, 'config', 'user.email', 'effects@example.invalid');
+    const identity = await resolveCanonicalGitWorktree(repo);
+    const unborn = await observeGitRepository(repo);
+    expect(unborn).toMatchObject({ ...identity, head: '0'.repeat(40), projection: {} });
+
+    await writeFile(join(repo, 'first.txt'), 'first\n', 'utf8');
+    const dirty = await observeGitRepository(repo);
+    expect(dirty.head).toBe(unborn.head);
+    expect(Object.keys(dirty.projection)).toEqual(['first.txt']);
+    expect(
+      (
+        await classifyRepositoryReceipt(unborn, dirty, {
+          allowedDispositions: ['unchanged'],
+        })
+      ).classification,
+    ).toBe('concurrent-or-foreign-change');
+
+    await git(repo, 'add', '--all');
+    await git(repo, 'commit', '--quiet', '-m', 'root');
+    const rootCommit = await git(repo, 'rev-parse', 'HEAD');
+    const committed = await captureRepositoryReceipt(unborn, {
+      allowedDispositions: ['one-descendant-commit'],
+    });
+    expect(committed.classification).toBe('one-descendant-commit');
+    expect(committed.commitOid).toBe(rootCommit);
+    expect(committed.after?.head).toBe(rootCommit);
+    // The null baseline is never "not an ancestor": only the commit count and
+    // the projection decide, so a second root-descended commit is multiple.
+    await writeFile(join(repo, 'second.txt'), 'second\n', 'utf8');
+    await git(repo, 'add', '--all');
+    await git(repo, 'commit', '--quiet', '-m', 'second');
+    expect(
+      (
+        await captureRepositoryReceipt(unborn, {
+          allowedDispositions: ['one-descendant-commit'],
+        })
+      ).classification,
+    ).toBe('multiple-commits');
+  });
+
   it('fails closed instead of collapsing a non-UTF-8 Git path', async () => {
     const repo = await initRepository();
     const oid = await exec('git', ['hash-object', '-w', '--stdin'], {

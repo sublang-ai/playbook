@@ -1271,6 +1271,14 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'defaultSessionsDir',
       'openSessionStore',
     ],
+    './host-capabilities': [
+      'REPOSITORY_RECEIPT_CLASSIFICATIONS',
+      'captureRepositoryReceipt',
+      'classifyRepositoryReceipt',
+      'createFailClosedHostCapabilities',
+      'createWorktreeHostCapabilities',
+      'observeGitRepository',
+    ],
     './review/playbook': ['_internal', 'default'],
     './review/registry': [
       'default',
@@ -1550,6 +1558,41 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'SkippedPlaybookSession',
       'defaultSessionsDir',
       'openSessionStore',
+    ],
+    // DR-046: the worktree host-capability facade. Its ledger, receipt,
+    // observation, and question types are re-declared name for name from
+    // `./runtime` so the declaration stays self-contained.
+    './host-capabilities': [
+      'EffectBoundarySeed',
+      'HostCapabilities',
+      'JsonValue',
+      'PlaybookEffectBoundary',
+      'PlaybookEffectBoundaryStart',
+      'PlaybookEffectLedger',
+      'PlaybookEffectLedgerCapability',
+      'PlaybookEffectLedgerCommand',
+      'PlaybookEffectLedgerCommandBatch',
+      'PlaybookEffectLogicalOperation',
+      'PlaybookPendingBossQuestion',
+      'PlaybookRepositoryDisposition',
+      'PlaybookRepositoryObservation',
+      'PlaybookRepositoryReceipt',
+      'REPOSITORY_RECEIPT_CLASSIFICATIONS',
+      'RepositoryCapability',
+      'RepositoryCompletionEvidence',
+      'RepositoryExclusiveCompletion',
+      'RepositoryExclusiveResult',
+      'RepositoryIdentity',
+      'RepositoryReceiptClassification',
+      'RepositoryReceiptOptions',
+      'WorktreeHostCapabilities',
+      'WorktreeHostCapabilitiesOptions',
+      'WorktreeRepositoryCapability',
+      'captureRepositoryReceipt',
+      'classifyRepositoryReceipt',
+      'createFailClosedHostCapabilities',
+      'createWorktreeHostCapabilities',
+      'observeGitRepository',
     ],
     './review/playbook': [
       'CaptainCallOptions',
@@ -1904,6 +1947,152 @@ void [version, store, appendResult, status, consume];
     }
   });
 
+  // DR-046 / playbook-cli-87: the host-capabilities declaration is
+  // self-contained and strict — a consumer with `skipLibCheck: false` and only
+  // Node's globals must compile the exact declared usage and be refused every
+  // member the facade deliberately omits.
+  it('publishes a self-contained strict host-capabilities declaration', () => {
+    const declaration = declarationSourceOf('./host-capabilities');
+    expect(declaration).not.toMatch(/^\s*import\b/m);
+    expect(declaration).not.toMatch(/\bfrom\s+['"]/);
+    expect(declaration).not.toMatch(/\/\/\/\s*<reference/);
+
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-host-capability-types-'));
+    try {
+      mkdirSync(join(scratch, 'node_modules', '@sublang'), { recursive: true });
+      symlinkSync(
+        repoRoot,
+        join(scratch, 'node_modules', '@sublang', 'playbook'),
+        'junction',
+      );
+      writeFileSync(join(scratch, 'package.json'), '{"type":"module"}\n');
+      const fixture = join(scratch, 'consumer.ts');
+      writeFileSync(
+        fixture,
+        `// @ts-expect-error the facade has no default export
+import hostCapabilitiesDefault, {
+  REPOSITORY_RECEIPT_CLASSIFICATIONS,
+  captureRepositoryReceipt,
+  classifyRepositoryReceipt,
+  createFailClosedHostCapabilities,
+  createWorktreeHostCapabilities,
+  observeGitRepository,
+  type EffectBoundarySeed,
+  type HostCapabilities,
+  type PlaybookEffectLedger,
+  type PlaybookRepositoryObservation,
+  type PlaybookRepositoryReceipt,
+  type RepositoryCompletionEvidence,
+  type RepositoryExclusiveCompletion,
+  type WorktreeHostCapabilities,
+} from '@sublang/playbook/host-capabilities';
+
+void hostCapabilitiesDefault;
+declare const seed: EffectBoundarySeed;
+declare const signal: AbortSignal;
+interface Outcome {
+  readonly baselineHead: string;
+  readonly gitDir: string;
+}
+
+const classifications: readonly string[] = REPOSITORY_RECEIPT_CLASSIFICATIONS;
+const closed: HostCapabilities = createFailClosedHostCapabilities();
+// @ts-expect-error a fail-closed capability observes no worktree
+closed.repository.observe;
+
+async function consume(): Promise<void> {
+  const capabilities: WorktreeHostCapabilities =
+    await createWorktreeHostCapabilities({
+      cwd: '/repo',
+      playbookId: 'workflow',
+      requiredRoleIds: ['coder'],
+      concurrentRoleSets: [],
+      effectLedger: {
+        schemaVersion: 1,
+        revision: 0,
+        boundaries: [],
+        logicalOperations: [],
+      },
+    });
+  const worktree: string = capabilities.repository.identity.worktree;
+  const observation: PlaybookRepositoryObservation =
+    await capabilities.repository.observe();
+  const head: string = observation.head;
+  const ledger: PlaybookEffectLedger = capabilities.effectLedger.snapshot();
+  const revision: number = ledger.revision;
+  const result = await capabilities.repository.runExclusive({
+    signal,
+    effectBoundary: seed,
+    operation: async ({ baseline, identity }): Promise<Outcome> => ({
+      baselineHead: baseline.head,
+      gitDir: identity.gitDir,
+    }),
+    completeEffectBoundary: (
+      completion: RepositoryExclusiveCompletion<Outcome>,
+    ): RepositoryCompletionEvidence => {
+      const spent: boolean = completion.boundary.correctionBudget.spent;
+      const detail: string =
+        completion.operation.status === 'fulfilled'
+          ? completion.operation.value.gitDir
+          : String(completion.operation.reason);
+      void [spent, detail, completion.outcomeReceipt.classification];
+      return { finalText: 'done', semanticCandidate: { guard: 'done' } };
+    },
+  });
+  const commitOid: string | undefined = result.receipt.commitOid;
+  const value: Outcome | undefined =
+    result.operation.status === 'fulfilled' ? result.operation.value : undefined;
+  const parked = await capabilities.repository.runDeferred({
+    mode: 'park',
+    operationId: '00000000-0000-4000-8000-000000000001',
+  });
+  const parkedStatus: 'parked' | 'restored' | 'checkpoint-mismatch' | 'ineligible' =
+    parked.status;
+  const widened: HostCapabilities = capabilities;
+  const captured: PlaybookRepositoryReceipt = await captureRepositoryReceipt(
+    observation,
+    { allowedDispositions: ['unchanged'] },
+  );
+  const classified: PlaybookRepositoryReceipt = await classifyRepositoryReceipt(
+    observation,
+    observation,
+    { allowedDispositions: ['one-descendant-commit', 'deferred'] },
+  );
+  const observed: PlaybookRepositoryObservation =
+    await observeGitRepository('/repo');
+  // @ts-expect-error a receipt classification is not a declared disposition
+  await captureRepositoryReceipt(observation, { allowedDispositions: ['multiple-commits'] });
+  // @ts-expect-error the facade carries no lease acquisition
+  capabilities.repository.acquire;
+  // @ts-expect-error the facade carries no cohort transaction
+  capabilities.repository.runCohort;
+  // @ts-expect-error the facade carries no session lease
+  await createWorktreeHostCapabilities({ cwd: '/repo', playbookId: 'workflow', requiredRoleIds: ['coder'], sessionLease: {} });
+  void [worktree, head, revision, commitOid, value, parkedStatus, widened, captured, classified, observed];
+}
+void [classifications, closed, consume];
+`,
+      );
+      const program = ts.createProgram([fixture], {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+        types: ['node'],
+        typeRoots: [join(repoRoot, 'node_modules', '@types')],
+      });
+      expect(
+        ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        ),
+      ).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('publishes unresolved-effect as an exact state-only run result', () => {
     const runtimeDeclaration = declarationSourceOf('./runtime');
     const runResult = runtimeDeclaration.match(
@@ -2035,6 +2224,10 @@ import type {
 } from '@sublang/playbook/decide/playbook';
 import { devPlaybookRegistryEntry } from '@sublang/playbook/dev/registry';
 import type { DevPlaybookHostCapabilities } from '@sublang/playbook/dev/playbook';
+import type {
+  HostCapabilities as FacadeHostCapabilities,
+  WorktreeHostCapabilities,
+} from '@sublang/playbook/host-capabilities';
 
 interface Options { readonly mode: string }
 interface Capabilities {
@@ -2085,6 +2278,16 @@ inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { rep
 inferredV3Factory({ mode: 'safe' });
 // @ts-expect-error inferred schema 3 still requires an object capability
 inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: 1 });
+
+// DR-046: the self-contained facade declarations are assignable, member for
+// member, to the engine's own construction and capability contracts.
+declare const facadeCapabilities: WorktreeHostCapabilities;
+declare const facadeClosed: FacadeHostCapabilities;
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: facadeCapabilities });
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: facadeClosed });
+const facadeRepository: XStateRepositoryCapability = facadeCapabilities.repository;
+const facadeLedger: PlaybookEffectLedgerCapability = facadeCapabilities.effectLedger;
+void [facadeRepository, facadeLedger];
 
 // @ts-expect-error schema 3 requires outcome authority metadata
 const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { snapshotOptions: () => ({ mode: 'safe' }), compat: { artifactSchema: 3, runtimeAbi: 1 } };
@@ -2381,6 +2584,8 @@ void devCapabilities;
       `${CODE_BASE}bin/repository-effects.js`,
       `${CODE_BASE}session-store.js`,
       `${CODE_BASE}session-store.d.ts`,
+      `${CODE_BASE}host-capabilities.js`,
+      `${CODE_BASE}host-capabilities.d.ts`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       `${REVIEW_BASE}review.playbook.js`,

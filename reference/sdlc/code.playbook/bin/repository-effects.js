@@ -8,6 +8,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
@@ -16,7 +17,7 @@ import {
   rename,
   rm,
 } from 'node:fs/promises';
-import { hostname as systemHostname } from 'node:os';
+import { hostname as systemHostname, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -24,6 +25,7 @@ import {
   emptyPlaybookEffectLedger,
   snapshotJsonValue,
 } from '../../../../src/xstate-runtime.js';
+import { applyEffectLedgerCommands } from './session-store.js';
 
 const CLAIM_SCHEMA = 1;
 const CLAIM_OWNER_FILE = 'owner.json';
@@ -31,6 +33,10 @@ const CLAIM_ROOT_NAME = 'playbook-effect-claims';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+// The HEAD of a worktree whose HEAD names no commit yet (an unborn branch) or
+// of a directory that is not a repository yet: the all-zero OID Git itself
+// reports for "no object". Exactly one root commit descends from it.
+export const NULL_GIT_OID = '0'.repeat(40);
 const CLAIM_COLLISION_CODES = new Set(['EEXIST', 'ENOTEMPTY']);
 const processClaims = new Map();
 const capabilityLedgerServices = new WeakMap();
@@ -64,9 +70,9 @@ function processClaimKey(identity) {
   return `${identity.gitDir}\0${identity.worktree}`;
 }
 
-function registerProcessClaim(claim) {
+function registerProcessClaim(claim, local) {
   const key = processClaimKey(claim.identity);
-  const entry = { claim, key, state: 'active' };
+  const entry = { claim, key, state: 'active', local };
   processClaims.set(key, entry);
   processClaimEntries.set(claim, entry);
 }
@@ -216,8 +222,8 @@ function runGit(cwd, args, options = {}) {
   });
 }
 
-async function runGitText(cwd, args) {
-  const raw = await runGit(cwd, args);
+async function runGitText(cwd, args, options = {}) {
+  const raw = await runGit(cwd, args, options);
   const content = raw.at(-1) === 0x0a ? raw.subarray(0, -1) : raw;
   const value = content.toString('utf8');
   if (!Buffer.from(value, 'utf8').equals(content)) {
@@ -522,30 +528,62 @@ function projectionPreservesBaseline(baseline, after) {
   );
 }
 
-async function rawRepositoryStatus(worktree) {
-  return runGit(worktree, [
-    '-c',
-    'core.fileMode=true',
-    '-c',
-    'core.fsmonitor=false',
-    '-c',
-    'core.ignoreStat=false',
-    '-c',
-    'core.trustctime=true',
-    '-c',
-    'core.checkStat=default',
-    'status',
-    '--porcelain=v2',
-    '-z',
-    '--untracked-files=all',
-    '--ignored=no',
-    '--ignore-submodules=none',
-    '--no-renames',
-  ]);
+async function rawRepositoryStatus(worktree, env) {
+  return runGit(
+    worktree,
+    [
+      '-c',
+      'core.fileMode=true',
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.ignoreStat=false',
+      '-c',
+      'core.trustctime=true',
+      '-c',
+      'core.checkStat=default',
+      'status',
+      '--porcelain=v2',
+      '-z',
+      '--untracked-files=all',
+      '--ignored=no',
+      '--ignore-submodules=none',
+      '--no-renames',
+    ],
+    { env },
+  );
 }
 
-async function rawIndexVisibility(worktree) {
-  return runGit(worktree, ['ls-files', '-v', '-z']);
+async function rawIndexVisibility(worktree, env) {
+  return runGit(worktree, ['ls-files', '-v', '-z'], { env });
+}
+
+// The commit HEAD names, or the null OID when HEAD names none: `--verify
+// --quiet` exits 1 without output for an unborn branch, and every other
+// failure stays a failure.
+async function resolveHead(worktree, env) {
+  try {
+    const head = await runGitText(
+      worktree,
+      ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'],
+      { env },
+    );
+    assertOid(head, 'repository HEAD');
+    return head;
+  } catch (error) {
+    if (error?.code === 1 && error.stdout?.length === 0) return NULL_GIT_OID;
+    throw error;
+  }
+}
+
+function gitFailureSays(error, exitCode, text) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    error.code === exitCode &&
+    Buffer.isBuffer(error.stderr) &&
+    error.stderr.toString('utf8').includes(text)
+  );
 }
 
 function assertIndexVisibility(raw) {
@@ -564,73 +602,131 @@ function assertIndexVisibility(raw) {
   }
 }
 
-export async function resolveCanonicalGitWorktree(cwd) {
+// The governed worktree of a working directory, resolved afresh at every
+// binding: the canonical root of the nearest Git worktree containing `cwd`
+// when one exists (`repository: true`), otherwise the prospective root `cwd`
+// itself with the `.git` a later `git init` there creates (`repository:
+// false`). A prospective identity therefore equals the identity `git init`
+// binds, so a boundary that initializes its own directory keeps one identity.
+async function resolveGovernedWorktree(cwd) {
   if (typeof cwd !== 'string' || cwd.length === 0) {
     throw new TypeError('repository working directory must be a nonempty string');
   }
-  const inside = await runGitText(cwd, ['rev-parse', '--is-inside-work-tree']);
-  if (inside !== 'true') {
+  let report;
+  try {
+    report = await runGitText(cwd, [
+      'rev-parse',
+      '--is-inside-work-tree',
+      '--show-toplevel',
+      '--absolute-git-dir',
+    ]);
+  } catch (error) {
+    if (gitFailureSays(error, 128, 'must be run in a work tree')) {
+      throw new Error(`${JSON.stringify(cwd)} is not inside a Git worktree`, {
+        cause: error,
+      });
+    }
+    if (!gitFailureSays(error, 128, 'not a git repository')) throw error;
+    const worktree = await realpath(cwd);
+    if (!(await lstat(worktree)).isDirectory()) {
+      throw new Error(`${JSON.stringify(cwd)} is not a directory`);
+    }
+    return Object.freeze({
+      identity: Object.freeze({ worktree, gitDir: join(worktree, '.git') }),
+      repository: false,
+    });
+  }
+  const [inside, reportedRoot, reportedGitDir, ...rest] = report.split('\n');
+  if (inside !== 'true' || reportedGitDir === undefined || rest.length > 0) {
     throw new Error(`${JSON.stringify(cwd)} is not inside a Git worktree`);
   }
-  const [reportedRoot, reportedGitDir] = await Promise.all([
-    runGitText(cwd, ['rev-parse', '--show-toplevel']),
-    runGitText(cwd, ['rev-parse', '--absolute-git-dir']),
-  ]);
   const [worktree, gitDir] = await Promise.all([
     realpath(reportedRoot),
     realpath(reportedGitDir),
   ]);
-  return Object.freeze({ worktree, gitDir });
+  return Object.freeze({
+    identity: Object.freeze({ worktree, gitDir }),
+    repository: true,
+  });
 }
 
-async function observeResolvedWorktree(identity, options = {}) {
-  const headBefore = await runGitText(identity.worktree, [
-    'rev-parse',
-    '--verify',
-    'HEAD^{commit}',
-  ]);
-  assertOid(headBefore, 'repository HEAD');
-  const indexVisibilityBefore = await rawIndexVisibility(identity.worktree);
-  assertIndexVisibility(indexVisibilityBefore);
-  const statusBefore = await rawRepositoryStatus(identity.worktree);
-  const projectionBefore = await projectionFromStatus(
-    identity.worktree,
-    statusBefore,
-  );
+export async function resolveCanonicalGitWorktree(cwd) {
+  const resolved = await resolveGovernedWorktree(cwd);
+  if (!resolved.repository) {
+    throw new Error(`${JSON.stringify(cwd)} is not inside a Git worktree`);
+  }
+  return resolved.identity;
+}
+
+async function sampleWorktree(worktree, env) {
+  const head = await resolveHead(worktree, env);
+  const indexVisibility = await rawIndexVisibility(worktree, env);
+  assertIndexVisibility(indexVisibility);
+  const status = await rawRepositoryStatus(worktree, env);
+  const projection = await projectionFromStatus(worktree, status);
+  return { head, indexVisibility, status, projection };
+}
+
+async function observeWorktreeSamples(identity, env, options) {
+  const before = await sampleWorktree(identity.worktree, env);
   await options.afterFirstSample?.();
-  const headAfter = await runGitText(identity.worktree, [
-    'rev-parse',
-    '--verify',
-    'HEAD^{commit}',
-  ]);
-  const indexVisibilityAfter = await rawIndexVisibility(identity.worktree);
-  assertIndexVisibility(indexVisibilityAfter);
-  const statusAfter = await rawRepositoryStatus(identity.worktree);
-  const projectionAfter = await projectionFromStatus(
-    identity.worktree,
-    statusAfter,
-  );
-  const beforeText = projectionText(projectionBefore);
+  const after = await sampleWorktree(identity.worktree, env);
+  const beforeText = projectionText(before.projection);
   if (
-    headBefore !== headAfter ||
-    !indexVisibilityBefore.equals(indexVisibilityAfter) ||
-    !statusBefore.equals(statusAfter) ||
-    beforeText !== projectionText(projectionAfter)
+    before.head !== after.head ||
+    !before.indexVisibility.equals(after.indexVisibility) ||
+    !before.status.equals(after.status) ||
+    beforeText !== projectionText(after.projection)
   ) {
     throw new RepositoryObservationAmbiguousError();
   }
   return deepFreeze({
     worktree: identity.worktree,
     gitDir: identity.gitDir,
-    head: headBefore,
-    projection: projectionBefore,
+    head: before.head,
+    projection: before.projection,
     projectionDigest: `sha256:${sha256(beforeText)}`,
   });
 }
 
+// A directory that is not a repository yet is observed exactly as `git init`
+// would then see it — the null HEAD over every non-ignored path as untracked
+// content — by pointing Git's own status at it from an empty scratch
+// repository, so initializing the directory in place changes nothing.
+async function observeGovernedWorktree(resolved, options = {}) {
+  if (resolved.repository) {
+    return observeWorktreeSamples(resolved.identity, undefined, options);
+  }
+  const scratch = await mkdtemp(join(tmpdir(), 'playbook-effect-observe-'));
+  try {
+    await runGit(scratch, ['init', '--quiet', '--bare'], {
+      env: { GIT_DIR: scratch },
+    });
+    return await observeWorktreeSamples(
+      resolved.identity,
+      { GIT_DIR: scratch, GIT_WORK_TREE: resolved.identity.worktree },
+      options,
+    );
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+// Every observation of a known identity re-binds it first, so a `.git` that
+// appeared in or vanished from the worktree since is observed, and a root
+// that moved elsewhere fails closed.
+async function observeResolvedWorktree(identity, options = {}) {
+  const resolved = await resolveGovernedWorktree(identity.worktree);
+  if (!isDeepStrictEqual(resolved.identity, identity)) {
+    throw new RepositoryObservationAmbiguousError(
+      'repository canonical worktree identity changed since it was bound',
+    );
+  }
+  return observeGovernedWorktree(resolved, options);
+}
+
 export async function observeGitRepository(cwd, options = {}) {
-  const identity = await resolveCanonicalGitWorktree(cwd);
-  return observeResolvedWorktree(identity, options);
+  return observeGovernedWorktree(await resolveGovernedWorktree(cwd), options);
 }
 
 function assertObservation(value, label) {
@@ -673,7 +769,7 @@ async function descendantCount(worktree, baselineHead, afterHead) {
   const value = await runGitText(worktree, [
     'rev-list',
     '--count',
-    `${baselineHead}..${afterHead}`,
+    baselineHead === NULL_GIT_OID ? afterHead : `${baselineHead}..${afterHead}`,
   ]);
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 0) {
@@ -729,7 +825,13 @@ export async function classifyRepositoryReceipt(
       after,
     );
   }
-  if (!(await isAncestor(after.worktree, baseline.head, after.head))) {
+  // A HEAD that stopped naming a commit lost its history; every commit
+  // descends from the null HEAD, so a first root commit is one descendant.
+  if (
+    after.head === NULL_GIT_OID ||
+    (baseline.head !== NULL_GIT_OID &&
+      !(await isAncestor(after.worktree, baseline.head, after.head)))
+  ) {
     return receipt('rewritten-or-non-descendant', baseline, after);
   }
   const count = await descendantCount(after.worktree, baseline.head, after.head);
@@ -1025,12 +1127,75 @@ export function createRepositoryEffectCoordinator(options = {}) {
     throw new TypeError('repository coordinator publication hook must be a function');
   }
 
+  const issueClaim = (identity, ownerToken, { assertActive, retire, local }) => {
+    let released = false;
+    let operationInProgress = false;
+    let claim;
+    const assertOwnerUnserialized = async () => {
+      if (released) throw new Error('repository claim was already released');
+      await assertActive(claim);
+    };
+    const runClaimOperation = async (operation) => {
+      if (released) throw new Error('repository claim was already released');
+      if (operationInProgress) {
+        throw new Error('repository claim operation is already in progress');
+      }
+      operationInProgress = true;
+      try {
+        return await operation();
+      } finally {
+        operationInProgress = false;
+      }
+    };
+    const assertOwner = () => runClaimOperation(assertOwnerUnserialized);
+    const observe = (observationOptions = {}) =>
+      runClaimOperation(async () => {
+        await assertOwnerUnserialized();
+        const observation = await observeResolvedWorktree(
+          identity,
+          observationOptions,
+        );
+        await assertOwnerUnserialized();
+        return observation;
+      });
+    const capture = (baseline, receiptOptions = {}) =>
+      runClaimOperation(async () => {
+        await assertOwnerUnserialized();
+        assertObservation(baseline, 'baseline');
+        if (
+          baseline.worktree !== identity.worktree ||
+          baseline.gitDir !== identity.gitDir
+        ) {
+          throw new TypeError(
+            'repository receipt baseline does not match the active claim',
+          );
+        }
+        const result = await captureRepositoryReceipt(baseline, receiptOptions);
+        await assertOwnerUnserialized();
+        return result;
+      });
+    const release = () =>
+      runClaimOperation(async () => {
+        await assertOwnerUnserialized();
+        await retire();
+        released = true;
+        forgetProcessClaim(claim);
+      });
+    claim = Object.freeze({
+      identity,
+      ownerToken,
+      assertOwner,
+      observe,
+      capture,
+      release,
+    });
+    registerProcessClaim(claim, local);
+    return claim;
+  };
+
   const acquire = async (cwd, claimOptions = {}) => {
     assertSignal(claimOptions.signal);
-    const identity = await resolveCanonicalGitWorktree(cwd);
-    const root = join(identity.gitDir, CLAIM_ROOT_NAME);
-    await ensureClaimRoot(root);
-    const activePath = join(root, 'active');
+    const { identity, repository } = await resolveGovernedWorktree(cwd);
     const ownerToken = createOwnerToken();
     if (typeof ownerToken !== 'string' || !UUID_PATTERN.test(ownerToken)) {
       throw new TypeError('repository coordinator owner-token generator returned an invalid token');
@@ -1042,6 +1207,33 @@ export function createRepositoryEffectCoordinator(options = {}) {
       hostname: currentHostname,
     });
 
+    // A directory that is not a repository yet has no `.git` to publish a
+    // claim in, so its claim is process-local: every same-process acquisition
+    // of that identity waits for it, including the repository claim that
+    // follows a `git init` inside it. Repository claims exclude one another
+    // through the published owner below, as they always have.
+    const key = processClaimKey(identity);
+    while (true) {
+      if (claimOptions.signal?.aborted) throw claimOptions.signal.reason;
+      const entry = processClaims.get(key);
+      if (entry === undefined || (repository && !entry.local)) break;
+      await waitForRetry(pollIntervalMs, claimOptions.signal);
+    }
+    if (!repository) {
+      return issueClaim(identity, ownerToken, {
+        local: true,
+        assertActive: (claim) => {
+          if (processClaims.get(key)?.claim !== claim) {
+            throw new Error('repository claim is owned by a different token');
+          }
+        },
+        retire: async () => {},
+      });
+    }
+
+    const root = join(identity.gitDir, CLAIM_ROOT_NAME);
+    await ensureClaimRoot(root);
+    const activePath = join(root, 'active');
     while (true) {
       if (claimOptions.signal?.aborted) throw claimOptions.signal.reason;
       let activeOwner;
@@ -1126,74 +1318,20 @@ export function createRepositoryEffectCoordinator(options = {}) {
       break;
     }
 
-    let released = false;
-    let operationInProgress = false;
-    const assertOwnerUnserialized = async () => {
-      if (released) throw new Error('repository claim was already released');
-      const activeOwner = await readClaimOwner(activePath);
-      if (activeOwner.ownerToken !== owner.ownerToken) {
-        throw new Error('repository claim is owned by a different token');
-      }
-    };
-    const runClaimOperation = async (operation) => {
-      if (released) throw new Error('repository claim was already released');
-      if (operationInProgress) {
-        throw new Error('repository claim operation is already in progress');
-      }
-      operationInProgress = true;
-      try {
-        return await operation();
-      } finally {
-        operationInProgress = false;
-      }
-    };
-    const assertOwner = () => runClaimOperation(assertOwnerUnserialized);
-    const observe = (observationOptions = {}) =>
-      runClaimOperation(async () => {
-        await assertOwnerUnserialized();
-        const observation = await observeResolvedWorktree(
-          identity,
-          observationOptions,
-        );
-        await assertOwnerUnserialized();
-        return observation;
-      });
-    const capture = (baseline, receiptOptions = {}) =>
-      runClaimOperation(async () => {
-        await assertOwnerUnserialized();
-        assertObservation(baseline, 'baseline');
-        if (
-          baseline.worktree !== identity.worktree ||
-          baseline.gitDir !== identity.gitDir
-        ) {
-          throw new TypeError(
-            'repository receipt baseline does not match the active claim',
-          );
+    return issueClaim(identity, owner.ownerToken, {
+      local: false,
+      assertActive: async () => {
+        const activeOwner = await readClaimOwner(activePath);
+        if (activeOwner.ownerToken !== owner.ownerToken) {
+          throw new Error('repository claim is owned by a different token');
         }
-        const result = await captureRepositoryReceipt(baseline, receiptOptions);
-        await assertOwnerUnserialized();
-        return result;
-      });
-    let claim;
-    const release = () =>
-      runClaimOperation(async () => {
-        await assertOwnerUnserialized();
+      },
+      retire: async () => {
         if (!(await retireClaim(root, activePath, owner))) {
           throw new Error('repository claim retirement target is occupied');
         }
-        released = true;
-        forgetProcessClaim(claim);
-      });
-    claim = Object.freeze({
-      identity,
-      ownerToken: owner.ownerToken,
-      assertOwner,
-      observe,
-      capture,
-      release,
+      },
     });
-    registerProcessClaim(claim);
-    return claim;
   };
 
   const runExclusive = async (runOptions) => {
@@ -1814,13 +1952,29 @@ async function releaseRepositoryClaim(claim, primaryError) {
   }
 }
 
-async function runDurableExclusive({
-  coordinator,
-  identity,
-  authority,
-  ledgerService,
-  options,
-}) {
+// A host binds the governed worktree identity for each durable call — fixed
+// at construction for the Captain host, resolved afresh from `cwd` for the
+// worktree host capability — and derives the schema-3 authority naming it.
+function bindHostWorktree(host) {
+  return host.resolveIdentity().then((identity) => ({
+    identity,
+    authority: host.authorityFor(identity),
+  }));
+}
+
+async function acquireBoundClaim(coordinator, identity, signal) {
+  const claim = await coordinator.acquire(identity.worktree, { signal });
+  if (!isDeepStrictEqual(claim.identity, identity)) {
+    const error = new Error(
+      'repository canonical worktree identity changed before its claim was acquired',
+    );
+    await releaseRepositoryClaim(claim, error);
+    throw error;
+  }
+  return claim;
+}
+
+async function runDurableExclusive({ coordinator, host, ledgerService, options }) {
   if (!isPlainObject(options) || typeof options.operation !== 'function') {
     throw new TypeError('exclusive repository operation must be a function');
   }
@@ -1829,9 +1983,8 @@ async function runDurableExclusive({
     'exclusive repository operation',
   );
   rejectBoundRepositoryOverride(options, 'runExclusive', ['cwd']);
-  const claim = await coordinator.acquire(identity.worktree, {
-    signal: options.signal,
-  });
+  const { identity, authority } = await bindHostWorktree(host);
+  const claim = await acquireBoundClaim(coordinator, identity, options.signal);
   let effectPossible = false;
   let recovery;
   try {
@@ -2015,13 +2168,7 @@ function replaceLogicalOperationCommand(expected, next) {
   };
 }
 
-async function runDurableDeferred({
-  coordinator,
-  identity,
-  authority,
-  ledgerService,
-  options,
-}) {
+async function runDurableDeferred({ coordinator, host, ledgerService, options }) {
   if (!isPlainObject(options)) {
     throw new TypeError('deferred repository operation options must be an object');
   }
@@ -2033,6 +2180,7 @@ async function runDurableDeferred({
     );
   }
   const operationId = options.operationId;
+  const { identity, authority } = await bindHostWorktree(host);
   deferredOperationForAuthority(
     ledgerService.snapshot(),
     operationId,
@@ -2058,9 +2206,7 @@ async function runDurableDeferred({
     );
   }
 
-  const claim = await coordinator.acquire(identity.worktree, {
-    signal: options.signal,
-  });
+  const claim = await acquireBoundClaim(coordinator, identity, options.signal);
   let effectPossible = false;
   let recovery;
   try {
@@ -2359,8 +2505,7 @@ async function runDurableDeferred({
 
 async function runDurableCohort({
   coordinator,
-  identity,
-  authority,
+  host,
   concurrentRoleSets,
   ledgerService,
   options,
@@ -2385,9 +2530,8 @@ async function runDurableCohort({
       'repository cohort effect boundaries must exactly match its roles',
     );
   }
-  const claim = await coordinator.acquire(identity.worktree, {
-    signal: options.signal,
-  });
+  const { identity, authority } = await bindHostWorktree(host);
+  const claim = await acquireBoundClaim(coordinator, identity, options.signal);
   let effectPossible = false;
   let recovery;
   try {
@@ -2850,6 +2994,10 @@ export async function createRepositoryEffectCapabilities({
         requiredRoleIds,
         concurrentRoleSets,
       });
+      const host = Object.freeze({
+        resolveIdentity: async () => identity,
+        authorityFor: () => authority,
+      });
       const observe = async (options = {}) => {
         rejectBoundRepositoryOverride(options, 'observe', ['cwd']);
         return observeResolvedWorktree(identity, options);
@@ -2861,8 +3009,7 @@ export async function createRepositoryEffectCapabilities({
       const runExclusive = async (options) => {
         return runDurableExclusive({
           coordinator,
-          identity,
-          authority,
+          host,
           ledgerService,
           options,
         });
@@ -2870,8 +3017,7 @@ export async function createRepositoryEffectCapabilities({
       const runCohort = async (options) => {
         return runDurableCohort({
           coordinator,
-          identity,
-          authority,
+          host,
           concurrentRoleSets,
           ledgerService,
           options,
@@ -2880,8 +3026,7 @@ export async function createRepositoryEffectCapabilities({
       const runDeferred = async (options) => {
         return runDurableDeferred({
           coordinator,
-          identity,
-          authority,
+          host,
           ledgerService,
           options,
         });
@@ -2923,6 +3068,192 @@ export async function refreshRepositoryEffectCapabilities(capabilities) {
     );
   }
   return ledgerService.refresh();
+}
+
+const WORKTREE_HOST_CAPABILITY_OPTION_KEYS = new Set([
+  'cwd',
+  'playbookId',
+  'requiredRoleIds',
+  'concurrentRoleSets',
+  'effectLedger',
+]);
+
+function assertWorktreeSeedLedger(seed, playbookId, identity) {
+  const ledger = assertPlaybookEffectLedger(
+    seed,
+    'worktree host capability effect ledger seed',
+  );
+  for (const boundary of ledger.boundaries) {
+    if (
+      boundary.playbookId !== playbookId ||
+      !isDeepStrictEqual(boundary.canonicalWorktree, identity)
+    ) {
+      throw new TypeError(
+        'worktree host capability effect ledger seed names another playbook or worktree',
+      );
+    }
+  }
+  for (const operation of ledger.logicalOperations) {
+    if (operation.playbookId !== playbookId) {
+      throw new TypeError(
+        'worktree host capability effect ledger seed names another playbook',
+      );
+    }
+  }
+  return ledger;
+}
+
+// The host-owned in-memory ledger behind a worktree host capability. Every
+// write applies the exact command semantics the durable Captain record
+// applies; each construction is one attempt over its seed.
+function createMemoryEffectLedgerService(seed) {
+  let mirror = seed;
+  const attempt = Object.freeze({
+    attemptId: randomUUID(),
+    attemptNumber:
+      seed.boundaries.reduce(
+        (highest, boundary) => Math.max(highest, boundary.attemptNumber),
+        0,
+      ) + 1,
+  });
+  return Object.freeze({
+    snapshot: () => mirror,
+    async writeAhead(authority, commands) {
+      mirror = applyEffectLedgerCommands(mirror, authority, attempt, commands);
+      return mirror;
+    },
+  });
+}
+
+async function assertExistingDirectory(cwd, label) {
+  try {
+    if ((await lstat(await realpath(cwd))).isDirectory()) return;
+  } catch (error) {
+    throw new Error(`${label} ${JSON.stringify(cwd)} is not an existing directory`, {
+      cause: error,
+    });
+  }
+  throw new Error(`${label} ${JSON.stringify(cwd)} is not an existing directory`);
+}
+
+// DR-046: the lease-free worktree capability an embedding host constructs
+// through `@sublang/playbook/host-capabilities`. It runs the same claim,
+// observation, receipt, completion, and deferred-operation path as the
+// Captain-hosted capability above, over one host-owned in-memory ledger.
+// Unlike that capability, it binds its worktree lazily: `cwd` need not be a
+// repository yet, and every governed call and observation re-resolves the
+// governed worktree of `cwd`, so a `git init` there — inside a governed call
+// or between calls — is observed rather than hidden behind a stale identity.
+export async function createWorktreeHostCapabilities(options = {}) {
+  if (!isPlainObject(options)) {
+    throw new TypeError('worktree host capability options must be an object');
+  }
+  for (const key of Object.keys(options)) {
+    if (!WORKTREE_HOST_CAPABILITY_OPTION_KEYS.has(key)) {
+      throw new TypeError(
+        `worktree host capability option ${JSON.stringify(key)} is not supported`,
+      );
+    }
+  }
+  const {
+    cwd,
+    playbookId,
+    requiredRoleIds,
+    concurrentRoleSets = [],
+    effectLedger: seed = emptyPlaybookEffectLedger(),
+  } = options;
+  if (typeof cwd !== 'string' || cwd.length === 0) {
+    throw new TypeError(
+      'worktree host capability working directory must be nonempty',
+    );
+  }
+  if (typeof playbookId !== 'string' || playbookId.length === 0) {
+    throw new TypeError('worktree host capability playbookId must be nonempty');
+  }
+  const [entry] = detachedSchema3CatalogEntries({
+    [playbookId]: {
+      id: playbookId,
+      artifactSchema: 3,
+      requiredRoleIds,
+      concurrentRoleSets,
+    },
+  });
+  await assertExistingDirectory(cwd, 'worktree host capability working directory');
+  const resolveIdentity = async () => (await resolveGovernedWorktree(cwd)).identity;
+  const identity = await resolveIdentity();
+  const ledgerService = assertEffectLedgerService(
+    createMemoryEffectLedgerService(
+      assertWorktreeSeedLedger(seed, playbookId, identity),
+    ),
+  );
+  const coordinator = createRepositoryEffectCoordinator();
+  const authorityFor = (canonicalWorktree) =>
+    deepFreeze({
+      playbookId,
+      artifactSchema: 3,
+      cwd,
+      canonicalWorktree,
+      requiredRoleIds: entry.requiredRoleIds,
+      concurrentRoleSets: entry.concurrentRoleSets,
+    });
+  const host = Object.freeze({ resolveIdentity, authorityFor });
+  return deepFreeze({
+    repository: {
+      identity,
+      observe: async (observationOptions = {}) => {
+        rejectBoundRepositoryOverride(observationOptions, 'observe', ['cwd']);
+        return observeGovernedWorktree(
+          await resolveGovernedWorktree(cwd),
+          observationOptions,
+        );
+      },
+      runExclusive: (runOptions) =>
+        runDurableExclusive({
+          coordinator,
+          host,
+          ledgerService,
+          options: runOptions,
+        }),
+      runDeferred: (runOptions) =>
+        runDurableDeferred({
+          coordinator,
+          host,
+          ledgerService,
+          options: runOptions,
+        }),
+    },
+    effectLedger: {
+      snapshot: () => ledgerService.snapshot(),
+      writeAhead: async (commands) =>
+        ledgerService.writeAhead(authorityFor(await resolveIdentity()), commands),
+    },
+  });
+}
+
+// DR-046: the capability for a host that runs no governed player state. Every
+// repository operation and effect-ledger write rejects, and the ledger stays
+// the canonical empty ledger.
+export function createFailClosedHostCapabilities() {
+  const rejectRepository = () =>
+    Promise.reject(
+      new Error(
+        'fail-closed host capabilities run no governed repository operation',
+      ),
+    );
+  const rejectWrite = () =>
+    Promise.reject(
+      new Error('fail-closed host capabilities accept no effect-ledger write'),
+    );
+  return deepFreeze({
+    repository: {
+      runExclusive: rejectRepository,
+      runDeferred: rejectRepository,
+    },
+    effectLedger: {
+      snapshot: () => emptyPlaybookEffectLedger(),
+      writeAhead: rejectWrite,
+    },
+  });
 }
 
 export const _internal = Object.freeze({

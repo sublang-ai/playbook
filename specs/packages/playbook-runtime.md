@@ -176,16 +176,16 @@ interpretation.
 
 #### playbook-runtime-67
 
-Where a current host observes a Git worktree for a governed delegated-player boundary, the repository observer shall resolve the canonical real worktree root and capture the exact detached immutable `{ worktree, gitDir, head, projection, projectionDigest }`, where `head` is a canonical 40- or 64-lowercase-hex Git OID, `projection` is the path-keyed content-addressed projection relative to that HEAD, and `projectionDigest` is exactly `sha256:` plus the lowercase SHA-256 identity of the canonical JSON projection ([DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §2).
+Where a current host observes a Git worktree for a governed delegated-player boundary, the repository observer shall resolve the canonical real worktree root and capture the exact detached immutable `{ worktree, gitDir, head, projection, projectionDigest }`, where `head` is a canonical 40- or 64-lowercase-hex Git OID — the all-zero null OID when HEAD names no commit — `projection` is the path-keyed content-addressed projection relative to that HEAD, and `projectionDigest` is exactly `sha256:` plus the lowercase SHA-256 identity of the canonical JSON projection ([DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §2).
 The projection shall contain index entries that differ from the HEAD tree with their modes and blob identities, tracked worktree entries that differ from the index with their modes and content identities, and every non-ignored untracked path with its mode and content identity; it shall recursively content-address a reported nested Git worktree and shall exclude ignored-only paths, Git administrative data, and timestamps.
 An observation that changes while it is sampled, encounters an index flag suppressing tracked-worktree inspection, or cannot represent a reported path and its content identity losslessly shall fail closed as ambiguous rather than publish a mixed or lossy projection.
 For receipt classification, a call is effect-authorized exactly when at least one declared outcome carries `one-descendant-commit`, and it is declared exclusively `unchanged` exactly when every declared outcome carries `unchanged`, using the repository-disposition contract under [[playbook-runtime-50](#playbook-runtime-50)].
 When a complete after observation is reconciled with a baseline, the observer shall classify exactly:
 
 - `unchanged` only when HEAD and the complete projection are byte-equal;
-- `one-descendant-commit`, carrying the after OID, only when after HEAD is exactly one commit descended from baseline HEAD and the complete projection is byte-equal;
+- `one-descendant-commit`, carrying the after OID, only when after HEAD is exactly one commit descended from baseline HEAD — every commit descends from the null HEAD, so a first root commit qualifies — and the complete projection is byte-equal;
 - `multiple-commits` for more than one descendant commit;
-- `rewritten-or-non-descendant` for ancestry loss;
+- `rewritten-or-non-descendant` for ancestry loss, including an after HEAD that names no commit;
 - `worktree-only-change` for a same-HEAD projection delta from an effect-authorized call only when every pre-existing projection entry remains byte-equal;
 - `concurrent-or-foreign-change` for any delta from a call declared exclusively `unchanged`; and
 - `observation-ambiguous` for an unstable or lossy observation, an effect-authorized changed pre-existing overlay, post-commit residual, cohort overlap, or other delta that cannot be attributed uniquely.
@@ -1044,7 +1044,7 @@ When the integration suite drives transition and status profiles, it shall fail 
 
 #### playbook-runtime-68
 
-When the repository-observation integration suite drives real temporary Git worktrees, it shall fail unless staged, tracked-worktree, mode-only, non-ignored-untracked, and nested-worktree dirty-content changes alter the detached content-addressed projection while ignored-only and timestamp-only changes do not; unchanged pre-existing dirt proves `unchanged`; exactly one call-created descendant commit that preserves the complete baseline projection proves `one-descendant-commit` with the exact OID; and consumed or altered pre-existing overlays, residual changes, multiple commits, rewritten or non-descendant history, declared-zero deltas, inspection-suppressing index flags, unreadable reported content, non-lossless path data, and mutation during observation receive their exact fail-closed classifications without a path-attribution filter (verifying [[playbook-runtime-67](#playbook-runtime-67)]).
+When the repository-observation integration suite drives real temporary Git worktrees, it shall fail unless staged, tracked-worktree, mode-only, non-ignored-untracked, and nested-worktree dirty-content changes alter the detached content-addressed projection while ignored-only and timestamp-only changes do not; unchanged pre-existing dirt proves `unchanged`; exactly one call-created descendant commit that preserves the complete baseline projection proves `one-descendant-commit` with the exact OID, as does a worktree's first root commit from a baseline whose unborn HEAD observed as the null OID; and consumed or altered pre-existing overlays, residual changes, multiple commits, rewritten or non-descendant history, declared-zero deltas, inspection-suppressing index flags, unreadable reported content, non-lossless path data, and mutation during observation receive their exact fail-closed classifications without a path-attribution filter (verifying [[playbook-runtime-67](#playbook-runtime-67)]).
 
 #### playbook-runtime-70
 

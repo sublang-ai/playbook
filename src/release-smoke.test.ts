@@ -288,6 +288,115 @@ describe('deterministic packed release lane smoke', () => {
     30_000,
   );
 
+  const hostCapabilitiesConsumerFixture = {
+    repo: '/tmp/playbook-release-smoke/host-capabilities-worktree',
+    baselineHead: 'a'.repeat(40),
+  };
+
+  it('keeps the packed host-capabilities consumer on the public facade', () => {
+    const source = _testing.hostCapabilitiesConsumerSource(
+      hostCapabilitiesConsumerFixture,
+    );
+    const importSpecifiers = [
+      ...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g),
+      ...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g),
+      ...source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g),
+      ...source.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g),
+    ].map((match) => match[1]);
+
+    expect(importSpecifiers.filter((name) => !name.startsWith('node:'))).toEqual(
+      ['@sublang/playbook/host-capabilities'],
+    );
+    expect(source).not.toMatch(/(?:bin\/repository-effects|reference\/sdlc|src\/)/);
+    for (const value of [
+      hostCapabilitiesConsumerFixture.repo,
+      hostCapabilitiesConsumerFixture.baselineHead,
+    ]) {
+      expect(source).toContain(JSON.stringify(value));
+    }
+    expect(source).toContain(
+      "['identity', 'observe', 'runExclusive', 'runDeferred']",
+    );
+    expect(source).toContain("['snapshot', 'writeAhead']");
+    expect(source).toContain("kind: 'replace-boundaries'");
+    expect(source).toContain("correctionBudget: { limit: 1, spent: true }");
+    expect(source).toContain(
+      "committed.receipt.classification === 'one-descendant-commit'",
+    );
+    expect(source).toContain("idle.receipt.classification === 'unchanged'");
+    expect(source).toContain('createFailClosedHostCapabilities()');
+    expect(source).toContain("'the worktree claim was not released'");
+    expect(source).toMatch(/@ts-expect-error[^\n]*lease/i);
+    expect(source).toMatch(/@ts-expect-error[^\n]*cohort/i);
+  });
+
+  it('configures the packed host-capabilities consumer for strict emit', () => {
+    const tsconfig = _testing.hostCapabilitiesConsumerTsconfig();
+
+    expect(tsconfig.compilerOptions).toMatchObject({
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2022',
+      strict: true,
+      skipLibCheck: false,
+      types: ['node'],
+      noEmitOnError: true,
+      outDir: 'dist',
+    });
+    expect(tsconfig.compilerOptions.noEmit).not.toBe(true);
+    expect(tsconfig.compilerOptions.emitDeclarationOnly).not.toBe(true);
+    expect(tsconfig.files).toEqual(['consumer.ts']);
+  });
+
+  it(
+    'strictly compiles and emits the packed host-capabilities consumer',
+    () => {
+      const scratch = mkdtempSync(join(tmpdir(), 'playbook-release-consumer-'));
+      try {
+        mkdirSync(join(scratch, 'node_modules', '@sublang'), {
+          recursive: true,
+        });
+        symlinkSync(
+          repoRoot,
+          join(scratch, 'node_modules', '@sublang', 'playbook'),
+          'junction',
+        );
+        writeFileSync(join(scratch, 'package.json'), '{"type":"module"}\n');
+        writeFileSync(
+          join(scratch, 'consumer.ts'),
+          _testing.hostCapabilitiesConsumerSource(
+            hostCapabilitiesConsumerFixture,
+          ),
+        );
+
+        const configPath = join(scratch, 'tsconfig.json');
+        const parsed = ts.parseJsonConfigFileContent(
+          _testing.hostCapabilitiesConsumerTsconfig(),
+          ts.sys,
+          scratch,
+          undefined,
+          configPath,
+        );
+        const program = ts.createProgram(parsed.fileNames, parsed.options);
+        const emit = program.emit();
+        const diagnostics = [
+          ...parsed.errors,
+          ...ts.getPreEmitDiagnostics(program),
+          ...emit.diagnostics,
+        ].map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        );
+
+        expect(diagnostics).toEqual([]);
+        expect(emit.emitSkipped).toBe(false);
+        expect(existsSync(join(scratch, 'dist', 'consumer.js'))).toBe(true);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   it('keeps distinct segmented ids equal-configured and retunes both', () => {
     const primary = parseYaml(_testing.smokeConfig('a'));
     const overlay = parseYaml(_testing.smokeRetuneOverlay());

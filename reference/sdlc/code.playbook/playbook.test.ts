@@ -447,15 +447,21 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     expect(playbooks.map((p: any) => p.id).sort()).toEqual([
       'code',
       'decide',
+      'dev',
       'review',
     ]);
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain.adapter).toBe('claude');
-    // The release gate intentionally shares these stable session players.
+    // The release gate intentionally shares these stable session players;
+    // DR-044 keeps the DEV Analyst a distinct player.
     expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
       'acceptance.dev.coder claude',
       'acceptance.dev.reviewer codex',
+      'acceptance.dev.analyst claude',
     ]);
+    expect(config.captain.options.playbooks.dev.roles).toEqual({
+      analyst: expect.objectContaining({ playerId: 'acceptance.dev.analyst' }),
+    });
     expect(
       config.players.find((player: any) =>
         player.id === 'acceptance.dev.reviewer',
@@ -487,6 +493,11 @@ describe('live acceptance gate config (PBCLI-32)', () => {
         id: 'acceptance.dev.reviewer',
         effort: 'high',
         fastMode: false,
+      }),
+      // The overlay leaves the DEV Analyst on its primary-config tuning.
+      expect.objectContaining({
+        id: 'acceptance.dev.analyst',
+        effort: 'high',
       }),
     ]);
     expect(

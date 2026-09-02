@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies the generic `playbook` launcher and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store and replay stream they publish for other hosts, and integration verification.
+This package specifies the generic `playbook` launcher and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store, replay stream, and worktree host capabilities they publish for other hosts, and integration verification.
 
 ## External Behavior
 
@@ -829,6 +829,185 @@ The managed replay observer shall follow the forwarded presentation gate of [[pl
 A managed warning caused by initialization, settlement, or release shall use that same status record at the completed lifecycle boundary where no host-record dispatch is active; the synthetic status shall not pass through the replay observer or enter the replay stream.
 Successful replay shall add no diagnostic; with a writable headless sink or successful managed presentation, degraded replay shall add exactly its channel's one warning and no other output, while warning-delivery failure shall be swallowed without retry; neither delivery nor its failure shall change the turn, reply, settlement, attachment, canonical release, or exit outcome of [[playbook-cli-18](#playbook-cli-18)] and [[playbook-cli-20](#playbook-cli-20)].
 
+### Shared worktree host capabilities
+
+#### playbook-cli-87
+
+Where the package publishes the shared worktree host capabilities, `@sublang/playbook/host-capabilities` shall have exactly the JavaScript named exports `REPOSITORY_RECEIPT_CLASSIFICATIONS`, `captureRepositoryReceipt`, `classifyRepositoryReceipt`, `createFailClosedHostCapabilities`, `createWorktreeHostCapabilities`, and `observeGitRepository`, with no default export ([DR-046](../decisions/046-public-worktree-host-capabilities.md)).
+Its self-contained declaration shall import nothing and reference no global type other than `AbortSignal`.
+It shall re-declare `JsonValue`, `PlaybookRepositoryDisposition`, `PlaybookRepositoryObservation`, `PlaybookRepositoryReceipt`, `PlaybookPendingBossQuestion`, `PlaybookEffectBoundary`, `PlaybookEffectBoundaryStart`, `PlaybookEffectLogicalOperation`, `PlaybookEffectLedger`, `PlaybookEffectLedgerCommand`, `PlaybookEffectLedgerCommandBatch`, and `PlaybookEffectLedgerCapability` member for member from the runtime contract module [[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)], so that each is mutually assignable with its namesake there, and shall export exactly those, the six values, and the following declarations with these exact signatures, where `HostCapabilities` is assignable to the schema-3 factory's live host-capability input and `RepositoryCapability` to its repository member under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)]:
+
+```ts
+export type RepositoryReceiptClassification =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'multiple-commits'
+  | 'rewritten-or-non-descendant'
+  | 'worktree-only-change'
+  | 'concurrent-or-foreign-change'
+  | 'observation-ambiguous';
+export declare const REPOSITORY_RECEIPT_CLASSIFICATIONS: readonly RepositoryReceiptClassification[];
+export interface RepositoryIdentity {
+  readonly worktree: string;
+  readonly gitDir: string;
+}
+export interface RepositoryReceiptOptions {
+  readonly allowedDispositions: readonly PlaybookRepositoryDisposition[];
+}
+export declare function observeGitRepository(
+  cwd: string,
+): Promise<PlaybookRepositoryObservation>;
+export declare function classifyRepositoryReceipt(
+  baseline: PlaybookRepositoryObservation,
+  after: PlaybookRepositoryObservation,
+  options: RepositoryReceiptOptions,
+): Promise<PlaybookRepositoryReceipt>;
+export declare function captureRepositoryReceipt(
+  baseline: PlaybookRepositoryObservation,
+  options: RepositoryReceiptOptions,
+): Promise<PlaybookRepositoryReceipt>;
+export type EffectBoundarySeed = Omit<
+  PlaybookEffectBoundaryStart,
+  'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'
+>;
+interface RepositoryOperationSettlement<T> {
+  readonly status: 'fulfilled';
+  readonly value: T;
+}
+interface RepositoryOperationRejection {
+  readonly status: 'rejected';
+  readonly reason: unknown;
+}
+export interface RepositoryExclusiveCompletion<T> {
+  readonly boundary: PlaybookEffectBoundary;
+  readonly operation:
+    | RepositoryOperationSettlement<T>
+    | RepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly outcomeReceipt: PlaybookRepositoryReceipt;
+}
+interface RepositoryDeferredBinding {
+  readonly operationId: string;
+  readonly pendingQuestion: PlaybookPendingBossQuestion;
+  readonly playerContinuation: JsonValue;
+}
+export interface RepositoryCompletionEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate?: JsonValue;
+  readonly deferred?: RepositoryDeferredBinding;
+  readonly unresolved?: true;
+}
+export interface RepositoryExclusiveResult<T> {
+  readonly operation:
+    | RepositoryOperationSettlement<T>
+    | RepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+  readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface RepositoryDeferredContinuationResult<T> {
+  readonly status: 'continued';
+  readonly operation:
+    | RepositoryOperationSettlement<T>
+    | RepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly logicalReceipt?: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+  readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface RepositoryDeferredCheckpointMismatch {
+  readonly status: 'checkpoint-mismatch' | 'ineligible';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+interface RepositoryDeferredParked {
+  readonly status: 'parked';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+interface RepositoryDeferredRestoreResult {
+  readonly status: 'restored' | 'checkpoint-mismatch' | 'ineligible';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+export interface RepositoryCapability {
+  runExclusive<T>(options: {
+    readonly signal?: AbortSignal;
+    readonly effectBoundary: EffectBoundarySeed;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryObservation;
+      readonly identity: RepositoryIdentity;
+    }) => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: RepositoryExclusiveCompletion<T>,
+    ) => RepositoryCompletionEvidence | Promise<RepositoryCompletionEvidence>;
+  }): Promise<RepositoryExclusiveResult<T>>;
+  runDeferred<T>(options: {
+    readonly mode: 'continue';
+    readonly signal?: AbortSignal;
+    readonly operationId: string;
+    readonly effectBoundary: EffectBoundarySeed;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryObservation;
+      readonly identity: RepositoryIdentity;
+      readonly playerContinuation: JsonValue;
+    }) => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: RepositoryExclusiveCompletion<T>,
+    ) => RepositoryCompletionEvidence | Promise<RepositoryCompletionEvidence>;
+  }): Promise<
+    RepositoryDeferredContinuationResult<T> | RepositoryDeferredCheckpointMismatch
+  >;
+  runDeferred(options: {
+    readonly mode: 'park' | 'restore';
+    readonly signal?: AbortSignal;
+    readonly operationId: string;
+  }): Promise<RepositoryDeferredParked | RepositoryDeferredRestoreResult>;
+}
+export interface HostCapabilities {
+  readonly repository: RepositoryCapability;
+  readonly effectLedger: PlaybookEffectLedgerCapability;
+}
+export interface WorktreeRepositoryCapability extends RepositoryCapability {
+  readonly identity: RepositoryIdentity;
+  observe(): Promise<PlaybookRepositoryObservation>;
+}
+export interface WorktreeHostCapabilities extends HostCapabilities {
+  readonly repository: WorktreeRepositoryCapability;
+}
+export interface WorktreeHostCapabilitiesOptions {
+  readonly cwd: string;
+  readonly playbookId: string;
+  readonly requiredRoleIds: readonly string[];
+  readonly concurrentRoleSets?: readonly (readonly string[])[];
+  readonly effectLedger?: PlaybookEffectLedger;
+}
+export declare function createWorktreeHostCapabilities(
+  options: WorktreeHostCapabilitiesOptions,
+): Promise<WorktreeHostCapabilities>;
+export declare function createFailClosedHostCapabilities(): HostCapabilities;
+```
+
+The facade and both CLI front ends shall use the private module of [[playbook-cli-60](#playbook-cli-60)] as their one implementation — the facade re-exports its constructors and constant and narrows only arguments — so observation, classification, and ledger command application change in one place, and the facade shall expose no session lease, session record, resume credential, catalog, recovery, refresh, cohort, or claim-acquisition member.
+
+#### playbook-cli-88
+
+When `createWorktreeHostCapabilities(options)` is called, it shall reject, before touching any worktree, an option object with an unrecognized member, an empty `cwd` or `playbookId`, role declarations that are not distinct nonempty ids with each concurrent set a distinct subset of at least two of them, or an `effectLedger` seed that is not a valid ledger under [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)]; it shall reject a `cwd` that is not an existing directory and a seed whose boundaries or logical operations name another playbook or a canonical worktree other than the governed worktree of `cwd` at construction; and it shall otherwise return one frozen capability with exactly `repository: { identity, observe, runExclusive, runDeferred }` and `effectLedger: { snapshot, writeAhead }`, where `identity` is the governed worktree of `cwd` at construction:
+
+- The governed worktree of `cwd` is bound afresh at every governed call and observation, never fixed at construction: it is the canonical `{ worktree, gitDir }` identity of [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)] of the nearest Git worktree containing `cwd` when one exists, and otherwise the prospective root `{ worktree: <real path of cwd>, gitDir: <that path>/.git }` that a `git init` in `cwd` then binds unchanged; so before `cwd` is a repository an enclosing worktree is what a governed call observes and records, and once `.git` exists in `cwd`, `cwd` is the governed worktree.
+- A prospective root observes as the null HEAD over its non-ignored content as untracked, exactly as `git init` there would then see it, so a governed call that initializes its own directory receives `unchanged`, the repository's first root commit receives `one-descendant-commit` with its OID, and a boundary records the identity its baseline observed; before `cwd` is a repository its worktree claim is process-local under [[playbook-cli-57](#playbook-cli-57)].
+- The seed, by default the canonical empty ledger, becomes the capability's in-memory ledger: `snapshot()` returns its current detached value, `writeAhead(commands)` applies one batch under the exact command, idempotent-replay, rejection, and revision semantics of the private writer of [[playbook-cli-63](#playbook-cli-63)] and returns the acknowledged ledger, and every boundary started through the capability carries one attempt identity minted at construction — a fresh UUID with attempt number one above the seed's highest — so a construction over a prior `snapshot()` continues that ledger under a new attempt, while durability beyond the process is the host's own concern through `snapshot()`.
+- `observe()` returns the detached exact observation of [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)] of the governed worktree, and `runExclusive` and `runDeferred` run the private claim, observation, receipt, completion, and deferred-operation transaction of [[playbook-cli-57](#playbook-cli-57)], [[playbook-cli-59](#playbook-cli-59)], [[playbook-cli-63](#playbook-cli-63)], and [[playbook-cli-65](#playbook-cli-65)] exactly as the Captain-hosted capability of [[playbook-cli-20](#playbook-cli-20)] does, against the in-memory ledger instead of the lease-bound record, so a correction-budget `writeAhead` issued during completion mapping settles into the completed boundary under [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)].
+- Overlapping governed calls on one worktree run one at a time, each acquiring the claim only after the prior call's receipt and release and appending contiguous boundary sequences, with no guaranteed acquisition order.
+- A boundary start the ledger rejects, a completion failure, or a rejected completion batch quarantines the worktree claim exactly as [[playbook-cli-63](#playbook-cli-63)] requires: later governed calls on that worktree in the same process wait until their signal aborts and only process death lets a successor reclaim it, so the host shall treat such a rejection as terminal for that worktree.
+
+#### playbook-cli-89
+
+`observeGitRepository(cwd)` shall bind the governed worktree of `cwd` by the rule of [[playbook-cli-88](#playbook-cli-88)] and return its detached exact observation of [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], rejecting when `cwd` is not an existing directory or the sample fails closed as ambiguous; `classifyRepositoryReceipt(baseline, after, options)` shall return the receipt classifying `after` against `baseline` for one canonical worktree under the declared `allowedDispositions` by the classification rules of [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], carrying `commitOid` exactly when it proves `one-descendant-commit`; and `captureRepositoryReceipt(baseline, options)` shall take the after observation of the baseline's identity itself — rebinding it, so a `.git` that appeared in or vanished from that worktree since is observed and a worktree whose identity moved elsewhere is ambiguous — and return that receipt, folding an ambiguous sample into an `observation-ambiguous` receipt without `after`:
+
+- each shall reject a missing option object or an `allowedDispositions` that is not a nonempty array drawn from `unchanged`, `one-descendant-commit`, and `deferred`, and shall ignore every other option member.
+
+#### playbook-cli-90
+
+`createFailClosedHostCapabilities()` shall return a frozen `{ repository: { runExclusive, runDeferred }, effectLedger: { snapshot, writeAhead } }` whose repository operations and `writeAhead` reject every call and whose `snapshot()` returns the canonical empty ledger of [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)], for a host whose artifact declares no governed player state.
+
 ## Internal Behavior
 
 ### Repository effect coordination
@@ -838,6 +1017,7 @@ Successful replay shall add no diagnostic; with a writable headless sink or succ
 When the private repository-effect coordinator receives one Git working directory and detached call metadata carrying the governed outcomes' repository dispositions under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], it shall key one exclusive cooperative claim by the canonical worktree identity under [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], acquire it before the baseline observation, and hold it through the complete after observation and receipt.
 An exclusive call shall run alone; a cohort call shall require one nonempty invocation identity, an exact role set matching one supplied detached `concurrentRoleSets` member under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)], and exclusively `unchanged` dispositions for every exact participating role; it shall capture one common baseline before any member begins, await every member before one common after observation, and classify any repository delta as `observation-ambiguous` for every member.
 A same-worktree call outside an active cohort shall wait through every cohort receipt, separate coordinator calls shall acquire separate claims, and different canonical worktree identities shall not block one another.
+Where the working directory is not a repository yet, the claim shall be keyed by its prospective identity of [[playbook-cli-88](#playbook-cli-88)] and held only within the process — every same-process claim of that identity, including the published claim that follows a `git init` there, shall wait for it — because no `.git` exists to publish it in.
 The coordinator shall reject malformed or unauthorized cohort metadata before a member starts and shall neither claim to exclude nor identify a nonparticipating writer.
 
 #### playbook-cli-59
@@ -848,7 +1028,7 @@ One issued claim handle shall reject overlapping observation, receipt, ownership
 
 #### playbook-cli-60
 
-When the package candidate is assembled, it shall carry the private repository-observation and coordination module without adding a package export or executable.
+When the package candidate is assembled, it shall carry the private repository-observation and coordination module without adding an executable, exposing that module only through the narrow facade of [[playbook-cli-87](#playbook-cli-87)].
 
 #### playbook-cli-63
 
@@ -1180,3 +1360,22 @@ Where the shared-session-store negative and recovery compatibility suite runs ag
 #### playbook-cli-81
 
 Where a config sets `sessions`, the suite shall fail unless both front ends resolve and use that one directory before selecting any record, every resolution case holds — unset default, `~` expansion with `~user` rejected, absolute, dot-relative and bare-relative against the primary config directory, overlay override, injected-store precedence, and fail-closed launch on an unusable directory — non-launching `playbook --list` rejects an authoritative malformed locator value yet prints the catalog without inspecting a syntactically valid locator's unusable resolved directory, the existing managed-child sessions-directory descriptor carries the resolved value unchanged, and the persisted record's structural and execution projections carry no `sessions` member ([[playbook-cli-78](#playbook-cli-78)]).
+
+### Shared worktree host capabilities coverage
+
+#### playbook-cli-91
+
+Where the shared worktree host-capabilities facade suite runs against the repository and real throwaway Git repositories, it shall fail unless every case satisfies its required evidence:
+
+| Case | Required evidence |
+| --- | --- |
+| Facade exports and closure | The JavaScript export set equals exactly the six values of [[playbook-cli-87](#playbook-cli-87)] with no default, each constructor and the constant is the private module's own export, and the facade imports only that module; the declaration imports nothing, and a strict `skipLibCheck: false` consumer compiles the exact declared usage — construction with every option, observation, an exclusive call whose operation and completion are typed by the declared context and evidence, `park` through `runDeferred`, widening to `HostCapabilities`, and the three module functions — while failing on a default import, a receipt classification supplied as a disposition, `acquire`, `runCohort`, a session-lease option, and observing through the fail-closed capability; the same declarations assign to the engine's schema-3 construction input and repository capability ([[playbook-cli-87](#playbook-cli-87)]). |
+| Construction | The returned capability is frozen with exactly the declared members, its identity equals the canonical resolution of the repository, its snapshot equals the empty ledger, and `observe()` equals the module observation of the same worktree; an unrecognized option, empty `cwd` or `playbookId`, missing required roles, a malformed concurrent set, and a malformed seed reject before any claim exists, while a missing directory and a seed naming another playbook or worktree reject ([[playbook-cli-88](#playbook-cli-88)]). |
+| Not-yet-repository | Over a fresh directory that is not a repository, the identity is its prospective root and `observe()` reports the null HEAD with an empty projection; a governed `git init` classifies `unchanged` with the same identity and reconciles `resolved` without publishing a claim into the created `.git`; the first root commit classifies `one-descendant-commit` with that commit's OID from a null-HEAD baseline and reconciles `resolved`, and a following idle call classifies `unchanged` at that HEAD, the three boundaries sharing one attempt id, contiguous sequences, and that identity in a validator-clean ledger at revision six with no active claim; a directory with content observes that content before `git init`, so a rewrite under unchanged-only dispositions classifies `concurrent-or-foreign-change`, initializing the directory stays `unchanged`, two root-descended commits classify `multiple-commits`, and deleting `.git` after a commit classifies `rewritten-or-non-descendant` with a null after HEAD; and a plain directory nested in an unborn enclosing repository binds that repository at construction and observation, then binds itself once initialized, so its first commit classifies `one-descendant-commit` on a boundary naming the nested identity while the enclosing repository stays unborn ([[playbook-cli-88](#playbook-cli-88)]). |
+| Receipt matrix | Through `runExclusive` on real repositories, one clean commit classifies `one-descendant-commit` with `commitOid` equal to the after HEAD and reconciles `resolved` through the engine reconciler; two commits classify `multiple-commits` without `commitOid` and reconcile `unresolved` as `repository-disposition-mismatch`; an amended HEAD classifies `rewritten-or-non-descendant`; a commit leaving a stray file classifies `observation-ambiguous`; a stray file, an uncommitted tracked-file rewrite, and a re-modified already-dirty file under unchanged-only dispositions classify `concurrent-or-foreign-change`; no change classifies `unchanged` and reconciles `resolved`; a same-HEAD superset with a commit arm classifies `worktree-only-change`; and a reverted baseline-dirty entry classifies `observation-ambiguous`; each acknowledged ledger passes the engine validator, stores the receipt, after observation, and `finalText` on its boundary at revision two, equals the capability snapshot, and leaves no active claim ([[playbook-cli-88](#playbook-cli-88)]). |
+| Correction budget | A `replace-boundaries` spend written through `writeAhead` inside `completeEffectBoundary` — which receives the started boundary with an unspent budget and no receipt — yields revision two inside the completion and three at settlement, with the settled boundary carrying the spent budget, the returned `finalText` and `semanticCandidate`, and the commit receipt ([[playbook-cli-88](#playbook-cli-88)]). |
+| Exclusion and abort | Two overlapping calls run one at a time, with exactly one start recorded while the leader holds the claim and contiguous sequences `1` and `2` under one attempt id afterward; a pre-aborted signal rejects with its reason before observation or operation, leaving revision zero and no claim; an undeclared role rejects at boundary start without running the operation, leaves the ledger empty, and keeps the claim quarantined ([[playbook-cli-88](#playbook-cli-88)]). |
+| Deferred operations | A `deferred` completion returns `bound` with an `unchanged` receipt, the boundary naming the operation and the operation carrying the checkpoint, question, `false` continuation, and eligibility `false`; `park` clears the bound group and a following `restore` is `ineligible`; separately, a meddled worktree makes `continue` return `checkpoint-mismatch` with eligibility `true` and no new boundary, `restore` after reverting returns `restored` with the question retained, and `continue` at the exact checkpoint returns `continued` with the fulfilled operation, an `unchanged` physical receipt, the cumulative `logicalReceipt` stored on the operation, both boundaries named in order, and the question cleared; every ledger passes the validator and no claim stays active ([[playbook-cli-88](#playbook-cli-88)]). |
+| Seeded continuation | A construction over a prior snapshot reports that snapshot, appends sequence `2` under attempt number `2` with a different attempt id, and advances revision by two per governed call ([[playbook-cli-88](#playbook-cli-88)]). |
+| Observation functions | A call ignoring an undeclared `cohort` member classifies a real commit `one-descendant-commit` with its OID, while a missing option object rejects with `TypeError`, an empty disposition list rejects, and a missing directory rejects; a directory that is not a repository observes as its prospective root with the null HEAD over its non-ignored content, equal to the observation after `git init` there, which captures `unchanged` ([[playbook-cli-89](#playbook-cli-89)]). |
+| Fail-closed capabilities | Exactly the declared frozen members; `runExclusive`, `runDeferred`, and `writeAhead` reject, and `snapshot()` is the engine-valid empty ledger ([[playbook-cli-90](#playbook-cli-90)]). |
