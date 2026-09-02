@@ -640,9 +640,10 @@ export function defaultBuildJudgePrompt(input, finalText) {
  * so the judge omits it. Rendering the clause verbatim asked the judge for
  * `question`, `planningResult`, or `evaluatedRevision`, which the reconciler
  * rejects as a structural error, spending the single correction on a
- * self-inflicted defect.
+ * self-inflicted defect. Exported so a bespoke linked runtime (DECIDE's
+ * parallel machinery) renders the identical contract instead of restating it.
  */
-function renderGovernedOutcomeContract(guard, description, outcome) {
+export function renderGovernedOutcomeContract(guard, description, outcome) {
     const { meaning, clause } = splitOutputClause(description);
     // Each field's authored segment runs from its token to the next token:
     // the annotated `name: <placeholder>` form, or the bare name followed by

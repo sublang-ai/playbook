@@ -76,6 +76,7 @@ runtime contract types `PlayerResult`, `PlayerCallOptions`,
 the TypeScript projection of
 [slc/link.md](../../slc/link.md#playbookruntime-contract).
 The executable `@sublang/playbook/xstate-runtime` module shall export `assertPlaybookEffectLedger`, `emptyPlaybookEffectLedger`, and `isPlaybookEffectLedgerMonotonicExtension` over those shared contract types, plus `PlaybookSemanticFieldAuthority`, `PlaybookSemanticOutcomeSpec`, `PlaybookSemanticEvidenceInput`, `PlaybookReconciledSemanticOutput`, `PlaybookRetainedSemanticEvidence`, `PlaybookSemanticReconciliationReason`, `PlaybookSemanticReconciliation`, `PlaybookSemanticCandidateStructureError`, and `reconcilePlaybookSemanticEvidence` as the centralized semantic-reconciliation surface of [[playbook-runtime-77](#playbook-runtime-77)].
+That module shall also export `renderGovernedOutcomeContract`, the judge-facing governed reply-contract rendering of [[playbook-runtime-10](#playbook-runtime-10)], so a bespoke linked runtime under [[playbook-runtime-5](#playbook-runtime-5)] renders the identical contract rather than restating it.
 `PlaybookPendingBossQuestion` shall carry `questionId`, exact `question`, optional `sourceItem`, and an `asker` discriminated as `{ kind: 'captain' }` or `{ kind: 'role', roleId: string }`; it shall expose no overloaded player field.
 `PlayerResult.status` shall be the union `'ok' | 'aborted' | 'error'`,
 `PlayerResult` shall expose optional `resumeToken`, `PlayerCallOptions`

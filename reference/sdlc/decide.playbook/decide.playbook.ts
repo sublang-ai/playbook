@@ -38,6 +38,7 @@ import {
   normalizePlaybookSnapshot,
   PlaybookSemanticCandidateStructureError,
   reconcilePlaybookSemanticEvidence,
+  renderGovernedOutcomeContract,
   snapshotJsonValue,
   snapshotPlaybookSession,
   validatePlayerResult,
@@ -660,22 +661,24 @@ function buildAdjudicatorPrompt(
   lines.push(
     'Guards (choose exactly one; the descriptions are authoritative and must be applied as written):',
   );
+  // The shared engine's renderer (slc/link.md §Captain adjudication): each
+  // arm's meaning verbatim, with its `Output shall include` clause — authored
+  // for the complete actor output — replaced by the reply contract the
+  // outcome authority gives the judge. Rendering the clause verbatim asked
+  // the judge for presentation-owned `coderProposal` or `question`, which the
+  // reconciler rejects, spending the single correction on a self-inflicted
+  // defect.
   for (const [guard, description] of Object.entries(input.result)) {
-    const semanticFields = Object.entries(outcomes[guard]?.fields ?? {})
-      .filter(([, authority]) => authority === 'semantic')
-      .map(([field]) => field);
     lines.push(
-      `- ${guard}: semantic fields: ${
-        semanticFields.length === 0 ? '(none)' : semanticFields.join(', ')
-      }; ${description}`,
+      ...renderGovernedOutcomeContract(guard, description, outcomes[guard]),
     );
   }
   lines.push('');
   lines.push(
-    'Reply with exactly the chosen `guard` and every semantic-owned field for that guard, and no other field.',
+    "Pick exactly one declared `guard` and reply with exactly that outcome's reply shape above: `guard` plus its semantic-owned fields and nothing else.",
   );
   lines.push(
-    'Do not include presentation-, effect-, or runtime-owned fields; the runtime supplies those from authoritative evidence.',
+    'A field listed as runtime-supplied is owned by presentation, effect, or runtime evidence; the runtime fills it itself, and a reply that includes one is structurally invalid.',
   );
   if (correction !== undefined) {
     lines.push('');

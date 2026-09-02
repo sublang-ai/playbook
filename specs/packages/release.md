@@ -229,6 +229,7 @@ adjudication prompt builder `defaultBuildCaptainJudgePrompt` that states the
 judge reply contract shared with compiled Captain artifacts
 ([DR-025](../decisions/025-resilient-captain-control-adjudication.md),
 [[captain-playbook-18](captain-playbook.md#captain-playbook-18)]).
+It shall also expose the governed-outcome judge contract renderer `renderGovernedOutcomeContract` that a bespoke linked workflow runtime shares with the engine ([[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)]).
 This engine subpath shall depend one-way on the
 type-only runtime contract and shall import no generated FSM or host adapter.
 The public XState engine shall keep `RUNTIME_ABI` at `1`, export the frozen `SUPPORTED_ARTIFACT_SCHEMAS` value `[3]`, and export only the schema-3 authority, repository-disposition, governed-outcome, authority-specification, construction-input, factory-option, and specification declaration types governed by [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].

@@ -412,6 +412,21 @@ export declare function defaultComposeCaptainPrompt(input: PlaybookCaptainInput,
 export declare function defaultExtractRequiredFields(description: string): string[];
 /** Default delegated-player adjudicator prompt. */
 export declare function defaultBuildJudgePrompt(input: PlaybookPlayerInput, finalText: string): string;
+/**
+ * Judge-facing rendering of one governed outcome (DR-040 §1). The artifact's
+ * description is not altered: its meaning is carried through verbatim, while
+ * its `Output shall include` clause — authored for the complete actor output
+ * — is replaced by the reply contract `outcomeAuthority` gives the judge:
+ * exactly `guard` plus the outcome's semantic-owned fields, each keeping the
+ * placeholder or guidance the clause authors for it, and every
+ * presentation-, effect-, or runtime-owned field named as runtime-supplied
+ * so the judge omits it. Rendering the clause verbatim asked the judge for
+ * `question`, `planningResult`, or `evaluatedRevision`, which the reconciler
+ * rejects as a structural error, spending the single correction on a
+ * self-inflicted defect. Exported so a bespoke linked runtime (DECIDE's
+ * parallel machinery) renders the identical contract instead of restating it.
+ */
+export declare function renderGovernedOutcomeContract(guard: string, description: string, outcome: XStateGovernedOutcomeSpec | undefined): string[];
 export interface PlayerAdjudicationSpec {
     buildJudgePrompt?: (input: PlaybookPlayerInput, finalText: string) => string;
     extractRequiredFields?: (description: string) => string[];

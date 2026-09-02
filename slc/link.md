@@ -1085,6 +1085,9 @@ contract — exactly `guard` plus the semantic-owned fields, each keeping its
 authored placeholder or guidance, with every presentation-, effect-, or
 runtime-owned field named as runtime-supplied to omit — so the judge is never asked for a
 field it does not own; the artifact's description text stays unchanged.
+The shared engine shall export that rendering as `renderGovernedOutcomeContract`
+on `@sublang/playbook/xstate-runtime`, and a bespoke linked runtime shall
+render its judge prompt through it rather than restate the contract.
 The reconciler shall construct the complete actor output rather than accept a
 cross-authority object from the judge: every presentation-owned payload field
 shall receive the canonical `finalText.trim()` value; every effect-owned

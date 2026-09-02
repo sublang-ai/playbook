@@ -1644,6 +1644,145 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
   });
 });
 
+describe('DECIDE governed adjudicator prompt', () => {
+  it('asks the governed judge only for the fields it owns', async () => {
+    // The shared engine's regression (src/role-runtime-transition.test.ts):
+    // a judge shown the authored "Output shall include `coderProposal:
+    // <verbatim final text>`" clause verbatim returned the presentation-owned
+    // field, the reconciler rejected it as a structural error, and the single
+    // correction was spent on a self-inflicted defect. DECIDE's bespoke
+    // runtime built its own prompt with the same flaw; it now renders every
+    // arm through the engine's exported renderer.
+    const judgePrompts: string[] = [];
+    const playerPrompts: string[] = [];
+    const nestedRequests: PlaybookCallRequest[] = [];
+    let coderCalls = 0;
+    const host = createTestEffectHost();
+    const runtime = createPlaybookRuntime({}, host);
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId, prompt) => {
+            playerPrompts.push(prompt);
+            if (roleId === 'reviewer') {
+              return { status: 'ok', finalText: 'Reviewer proposal' };
+            }
+            coderCalls += 1;
+            return {
+              status: 'ok',
+              finalText:
+                coderCalls === 1 ? 'Coder proposal' : 'Committed proposal',
+            };
+          },
+          callJudge: async (prompt) => {
+            judgePrompts.push(prompt);
+            return judgeReply(prompt);
+          },
+          callPlaybook: async (request) => {
+            nestedRequests.push(request);
+            return { state: 'suspended', childSessionId: 'review-child' };
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'suspended',
+      state: { stateId: 'reviewCommit' },
+    });
+
+    // One judge per governed boundary: a guard-only reply resolves each arm
+    // without spending the corrective re-ask.
+    expect(judgePrompts).toHaveLength(3);
+    const promptFor = (sourceItem: string): string => {
+      const prompt = judgePrompts.find((candidate) =>
+        candidate.includes(`source item ${sourceItem}.`),
+      );
+      if (prompt === undefined) {
+        throw new Error(`no judge prompt for ${sourceItem}`);
+      }
+      return prompt;
+    };
+    for (const prompt of judgePrompts) {
+      expect(prompt).not.toContain('Output shall include');
+      expect(prompt).toContain(
+        "- `needsBossReply` — The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone.\n" +
+          '  Reply exactly: { "guard": "needsBossReply" }\n' +
+          '  Runtime-supplied, do not include: `question` (presentation-owned)',
+      );
+      expect(prompt).toContain(
+        'A field listed as runtime-supplied is owned by presentation, effect, or runtime evidence; the runtime fills it itself, and a reply that includes one is structurally invalid.',
+      );
+    }
+    expect(promptFor('DECIDE-1')).toContain(
+      '- `proposed` — Coder affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome.\n' +
+        '  Reply exactly: { "guard": "proposed" }\n' +
+        '  Runtime-supplied, do not include: `coderProposal` (presentation-owned)',
+    );
+    expect(promptFor('DECIDE-2')).toContain(
+      '- `proposed` — Reviewer affirmatively provided a complete design proposal; a progress report, status update, or promise of a later proposal supports no proposal outcome.\n' +
+        '  Reply exactly: { "guard": "proposed" }\n' +
+        '  Runtime-supplied, do not include: `reviewerProposal` (presentation-owned)',
+    );
+    expect(promptFor('DECIDE-3')).toContain(
+      '- `committed` — Coder synthesized both proposals and committed the resulting design as one new commit.\n' +
+        '  Reply exactly: { "guard": "committed" }\n' +
+        '  Runtime-supplied, do not include: `coderOutput` (presentation-owned), `latestCommit` (effect-owned)',
+    );
+
+    expect(
+      host
+        .readEffectLedger()
+        .boundaries.map(
+          ({ sourceStateId, semanticCandidate, correctionBudget }) => ({
+            sourceStateId,
+            semanticCandidate,
+            correctionBudget,
+          }),
+        )
+        .sort((left, right) =>
+          left.sourceStateId.localeCompare(right.sourceStateId),
+        ),
+    ).toEqual([
+      {
+        sourceStateId: 'askCoderProposal',
+        semanticCandidate: { guard: 'proposed' },
+        correctionBudget: { limit: 1, spent: false },
+      },
+      {
+        sourceStateId: 'askReviewerProposal',
+        semanticCandidate: { guard: 'proposed' },
+        correctionBudget: { limit: 1, spent: false },
+      },
+      {
+        sourceStateId: 'commitCoderProposal',
+        semanticCandidate: { guard: 'committed' },
+        correctionBudget: { limit: 1, spent: false },
+      },
+    ]);
+    // The runtime supplies the omitted fields itself: each presentation
+    // field from the player's final text and `latestCommit` from the merge
+    // receipt's exact OID.
+    expect(playerPrompts).toHaveLength(3);
+    expect(playerPrompts[2]).toContain(
+      "> Reviewer's independent proposal: Reviewer proposal",
+    );
+    expect(nestedRequests).toHaveLength(1);
+    expect(nestedRequests[0].text).toContain(
+      `> Review scope: the \`decide\`-owned commit ${DEFAULT_COMMIT_OID} and its resulting repository state.`,
+    );
+    expect(nestedRequests[0].text).toContain(
+      '> Coder output: Committed proposal',
+    );
+    await runtime.dispose();
+  });
+});
+
 describe('DECIDE accepted-outcome consumer', () => {
   it.each(['coder', 'reviewer'] as const)(
     'publishes executed parallel outcomes when %s finishes first and drains them before settlement',

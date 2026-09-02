@@ -1389,9 +1389,10 @@ export function defaultBuildJudgePrompt(
  * so the judge omits it. Rendering the clause verbatim asked the judge for
  * `question`, `planningResult`, or `evaluatedRevision`, which the reconciler
  * rejects as a structural error, spending the single correction on a
- * self-inflicted defect.
+ * self-inflicted defect. Exported so a bespoke linked runtime (DECIDE's
+ * parallel machinery) renders the identical contract instead of restating it.
  */
-function renderGovernedOutcomeContract(
+export function renderGovernedOutcomeContract(
   guard: string,
   description: string,
   outcome: XStateGovernedOutcomeSpec | undefined,
