@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done — v12.1.0 carries the facade, the DEV live scenario, and the compiled-execution definitions
 
 ## Intent
 
@@ -16,7 +16,7 @@ Publish the single worktree host-capability implementation as a typed facade per
 - [x] `@sublang/playbook/host-capabilities` is exported, packaged, spec-pinned, smoke-checked as a packed consumer, and documented.
 - [x] The live acceptance suite drives `/dev` through its nested `code` and `review` chain against the packed candidate.
 - [x] `slc/text2gears.md`, `slc/gears2fsm.md`, and `slc/link.md` carry their `## Compiled execution` sections and the meta-compile rule.
-- [ ] A release carries all three so consumers can adopt them together.
+- [x] A release carries all three so consumers can adopt them together.
 
 ## Tasks
 
@@ -24,7 +24,7 @@ Publish the single worktree host-capability implementation as a typed facade per
 2. [x] Publish the host-capabilities facade with its specs, surface pins, packed-consumer smoke step, and embedding guide section.
 3. [x] Add the DEV live acceptance scenario and its fixture configuration.
 4. [x] Add the compiled-execution sections and the meta-compile rule to the shipped definitions.
-5. [ ] Prepare and publish the release.
+5. [x] Prepare and publish the release.
 
 ## Verification
 
