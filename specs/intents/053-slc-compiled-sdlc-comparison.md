@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress — the four reviewed compiles run on the user's CLIs from `slc/.scratch/sdlc-<name>/`; judgment follows the milestone release.
+Blocked — the Codex usage limit is exhausted until 2026-09-06 19:29 PT; the reviewed compiles cannot run with the requested GPT-5.6 Sol coder before then.
 
 ## Intent
 
@@ -19,7 +19,7 @@ The maintained artifacts were recompiled by agents following the definitions dir
 
 ## Tasks
 
-1. [ ] Compile the four sources through reviewed `slc playbook` and collect the artifacts: launched 2026-09-02 with slc main (db83c66, Playbook 12.1.0 adopted), coder `codex` / `gpt-5.6-sol` / `ultra` / fast mode, reviewer `claude-code` / `claude-opus-5` / `ultracode`. The first `dev` attempt failed closed at text2gears after 22 min: the reviewer call showed no activity for the default 600 s stall budget; relaunched with `SLC_STALL_TIMEOUT=2400`.
+1. [ ] Compile the four sources through reviewed `slc playbook` and collect the artifacts: launched 2026-09-02 with slc main (db83c66, Playbook 12.1.0 adopted), coder `codex` / `gpt-5.6-sol` / `ultra` / fast mode, reviewer `claude-code` / `claude-opus-5` / `ultracode`. The first `dev` attempt failed closed at text2gears after 22 min: the reviewer call showed no activity for the default 600 s stall budget; relaunched with `SLC_STALL_TIMEOUT=2400`; `decide` (38 min) and `review` (42 min) failed the same way, so all four were relaunched with the 2400 s budget; the relaunches then failed on the Codex usage limit (`review`, `code`, `decide`), and `dev` was stopped. No compile reached gears2fsm; no artifact to compare yet. Finding for task 3: an `ultracode` reviewer can stay silent beyond the default 600 s stall budget, so reviewed compilation needs either a documented larger default for deep reviewers or activity signals from the adapter.
 2. [ ] Compare each against the maintained artifact and record verdicts here.
 3. [ ] Land any essential improvement with its decision record, or record why none is warranted.
 

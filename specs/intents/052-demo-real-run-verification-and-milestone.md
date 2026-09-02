@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done — v12.2.0 is the milestone; the `/dev` scenario's remaining failure is model behavior on a fixture with open intent records
 
 ## Intent
 
@@ -16,7 +16,7 @@ Before the demo, prove the four maintained workflows on real development scenari
 - [x] A small set of real scenarios over `../spex/demo`, one or more per workflow, each run locally on its own branch and never pushed.
 - [x] `/review`, `/code`, and `/decide` complete their scenarios; `/dev` completes its chain but its Coder's task choice failed on the fixture's open IRs — `/dev`, `/review`, `/code`, and `/decide` each complete a scenario with truthful terminal outcomes and receipt-proven commits.
 - [x] Every defect the runs expose is fixed at its root with a regression test, or recorded here as an accepted limitation.
-- [ ] The milestone release is published with all gates and the live acceptance green.
+- [x] The milestone release is published with all gates and the live acceptance green.
 
 ## Tasks
 
@@ -32,7 +32,7 @@ Before the demo, prove the four maintained workflows on real development scenari
    - Recorded, not fixed here (cligent-level): Codex `writablePaths` cannot cover a linked worktree's external git dir; the replay stream omits Codex sub-agent tool activity.
    - Environment: concurrent scenarios exhausted the Claude session quota once and hit a Codex capacity error once; the runtime parked truthfully each time.
 3. [x] Fix the exposed defects with tests; re-run the affected scenarios (the `/dev` re-run reproduced only the model and fixture causes).
-4. [ ] Prepare and publish the milestone release.
+4. [x] Prepare and publish the milestone release (v12.2.0, live acceptance six of six, release smoke eleven of eleven).
 
 ## Verification
 
