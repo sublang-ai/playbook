@@ -242,6 +242,12 @@ text2gears shall emit an item whose behavior uses
 complete JSON-safe input-text template for that call.
 The literal target id shall be a stable configured playbook id, not a slash
 command or module specifier.
+A nested-call item shall carry no `Results:` label: the child's terminal result
+is its outcome, so Source's continuation after child success, abort, or failure
+stays as prose after the blockquote for
+[gears2fsm](gears2fsm.md#nested-playbook-calls) to route through
+`invoke.onDone` and `invoke.onError`; a `Results:` block on a nested-call item
+is malformed.
 
 Example:
 

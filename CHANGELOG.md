@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A nested-call GEARS item carries no `Results:` label.** `slc/text2gears.md` told the compiler to move every Source outcome contract into `Results:` with no exception for `Captain shall call playbook` items, while slc's conformance verifier has always rejected `Results:` metadata on such items; a reviewed `slc playbook` compile of `dev.md` followed the definition's letter and produced a verifier-rejected GEARS that two review loops accepted. The nested-call section now states the rule: the child's terminal result is the item's outcome, and Source's continuation after child success, abort, or failure stays as prose after the blockquote for gears2fsm to route through `invoke.onDone` and `invoke.onError`.
+
 ## [12.2.0] - 2026-09-02
 
 ### Fixed
