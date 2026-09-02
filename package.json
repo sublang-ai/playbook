@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "12.0.0",
+  "version": "12.1.0",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, and DEV workflows driven by GEARS specs.",
   "license": "Apache-2.0",
@@ -70,6 +70,8 @@
     "reference/sdlc/code.playbook/playbook-captain.d.ts",
     "reference/sdlc/code.playbook/session-store.js",
     "reference/sdlc/code.playbook/session-store.d.ts",
+    "reference/sdlc/code.playbook/host-capabilities.js",
+    "reference/sdlc/code.playbook/host-capabilities.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
@@ -144,6 +146,10 @@
     "./session-store": {
       "types": "./reference/sdlc/code.playbook/session-store.d.ts",
       "default": "./reference/sdlc/code.playbook/session-store.js"
+    },
+    "./host-capabilities": {
+      "types": "./reference/sdlc/code.playbook/host-capabilities.d.ts",
+      "default": "./reference/sdlc/code.playbook/host-capabilities.js"
     },
     "./slc/*": "./slc/*",
     "./review/playbook": {

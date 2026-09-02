@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.1.0] - 2026-09-01
+
+### Added
+
+- **`@sublang/playbook/host-capabilities` publishes the worktree host capabilities every embedding host needs.** The narrow self-contained JavaScript and TypeScript facade re-exports the CLI host's single repository-effect implementation: `createWorktreeHostCapabilities` constructs live schema-3 `{ repository, effectLedger }` capabilities for a Git worktree from a host-owned ledger seed — with exclusive serialization, correction-budget `writeAhead`, and deferred bind/park — beside `observeGitRepository`, `captureRepositoryReceipt`, `classifyRepositoryReceipt`, `REPOSITORY_RECEIPT_CLASSIFICATIONS`, and `createFailClosedHostCapabilities`; lease, session-record, and Captain-lifecycle members stay private. Capabilities bind the nearest enclosing worktree per call and treat a not-yet-repository or unborn HEAD as the NULL OID, so a governed step may itself run `git init` and make the root commit. A host that copied the classifier deletes its copy and inherits every engine-contract change. The packed release gate type-checks an external consumer against the facade with `skipLibCheck: false` and drives an exclusive commit, an unchanged classification, and the fail-closed constructor through the installed tarball ([DR-046](specs/decisions/046-public-worktree-host-capabilities.md), [[playbook-cli-87](specs/packages/playbook-cli.md#playbook-cli-87)], [[release-34](specs/packages/release.md#release-34)]).
+
+- **The live release gate now drives `/dev` end to end.** A headless DEV scenario plans a request whose sound path is `code`, nests CODE and CODE's nested REVIEW through a distinct Analyst player the other cases never reach, and asserts the six ordered lifecycle markers, the DEV `unchanged` receipt, the committed result, and a clean worktree; every live case now asserts the exact three-player roster with resume tokens only on the players that acted ([[release-24](specs/packages/release.md#release-24)]).
+
+- **Each shipped compile definition declares its compiled-execution contract.** `slc/text2gears.md`, `slc/gears2fsm.md`, and `slc/link.md` close with a `## Compiled execution` section: one direct-Captain acting item that relays the definition's own exact bytes at run time through a host-supplied `<definition>` option, with `compiled` and `rejected` results. A self-hosting compiler compiles a definition from that section alone, so its phase bundle becomes a stable control shell whose semantics are the current definition; rule edits reach compiled runs without rebuilding the bundle, and a rebuild is warranted only when the section itself changes ([DR-047](specs/decisions/047-compiled-execution-contract-in-definitions.md)).
+
 ## [12.0.0] - 2026-09-01
 
 ### Added
@@ -529,7 +539,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.1.0...HEAD
+[12.1.0]: https://github.com/sublang-ai/playbook/compare/v12.0.0...v12.1.0
 [12.0.0]: https://github.com/sublang-ai/playbook/compare/v11.0.0...v12.0.0
 [11.0.0]: https://github.com/sublang-ai/playbook/compare/v10.0.0...v11.0.0
 [10.0.0]: https://github.com/sublang-ai/playbook/compare/v9.0.0...v10.0.0
