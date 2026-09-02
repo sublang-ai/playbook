@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned — starts after the milestone release.
+In progress — the four reviewed compiles run on the user's CLIs from `slc/.scratch/sdlc-<name>/`; judgment follows the milestone release.
 
 ## Intent
 
@@ -19,7 +19,7 @@ The maintained artifacts were recompiled by agents following the definitions dir
 
 ## Tasks
 
-1. [ ] Compile the four sources through reviewed `slc playbook` and collect the artifacts.
+1. [ ] Compile the four sources through reviewed `slc playbook` and collect the artifacts: launched 2026-09-02 with slc main (db83c66, Playbook 12.1.0 adopted), coder `codex` / `gpt-5.6-sol` / `ultra` / fast mode, reviewer `claude-code` / `claude-opus-5` / `ultracode`. The first `dev` attempt failed closed at text2gears after 22 min: the reviewer call showed no activity for the default 600 s stall budget; relaunched with `SLC_STALL_TIMEOUT=2400`.
 2. [ ] Compare each against the maintained artifact and record verdicts here.
 3. [ ] Land any essential improvement with its decision record, or record why none is warranted.
 
