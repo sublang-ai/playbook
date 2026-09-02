@@ -964,6 +964,136 @@ const deferredBossMachine = createMachine({
   },
 });
 
+// The maintained workflows' governed result descriptions carry their
+// `Output shall include` clauses for the complete actor output — naming
+// presentation-owned (`summary`, `question`), effect-owned (`latestCommit`),
+// and semantic-owned (`irNumber`) fields alike. The judge owns only the
+// semantic ones; the artifact text stays as authored.
+const authorityPromptMachine = createMachine({
+  id: 'role-authority-prompt',
+  context: {
+    task: '',
+    delivered: undefined as Record<string, unknown> | undefined,
+    pendingBossQuestion: undefined as
+      | {
+          questionId: string;
+          resumeStateId: string;
+          sourceItem: string;
+          asker: { kind: 'role'; roleId: string };
+          question: string;
+        }
+      | undefined,
+    bossReply: undefined as string | undefined,
+  },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            delivered: () => undefined,
+            pendingBossQuestion: () => undefined,
+            bossReply: () => undefined,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the governed task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-AUTHORITY-1',
+          prompt: `Implement ${context.task}.`,
+          result: {
+            complete:
+              'Coder committed the task as one new commit. Output shall include `summary: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask: <the implemented task>`.',
+            needsBossReply:
+              "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+          },
+          ...(context.pendingBossQuestion === undefined
+            ? {}
+            : { pendingBossQuestion: context.pendingBossQuestion }),
+          ...(context.bossReply === undefined
+            ? {}
+            : { bossReply: context.bossReply }),
+        }),
+        onDone: [
+          {
+            guard: ({ event }) =>
+              (event as { output?: { guard?: string } }).output?.guard ===
+              'needsBossReply',
+            target: 'awaitBossReply',
+            actions: assign({
+              pendingBossQuestion: ({ event }) => {
+                const output = (event as {
+                  output: { guard: string; question: string };
+                }).output;
+                return {
+                  questionId: 'work',
+                  resumeStateId: 'work',
+                  sourceItem: 'ROLE-AUTHORITY-1',
+                  asker: { kind: 'role' as const, roleId: 'coder' },
+                  question: output.question,
+                };
+              },
+              bossReply: () => undefined,
+            }),
+          },
+          {
+            target: 'delivered',
+            actions: assign({
+              delivered: ({ event }) =>
+                (event as { output: Record<string, unknown> }).output,
+              pendingBossQuestion: () => undefined,
+              bossReply: () => undefined,
+            }),
+          },
+        ],
+        onError: 'unresolved',
+      },
+    },
+    awaitBossReply: {
+      meta: stateMeta('awaitBossReply', 'Waiting for Boss to answer Coder.'),
+      tags: ['playbook.parked'],
+      on: {
+        BOSS_REPLY: {
+          guard: ({ context, event }) => {
+            const reply = event as { questionId?: string; answer?: string };
+            return (
+              typeof reply.answer === 'string' &&
+              reply.answer.trim().length > 0 &&
+              (reply.questionId === undefined ||
+                reply.questionId === context.pendingBossQuestion?.questionId)
+            );
+          },
+          target: 'work',
+          reenter: true,
+          actions: assign({
+            bossReply: ({ event }) =>
+              (event as { answer: string }).answer,
+          }),
+        },
+      },
+    },
+    delivered: {
+      meta: stateMeta('delivered', 'The reconciled result was delivered.'),
+      tags: ['playbook.parked'],
+    },
+    unresolved: {
+      meta: stateMeta('unresolved', 'Semantic evidence remains unresolved.'),
+      tags: ['playbook.parked'],
+    },
+  },
+});
+
 // A schema-3 parent can fail outside its own governed player state after a
 // nested or sibling runtime has already written the shared host attempt. The
 // unreachable `work` state makes the artifact governed; `control` exercises
@@ -1223,6 +1353,33 @@ function unchangedBossSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
           needsBossReply: {
             fields: { question: 'presentation' },
             repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
+  };
+}
+
+function authorityPromptSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    ...deferredBossSchema3Spec(),
+    label: 'ROLE-AUTHORITY',
+    verbatimPayloadFields: new Set(['summary', 'question']),
+    outcomeAuthority: {
+      governedPlayerStates: {
+        work: {
+          complete: {
+            fields: {
+              summary: 'presentation',
+              latestCommit: 'effect',
+              irNumber: 'semantic',
+              irTask: 'semantic',
+            },
+            repositoryDisposition: 'one-descendant-commit',
+          },
+          needsBossReply: {
+            fields: { question: 'presentation' },
+            repositoryDisposition: 'deferred',
           },
         },
       },
@@ -3051,6 +3208,113 @@ describe('DR-032 shared role runtime transition', () => {
         },
         correctionBudget: { limit: 1, spent: true },
       });
+    await runtime.dispose();
+  });
+
+  it('asks the governed judge only for the fields it owns', async () => {
+    // A judge shown the authored clause "Output shall include `question:
+    // <…>`" verbatim returned `question`; the reconciler rejected the
+    // presentation-owned field as a structural error and the single
+    // correction was spent on a self-inflicted defect. The judge-facing
+    // contract now derives from `outcomeAuthority` while the artifact's
+    // description text stays as authored.
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'one-descendant-commit'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'Which IR should this land in?',
+          resumeToken: 'thread-question',
+        },
+        {
+          status: 'ok',
+          finalText: 'Implemented under IR-048 and committed.',
+          resumeToken: 'thread-final',
+        },
+      ],
+      [
+        '{"guard":"needsBossReply"}',
+        '{"guard":"complete","irNumber":"048","irTask":"Add navigation"}',
+      ],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      authorityPromptMachine,
+      authorityPromptSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+    const questionPrompt = harness.callJudge.mock.calls[0]![0];
+    expect(questionPrompt).toContain('Which IR should this land in?');
+    expect(questionPrompt).not.toContain('Output shall include');
+    expect(questionPrompt).toContain(
+      "- `needsBossReply` — The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone.\n" +
+        '  Reply exactly: { "guard": "needsBossReply" }\n' +
+        '  Runtime-supplied, do not include: `question` (presentation-owned)',
+    );
+    expect(questionPrompt).toContain(
+      '- `complete` — Coder committed the task as one new commit.\n' +
+        '  Reply exactly: { "guard": "complete", "irNumber": <string>, "irTask": <the implemented task> }\n' +
+        '  Semantic fields as authored: `irNumber` identifying the IR; `irTask: <the implemented task>`\n' +
+        '  Runtime-supplied, do not include: `summary` (presentation-owned), `latestCommit` (effect-owned)',
+    );
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0]).toMatchObject(
+      {
+        finalText: 'Which IR should this land in?',
+        semanticCandidate: { guard: 'needsBossReply' },
+        correctionBudget: { limit: 1, spent: false },
+      },
+    );
+    expect(runtime.describe?.().pendingQuestions).toMatchObject([
+      { questionId: 'work', question: 'Which IR should this land in?' },
+    ]);
+
+    await expect(
+      runtime.handleBossInput(bossTurn('IR-048')),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'delivered' },
+    });
+    expect(harness.callJudge).toHaveBeenCalledTimes(2);
+    expect(harness.callJudge.mock.calls[1]![0]).not.toContain(
+      'Output shall include',
+    );
+    const completed = hostCapabilities.effectLedger.snapshot();
+    expect(
+      completed.boundaries.map(({ correctionBudget }) => correctionBudget),
+    ).toEqual([
+      { limit: 1, spent: false },
+      { limit: 1, spent: false },
+    ]);
+    expect(completed.boundaries[1]).toMatchObject({
+      semanticCandidate: {
+        guard: 'complete',
+        irNumber: '048',
+        irTask: 'Add navigation',
+      },
+    });
+    expect(runtime.exportSnapshot?.()?.machine).toMatchObject({
+      context: {
+        delivered: {
+          guard: 'complete',
+          summary: 'Implemented under IR-048 and committed.',
+          irNumber: '048',
+          irTask: 'Add navigation',
+          latestCommit: completed.logicalOperations[0]?.logicalReceipt?.commitOid,
+        },
+      },
+    });
+    expect(completed.logicalOperations[0]?.logicalReceipt?.commitOid).toMatch(
+      /^[0-9a-f]{40}$/,
+    );
     await runtime.dispose();
   });
 

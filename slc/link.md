@@ -1079,6 +1079,12 @@ runtime-owned payload field; `guard` shall name exactly one outcome declared
 by both the live result map and `outcomeAuthority`; and every semantic-owned
 field shall satisfy the result map's required-field type before any actor
 output is delivered.
+The judge prompt shall render each governed outcome's description with its
+meaning verbatim and its `Output shall include` clause replaced by that reply
+contract — exactly `guard` plus the semantic-owned fields, each keeping its
+authored placeholder or guidance, with every presentation-, effect-, or
+runtime-owned field named as runtime-supplied to omit — so the judge is never asked for a
+field it does not own; the artifact's description text stays unchanged.
 The reconciler shall construct the complete actor output rather than accept a
 cross-authority object from the judge: every presentation-owned payload field
 shall receive the canonical `finalText.trim()` value; every effect-owned
@@ -1170,7 +1176,9 @@ Two default adjudication strategies, in selection order:
   to decide only from the supplied actor output and declared outcomes, and
   require exactly one JSON object with no prose. The judge prompt shall not
   interpret the player's output, paraphrase it, or alter the FSM's `result`
-  text — it carries the description verbatim.
+  text — it carries the description verbatim, except that a governed
+  schema-3 outcome's `Output shall include` clause is rendered as the
+  authority-derived reply contract of §Captain adjudication.
 - **Marker-parse** (delegated-player alternative): a deterministic parser that
   scans the player output for a terminal control line such as
   `FSM-RESULT: { "guard": "...", ... }`. Useful when player adapters can

@@ -1304,6 +1304,36 @@ export function defaultComposeCaptainPrompt(
   return blocks.join('\n\n');
 }
 
+// A result description's output clause (slc/link.md §Captain adjudication):
+// everything after `Output shall include` / `输出应包含` names the outcome's
+// payload fields, each as a bare backticked name or the annotated
+// `name: <placeholder>` form. The text before the clause is the outcome's
+// meaning.
+const OUTPUT_CLAUSE_MARKERS: readonly string[] = [
+  'Output shall include',
+  '输出应包含',
+];
+const PAYLOAD_FIELD_PATTERN =
+  /`([A-Za-z_$][A-Za-z0-9_$]*)(?::\s*([^`]*))?`/g;
+// Separators between one field's authored segment and the next field token.
+const SEGMENT_SEPARATOR_SUFFIX = /(?:\s|[,;.，、；。]|\band\b)+$/;
+
+function splitOutputClause(description: string): {
+  readonly meaning: string;
+  readonly clause?: string;
+} {
+  for (const marker of OUTPUT_CLAUSE_MARKERS) {
+    const idx = description.indexOf(marker);
+    if (idx !== -1) {
+      return {
+        meaning: description.slice(0, idx).trim(),
+        clause: description.slice(idx + marker.length),
+      };
+    }
+  }
+  return { meaning: description.trim() };
+}
+
 /**
  * Default required-field extraction (slc/link.md §Captain adjudication).
  * Limited to the description's `Output shall include` / `输出应包含` clause;
@@ -1311,20 +1341,10 @@ export function defaultComposeCaptainPrompt(
  * form.
  */
 export function defaultExtractRequiredFields(description: string): string[] {
-  const markers = ['Output shall include', '输出应包含'];
-  let clauseStart = -1;
-  for (const marker of markers) {
-    const idx = description.indexOf(marker);
-    if (idx !== -1) {
-      clauseStart = idx + marker.length;
-      break;
-    }
-  }
-  if (clauseStart === -1) return [];
-  const clause = description.slice(clauseStart);
+  const { clause } = splitOutputClause(description);
+  if (clause === undefined) return [];
   const fields: string[] = [];
-  const re = /`([A-Za-z_$][A-Za-z0-9_$]*)(?::[^`]*)?`/g;
-  for (const m of clause.matchAll(re)) fields.push(m[1]);
+  for (const m of clause.matchAll(PAYLOAD_FIELD_PATTERN)) fields.push(m[1]);
   return fields;
 }
 
@@ -1358,6 +1378,82 @@ export function defaultBuildJudgePrompt(
   return lines.join('\n');
 }
 
+/**
+ * Judge-facing rendering of one governed outcome (DR-040 §1). The artifact's
+ * description is not altered: its meaning is carried through verbatim, while
+ * its `Output shall include` clause — authored for the complete actor output
+ * — is replaced by the reply contract `outcomeAuthority` gives the judge:
+ * exactly `guard` plus the outcome's semantic-owned fields, each keeping the
+ * placeholder or guidance the clause authors for it, and every
+ * presentation-, effect-, or runtime-owned field named as runtime-supplied
+ * so the judge omits it. Rendering the clause verbatim asked the judge for
+ * `question`, `planningResult`, or `evaluatedRevision`, which the reconciler
+ * rejects as a structural error, spending the single correction on a
+ * self-inflicted defect.
+ */
+function renderGovernedOutcomeContract(
+  guard: string,
+  description: string,
+  outcome: XStateGovernedOutcomeSpec | undefined,
+): string[] {
+  const { meaning, clause } = splitOutputClause(description);
+  // Each field's authored segment runs from its token to the next token:
+  // the annotated `name: <placeholder>` form, or the bare name followed by
+  // its guidance (`` `irNumber` identifying the continued IR ``).
+  const authored = new Map<
+    string,
+    { readonly segment: string; readonly placeholder?: string }
+  >();
+  if (clause !== undefined) {
+    const matches = [...clause.matchAll(PAYLOAD_FIELD_PATTERN)];
+    matches.forEach((m, i) => {
+      const field = m[1];
+      if (authored.has(field)) return;
+      const start = m.index ?? 0;
+      const end = matches[i + 1]?.index ?? clause.length;
+      const segment = clause
+        .slice(start, end)
+        .replace(SEGMENT_SEPARATOR_SUFFIX, '');
+      const placeholder = m[2]?.trim();
+      authored.set(field, {
+        segment,
+        ...(placeholder !== undefined && placeholder.length > 0
+          ? { placeholder }
+          : {}),
+      });
+    });
+  }
+  const replyMembers = [`"guard": ${JSON.stringify(guard)}`];
+  const semanticAsAuthored: string[] = [];
+  const runtimeSupplied: string[] = [];
+  for (const [field, authority] of Object.entries(outcome?.fields ?? {})) {
+    if (authority === 'semantic') {
+      const entry = authored.get(field);
+      replyMembers.push(
+        `${JSON.stringify(field)}: ${entry?.placeholder ?? '<string>'}`,
+      );
+      semanticAsAuthored.push(entry?.segment ?? `\`${field}\``);
+    } else {
+      runtimeSupplied.push(`\`${field}\` (${authority}-owned)`);
+    }
+  }
+  const lines = [
+    meaning.length === 0 ? `- \`${guard}\`` : `- \`${guard}\` — ${meaning}`,
+    `  Reply exactly: { ${replyMembers.join(', ')} }`,
+  ];
+  if (semanticAsAuthored.length > 0) {
+    lines.push(
+      `  Semantic fields as authored: ${semanticAsAuthored.join('; ')}`,
+    );
+  }
+  if (runtimeSupplied.length > 0) {
+    lines.push(
+      `  Runtime-supplied, do not include: ${runtimeSupplied.join(', ')}`,
+    );
+  }
+  return lines;
+}
+
 function buildGovernedJudgePrompt(
   input: PlaybookPlayerInput,
   finalText: string,
@@ -1375,20 +1471,13 @@ function buildGovernedJudgePrompt(
     finalText,
     '```',
     '',
-    'Pick exactly one declared `guard`. Include every semantic-owned field for that guard and no other field.',
-    'Do not include presentation-, effect-, or runtime-owned fields; the runtime supplies those from their authoritative evidence.',
+    'Pick exactly one declared `guard` and reply with exactly that outcome\'s reply shape below: `guard` plus its semantic-owned fields and nothing else.',
+    'A field listed as runtime-supplied is owned by presentation, effect, or runtime evidence; the runtime fills it itself, and a reply that includes one is structurally invalid.',
     '',
   ];
   for (const [guard, description] of Object.entries(input.result)) {
-    const semanticFields = Object.entries(outcomes[guard]?.fields ?? {})
-      .filter(([, authority]) => authority === 'semantic')
-      .map(([field]) => field);
     lines.push(
-      `- \`${guard}\` — semantic fields: ${
-        semanticFields.length === 0
-          ? '(none)'
-          : semanticFields.map((field) => `\`${field}\``).join(', ')
-      }; ${description}`,
+      ...renderGovernedOutcomeContract(guard, description, outcomes[guard]),
     );
   }
   if (correction !== undefined) {
