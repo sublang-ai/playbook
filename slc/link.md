@@ -2413,6 +2413,10 @@ original template. Replacement strings are literal: placeholder-looking text
 inside Boss/catalog/plan/result values and JavaScript replacement tokens such
 as `$&`, `$$`, dollar-backtick, and `$'` shall not be interpreted or
 substituted again.
+A quoted relay line `> <placeholder>` whose value is empty shall be omitted
+from the composed text rather than left as an empty quoted line, a multi-line
+value shall be quoted line by line so every continuation line keeps its `>`
+marker, and the composer shall insert no empty quoted line of its own.
 
 ## Host adaptation (informative, not normative)
 

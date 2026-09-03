@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An output property name is an identifier.** The same definition asked for each required output property's "exact case-sensitive identifier" without binding it to the guard-name pattern, so a reviewed compile of `decide.md` declared quoted kebab-case keys (`decide-commit`, `reviewer-proposal`) throughout its GEARS and FSM — internally consistent, but invisible to slc's conformance verifier and incompatible with `dev`, which consumes `decide`'s terminal `decideCommit` by name. The results section now requires the guard-name identifier pattern for output properties and names the kebab-token-to-camel-field mapping as the route from a Source placeholder to its property.
 
+- **An empty relay leaves no empty quoted line.** `slc/link.md` described placeholder substitution as one literal pass but said nothing about a quoted relay line whose value is empty, and two independent reviewed compiles composed a stray `> ` line where an omitted optional run-results relay had been (the `code` linker) or inside a relayed multi-paragraph request (the `dev` FSM's child-call text). The substitution rule now states that an empty relay line is omitted, a multi-line value is quoted line by line, and the composer inserts no empty quoted line of its own; `slc/gears2fsm.md` binds a literal nested call's composed text to the same rules.
+
 ## [12.2.0] - 2026-09-02
 
 ### Fixed

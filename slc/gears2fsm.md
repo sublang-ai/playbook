@@ -385,6 +385,9 @@ implementation.
 
 A literal call shall retain the existing representation: `playbookId` is the
 literal target and `text` is the composed GEARS blockquote.
+Composing that text follows the quoted-relay rules of [link](link.md): a
+relayed value that is empty contributes no line, a multi-line value is quoted
+line by line, and the composer inserts no empty quoted line of its own.
 
 A dynamic call written
 ``Captain shall call playbook selected by `<target-field>`:`` shall declare the
