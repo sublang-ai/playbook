@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A nested-call GEARS item carries no `Results:` label.** `slc/text2gears.md` told the compiler to move every Source outcome contract into `Results:` with no exception for `Captain shall call playbook` items, while slc's conformance verifier has always rejected `Results:` metadata on such items; a reviewed `slc playbook` compile of `dev.md` followed the definition's letter and produced a verifier-rejected GEARS that two review loops accepted. The nested-call section now states the rule: the child's terminal result is the item's outcome, and Source's continuation after child success, abort, or failure stays as prose after the blockquote for gears2fsm to route through `invoke.onDone` and `invoke.onError`.
 
+- **An output property name is an identifier.** The same definition asked for each required output property's "exact case-sensitive identifier" without binding it to the guard-name pattern, so a reviewed compile of `decide.md` declared quoted kebab-case keys (`decide-commit`, `reviewer-proposal`) throughout its GEARS and FSM — internally consistent, but invisible to slc's conformance verifier and incompatible with `dev`, which consumes `decide`'s terminal `decideCommit` by name. The results section now requires the guard-name identifier pattern for output properties and names the kebab-token-to-camel-field mapping as the route from a Source placeholder to its property.
+
 ## [12.2.0] - 2026-09-02
 
 ### Fixed
