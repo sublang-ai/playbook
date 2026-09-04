@@ -1557,6 +1557,56 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     ).rejects.toThrow(/no valid registry entry/);
   });
 
+  it('binds non-ASCII canonical local role ids and refuses noncanonical ones', async () => {
+    const loadModule = moduleLoader({
+      'mod://zh': entry('zh', ['编码者', '审查者'], 'zh'),
+    });
+    const zhConfig = () => ({
+      captain: 'claude',
+      players: { 'dev.coder': 'codex', 'dev.reviewer': 'claude' },
+      playbooks: {
+        zh: {
+          from: 'mod://zh',
+          roles: { 编码者: 'dev.coder', 审查者: 'dev.reviewer' },
+        },
+      },
+    });
+
+    const plan = await launchConfig.normalizeLaunchPlan(zhConfig(), {
+      loadModule,
+    });
+    expect(plan.catalog.zh.requiredRoleIds).toEqual(['编码者', '审查者']);
+    expect(Object.keys(plan.catalog.zh.roles)).toEqual(['编码者', '审查者']);
+    expect(plan.catalog.zh.roles.编码者.playerId).toBe('dev.coder');
+    expect(plan.catalog.zh.roles.审查者.playerId).toBe('dev.reviewer');
+    expect(plan.players.map((player: any) => player.id)).toEqual([
+      'dev.coder',
+      'dev.reviewer',
+    ]);
+
+    const refused: Array<[string, RegExp]> = [
+      ['Coder', /must be a canonical lowercase local role id/],
+      ['code r', /must be a canonical lowercase local role id/],
+      ['captain', /binds local role "captain", which is reserved/],
+    ];
+    for (const [roleKey, message] of refused) {
+      const config: any = oneRoleConfig();
+      config.playbooks.code.roles = { [roleKey]: 'dev.coder' };
+      const rejectingLoad = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(config, {
+          loadModule: rejectingLoad,
+        }),
+      ).rejects.toThrow(message);
+      expect(rejectingLoad).not.toHaveBeenCalled();
+    }
+    await expect(
+      launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+        loadModule: moduleLoader({ 'mod://code': entry('code', ['编码 者']) }),
+      }),
+    ).rejects.toThrow(/no valid registry entry/);
+  });
+
   it('requires exact role coverage and distinct concurrent players', async () => {
     const loadDecide = moduleLoader({
       'mod://decide': entry(

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A non-English workflow's roles bind.** The CLI host validated every local role id against the ASCII pattern `[a-z][a-z0-9_-]*`, in `bin/launch-config.js`, `bin/session-store.js`, and the Captain shell alike, so a workflow whose `Roles:` list names `编码者` or `作者` — which the compiler definitions explicitly support, and whose canonical lowercase id is the name itself — compiled cleanly and was then refused at launch with `playbooks.<id>.roles.编码者 must use a canonical lowercase local role id`. No spec ever required ASCII. The canonical form is now stated and enforced as what it always meant: the source role name lowercased by Unicode case mapping — nonempty, carrying no whitespace or control character, never the reserved `captain` — and a config role key, manifest role id, or stored catalog role id is accepted exactly when it equals its own lowercase form, so `coder`, `编码者`, and `作者` bind while `Coder` is still refused. Host-chosen player ids keep their existing segmented ASCII grammar ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-1](specs/packages/playbook.md#playbook-1)]).
+
 ## [12.2.2] - 2026-09-04
 
 ### Fixed

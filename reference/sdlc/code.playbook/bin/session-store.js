@@ -57,8 +57,22 @@ export const CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION = 1;
 export const CAPTAIN_SESSION_EXECUTION_PROJECTION_SCHEMA_VERSION = 2;
 
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
-const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const ROLE_ID_WHITESPACE_OR_CONTROL = /[\s\p{Cc}]/u;
 const RESERVED_ID = 'captain';
+
+// PBCLI-4: a local role id is its source role name lowercased by Unicode case
+// mapping — nonempty, free of whitespace and control characters, and equal to
+// its own lowercase form. The rule restricts neither script nor alphabet, so
+// `coder`, `编码者`, and `作者` are canonical while `Coder` is not. Callers
+// enforce the reserved `captain` name separately.
+export function isCanonicalLocalRoleId(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.toLowerCase() &&
+    !ROLE_ID_WHITESPACE_OR_CONTROL.test(value)
+  );
+}
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const KNOWN_ADAPTERS = new Set(KNOWN_PLAYER_ADAPTERS);
 
@@ -5080,10 +5094,7 @@ function validateRoleIds(value, path) {
   if (
     !Array.isArray(value) ||
     value.some(
-      (roleId) =>
-        typeof roleId !== 'string' ||
-        !ROLE_ID_PATTERN.test(roleId) ||
-        roleId === RESERVED_ID,
+      (roleId) => !isCanonicalLocalRoleId(roleId) || roleId === RESERVED_ID,
     ) ||
     new Set(value).size !== value.length
   ) {

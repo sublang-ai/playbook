@@ -549,8 +549,24 @@ const INTERNAL_CAPTAIN_ID = 'captain';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
-const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const ROLE_ID_WHITESPACE_OR_CONTROL = /[\s\p{Cc}]/u;
 const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
+
+// PBCLI-4: a local role id is its source role name lowercased by Unicode case
+// mapping — nonempty, free of whitespace and control characters, and equal to
+// its own lowercase form. The rule restricts neither script nor alphabet, so
+// `coder`, `编码者`, and `作者` are canonical while `Coder` is not. Callers
+// enforce the reserved `captain` name separately. The CLI host owns the same
+// predicate in `bin/session-store.js`; that private module already imports
+// this one, so the text is repeated here rather than cycled back.
+function isCanonicalLocalRoleId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.toLowerCase() &&
+    !ROLE_ID_WHITESPACE_OR_CONTROL.test(value)
+  );
+}
 const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
   'reconcile:unresolved-effect';
 const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
@@ -1452,9 +1468,7 @@ function isValidRegistryEntry(
     !Array.isArray(e.requiredRoleIds) ||
     e.requiredRoleIds.some(
       (role) =>
-        typeof role !== 'string' ||
-        !ROLE_ID_PATTERN.test(role) ||
-        role === INTERNAL_CAPTAIN_ID,
+        !isCanonicalLocalRoleId(role) || role === INTERNAL_CAPTAIN_ID,
     ) ||
     new Set(e.requiredRoleIds).size !== e.requiredRoleIds.length ||
     !Array.isArray(e.concurrentRoleSets)
@@ -1773,7 +1787,7 @@ function snapshotFrameRoleBindings(
   const bindings = snapshotRecord(value, path);
   return Object.fromEntries(
     Object.entries(bindings).map(([roleId, raw]) => {
-      if (!ROLE_ID_PATTERN.test(roleId) || roleId === INTERNAL_CAPTAIN_ID) {
+      if (!isCanonicalLocalRoleId(roleId) || roleId === INTERNAL_CAPTAIN_ID) {
         throw new TypeError(`${path} has invalid role id ${JSON.stringify(roleId)}`);
       }
       const playerId = snapshotString(raw, `${path}.${roleId}`);

@@ -2372,7 +2372,58 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       'fastMode',
     );
 
+    const zhExecution: any = structuredClone(execution);
+    zhExecution.players.push({ ...zhExecution.players[0], id: 'dev.reviewer' });
+    zhExecution.catalog.code.requiredRoleIds = ['编码者', '审查者'];
+    zhExecution.catalog.code.roles = {
+      编码者: zhExecution.catalog.code.roles.coder,
+      审查者: {
+        ...zhExecution.catalog.code.roles.coder,
+        playerId: 'dev.reviewer',
+      },
+    };
+    const validatedZh = validateCaptainSessionExecutionProjection(zhExecution);
+    expect(validatedZh.catalog.code.requiredRoleIds).toEqual([
+      '编码者',
+      '审查者',
+    ]);
+    const zhStructure = validateCaptainSessionStructuralProjection(
+      projectCaptainSessionStructure(validatedZh),
+    );
+    expect(Object.keys(zhStructure.catalog.code.roles)).toEqual([
+      '编码者',
+      '审查者',
+    ]);
+    expect(captainSessionSelectedMembers(zhStructure)).toEqual({
+      playbookIds: ['code'],
+      playerIds: ['dev.coder', 'dev.reviewer'],
+    });
+
+    const roleIdMutation = (roleId: string) => {
+      const mutated: any = structuredClone(execution);
+      mutated.catalog.code.requiredRoleIds = [roleId];
+      mutated.catalog.code.roles = {
+        [roleId]: mutated.catalog.code.roles.coder,
+      };
+      return mutated;
+    };
+
     const mutations: Array<[string, any, RegExp]> = [
+      [
+        'uppercase role id',
+        roleIdMutation('Coder'),
+        /must contain distinct canonical local role ids/,
+      ],
+      [
+        'whitespace role id',
+        roleIdMutation('code r'),
+        /must contain distinct canonical local role ids/,
+      ],
+      [
+        'reserved role id',
+        roleIdMutation('captain'),
+        /must contain distinct canonical local role ids/,
+      ],
       [
         'unknown field',
         { ...execution, extra: true },

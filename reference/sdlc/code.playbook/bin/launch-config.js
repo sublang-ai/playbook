@@ -28,7 +28,10 @@ import {
   stringify as stringifyYaml,
 } from "yaml";
 import { loadTmuxPlayConfig } from "@sublang/cligent/tmux-play";
-import { defaultCaptainSessionsDir } from "./session-store.js";
+import {
+  defaultCaptainSessionsDir,
+  isCanonicalLocalRoleId,
+} from "./session-store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = resolve(
@@ -53,7 +56,6 @@ const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
 const RESERVED_CAPTAIN_PLAYBOOK_ID = "captain";
 const RESERVED_CAPTAIN_ROLE_ID = "captain";
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
-const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 
 // PBCLI-26: split ordered `--with <path>` pairs out of an argument vector.
 // The returned arrays are new values; the caller's vector is never changed.
@@ -2060,8 +2062,11 @@ function assertPlayerId(value, path) {
 }
 
 function assertRoleId(value, path) {
-  if (typeof value !== "string" || !ROLE_ID_PATTERN.test(value)) {
-    throw new Error(`${path} must use a canonical lowercase local role id`);
+  if (!isCanonicalLocalRoleId(value)) {
+    throw new Error(
+      `${path} must be a canonical lowercase local role id ` +
+        "(the role name lowercased, no whitespace)",
+    );
   }
   if (value === RESERVED_CAPTAIN_ROLE_ID) {
     throw new Error(`${path} uses reserved local role id "captain"`);
@@ -2077,7 +2082,7 @@ function invalidManifestRoles(value) {
   if (new Set(canonical).size !== canonical.length) {
     return "contains roles that collide after canonical lowercase derivation";
   }
-  const invalid = value.find((role) => !ROLE_ID_PATTERN.test(role));
+  const invalid = value.find((role) => !isCanonicalLocalRoleId(role));
   if (invalid !== undefined) {
     return `contains noncanonical role ${JSON.stringify(invalid)}`;
   }
@@ -2099,8 +2104,7 @@ function invalidConcurrentRoleSets(value, requiredRoleIds) {
     if (
       set.some(
         (role) =>
-          typeof role !== "string" ||
-          !ROLE_ID_PATTERN.test(role) ||
+          !isCanonicalLocalRoleId(role) ||
           role === RESERVED_CAPTAIN_ROLE_ID ||
           !required.has(role),
       )
