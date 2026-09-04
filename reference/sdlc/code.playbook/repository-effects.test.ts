@@ -2798,6 +2798,118 @@ describe('schema-3 repository host capabilities', () => {
     }
   });
 
+  it('assembles over a directory that is not a repository and governs its own git init', async () => {
+    const prospective = await mkdtemp(
+      join(tmpdir(), 'playbook-effects-prospective-'),
+    );
+    tempDirs.push(prospective);
+    const worktree = await realpath(prospective);
+    const identity = { worktree, gitDir: join(worktree, '.git') };
+    const backing = fakeEffectLedgerService();
+    const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+    const capability = (
+      await createRepositoryEffectCapabilities({
+        cwd: prospective,
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionLease: {
+          sessionId: '10000000-0000-4000-8000-000000000001',
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      })
+    ).code;
+
+    expect(capability.repository.identity).toEqual(identity);
+    expect(capability.authority.canonicalWorktree).toEqual(identity);
+    expect(await capability.repository.observe()).toMatchObject({
+      ...identity,
+      head: '0'.repeat(40),
+      projection: {},
+    });
+
+    const runStep = (
+      boundaryId: string,
+      turnId: number,
+      dispositions: string[],
+      operation: () => Promise<string>,
+    ): Promise<any> =>
+      capability.repository.runExclusive({
+        effectBoundary: {
+          boundaryId,
+          runtimeSessionId,
+          turnId,
+          callId: `coder:${turnId}`,
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { done: {} },
+          dispositions,
+          correctionBudget: { limit: 1, spent: false },
+        },
+        operation,
+        completeEffectBoundary: ({ operation: settled }: any) => ({
+          finalText: settled.value,
+          semanticCandidate: { guard: 'done' },
+        }),
+      });
+
+    // The workflow's own agent-free setup step initializes the repository.
+    const initialized = await runStep(
+      '30000000-0000-4000-8000-000000000003',
+      1,
+      ['unchanged'],
+      async () => {
+        await git(prospective, 'init', '--quiet');
+        await git(prospective, 'config', 'user.name', 'Repository Effect Test');
+        await git(
+          prospective,
+          'config',
+          'user.email',
+          'effects@example.invalid',
+        );
+        return 'initialized';
+      },
+    );
+    expect(initialized.receipt.classification).toBe('unchanged');
+    expect(initialized.receipt.baseline.head).toBe('0'.repeat(40));
+
+    const committed = await runStep(
+      '50000000-0000-4000-8000-000000000005',
+      2,
+      ['one-descendant-commit'],
+      async () => {
+        await writeFile(join(prospective, 'first.txt'), 'first\n', 'utf8');
+        await git(prospective, 'add', '--all');
+        await git(prospective, 'commit', '--quiet', '-m', 'root');
+        return 'committed';
+      },
+    );
+    const rootCommit = await git(prospective, 'rev-parse', 'HEAD');
+    expect(committed.receipt.classification).toBe('one-descendant-commit');
+    expect(committed.receipt.commitOid).toBe(rootCommit);
+    expect(committed.receipt.baseline.head).toBe('0'.repeat(40));
+    expect(await capability.repository.observe()).toMatchObject({
+      ...identity,
+      head: rootCommit,
+    });
+    expect(
+      committed.effectLedger.boundaries.map(
+        (boundary: any) => boundary.canonicalWorktree,
+      ),
+    ).toEqual([identity, identity]);
+    for (const [authority] of backing.writeAhead.mock.calls) {
+      expect((authority as any).canonicalWorktree).toEqual(identity);
+    }
+  });
+
   it('binds repeated deferred checkpoints and reconciles one cumulative receipt', async () => {
     const repo = await initRepository('playbook-deferred-chain-');
     const backing = fakeEffectLedgerService();

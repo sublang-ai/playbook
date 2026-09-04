@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A working directory that is not a repository yet is governed from launch.** The CLI host resolved its schema-3 capabilities' governed worktree once at construction through the strict canonical resolver, so `playbook run` over a fresh directory with no `.git` was refused at launch — before the workflow's own agent-free `[ -e .git ] || git init` script step could run — even though the module's prospective-root binding, already used by the `@sublang/playbook/host-capabilities` facade, resolves exactly that case. The Captain host now binds the governed worktree the same lazy way: the enclosing Git worktree when one exists and otherwise the working directory's own prospective root, rebound afresh at every governed call and observation, so a governed `git init` there classifies `unchanged` and the repository's first root commit classifies `one-descendant-commit` under one identity ([DR-046](specs/decisions/046-public-worktree-host-capabilities.md), [[playbook-cli-20](specs/packages/playbook-cli.md#playbook-cli-20)], [[playbook-cli-88](specs/packages/playbook-cli.md#playbook-cli-88)]).
+
 ## [12.2.1] - 2026-09-03
 
 ### Fixed

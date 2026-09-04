@@ -1952,9 +1952,9 @@ async function releaseRepositoryClaim(claim, primaryError) {
   }
 }
 
-// A host binds the governed worktree identity for each durable call — fixed
-// at construction for the Captain host, resolved afresh from `cwd` for the
-// worktree host capability — and derives the schema-3 authority naming it.
+// A host binds the governed worktree identity for each durable call —
+// resolved afresh from `cwd` by both the Captain host and the worktree host
+// capability — and derives the schema-3 authority naming it.
 function bindHostWorktree(host) {
   return host.resolveIdentity().then((identity) => ({
     identity,
@@ -2978,33 +2978,43 @@ export async function createRepositoryEffectCapabilities({
   await sessionLease.assertOwner();
   const createdWriteAhead = await createWriteAhead(sessionLease);
   const ledgerService = assertEffectLedgerService(createdWriteAhead);
-  const identity = await resolveCanonicalGitWorktree(cwd);
+  // The governed worktree is bound afresh from `cwd` at every governed call
+  // and observation, so a working directory that is not a repository yet is
+  // governed from launch as its own prospective root and the `git init` a
+  // workflow's own setup step runs there keeps that one identity.
+  const resolveIdentity = async () => (await resolveGovernedWorktree(cwd)).identity;
+  const identity = await resolveIdentity();
   await sessionLease.assertOwner();
   const coordinator = createRepositoryEffectCoordinator();
 
   const capabilities = schema3Entries.map(
     ({ playbookId, requiredRoleIds, concurrentRoleSets }) => {
-      const authority = deepFreeze({
-        playbookId,
-        artifactSchema: 3,
-        cwd,
-        sessionId,
-        leaseOwnerToken: sessionLease.ownerToken,
-        canonicalWorktree: identity,
-        requiredRoleIds,
-        concurrentRoleSets,
-      });
+      const authorityNaming = (canonicalWorktree) =>
+        deepFreeze({
+          playbookId,
+          artifactSchema: 3,
+          cwd,
+          sessionId,
+          leaseOwnerToken: sessionLease.ownerToken,
+          canonicalWorktree,
+          requiredRoleIds,
+          concurrentRoleSets,
+        });
+      const authority = authorityNaming(identity);
       const host = Object.freeze({
-        resolveIdentity: async () => identity,
-        authorityFor: () => authority,
+        resolveIdentity,
+        authorityFor: (canonicalWorktree) =>
+          isDeepStrictEqual(canonicalWorktree, identity)
+            ? authority
+            : authorityNaming(canonicalWorktree),
       });
       const observe = async (options = {}) => {
         rejectBoundRepositoryOverride(options, 'observe', ['cwd']);
-        return observeResolvedWorktree(identity, options);
+        return observeGovernedWorktree(await resolveGovernedWorktree(cwd), options);
       };
       const acquire = async (options = {}) => {
         rejectBoundRepositoryOverride(options, 'acquire', ['cwd']);
-        return coordinator.acquire(identity.worktree, options);
+        return coordinator.acquire(cwd, options);
       };
       const runExclusive = async (options) => {
         return runDurableExclusive({
@@ -3139,11 +3149,11 @@ async function assertExistingDirectory(cwd, label) {
 // DR-046: the lease-free worktree capability an embedding host constructs
 // through `@sublang/playbook/host-capabilities`. It runs the same claim,
 // observation, receipt, completion, and deferred-operation path as the
-// Captain-hosted capability above, over one host-owned in-memory ledger.
-// Unlike that capability, it binds its worktree lazily: `cwd` need not be a
-// repository yet, and every governed call and observation re-resolves the
-// governed worktree of `cwd`, so a `git init` there — inside a governed call
-// or between calls — is observed rather than hidden behind a stale identity.
+// Captain-hosted capability above, over one host-owned in-memory ledger, and
+// binds its worktree the same lazy way: `cwd` need not be a repository yet,
+// and every governed call and observation re-resolves the governed worktree
+// of `cwd`, so a `git init` there — inside a governed call or between calls —
+// is observed rather than hidden behind a stale identity.
 export async function createWorktreeHostCapabilities(options = {}) {
   if (!isPlainObject(options)) {
     throw new TypeError('worktree host capability options must be an object');
