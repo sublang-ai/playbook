@@ -23,6 +23,10 @@ import { checkCligentReleaseCapabilities } from '../scripts/cligent-release-capa
 
 const packageRootUrl = new URL('../', import.meta.url);
 const repoRoot = fileURLToPath(packageRootUrl);
+// Tests that shell out (npm pack, pnpm, node probes) or build a whole
+// consumer type-check program exceed Vitest's five-second default on a
+// loaded CI runner, so every such case gets one generous explicit budget.
+const SUBPROCESS_TIMEOUT_MS = 120_000;
 const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md', 'optimize.md'];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
@@ -406,7 +410,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         }
       }
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
   it('pins the complete cligent release capabilities', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-cligent-release-'));
@@ -454,7 +458,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('adapter SDK declarations (RELEASE-27)', () => {
@@ -514,7 +518,7 @@ describe('GEARS grammar provenance (RELEASE-23)', () => {
       { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     expect(out).toBe('OK');
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('normal test gate (RELEASE-32)', () => {
@@ -573,7 +577,7 @@ describe('normal test gate (RELEASE-32)', () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('public slc/* surface (RELEASE-17)', () => {
@@ -600,7 +604,7 @@ describe('public slc/* surface (RELEASE-17)', () => {
       { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     expect(out).toContain('OK');
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('public XState runtime surface (RELEASE-15)', () => {
@@ -720,7 +724,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     expect(out).toBe('OK');
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('canonical Captain compiler bundle (CAPPLAY-11)', () => {
@@ -892,7 +896,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     for (const name of SLC_SPECS) {
       expect(packed, `tarball missing slc/${name}`).toContain(`slc/${name}`);
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
   // RELEASE-20: every Markdown file the tarball ships must be link-closed
   // over the packed file list — each relative link target and reference
@@ -1001,7 +1005,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     expect(failures).toEqual([]);
     // Guard against a vacuous pass: the packed docs really carry links.
     expect(scanned).toBeGreaterThan(50);
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
   // RELEASE-20: repository-only content is cited from packed docs by
   // absolute repository URL on the repository's main line — a deliberate
@@ -1136,7 +1140,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     // Both URL forms occur in the packed docs; pin both parser branches so a
     // blob-only matcher cannot silently wave through a broken tree pointer.
     expect([...forms].sort()).toEqual(['blob', 'tree']);
-  }, 30_000);
+  }, SUBPROCESS_TIMEOUT_MS);
 });
 
 describe('public CLI and registry surface (RELEASE-21)', () => {
@@ -1949,7 +1953,7 @@ void [version, store, appendResult, status, consume];
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
   // DR-046 / playbook-cli-87: the host-capabilities declaration is
   // self-contained and strict — a consumer with `skipLibCheck: false` and only
@@ -2095,7 +2099,7 @@ void [classifications, closed, consume];
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
   it('publishes unresolved-effect as an exact state-only run result', () => {
     const runtimeDeclaration = declarationSourceOf('./runtime');
@@ -2185,10 +2189,8 @@ if (snapshot.mode === 'engaged.parked') {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 
-  // Building and diagnosing the complete consumer program can exceed Vitest's
-  // five-second default on Node 20 CI, so budget only this compiler-heavy case.
   it('discriminates schema-gated factory and registry construction types', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-schema-types-'));
     try {
@@ -2386,7 +2388,7 @@ void devCapabilities;
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SUBPROCESS_TIMEOUT_MS);
 
   it.each(BUNDLED_WORKFLOW_IDS)(
     '%s visibly re-exports PlayerSessionStore from the shared contract',
@@ -2614,5 +2616,5 @@ void devCapabilities;
     ]) {
       expect(packed, `tarball still ships ${removed}`).not.toContain(removed);
     }
-  });
+  }, SUBPROCESS_TIMEOUT_MS);
 });
