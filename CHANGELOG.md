@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.2.2] - 2026-09-04
+
 ### Fixed
 
 - **A working directory that is not a repository yet is governed from launch.** The CLI host resolved its schema-3 capabilities' governed worktree once at construction through the strict canonical resolver, so `playbook run` over a fresh directory with no `.git` was refused at launch — before the workflow's own agent-free `[ -e .git ] || git init` script step could run — even though the module's prospective-root binding, already used by the `@sublang/playbook/host-capabilities` facade, resolves exactly that case. The Captain host now binds the governed worktree the same lazy way: the enclosing Git worktree when one exists and otherwise the working directory's own prospective root, rebound afresh at every governed call and observation, so a governed `git init` there classifies `unchanged` and the repository's first root commit classifies `one-descendant-commit` under one identity ([DR-046](specs/decisions/046-public-worktree-host-capabilities.md), [[playbook-cli-20](specs/packages/playbook-cli.md#playbook-cli-20)], [[playbook-cli-88](specs/packages/playbook-cli.md#playbook-cli-88)]).
@@ -567,7 +569,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.2.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.2.2...HEAD
+[12.2.2]: https://github.com/sublang-ai/playbook/compare/v12.2.1...v12.2.2
 [12.2.1]: https://github.com/sublang-ai/playbook/compare/v12.2.0...v12.2.1
 [12.2.0]: https://github.com/sublang-ai/playbook/compare/v12.1.0...v12.2.0
 [12.1.0]: https://github.com/sublang-ai/playbook/compare/v12.0.0...v12.1.0
