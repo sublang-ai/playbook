@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.3.0] - 2026-09-04
+
 ### Added
 
 - **Every terminal outcome is typed, so a nested call's failure is mechanical.** A workflow source describes a nested call's failure in its own terms — "a terminal result that does not prove the success required for the selected path" — but nothing recorded whether a final state meant success or failure, so the runtime delivered every completed child as `status: 'ok'` and a caller could tell an approval from an authored failure only by inspecting fields it had no source for. The maintained `dev` artifact did so because its author had read `code.md`; a compiler given `dev.md` alone accepted any child output as success. Each final state of a schema-3 artifact now declares `terminal: 'success' | 'failure'` in its `meta.playbook`, derived at compile time from the source's own outcome wording exactly as its description is, and the runtime publishes the reached state's `{ stateId, kind, description }` record on the terminal run result for the host to relay onto the completed child's `ok` call result. The nested-call bridge resolves the caller's actor only for a success terminal or an artifact that declares no kind; a failure terminal rejects it through the caller's existing error path with an `Error` carrying that same public result, so `onDone` proves success with no knowledge of the callee's fields, an authored abort, an authored error, and a completed failure terminal stay distinguishable, and a relayed failure still carries the child's output. CODE, REVIEW, DECIDE, and DEV declare their kinds; a malformed declaration fails runtime construction and a malformed delivered record is a control-plane error. No agent call is added ([DR-048](specs/decisions/048-typed-terminal-outcomes.md), [[playbook-runtime-83](specs/packages/playbook-runtime.md#playbook-runtime-83)], [[playbook-runtime-84](specs/packages/playbook-runtime.md#playbook-runtime-84)], [[playbook-runtime-42](specs/packages/playbook-runtime.md#playbook-runtime-42)], [[playbook-41](specs/packages/playbook.md#playbook-41)], [[playbook-captain-29](specs/packages/playbook-captain.md#playbook-captain-29)]).
@@ -579,7 +581,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.2.2...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.3.0...HEAD
+[12.3.0]: https://github.com/sublang-ai/playbook/compare/v12.2.2...v12.3.0
 [12.2.2]: https://github.com/sublang-ai/playbook/compare/v12.2.1...v12.2.2
 [12.2.1]: https://github.com/sublang-ai/playbook/compare/v12.2.0...v12.2.1
 [12.2.0]: https://github.com/sublang-ai/playbook/compare/v12.1.0...v12.2.0
