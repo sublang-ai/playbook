@@ -183,10 +183,30 @@ const reviewToken = 'REVIEW_ACCEPTANCE_OK';
 const hermeticTask = 'Echo the hermetic acceptance token.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
-function expectReviewApprovalReply(reply: string): void {
-  expect(reply).toMatch(
-    /\b(?:approved|passed)\b|\bno\s+(?:unsettled|outstanding|remaining)\s+findings?\b/i,
+// Approval is a recorded machine outcome, never a turn of phrase: REVIEW
+// reaches its `{ noUnsettledFindings: true, evaluatedRevision }` terminal
+// only through a Reviewer round the runtime accepted as `noFindings`, so the
+// durable ledger — not the Captain's wording — is the evidence. The reply is
+// held to nothing beyond being present.
+function expectRecordedReviewApproval(
+  record: DurableSessionRecord,
+  reply: string,
+): void {
+  const boundaries = (record.effectLedger?.boundaries ?? []) as any[];
+  const reviewerRounds = boundaries.filter(
+    (boundary) =>
+      boundary.playbookId === 'review' && boundary.roleId === 'reviewer',
   );
+  expect(reviewerRounds.length).toBeGreaterThanOrEqual(1);
+  // `evaluatedRevision` is effect-owned (DR-045), so the retained candidate
+  // is the guard alone; the receipt beside it proves the revision.
+  expect(reviewerRounds.at(-1)?.semanticCandidate).toEqual({
+    guard: 'noFindings',
+  });
+  expect(reviewerRounds.at(-1)?.physicalReceipt?.classification).toBe(
+    'unchanged',
+  );
+  expect(reply).toEqual(expect.stringMatching(/\S/));
 }
 
 function expectReviewCompletionReply(reply: string): void {
@@ -314,7 +334,7 @@ describe.sequential('installed playbook live acceptance', () => {
           },
         ]);
         expectLiveRoleBindings(firstRecord);
-        expectReviewApprovalReply(firstEnvelope.reply);
+        expectRecordedReviewApproval(firstRecord, firstEnvelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
           '◇ /review started',
           '◇ /review finished',
