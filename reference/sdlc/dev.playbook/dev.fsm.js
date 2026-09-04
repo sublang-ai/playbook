@@ -47,6 +47,18 @@ function playbookMeta(stateId, role) {
         },
     };
 }
+// DR-048: a final state additionally declares whether its outcome means the
+// workflow succeeded or failed, so DEV's own caller learns that from the
+// machine rather than from DEV's output fields.
+function terminalMeta(stateId, terminal) {
+    return {
+        playbook: {
+            stateId,
+            description: STATE_DESCRIPTIONS[stateId],
+            terminal,
+        },
+    };
+}
 function isRecord(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return false;
@@ -172,6 +184,16 @@ function nestedResultFromError(error) {
     const result = error.result;
     return isRecord(result) ? result : undefined;
 }
+function isFailureTerminalRecord(value) {
+    if (!isRecord(value))
+        return false;
+    const allowed = new Set(['stateId', 'kind', 'description']);
+    return (Reflect.ownKeys(value).every((key) => typeof key === 'string' && allowed.has(key)) &&
+        isNonEmptyString(value.stateId) &&
+        value.kind === 'failure' &&
+        (!Object.prototype.hasOwnProperty.call(value, 'description') ||
+            typeof value.description === 'string'));
+}
 function normalizedChildFailure(error, playbookId) {
     const result = nestedResultFromError(error);
     if (result === undefined)
@@ -181,16 +203,33 @@ function normalizedChildFailure(error, playbookId) {
         'playbookId',
         'childSessionId',
         'state',
-        'error',
+        ...(result.status === 'ok' ? ['output', 'terminal'] : ['error']),
     ]);
     if (Reflect.ownKeys(result).some((key) => typeof key !== 'string' || !allowed.has(key)) ||
-        (result.status !== 'aborted' && result.status !== 'error') ||
+        (result.status !== 'aborted' &&
+            result.status !== 'error' &&
+            result.status !== 'ok') ||
         result.playbookId !== playbookId) {
         return undefined;
     }
     if (Object.prototype.hasOwnProperty.call(result, 'childSessionId') &&
         !isNonEmptyString(result.childSessionId)) {
         return undefined;
+    }
+    if (result.status === 'ok') {
+        if (!Object.prototype.hasOwnProperty.call(result, 'terminal') ||
+            !isFailureTerminalRecord(result.terminal) ||
+            !isNonEmptyString(result.childSessionId) ||
+            (Object.prototype.hasOwnProperty.call(result, 'state') &&
+                !isPlaybookState(result.state))) {
+            return undefined;
+        }
+        return {
+            status: 'ok',
+            ...(result.output === undefined
+                ? {}
+                : { output: result.output }),
+        };
     }
     if (Object.prototype.hasOwnProperty.call(result, 'state') &&
         !isPlaybookState(result.state)) {
@@ -233,8 +272,9 @@ function authoredChildFailureGuard(playbookId) {
 function authoredChildError(event, playbookId) {
     const outer = isRecord(event) ? event.error : undefined;
     const failure = normalizedChildFailure(outer, playbookId);
-    if (failure?.error !== undefined)
+    if (failure !== undefined && failure.status !== 'ok' && failure.error) {
         return failure.error;
+    }
     if (failure?.status === 'aborted') {
         return {
             name: 'AbortError',
@@ -249,9 +289,19 @@ function authoredChildError(event, playbookId) {
 function relayedChildFailure(event, playbookId) {
     const outer = isRecord(event) ? event.error : undefined;
     const failure = normalizedChildFailure(outer, playbookId);
+    // DR-048: a completed child that reached an authored failure terminal
+    // relays its own output, exactly as a terminal result that did not prove
+    // success did before it was routed through the error path.
+    if (failure?.status === 'ok') {
+        return {
+            playbookId,
+            status: 'ok',
+            ...(failure.output === undefined ? {} : { output: failure.output }),
+        };
+    }
     return {
         playbookId,
-        status: failure?.status ?? 'error',
+        status: failure?.status === 'aborted' ? 'aborted' : 'error',
         error: authoredChildError(event, playbookId),
     };
 }
@@ -703,19 +753,19 @@ export const devMachine = machineSetup.createMachine({
         discussionComplete: {
             id: 'discussionComplete',
             description: STATE_DESCRIPTIONS.discussionComplete,
-            meta: playbookMeta('discussionComplete'),
+            meta: terminalMeta('discussionComplete', 'success'),
             type: 'final',
         },
         done: {
             id: 'done',
             description: STATE_DESCRIPTIONS.done,
-            meta: playbookMeta('done'),
+            meta: terminalMeta('done', 'success'),
             type: 'final',
         },
         reportedChildFailure: {
             id: 'reportedChildFailure',
             description: STATE_DESCRIPTIONS.reportedChildFailure,
-            meta: playbookMeta('reportedChildFailure'),
+            meta: terminalMeta('reportedChildFailure', 'failure'),
             type: 'final',
         },
     },

@@ -77,6 +77,18 @@ function playbookMeta(stateId, role) {
         },
     };
 }
+// DR-048: a final state additionally declares whether its outcome means the
+// workflow succeeded or failed, so a caller learns that from the machine
+// rather than from CODE's output fields.
+function terminalMeta(stateId, terminal) {
+    return {
+        playbook: {
+            stateId,
+            description: STATE_DESCRIPTIONS[stateId],
+            terminal,
+        },
+    };
+}
 function isRecord(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return false;
@@ -206,6 +218,16 @@ function nestedResultFromError(error) {
     const result = error.result;
     return isRecord(result) ? result : undefined;
 }
+function isFailureTerminalRecord(value) {
+    if (!isRecord(value))
+        return false;
+    const allowed = new Set(['stateId', 'kind', 'description']);
+    return (Reflect.ownKeys(value).every((key) => typeof key === 'string' && allowed.has(key)) &&
+        isNonEmptyString(value.stateId) &&
+        value.kind === 'failure' &&
+        (!Object.prototype.hasOwnProperty.call(value, 'description') ||
+            typeof value.description === 'string'));
+}
 function normalizedReviewFailure(error) {
     const result = nestedResultFromError(error);
     if (result === undefined)
@@ -215,10 +237,12 @@ function normalizedReviewFailure(error) {
         'playbookId',
         'childSessionId',
         'state',
-        'error',
+        ...(result.status === 'ok' ? ['output', 'terminal'] : ['error']),
     ]);
     if (Reflect.ownKeys(result).some((key) => typeof key !== 'string' || !allowed.has(key)) ||
-        (result.status !== 'aborted' && result.status !== 'error') ||
+        (result.status !== 'aborted' &&
+            result.status !== 'error' &&
+            result.status !== 'ok') ||
         result.playbookId !== 'review') {
         return undefined;
     }
@@ -229,6 +253,19 @@ function normalizedReviewFailure(error) {
     if (Object.prototype.hasOwnProperty.call(result, 'state') &&
         !isPlaybookState(result.state)) {
         return undefined;
+    }
+    if (result.status === 'ok') {
+        if (!Object.prototype.hasOwnProperty.call(result, 'terminal') ||
+            !isFailureTerminalRecord(result.terminal) ||
+            !isNonEmptyString(result.childSessionId)) {
+            return undefined;
+        }
+        return {
+            status: 'ok',
+            ...(result.output === undefined
+                ? {}
+                : { output: result.output }),
+        };
     }
     let normalizedError;
     if (Object.prototype.hasOwnProperty.call(result, 'error')) {
@@ -274,8 +311,9 @@ function compactError(value) {
 function authoredReviewError(event) {
     const outer = isRecord(event) ? event.error : undefined;
     const failure = normalizedReviewFailure(outer);
-    if (failure?.error !== undefined)
+    if (failure !== undefined && failure.status !== 'ok' && failure.error) {
         return failure.error;
+    }
     if (failure?.status === 'aborted') {
         return { name: 'AbortError', message: 'REVIEW was aborted.' };
     }
@@ -787,13 +825,13 @@ export const codingMachine = machineSetup.createMachine({
         reportedReviewFailure: {
             id: 'reportedReviewFailure',
             description: STATE_DESCRIPTIONS.reportedReviewFailure,
-            meta: playbookMeta('reportedReviewFailure'),
+            meta: terminalMeta('reportedReviewFailure', 'failure'),
             type: 'final',
         },
         done: {
             id: 'done',
             description: STATE_DESCRIPTIONS.done,
-            meta: playbookMeta('done'),
+            meta: terminalMeta('done', 'success'),
             type: 'final',
         },
     },

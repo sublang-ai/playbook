@@ -521,7 +521,59 @@ describe('DEV FSM transition coverage', () => {
     );
   });
 
+  // DR-048: CODE's `reportedReviewFailure` is a declared failure terminal, so
+  // the bridge rejects this caller's actor with the child's own public
+  // result. DEV recognizes the failure from that record — never from CODE's
+  // output fields — and still relays the child's output.
   it('relays a terminal CODE result that does not prove success', async () => {
+    const insufficient = {
+      status: 'review-failed',
+      lastCodeCommit: 'code123',
+      error: { name: 'Error', message: 'unsettled findings' },
+    };
+    const workflow = createWorkflow(
+      [{ guard: 'code', planningResult: 'Proceed with code.' }],
+      [
+        Object.assign(
+          new Error(
+            'Child playbook code reached failure terminal reportedReviewFailure',
+          ),
+          {
+            result: {
+              status: 'ok',
+              playbookId: 'code',
+              childSessionId: 'child-code-1',
+              output: insufficient,
+              terminal: {
+                stateId: 'reportedReviewFailure',
+                kind: 'failure',
+                description: 'CODE reports the review failure.',
+              },
+            },
+          },
+        ),
+      ],
+    );
+    workflow.actor.send({
+      type: 'START_DEV',
+      developmentRequest: 'Implement it.',
+    });
+    const snapshot = await waitFor(
+      workflow.actor,
+      (value) => value.status === 'done',
+    );
+    expect(snapshot.value).toBe('reportedChildFailure');
+    expect(snapshot.output).toEqual({
+      status: 'child-failed',
+      childResult: { playbookId: 'code', status: 'ok', output: insufficient },
+    });
+  });
+
+  // Belt and braces: the resolved path keeps its own field check, so a child
+  // whose completion still resolves the actor — an artifact declaring no
+  // terminal kind, or a success terminal reached with an output that does
+  // not prove success — is relayed rather than accepted as complete.
+  it('relays a resolved CODE result that does not prove success', async () => {
     const insufficient = {
       status: 'review-failed',
       lastCodeCommit: 'code123',

@@ -73,6 +73,7 @@ meta.md       The spec of specs
 | [DR-045](decisions/045-unchanged-receipt-revision-authority.md) | 045-unchanged-receipt-revision-authority.md | An `unchanged` arm may declare effect-owned fields injected with the receipt's observed HEAD, so REVIEW always returns the exact evaluated revision and the clean-review happy path composes |
 | [DR-046](decisions/046-public-worktree-host-capabilities.md) | 046-public-worktree-host-capabilities.md | `@sublang/playbook/host-capabilities`: a typed facade over the CLI host's single repository-effect implementation, so every embedding host classifies receipts through the same code; every live capability it constructs binds the governed worktree lazily and observes an unborn HEAD as the null OID |
 | [DR-047](decisions/047-compiled-execution-contract-in-definitions.md) | 047-compiled-execution-contract-in-definitions.md | Each phase definition declares its compiled-execution contract with a run-time `<definition>` relay, so compiled phase bundles are stable control shells and rule edits need no rebuild |
+| [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
 
 ## Packages
 

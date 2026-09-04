@@ -431,8 +431,11 @@ behavior. The generic `failed` state is the default only when Source declares
 no recovery or reassessment path for a rejected child.
 That recovering `onError` shall be an ordered transition array. Its first arm
 shall use a typed structural guard that accepts only an `Error` carrying a
-validated public child `result` with `status: 'aborted' | 'error'`; only that
-arm appends sanitized child evidence and continues. A fallback arm shall retain
+validated public child `result` that is either `status: 'aborted' | 'error'`
+or `status: 'ok'` with `terminal.kind === 'failure'` — a child that completed
+at its own authored failure terminal, which the bridge delivers through this
+same error path; only that arm appends sanitized child evidence and
+continues. A fallback arm shall retain
 the control error normalized as JSON-safe `{ name, message, stack? }` in
 `lastError` and route to `failed` without appending a completed child result;
 the linked runtime alone retains the original error in its out-of-machine
@@ -444,9 +447,14 @@ result, the error action shall inspect whether its status was `aborted` or
 `error`; it shall not collapse both into an invented success/failure enum. The
 FSM may inspect that public structural data without importing the runner or
 constructing runtime call identities.
+Because a failure terminal reaches `onError`, `onDone` alone proves the child
+succeeded: a caller shall not decide success by inspecting the callee's output
+fields, and shall read those fields only where its own Source relays them.
 For a workflow that reassesses child results, use a typed JSON-safe record such
 as `{ playbookId, status: 'ok', output }` on `onDone` and
-`{ playbookId, status: 'aborted' | 'error', error }` on `onError`. Because the
+`{ playbookId, status: 'aborted' | 'error', error }` on `onError`, with a
+rejected `status: 'ok'` failure terminal recorded in that same `ok` shape so
+the child's own output is relayed. Because the
 runtime rejection is an `Error` with a public `result` property, normalization
 shall inspect `result.status` and `result.error` before applying a generic
 `Error` normalizer. It shall persist only the current context target id, the
@@ -772,6 +780,16 @@ wrong result field, because the quoting host cannot detect the difference.
 This constrains only published meaning: the declared machine `output` still
 derives its status and fields from typed context, so a caller that does read
 the output is unaffected.
+
+Each final state shall additionally declare `terminal: 'success' | 'failure'`
+in its `meta.playbook`, derived from the Source's own outcome wording exactly
+as the description is: an outcome Source states as the workflow completing is
+`'success'`, and one Source states as a failure the workflow reports instead
+of parking is `'failure'`. The kind is fixed at compile time and adds no agent
+call. The runtime publishes it, with the reached state's id and description, as
+the completed run's terminal record, so this workflow's own caller learns
+whether it succeeded from the machine it reached rather than from these output
+fields.
 
 Where Source declares a JSON-safe terminal result, the setup types shall
 declare that output and the root machine shall derive it from typed context

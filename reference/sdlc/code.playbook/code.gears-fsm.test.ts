@@ -289,10 +289,28 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       config: {
         states: Record<
           string,
-          { description?: string; tags?: readonly string[]; meta?: unknown }
+          {
+            type?: string;
+            description?: string;
+            tags?: readonly string[];
+            meta?: unknown;
+          }
         >;
       };
     }).config.states;
+    // DR-048: every final state declares whether its outcome means success
+    // or failure, so a caller routes CODE's report of a failed review
+    // through its own error path without reading CODE's output fields.
+    const terminalKinds: Readonly<Record<string, 'success' | 'failure'>> = {
+      done: 'success',
+      reportedReviewFailure: 'failure',
+    };
+    expect(
+      Object.entries(states)
+        .filter(([, state]) => state.type === 'final')
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(Object.keys(terminalKinds).sort());
     for (const id of ['runFirstPhase', 'runIrTask']) {
       expect(states[id]?.tags).toContain('playbook.busy');
     }
@@ -318,6 +336,9 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
           stateId: id,
           description: state.description,
           ...(delegated ? { role } : {}),
+          ...(terminalKinds[id] === undefined
+            ? {}
+            : { terminal: terminalKinds[id] }),
         },
       });
     }

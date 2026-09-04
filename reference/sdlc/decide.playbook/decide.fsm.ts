@@ -1233,6 +1233,9 @@ export const decideMachine = setup({
         playbook: {
           stateId: 'reportedReviewFailure',
           description: 'DECIDE reports REVIEW’s failure and its last commit.',
+          // DR-048: this final state means the workflow failed, so a caller
+          // learns that from the machine rather than from DECIDE's output.
+          terminal: 'failure',
         },
       },
     },
@@ -1244,6 +1247,7 @@ export const decideMachine = setup({
         playbook: {
           stateId: 'done',
           description: 'DECIDE completed with an approved commit.',
+          terminal: 'success',
         },
       },
     },

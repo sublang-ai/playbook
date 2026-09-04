@@ -2596,7 +2596,14 @@ export class NestedPlaybookCallError extends Error {
   readonly result: PlaybookCallResult;
 
   constructor(result: PlaybookCallResult) {
-    const fallback = `Child playbook ${result.playbookId} ${result.status}`;
+    // DR-048: a completed child that reached an authored failure terminal is
+    // rejected through the same error path as an abort or an error, so its
+    // message names that final state rather than reporting `ok`.
+    const fallback =
+      result.status === 'ok'
+        ? `Child playbook ${result.playbookId} reached failure terminal ` +
+          `${result.terminal?.stateId ?? 'unknown'}`
+        : `Child playbook ${result.playbookId} ${result.status}`;
     const normalized = result.status === 'ok' ? undefined : result.error;
     super(normalized?.message ?? fallback);
     this.name = normalized?.name ?? 'NestedPlaybookCallError';
@@ -2794,6 +2801,36 @@ function validateNormalizedError(error: unknown, path: string): void {
   }
 }
 
+// DR-048: the completed child's compiled terminal record. It is runtime-owned
+// data read from the child's artifact, so a malformed one is a control-plane
+// error rather than an authored child outcome.
+function validateTerminalOutcome(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new TypeError('playbook result terminal must be an object');
+  }
+  rejectUnknownKeys(
+    value,
+    ['stateId', 'kind', 'description'],
+    'playbook result terminal',
+  );
+  requireNonEmptyString(value.stateId, 'playbook result terminal stateId');
+  if (value.kind !== 'success' && value.kind !== 'failure') {
+    throw new TypeError(
+      "playbook result terminal kind must be 'success' or 'failure'",
+    );
+  }
+  if (own(value, 'description') && typeof value.description !== 'string') {
+    throw new TypeError(
+      'playbook result terminal description must be a string',
+    );
+  }
+}
+
+/** DR-048: a completed child that reached an authored failure terminal. */
+function isFailureTerminal(result: PlaybookCallResult): boolean {
+  return result.status === 'ok' && result.terminal?.kind === 'failure';
+}
+
 export function validatePlaybookCallResult(
   result: unknown,
   expectedPlaybookId: string,
@@ -2818,13 +2855,16 @@ export function validatePlaybookCallResult(
   if (capturedResult.status === 'ok') {
     rejectUnknownKeys(
       capturedResult,
-      ['status', 'playbookId', 'childSessionId', 'state', 'output'],
+      ['status', 'playbookId', 'childSessionId', 'state', 'output', 'terminal'],
       'playbook result',
     );
     requireNonEmptyString(
       capturedResult.childSessionId,
       'playbook result childSessionId',
     );
+    if (own(capturedResult, 'terminal')) {
+      validateTerminalOutcome(capturedResult.terminal);
+    }
   } else {
     rejectUnknownKeys(
       capturedResult,
@@ -2973,7 +3013,9 @@ function resultFromThrown(
 }
 
 function outputOrThrow(result: PlaybookCallResult): JsonValue | undefined {
-  if (result.status === 'ok') return result.output;
+  if (result.status === 'ok' && !isFailureTerminal(result)) {
+    return result.output;
+  }
   throw new NestedPlaybookCallError(result);
 }
 
@@ -3206,7 +3248,10 @@ export function createNestedPlaybookBridge<
         active.deferred.reject(controlError);
       } else if (cleanupControlError !== undefined) {
         active.deferred.reject(cleanupControlError);
-      } else if (effectiveResult.status === 'ok') {
+      } else if (
+        effectiveResult.status === 'ok' &&
+        !isFailureTerminal(effectiveResult)
+      ) {
         active.deferred.resolve(effectiveResult.output);
       } else {
         active.deferred.reject(new NestedPlaybookCallError(effectiveResult));

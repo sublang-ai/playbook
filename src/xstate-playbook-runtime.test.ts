@@ -5157,7 +5157,316 @@ describe('nested playbook actor over the shared factory', () => {
     expect('output' in result ? result.output : undefined).toEqual({
       childOutput: { note: 'fast child' },
     });
+    // DR-048: this fixture declares no terminal kind, so its own completion
+    // publishes no terminal record and an `ok` child result carrying none
+    // still resolves the actor.
+    expect('terminal' in result ? result.terminal : undefined).toBeUndefined();
     await runtime.dispose();
+  });
+});
+
+// DR-048 fixture: one machine that both declares a success final and a
+// failure final and routes a nested call's outcome, so a single drive proves
+// the runtime reads `meta.playbook.terminal` from the artifact and that the
+// bridge resolves or rejects the caller's actor from that record alone.
+const terminalKindMachine = createMachine({
+  id: 'kinds',
+  context: () => ({
+    request: undefined as string | undefined,
+    childOutcome: undefined as unknown,
+  }),
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: meta('ready'),
+      tags: ['playbook.parked'],
+      on: {
+        GO: {
+          target: 'call',
+          actions: assign({
+            request: ({ event }) => (event as { request: string }).request,
+          }),
+        },
+      },
+    },
+    call: {
+      meta: meta('call'),
+      tags: ['playbook.suspended'],
+      invoke: {
+        src: 'playbook',
+        input: ({ context }) => ({
+          stateId: 'call',
+          playbookId: 'child',
+          text: context.request ?? '',
+        }),
+        onDone: {
+          target: 'succeeded',
+          actions: assign({
+            childOutcome: ({ event }) => ({
+              path: 'onDone',
+              output: event.output ?? null,
+            }),
+          }),
+        },
+        onError: {
+          target: 'reportedFailure',
+          actions: assign({
+            childOutcome: ({ event }) => ({
+              path: 'onError',
+              result:
+                (event.error as { result?: unknown } | undefined)?.result ??
+                null,
+            }),
+          }),
+        },
+      },
+    },
+    succeeded: {
+      meta: {
+        playbook: {
+          stateId: 'succeeded',
+          description: 'succeeded state',
+          terminal: 'success',
+        },
+      },
+      type: 'final',
+    },
+    reportedFailure: {
+      meta: {
+        playbook: {
+          stateId: 'reportedFailure',
+          description: 'reportedFailure state',
+          terminal: 'failure',
+        },
+      },
+      type: 'final',
+    },
+  },
+  output: ({ context }) => context.childOutcome ?? null,
+});
+
+const createTerminalKindRuntimeFactory = createXStatePlaybookRuntime(
+  terminalKindMachine,
+  {
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    roleStates: {},
+    machineInput: () => ({}),
+    entryEvent: { type: 'GO', textField: 'request' },
+    outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+  },
+);
+const createTerminalKindRuntime = () =>
+  createTerminalKindRuntimeFactory(
+    governedRuntimeConstruction({}, 'factory-test'),
+  );
+
+describe('typed terminal outcomes over the shared factory (DR-048)', () => {
+  const successChildResult = {
+    status: 'ok' as const,
+    playbookId: 'child',
+    childSessionId: 'child-session-success',
+    output: { note: 'child succeeded' },
+    terminal: {
+      stateId: 'childDone',
+      kind: 'success' as const,
+      description: 'child done state',
+    },
+  };
+  const failureChildResult = {
+    status: 'ok' as const,
+    playbookId: 'child',
+    childSessionId: 'child-session-failure',
+    output: { note: 'child reported a failure' },
+    terminal: {
+      stateId: 'childReportedFailure',
+      kind: 'failure' as const,
+      description: 'child reported-failure state',
+    },
+  };
+
+  it('resolves the caller on a success terminal and publishes its own kind', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled',
+        result: successChildResult,
+      }),
+    });
+    const runtime = createTerminalKindRuntime();
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('ship it'));
+    expect(result.outcome).toBe('terminal');
+    expect('output' in result ? result.output : undefined).toEqual({
+      path: 'onDone',
+      output: { note: 'child succeeded' },
+    });
+    expect('terminal' in result ? result.terminal : undefined).toEqual({
+      stateId: 'succeeded',
+      kind: 'success',
+      description: 'succeeded state',
+    });
+    await runtime.dispose();
+  });
+
+  it('rejects the caller on a failure terminal with that exact public result', async () => {
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled',
+        result: failureChildResult,
+      }),
+    });
+    const runtime = createTerminalKindRuntime();
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('ship it'));
+    expect(result.outcome).toBe('terminal');
+    // The caller took `onError` and received the child's own public result,
+    // status and terminal record intact, so an authored abort, an authored
+    // error, and a completed failure terminal stay distinguishable.
+    expect('output' in result ? result.output : undefined).toEqual({
+      path: 'onError',
+      result: failureChildResult,
+    });
+    expect('terminal' in result ? result.terminal : undefined).toEqual({
+      stateId: 'reportedFailure',
+      kind: 'failure',
+      description: 'reportedFailure state',
+    });
+    // The call is a completed child, not an aborted or errored one: its
+    // finish trace keeps `status: 'ok'` and carries the terminal record.
+    const finished = telemetry
+      .map(({ payload }) => payload as { type?: string; payload?: unknown })
+      .find(({ type }) => type === 'playbook.call.finished');
+    expect(
+      (finished?.payload as { result?: unknown } | undefined)?.result,
+    ).toEqual(failureChildResult);
+    await runtime.dispose();
+  });
+
+  it('rejects a resumed suspended call that returns a failure terminal', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-failure',
+      }),
+    });
+    const runtime = createTerminalKindRuntime();
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('ship it'));
+    expect(suspended.outcome).toBe('suspended');
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    const resumed = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: failureChildResult,
+      signal: new AbortController().signal,
+    });
+    expect(resumed.outcome).toBe('terminal');
+    expect('output' in resumed ? resumed.output : undefined).toEqual({
+      path: 'onError',
+      result: failureChildResult,
+    });
+    await runtime.dispose();
+  });
+
+  it('resolves a child that declares no terminal kind', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled',
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'child-session-legacy',
+          output: { note: 'legacy child' },
+        },
+      }),
+    });
+    const runtime = createTerminalKindRuntime();
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('ship it'));
+    expect('output' in result ? result.output : undefined).toEqual({
+      path: 'onDone',
+      output: { note: 'legacy child' },
+    });
+    await runtime.dispose();
+  });
+
+  it('refuses a malformed terminal record as a control-plane error', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled',
+        result: {
+          ...successChildResult,
+          terminal: { stateId: 'childDone', kind: 'approved' },
+        },
+      }),
+    });
+    const runtime = createTerminalKindRuntime();
+    await runtime.init(makeSession(ports));
+    await expect(runtime.handleBossInput(turn('ship it'))).rejects.toThrow(
+      /terminal kind must be/,
+    );
+    await runtime.dispose();
+  });
+
+  it('refuses an artifact whose terminal declaration is not a kind', () => {
+    const malformed = createMachine({
+      id: 'malformed',
+      initial: 'ready',
+      states: {
+        ready: { meta: meta('ready'), tags: ['playbook.parked'], on: {} },
+        done: {
+          meta: {
+            playbook: {
+              stateId: 'done',
+              description: 'done state',
+              terminal: 'approved',
+            },
+          },
+          type: 'final',
+        },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(malformed, {
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: () => ({}),
+        roleStates: {},
+        machineInput: () => ({}),
+        entryEvent: { type: 'GO', textField: 'request' },
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+      })(governedRuntimeConstruction({}, 'factory-test')),
+    ).toThrow(/meta\.playbook\.terminal/);
+  });
+
+  it('refuses a terminal declaration on a state that is not final', () => {
+    const malformed = createMachine({
+      id: 'malformed',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: {
+            playbook: {
+              stateId: 'ready',
+              description: 'ready state',
+              terminal: 'success',
+            },
+          },
+          tags: ['playbook.parked'],
+          on: {},
+        },
+        done: { meta: meta('done'), type: 'final' },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(malformed, {
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: () => ({}),
+        roleStates: {},
+        machineInput: () => ({}),
+        entryEvent: { type: 'GO', textField: 'request' },
+        outcomeAuthority: ROLELESS_OUTCOME_AUTHORITY,
+      })(governedRuntimeConstruction({}, 'factory-test')),
+    ).toThrow(/is not a final state/);
   });
 });
 

@@ -338,6 +338,7 @@ type PlaybookRunResult =
       outcome: 'terminal';
       state: PlaybookState;
       stateDescription?: string;
+      terminal?: PlaybookTerminalOutcome;
       output?: JsonValue;
     }
   | {
@@ -515,6 +516,12 @@ interface PlaybookCallRequest {
   text: string;
 }
 
+interface PlaybookTerminalOutcome {
+  stateId: string;
+  kind: 'success' | 'failure';
+  description?: string;
+}
+
 type PlaybookCallResult =
   | {
       status: 'ok';
@@ -522,6 +529,7 @@ type PlaybookCallResult =
       childSessionId: string;
       state?: PlaybookState;
       output?: JsonValue;
+      terminal?: PlaybookTerminalOutcome;
     }
   | {
       status: 'aborted';
@@ -1448,12 +1456,23 @@ playbook id, and child session id; bind its new turn signal for work resumed in
 the parent; emit and drain the call-finish trace; settle the bridge deferred;
 and use XState `waitFor` to drive the parent to its next
 quiescent, suspended, failed, aborted, or terminal result.
-An `ok` result resolves the actor and reaches `invoke.onDone`; `aborted` and
-`error` results reject it and reach `invoke.onError`.
+An `ok` result whose `terminal.kind` is `success`, and an `ok` result carrying
+no `terminal` record at all, resolve the actor and reach `invoke.onDone`;
+`aborted` and `error` results, and an `ok` result whose `terminal.kind` is
+`failure`, reject it and reach `invoke.onError`.
 The rejection shall be an `Error` whose public readonly `result` property is
 the exact normalized `PlaybookCallResult`; throwing the result object directly
 or discarding its status prevents the FSM from distinguishing abort from
 failure during recovery.
+A completed child's `ok` result carries `terminal` exactly when the child's
+artifact declares its reached final state's kind: the runtime reads
+`meta.playbook.terminal` and that state's authored description from the
+artifact, never from an agent reply, and a declared value other than `success`
+or `failure` is a control-plane error rather than a child outcome.
+Because the bridge routes a failure terminal to the error path, `onDone` alone
+proves the child succeeded and a caller never inspects a callee's output fields
+to decide that; a caller reads those fields only when its own Source relays
+them.
 Unknown, duplicate, or stale call ids reject without changing actor state.
 The finish trace shall therefore precede any parent FSM transition caused by
 the child return.

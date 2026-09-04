@@ -212,6 +212,20 @@ const playbookMeta = <StateId extends keyof typeof stateDescriptions>(
   },
 });
 
+// DR-048: a final state additionally declares whether its outcome means the
+// workflow succeeded or failed, so a caller learns that from the machine
+// rather than from REVIEW's output fields.
+const terminalMeta = <StateId extends keyof typeof stateDescriptions>(
+  stateId: StateId,
+  terminal: 'success' | 'failure',
+) => ({
+  playbook: {
+    stateId,
+    description: stateDescriptions[stateId],
+    terminal,
+  },
+});
+
 const outputOf = (event: unknown): PlayerOutput =>
   (event as PlayerDoneEvent).output;
 
@@ -832,7 +846,7 @@ export const reviewMachine = setup({
     done: {
       id: 'done',
       description: stateDescriptions.done,
-      meta: playbookMeta('done'),
+      meta: terminalMeta('done', 'success'),
       type: 'final',
     },
   },

@@ -67,7 +67,7 @@ runtime contract types `PlayerResult`, `PlayerCallOptions`,
 `PlaybookRoleBinding`, `PlayerSessionStore`, `CaptainResult`, `CaptainCallOptions`,
 `JsonValue`, `NormalizedError`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
-`PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
+`PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`, `PlaybookTerminalOutcome`,
 `PlaybookRunResult`, `PlaybookPendingBossQuestion`, `PlaybookRepositoryDisposition`, `PlaybookRepositoryObservation`, `PlaybookRepositoryReceipt`,
 `PlaybookEffectBoundary`, `PlaybookEffectBoundaryStart`, `PlaybookEffectLogicalOperation`, `PlaybookEffectLedger`, `PlaybookEffectLedgerCommand`, `PlaybookEffectLedgerCommandBatch`, `PlaybookEffectLedgerCapability`, `PlaybookControlAction`, `PlaybookControlView`,
 `PlaybookControlReceipt`, `PlaybookRetainedGenerationMetadata`, `PlaybookAdoptionContext`, `PlaybookPorts`, `PlaybookSession`,
@@ -101,6 +101,7 @@ runtime's own classification maps to an FSM entry event
 That keeps the shared contract module free of host and playbook types while
 leaving the injection path typed end to end at the artifact.
 `PlaybookRunResult` shall include the exact state-only variant `{ outcome: 'unresolved-effect', state: PlaybookState }` governed by [[playbook-runtime-79](#playbook-runtime-79)], with no optional member or bounded repository evidence.
+`PlaybookTerminalOutcome` shall contain the nonempty `stateId`, the `kind` union `'success' | 'failure'`, and the optional `description`, and shall appear as the optional member `terminal` on exactly two variants — the `terminal` `PlaybookRunResult` arm and the `ok` `PlaybookCallResult` arm — carrying the compiled terminal record of [[playbook-runtime-83](#playbook-runtime-83)].
 `PlaybookRuntime` shall declare the optional host-only method `unresolvedEffectEnvelopes?(): readonly ({ readonly kind: 'boundary'; readonly boundaryId: string } | { readonly kind: 'logical-operation'; readonly operationId: string })[]`, whose exact nonblank durable identities shall name every effect-possible, outcome-unresolved envelope the runtime currently retains so the host can project its own authoritative ledger, and the method shall expose no receipt, repository observation, semantic evidence, prose, or live authority and shall add no member to `PlaybookRunResult`.
 `PlaybookRuntime` shall declare the optional read-only retention-classification marker `retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata`, whose value contains exactly the read-only string array `unfinishedFinalStateIds`; absence means the runtime contributes no retained generation, while presence supplies only terminal classification metadata and does not itself supply the independently feature-detected adoption capability.
 `PlaybookAdoptionContext` shall contain exactly the nonempty string `sourceSessionId`, the nonempty string `sourceGenerationId` naming the retained stack root frame's `rootSessionId` from [[playbook-captain-41](playbook-captain.md#playbook-captain-41)], and the optional nonempty string `targetChildSessionId`.
@@ -650,9 +651,9 @@ child playbook id and JSON-safe input, when the child call starts, the
 linked runtime shall allocate one stable call id, emit
 `playbook.call.started`, and call `PlaybookPorts.callPlaybook` with that
 id, target, input, and the invocation's abort signal.
-When the port returns a settled successful call, the invoked actor shall
+When the port returns or is resumed with a successful call that carries either a `success` terminal record or none at all, the invoked actor shall
 complete through `invoke.onDone`; when it returns or is resumed with an
-aborted or error result, the actor shall reject through `invoke.onError`.
+aborted or error result, or with a successful call whose terminal kind is `failure` [[playbook-runtime-83](#playbook-runtime-83)], the actor shall reject through `invoke.onError` with an `Error` whose public `result` is that same exact validated public result, so an authored abort, an authored error, and a completed failure terminal stay distinguishable to the caller.
 When the port returns a suspended child session, the runtime shall keep
 the actor pending and return a `PlaybookRunResult` with outcome
 `suspended` and the matching pending-call identity instead of holding
@@ -696,6 +697,19 @@ distinct rejection remains, it shall emit the paired error finish and reject
 parent disposal with the original distinct cleanup error, or the aggregate of
 multiple distinct failures, rather than swallowing it as an ordinary
 nested-call rejection.
+
+#### playbook-runtime-83
+
+Where a linked runtime settles a public boundary at a final state whose `meta.playbook` declares `terminal`, the runtime shall publish that state's compiled terminal record on the terminal run result — its `stateId`, the declared `kind`, and its authored description when the state declares one [[playbook-runtime-41](#playbook-runtime-41)] — for the host to relay onto that child's `ok` call result [[playbook-captain-29](playbook-captain.md#playbook-captain-29)]:
+
+- the kind is artifact metadata read from the reached state, never from an agent reply, the child's output, or a runtime-invented classification;
+- a final state declaring no kind shall publish no record, and a boundary that withholds its published meaning under [[playbook-runtime-79](#playbook-runtime-79)] shall withhold the record with it;
+- a declared kind other than `success` or `failure`, a declaration on a state that is not final, or a delivered record whose members are not exactly a nonempty `stateId`, that same kind union, and an optional string `description` shall be a control-plane error rather than an authored child outcome, refused at runtime construction for the artifact's own declaration and at the delivery boundary for a received one.
+
+#### playbook-runtime-84
+
+Where a compiled FSM recovers from a nested call rather than parking, its `invoke.onError` first arm shall accept exactly an `Error` carrying a validated public child result that is `status: 'aborted' | 'error'` or `status: 'ok'` whose terminal kind is `failure` [[playbook-runtime-42](#playbook-runtime-42)], and shall record the child's own evidence — the compact error for the first two shapes and the child's output for the third — while a later fallback arm retains the control-plane error and routes to the recoverable failure state.
+Because the bridge rejects a failure terminal, `invoke.onDone` alone shall prove the child succeeded: a caller shall neither decide success by inspecting the callee's output fields nor read them for any purpose its own source does not relay.
 
 ### Parked-session snapshot
 
@@ -1482,6 +1496,20 @@ It shall also fail unless same-engagement restore of those snapshots remains tra
 Where the integration suite arms the shared nested bridge and starts a real XState parent in its nested promise actor's invoking state, the test suite shall fail unless an exact descriptor remains unpublished before confirmation, confirms without allocating or emitting a second start or invoking the host port, preserves its detached full identity, and eventually emits one finish before the parent's `onDone` transition.
 The suite shall fail unless mismatched state, target, or text, a second claim, an invoke without a descriptor, and an unclaimed descriptor each reject; unless a failed or aborted pre-confirmation attempt emits no finish and leaves its call id reusable; and unless a confirmed call id remains spent after exact resume (verifying [[playbook-runtime-42](#playbook-runtime-42)]).
 Where the suite validates public runtime snapshots, it shall fail unless schemas `1` through `3` reject before binding, schema version `4` requires a valid effect ledger and explicit suspended-call support on the handling path, Captain and role question askers are discriminated exactly, the returned snapshot, ledger, and descriptor are detached and frozen, and malformed ownership, impossible state/counter combinations, undeclared fields, accessors, and current-host mirror mismatches are rejected (verifying [[playbook-runtime-45](#playbook-runtime-45)] and [[playbook-runtime-69](#playbook-runtime-69)]).
+
+#### playbook-runtime-85
+
+Where the integration suite drives one shared-factory fixture that declares both a success final state and a failure final state and routes its own nested call's outcome, the test suite shall fail unless each delivered child result produces its listed caller outcome and the run settles with the reached final state's exact published terminal record (verifying [[playbook-runtime-83](#playbook-runtime-83)], [[playbook-runtime-42](#playbook-runtime-42)], and [[playbook-runtime-84](#playbook-runtime-84)]):
+
+| Delivered child result | Caller outcome |
+| --- | --- |
+| `ok` with a `success` terminal record | resolves through `onDone` with the child's output |
+| `ok` with a `failure` terminal record, settled or resumed from suspension | rejects through `onError` carrying that exact public result, with the paired finish trace still recording `status: 'ok'` and the same record |
+| `ok` with no terminal record | resolves through `onDone`, and a fixture declaring no kind publishes no record of its own |
+
+#### playbook-runtime-86
+
+When the integration suite constructs a shared-factory runtime over an artifact whose `meta.playbook.terminal` declares a value that is not a kind or declares one on a state that is not final, and when it delivers a child result whose terminal record is malformed, the test suite shall fail unless each is refused as a control-plane error rather than accepted as a terminal meaning or an authored child outcome (verifying [[playbook-runtime-83](#playbook-runtime-83)]).
 
 ### Control Surface Coverage
 

@@ -906,6 +906,7 @@ shell shall dispose and pop it, restore the parent's player
 visibility, and call the parent's `resumePlaybookCall` with the same call id
 and current-turn signal, continuing until the top frame parks, suspends, or waits for
 Boss, or the root finishes.
+A terminal child's `ok` call result shall carry that terminal run result's published terminal record unchanged when it has one and omit it otherwise [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)], so the parent's bridge alone decides whether the completion resolves or rejects its actor.
 Where a child returns workflow outcome `failed` in a recoverable parked
 state, the shell shall retain it as the active leaf for later Boss recovery
 rather than return an error to its parent.
@@ -1433,6 +1434,7 @@ Every frame shall fail unless it receives a distinct UUID and the
 correct root, parent, call, and depth fields; trace pass-through shall
 preserve those fields and order child disposal before the parent's call
 finish.
+A terminal child shall fail unless the `ok` result its parent receives carries that child's published terminal record unchanged, and omits the member when the child published none (verifying [[playbook-captain-29](#playbook-captain-29)]).
 The suite shall fail unless the child retains its own exact role map, its visible panes equal the distinct bound player ids, equal ids share the Captain-session ledger regardless of role spelling, and same-named roles with distinct ids remain independent (verifying [[playbook-captain-22](#playbook-captain-22)], [[playbook-captain-26](#playbook-captain-26)], and [[playbook-captain-29](#playbook-captain-29)]).
 The test suite shall fail unless disabled targets, active-path cycles,
 a second child from one frame, initialization failure, and stale return

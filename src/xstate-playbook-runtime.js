@@ -1074,6 +1074,45 @@ export function stateDescriptionsFromMachine(machine) {
     return descriptions;
 }
 /**
+ * DR-048: each root final state's declared terminal kind, read from
+ * `meta.playbook.terminal` in `machine.config`. The kind is compiled
+ * metadata — the compiler derives it from the Source's own outcome wording,
+ * exactly as it derives the state's description — so a caller learns whether
+ * a completed child succeeded from the machine it reached, never from the
+ * child's output fields or an agent's prose.
+ *
+ * A machine whose final states declare no kind yields an empty map and keeps
+ * the pre-DR-048 delivery. A `terminal` on a non-final state, or a value
+ * other than `success` or `failure`, is a malformed artifact and throws.
+ */
+export function terminalOutcomesFromMachine(machine, label = 'playbook') {
+    const kinds = new Map();
+    const config = machine.config;
+    if (!isPlainObject(config) || !isPlainObject(config.states))
+        return kinds;
+    for (const [key, stateDef] of Object.entries(config.states)) {
+        if (!isPlainObject(stateDef))
+            continue;
+        const playbook = isPlainObject(stateDef.meta)
+            ? stateDef.meta.playbook
+            : undefined;
+        const declared = isPlainObject(playbook) ? playbook.terminal : undefined;
+        if (declared === undefined)
+            continue;
+        if (declared !== 'success' && declared !== 'failure') {
+            throw new TypeError(`${label} state ${key} declares meta.playbook.terminal ` +
+                `${JSON.stringify(declared)}; only 'success' or 'failure' is a ` +
+                'terminal kind');
+        }
+        if (stateDef.type !== 'final') {
+            throw new TypeError(`${label} state ${key} declares meta.playbook.terminal but is not ` +
+                'a final state');
+        }
+        kinds.set(key, declared);
+    }
+    return kinds;
+}
+/**
  * First configured target of `eventType` from the state with `stateId`,
  * falling back to the machine root's own transitions. Used only to pick the
  * source description that labels a retry action, and only for events that
@@ -1834,6 +1873,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
     // DR-029: source state descriptions label the control actions the
     // runtime advertises through `describe()`.
     const stateDescriptions = stateDescriptionsFromMachine(machine);
+    // DR-048: a malformed terminal declaration is a control-plane defect of the
+    // artifact, so it fails construction rather than at the one run that
+    // happens to reach that final state.
+    const terminalKinds = terminalOutcomesFromMachine(machine, label);
     const roleStatesDescriptor = specDescriptors.roleStates;
     if (roleStatesDescriptor !== undefined &&
         !Object.prototype.hasOwnProperty.call(roleStatesDescriptor, 'value')) {
@@ -4275,10 +4318,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const stateDescription = !hasUnresolvedReconciliation()
                     ? stateDescriptionFor(state)
                     : undefined;
+                // DR-048: the reached final state's compiled terminal meaning, read
+                // from the artifact. It is withheld exactly when the published
+                // description is, so an unresolved reconciliation publishes no
+                // terminal meaning at all.
+                const terminal = hasUnresolvedReconciliation() || state.stateId === undefined
+                    ? undefined
+                    : terminalOutcomeFor(state.stateId, stateDescription);
                 return {
                     outcome,
                     state,
                     ...(stateDescription === undefined ? {} : { stateDescription }),
+                    ...(terminal === undefined ? {} : { terminal }),
                     ...(output === undefined
                         ? {}
                         : {
@@ -4628,6 +4679,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     return description;
             }
             return undefined;
+        }
+        // DR-048: the public terminal record for a reached final state, present
+        // only for an artifact that declares that state's kind.
+        function terminalOutcomeFor(stateId, description) {
+            const kind = terminalKinds.get(stateId);
+            if (kind === undefined)
+                return undefined;
+            return {
+                stateId,
+                kind,
+                ...(description === undefined ? {} : { description }),
+            };
         }
         function receiptTracePayload(receipt) {
             return {

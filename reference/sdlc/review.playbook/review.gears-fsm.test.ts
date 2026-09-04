@@ -563,4 +563,31 @@ describe('REVIEW GEARS to FSM compilation', () => {
       output({ context: { callerInput: 'Initial request' } }),
     ).toThrow(/without a receipt-observed evaluated revision/);
   });
+
+  it('declares the terminal kind of its one final state', () => {
+    const states = (
+      reviewMachine as unknown as {
+        config: {
+          states: Record<
+            string,
+            { type?: string; description?: string; meta?: unknown }
+          >;
+        };
+      }
+    ).config.states;
+    // DR-048: REVIEW's only completion is a success, so a caller's `onDone`
+    // proves approval without reading REVIEW's output fields.
+    expect(
+      Object.entries(states)
+        .filter(([, state]) => state.type === 'final')
+        .map(([id]) => id),
+    ).toEqual(['done']);
+    expect(states.done?.meta).toEqual({
+      playbook: {
+        stateId: 'done',
+        description: states.done?.description,
+        terminal: 'success',
+      },
+    });
+  });
 });

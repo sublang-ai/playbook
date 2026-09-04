@@ -469,6 +469,19 @@ export declare function resumableStateIdsFromMachine(machine: AnyStateMachine): 
  */
 export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): ReadonlyMap<string, string>;
 /**
+ * DR-048: each root final state's declared terminal kind, read from
+ * `meta.playbook.terminal` in `machine.config`. The kind is compiled
+ * metadata — the compiler derives it from the Source's own outcome wording,
+ * exactly as it derives the state's description — so a caller learns whether
+ * a completed child succeeded from the machine it reached, never from the
+ * child's output fields or an agent's prose.
+ *
+ * A machine whose final states declare no kind yields an empty map and keeps
+ * the pre-DR-048 delivery. A `terminal` on a non-final state, or a value
+ * other than `success` or `failure`, is a malformed artifact and throws.
+ */
+export declare function terminalOutcomesFromMachine(machine: AnyStateMachine, label?: string): ReadonlyMap<string, 'success' | 'failure'>;
+/**
  * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
  * under the slc/link.md contract. The factory provides every actor kind the
  * machine declares — `player`, `script`, `captain`, and nested `playbook`

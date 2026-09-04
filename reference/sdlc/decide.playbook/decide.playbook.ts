@@ -41,6 +41,7 @@ import {
   renderGovernedOutcomeContract,
   snapshotJsonValue,
   snapshotPlaybookSession,
+  terminalOutcomesFromMachine,
   validatePlayerResult,
   waitForPlaybookQuiescence,
 } from '../../../src/xstate-runtime.js';
@@ -189,6 +190,10 @@ const STATE_DESCRIPTIONS = authoredStateDescriptions(
     | Readonly<Record<string, AuthoredStateConfig>>
     | undefined,
 );
+
+// DR-048: each root final state's compiled terminal kind, read from this
+// artifact through the shared reader the factory-backed runtimes use.
+const TERMINAL_KINDS = terminalOutcomesFromMachine(decideMachine, 'DECIDE');
 
 const ROLE_STATES = [
   { stateId: 'askCoderProposal', role: 'coder', sourceItem: 'DECIDE-1' },
@@ -4247,20 +4252,36 @@ function createDecidePlaybookRuntime(
     if (snapshot.status === 'done') {
       const output = (snapshot as { output?: unknown }).output;
       if (output !== undefined) assertJsonSafe(output, 'terminal output');
-      const stateDescription = state.activeStateIds.includes('done')
-        ? STATE_DESCRIPTIONS.done
+      const finalStateId = state.activeStateIds.includes('done')
+        ? 'done'
         : state.activeStateIds.includes('reportedReviewFailure')
-          ? STATE_DESCRIPTIONS.reportedReviewFailure
+          ? 'reportedReviewFailure'
           : undefined;
-      if (stateDescription === undefined) {
+      const stateDescription =
+        finalStateId === undefined
+          ? undefined
+          : STATE_DESCRIPTIONS[finalStateId];
+      if (finalStateId === undefined || stateDescription === undefined) {
         throw new Error(
           'decide runtime: completed actor has no authored final-state description',
         );
       }
+      // DR-048: the reached final state's compiled terminal kind, read from
+      // this artifact exactly as the shared factory reads it.
+      const terminalKind = TERMINAL_KINDS.get(finalStateId);
       return {
         outcome: 'terminal',
         state,
         stateDescription,
+        ...(terminalKind === undefined
+          ? {}
+          : {
+              terminal: {
+                stateId: finalStateId,
+                kind: terminalKind,
+                description: stateDescription,
+              },
+            }),
         ...(output === undefined ? {} : { output }),
       };
     }

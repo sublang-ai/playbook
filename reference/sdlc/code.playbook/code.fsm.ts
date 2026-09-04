@@ -241,6 +241,22 @@ function playbookMeta<StateId extends keyof typeof STATE_DESCRIPTIONS>(
   };
 }
 
+// DR-048: a final state additionally declares whether its outcome means the
+// workflow succeeded or failed, so a caller learns that from the machine
+// rather than from CODE's output fields.
+function terminalMeta<StateId extends keyof typeof STATE_DESCRIPTIONS>(
+  stateId: StateId,
+  terminal: 'success' | 'failure',
+) {
+  return {
+    playbook: {
+      stateId,
+      description: STATE_DESCRIPTIONS[stateId],
+      terminal,
+    },
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return false;
@@ -419,10 +435,32 @@ function nestedResultFromError(error: unknown): Record<string, unknown> | undefi
   return isRecord(result) ? result : undefined;
 }
 
-type AuthoredReviewFailure = {
-  readonly status: 'aborted' | 'error';
-  readonly error?: CompactError;
-};
+type AuthoredReviewFailure =
+  | {
+      readonly status: 'aborted' | 'error';
+      readonly error?: CompactError;
+    }
+  // DR-048: a child that completed at an authored failure terminal. The
+  // bridge rejects it through the same error path, so CODE recognizes the
+  // failure from REVIEW's own machine and never from its output fields.
+  | {
+      readonly status: 'ok';
+      readonly output?: JsonValue;
+    };
+
+function isFailureTerminalRecord(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const allowed = new Set(['stateId', 'kind', 'description']);
+  return (
+    Reflect.ownKeys(value).every(
+      (key) => typeof key === 'string' && allowed.has(key),
+    ) &&
+    isNonEmptyString(value.stateId) &&
+    value.kind === 'failure' &&
+    (!Object.prototype.hasOwnProperty.call(value, 'description') ||
+      typeof value.description === 'string')
+  );
+}
 
 function normalizedReviewFailure(
   error: unknown,
@@ -434,13 +472,15 @@ function normalizedReviewFailure(
     'playbookId',
     'childSessionId',
     'state',
-    'error',
+    ...(result.status === 'ok' ? ['output', 'terminal'] : ['error']),
   ]);
   if (
     Reflect.ownKeys(result).some(
       (key) => typeof key !== 'string' || !allowed.has(key),
     ) ||
-    (result.status !== 'aborted' && result.status !== 'error') ||
+    (result.status !== 'aborted' &&
+      result.status !== 'error' &&
+      result.status !== 'ok') ||
     result.playbookId !== 'review'
   ) {
     return undefined;
@@ -456,6 +496,21 @@ function normalizedReviewFailure(
     !isPlaybookState(result.state)
   ) {
     return undefined;
+  }
+  if (result.status === 'ok') {
+    if (
+      !Object.prototype.hasOwnProperty.call(result, 'terminal') ||
+      !isFailureTerminalRecord(result.terminal) ||
+      !isNonEmptyString(result.childSessionId)
+    ) {
+      return undefined;
+    }
+    return {
+      status: 'ok',
+      ...(result.output === undefined
+        ? {}
+        : { output: result.output as JsonValue }),
+    };
   }
   let normalizedError: CompactError | undefined;
   if (Object.prototype.hasOwnProperty.call(result, 'error')) {
@@ -507,7 +562,9 @@ function compactError(value: unknown): CompactError {
 function authoredReviewError(event: unknown): CompactError {
   const outer = isRecord(event) ? event.error : undefined;
   const failure = normalizedReviewFailure(outer);
-  if (failure?.error !== undefined) return failure.error;
+  if (failure !== undefined && failure.status !== 'ok' && failure.error) {
+    return failure.error;
+  }
   if (failure?.status === 'aborted') {
     return { name: 'AbortError', message: 'REVIEW was aborted.' };
   }
@@ -1052,13 +1109,13 @@ export const codingMachine = machineSetup.createMachine({
     reportedReviewFailure: {
       id: 'reportedReviewFailure',
       description: STATE_DESCRIPTIONS.reportedReviewFailure,
-      meta: playbookMeta('reportedReviewFailure'),
+      meta: terminalMeta('reportedReviewFailure', 'failure'),
       type: 'final',
     },
     done: {
       id: 'done',
       description: STATE_DESCRIPTIONS.done,
-      meta: playbookMeta('done'),
+      meta: terminalMeta('done', 'success'),
       type: 'final',
     },
   },

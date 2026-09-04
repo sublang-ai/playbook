@@ -573,6 +573,24 @@ describe('DECIDE GEARS to FSM compilation', () => {
       .sort();
     expect(rootFinals).toEqual(['done', 'reportedReviewFailure']);
 
+    // DR-048: each final state also declares whether its outcome means the
+    // workflow succeeded or failed, so DEV routes DECIDE's reported failure
+    // through its own error path without reading DECIDE's output fields.
+    expect(states.done?.meta).toEqual({
+      playbook: {
+        stateId: 'done',
+        description: states.done?.description,
+        terminal: 'success',
+      },
+    });
+    expect(states.reportedReviewFailure?.meta).toEqual({
+      playbook: {
+        stateId: 'reportedReviewFailure',
+        description: states.reportedReviewFailure?.description,
+        terminal: 'failure',
+      },
+    });
+
     const armList = (value: unknown): readonly RawTransition[] =>
       value === undefined
         ? []

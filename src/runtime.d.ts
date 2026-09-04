@@ -62,12 +62,18 @@ export interface PlaybookCallRequest {
     playbookId: string;
     text: string;
 }
+export interface PlaybookTerminalOutcome {
+    stateId: string;
+    kind: 'success' | 'failure';
+    description?: string;
+}
 export type PlaybookCallResult = {
     status: 'ok';
     playbookId: string;
     childSessionId: string;
     state?: PlaybookState;
     output?: JsonValue;
+    terminal?: PlaybookTerminalOutcome;
 } | {
     status: 'aborted';
     playbookId: string;
@@ -102,6 +108,7 @@ export type PlaybookRunResult = {
     outcome: 'terminal';
     state: PlaybookState;
     stateDescription?: string;
+    terminal?: PlaybookTerminalOutcome;
     output?: JsonValue;
 } | {
     outcome: 'suspended';

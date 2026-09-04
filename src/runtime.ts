@@ -98,6 +98,16 @@ export interface PlaybookCallRequest {
   text: string;
 }
 
+// DR-048: the reached final state's compiled terminal meaning. `kind` is
+// authored metadata read from the artifact, never from an agent reply, and
+// `description` repeats that state's authored description when it declares
+// one. An artifact whose final states declare no kind carries no such record.
+export interface PlaybookTerminalOutcome {
+  stateId: string;
+  kind: 'success' | 'failure';
+  description?: string;
+}
+
 export type PlaybookCallResult =
   | {
       status: 'ok';
@@ -105,6 +115,7 @@ export type PlaybookCallResult =
       childSessionId: string;
       state?: PlaybookState;
       output?: JsonValue;
+      terminal?: PlaybookTerminalOutcome;
     }
   | {
       status: 'aborted';
@@ -137,6 +148,7 @@ export type PlaybookRunResult =
       outcome: 'terminal';
       state: PlaybookState;
       stateDescription?: string;
+      terminal?: PlaybookTerminalOutcome;
       output?: JsonValue;
     }
   | {

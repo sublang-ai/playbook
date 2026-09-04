@@ -583,6 +583,7 @@ function terminalResult(
   stateId = 'done',
   output?: JsonValue,
   stateDescription?: string,
+  terminal?: { stateId: string; kind: 'success' | 'failure'; description?: string },
 ): PlaybookRunResult {
   return {
     outcome: 'terminal',
@@ -592,6 +593,7 @@ function terminalResult(
       quiescent: true,
     }),
     ...(stateDescription === undefined ? {} : { stateDescription }),
+    ...(terminal === undefined ? {} : { terminal }),
     ...(output !== undefined ? { output } : {}),
   };
 }
@@ -6315,6 +6317,81 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       await shell.dispose!();
     },
   );
+
+  it("relays a terminal child's published terminal record unchanged", async () => {
+    // DR-048: the shell copies the child runtime's own terminal record onto
+    // the completed child's `ok` call result and omits the member entirely
+    // when the child published none, so the caller's own bridge — not the
+    // host — decides whether that completion resolves or rejects its actor.
+    const starts: Awaited<ReturnType<PlaybookPorts['callPlaybook']>>[] = [];
+    const code = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      starts.push(
+        await runtime.ports.callPlaybook(
+          {
+            callId: `code:docs:terminal-${starts.length + 1}`,
+            playbookId: 'docs',
+            text: runtimeTurn.text,
+          },
+          runtimeTurn.signal,
+        ),
+      );
+      return quiescentResult('readyAfterDocs');
+    });
+    const docs = fakePlaybookEntry('docs', 'docs', async (_runtime, hostTurn) =>
+      hostTurn.text === 'declared'
+        ? terminalResult(
+            'reportedFailure',
+            { relayed: 'declared' },
+            'reportedFailure state',
+            {
+              stateId: 'reportedFailure',
+              kind: 'failure',
+              description: 'reportedFailure state',
+            },
+          )
+        : terminalResult('done', { relayed: 'undeclared' }, 'done state'),
+    );
+    delete code.entry.summaryPolicy;
+    delete docs.entry.summaryPolicy;
+    const shell = makeShell([code, docs], {
+      sessionIds: [ROOT_ID, CHILD_ID, LEAF_ID],
+    });
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ decision: 'deliver' }),
+      captainJson({ decision: 'deliver' }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code declared'), context.context);
+    await shell.handleBossTurn(turn('undeclared', 2), context.context);
+
+    expect(starts[0]).toEqual({
+      state: 'settled',
+      result: {
+        status: 'ok',
+        playbookId: 'docs',
+        childSessionId: CHILD_ID,
+        state: expect.objectContaining({ stateId: 'reportedFailure' }),
+        output: { relayed: 'declared' },
+        terminal: {
+          stateId: 'reportedFailure',
+          kind: 'failure',
+          description: 'reportedFailure state',
+        },
+      },
+    });
+    const undeclared =
+      starts[1]?.state === 'settled' ? starts[1].result : undefined;
+    expect(undeclared).toMatchObject({
+      status: 'ok',
+      playbookId: 'docs',
+      output: { relayed: 'undeclared' },
+    });
+    expect(undeclared).not.toHaveProperty('terminal');
+    await shell.dispose!();
+  });
 
   it('returns a later non-parked child failure to its parent instead of retaining the child', async () => {
     const code = fakeCodeEntry(

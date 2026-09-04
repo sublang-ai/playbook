@@ -5191,6 +5191,12 @@ export function createPlaybookCaptainShell(
         childSessionId: frame.sessionId,
         state: result.state,
         ...(result.output !== undefined ? { output: result.output } : {}),
+        // DR-048: the child runtime read this record from its own artifact;
+        // the host relays it unchanged so the caller's bridge can route a
+        // failure terminal without knowing the callee's output fields.
+        ...(result.terminal !== undefined
+          ? { terminal: result.terminal }
+          : {}),
       };
     }
     if (result.outcome === 'aborted') {

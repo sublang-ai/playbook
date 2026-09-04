@@ -340,10 +340,29 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       config: {
         states: Record<
           string,
-          { description?: string; tags?: readonly string[]; meta?: unknown }
+          {
+            type?: string;
+            description?: string;
+            tags?: readonly string[];
+            meta?: unknown;
+          }
         >;
       };
     }).config.states;
+    // DR-048: every final state declares whether its outcome means success
+    // or failure. DEV's two completions are successes and its relayed child
+    // failure is a failure, so DEV's own caller routes it mechanically.
+    const terminalKinds: Readonly<Record<string, 'success' | 'failure'>> = {
+      discussionComplete: 'success',
+      done: 'success',
+      reportedChildFailure: 'failure',
+    };
+    expect(
+      Object.entries(states)
+        .filter(([, state]) => state.type === 'final')
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(Object.keys(terminalKinds).sort());
     expect(states.planAnalysis?.tags).toContain('playbook.busy');
     for (const id of ['callCode', 'callDecide', 'callCodeAfterDecide']) {
       expect(states[id]?.tags).toContain('playbook.suspended');
@@ -367,6 +386,9 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
           stateId: id,
           description: state.description,
           ...(delegated ? { role } : {}),
+          ...(terminalKinds[id] === undefined
+            ? {}
+            : { terminal: terminalKinds[id] }),
         },
       });
     }

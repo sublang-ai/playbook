@@ -100,6 +100,16 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 - The declared machine output is unchanged, still deriving its status and fields from typed context.
 - Each maintained runtime's terminal result carries the reached final state's exact description under [[playbook-runtime-41](playbook-runtime.md#playbook-runtime-41)], independently of whether that runtime implements optional control actions.
 
+#### playbook-41
+
+Every maintained workflow's compiled FSM shall declare each of its final states' terminal kind in `meta.playbook.terminal`, so a caller routes a completed child from the machine that child reached rather than from that child's output fields [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)]:
+
+- each success terminal state of [[playbook-27](#playbook-27)], REVIEW's one completion, and DEV's discussion-complete state declare `success`;
+- each failure-relay terminal state of [[playbook-27](#playbook-27)] declares `failure`;
+- the recoverable parked `failed` state is not final and declares no kind.
+
+A caller's compiled FSM shall therefore route a maintained child's failure terminal through its `invoke.onError` authored-outcome arm [[playbook-runtime-84](playbook-runtime.md#playbook-runtime-84)], relaying the child's own output as its relayed failure evidence.
+
 #### playbook-28
 
 Where a maintained workflow runs under artifact schema `3`, its compiled runtime shall apply the automatic-replay fence of [[playbook-runtime-71](playbook-runtime.md#playbook-runtime-71)] at every governed delegated-player state regardless of whether linking emits the shared flat runtime or DECIDE's bespoke parallel runtime.
@@ -263,6 +273,10 @@ The suites shall further fail unless the proposal and merge adjudicator prompts 
 #### playbook-40
 
 When the DEV conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every Analyst outcome accepts only a matching `unchanged` receipt, including each question and separately governed answer continuation, with any repository mutation during planning remaining unresolved without a child call; discussion complete is accepted only after a Boss reply; the decide-then-code path starts `code` only after `decide`'s canonical success, relaying the exact `decide`-owned commit and evaluated revision from that structured result alone; an authored child abort, failure, or insufficient terminal result settles in the failure-relay terminal without a later child while a control-plane child failure parks; each terminal state publishes its distinct truthful description; every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-39](#playbook-39)] (verifying [[playbook-1](#playbook-1)], [[playbook-12](#playbook-12)], [[playbook-38](#playbook-38)], and [[playbook-39](#playbook-39)]).
+
+#### playbook-42
+
+When the maintained conformance suites read each artifact's compiled final states, they shall fail unless every one of them declares exactly the terminal kind of [[playbook-41](#playbook-41)] and no other state declares one; and when the DEV coverage suite delivers a CODE result that does not prove success, it shall fail unless that result reaches DEV through its `invoke.onError` authored-outcome arm and DEV's failure-relay terminal with the child's own output relayed, while a resolved result that does not prove success still reaches that same terminal through the retained `onDone` field check (verifying [[playbook-41](#playbook-41)]).
 
 ### Boss-reply suspension coverage
 
