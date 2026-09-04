@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.2.1] - 2026-09-03
+
 ### Fixed
 
 - **A nested-call GEARS item carries no `Results:` label.** `slc/text2gears.md` told the compiler to move every Source outcome contract into `Results:` with no exception for `Captain shall call playbook` items, while slc's conformance verifier has always rejected `Results:` metadata on such items; a reviewed `slc playbook` compile of `dev.md` followed the definition's letter and produced a verifier-rejected GEARS that two review loops accepted. The nested-call section now states the rule: the child's terminal result is the item's outcome, and Source's continuation after child success, abort, or failure stays as prose after the blockquote for gears2fsm to route through `invoke.onDone` and `invoke.onError`.
@@ -561,7 +563,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.2.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.2.1...HEAD
+[12.2.1]: https://github.com/sublang-ai/playbook/compare/v12.2.0...v12.2.1
 [12.2.0]: https://github.com/sublang-ai/playbook/compare/v12.1.0...v12.2.0
 [12.1.0]: https://github.com/sublang-ai/playbook/compare/v12.0.0...v12.1.0
 [12.0.0]: https://github.com/sublang-ai/playbook/compare/v11.0.0...v12.0.0
