@@ -356,10 +356,14 @@ An interrupted interactive turn uses the same uncertain record and these
 headless recovery commands. Discard preserves the attempt's replay history and
 refuses if the effect ledger has advanced beyond the prior checkpoint.
 
-Older stores require explicit migration through the
-[shared API](embedding.md#sharing-the-cli-session-store). Valid schema-6 recovery
-is converted without provider tokens; schemas 2–5 and incomplete desktop
-sidecars become history only. Original bytes are preserved outside the portable
-session directory before publication. Unknown or malformed formats remain
-unchanged. Ordinary continuation never guesses missing identity or effect
-evidence.
+Stop old writers before upgrading. When using the ordinary `~/.spex/sessions`
+default, the CLI imports sessions from
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions`. Explicit `SPEX_HOME`
+or `sessions` selections bypass this discovery. Other locations can be migrated
+through the [shared API](embedding.md#sharing-the-cli-session-store).
+
+Migration preserves the complete replay and retains original bytes before
+removing old active files. Valid schema-6 recovery becomes token-free; schemas
+2–5 and incomplete desktop sidecars become history only. Unsupported inputs
+stay in place with a diagnostic; active writers and destination conflicts stop
+the cutover. Ordinary continuation never guesses missing identity or effects.

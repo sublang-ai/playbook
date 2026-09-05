@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash } from 'node:crypto';
-import { isAbsolute, resolve } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
   validateCaptainSessionRecord,
@@ -27,6 +27,12 @@ function exact(value, required, optional = []) {
 function iso(value) {
   if (typeof value !== 'string' || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error('session timestamp must be canonical ISO UTC');
 }
+export function isRecordedAbsolutePath(value) {
+  return typeof value === 'string' && !value.includes('\0') && (
+    (posix.isAbsolute(value) && posix.resolve(value) === value) ||
+    (/^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+(?:\\|$))/.test(value) && win32.resolve(value) === value)
+  );
+}
 export function validateReplayCheckpoint(value) {
   exact(value, ['seq', 'sha256', 'incomplete']);
   if (!Number.isSafeInteger(value.seq) || value.seq < 0 || !HEX.test(value.sha256) || typeof value.incomplete !== 'boolean' || (value.seq === 0 && value.sha256 !== EMPTY_REPLAY_SHA256)) throw new Error('invalid replay checkpoint');
@@ -39,7 +45,7 @@ export function validateSessionManifest(value) {
   if (!object(value) || value.schemaVersion !== 7) throw new Error(`unsupported session manifest schema ${value?.schemaVersion}`);
   const history = value.state === 'history-only';
   exact(value, [...COMMON, ...(history ? ['reason'] : RECOVERY), ...(value.state === 'uncertain' ? ['uncertain'] : [])], history ? [] : OPTIONAL);
-  if (value.kind !== 'captain-session' || !SESSION_ID_PATTERN.test(value.sessionId) || !isAbsolute(value.cwd) || resolve(value.cwd) !== value.cwd) throw new Error('invalid session manifest identity');
+  if (value.kind !== 'captain-session' || !SESSION_ID_PATTERN.test(value.sessionId) || !isRecordedAbsolutePath(value.cwd)) throw new Error('invalid session manifest identity');
   iso(value.createdAt); iso(value.updatedAt);
   if (Date.parse(value.updatedAt) < Date.parse(value.createdAt)) throw new Error('session update precedes creation');
   validateReplayCheckpoint(value.replay);

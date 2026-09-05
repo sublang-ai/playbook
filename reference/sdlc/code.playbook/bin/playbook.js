@@ -229,6 +229,7 @@ export async function runPlaybookCli(options = {}) {
     interactiveArgs.cwd ?? ".",
   );
   let resolvedSessionsDir;
+  let migrateDefaultStore = false;
   if (options.sessionStore === undefined) {
     try {
       resolvedSessionsDir = resolveLaunchSessionsDir({
@@ -240,6 +241,7 @@ export async function runPlaybookCli(options = {}) {
           ? { sessionsDir: options.sessionsDir }
           : {}),
         preparePrimary: interactiveArgs.sessionId === undefined,
+        onDefault: () => { migrateDefaultStore = !(typeof env.SPEX_HOME === 'string' && env.SPEX_HOME.trim() !== ''); },
         onNotice: (line) => stderr.write(line),
       });
       // PBCLI-78: listing validates the locator but never consumes the store.
@@ -258,7 +260,7 @@ export async function runPlaybookCli(options = {}) {
   let selectedRecord;
   if (interactiveArgs.sessionId !== undefined) {
     try {
-      store = createInteractiveStore(options, env, home, resolvedSessionsDir);
+      store = await createInteractiveStore(options, env, home, resolvedSessionsDir, migrateDefaultStore, stderr);
       selectedRecord = validateCaptainSessionRecord(
         await store.read(interactiveArgs.sessionId),
       );
@@ -405,7 +407,7 @@ export async function runPlaybookCli(options = {}) {
   }
 
   try {
-    store ??= createInteractiveStore(options, env, home, resolvedSessionsDir);
+    store ??= await createInteractiveStore(options, env, home, resolvedSessionsDir, migrateDefaultStore, stderr);
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -743,8 +745,8 @@ function optionValue(argv, index, name) {
   return value;
 }
 
-function createInteractiveStore(options, env, home, sessionsDir) {
-  return (
+async function createInteractiveStore(options, env, home, sessionsDir, migrateDefault, stderr) {
+  const store = (
     options.sessionStore ??
     createCaptainSessionStore({
       env,
@@ -756,6 +758,12 @@ function createInteractiveStore(options, env, home, sessionsDir) {
         : {}),
     })
   );
+  if (migrateDefault && options.sessionStore === undefined) {
+    const migrated = await store.migrateLegacyDefault();
+    if (migrated.migrated.length > 0) stderr.write(`playbook: migrated ${migrated.migrated.length} sessions from ${migrated.sourceDir}\n`);
+    for (const skipped of migrated.skipped) stderr.write(`playbook: preserved legacy session ${skipped.sessionId} in ${migrated.sourceDir}: ${skipped.reason}\n`);
+  }
+  return store;
 }
 
 async function writeStream(stream, text, signal) {

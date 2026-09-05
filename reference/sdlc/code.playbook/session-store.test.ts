@@ -2655,6 +2655,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(defaultCaptainSessionsDir({ HOME: '/home' }, '/home')).toBe(
       '/home/.spex/sessions',
     );
+    expect(defaultCaptainSessionsDir({ SPEX_HOME: '  ', HOME: '/home' }, '/home')).toBe('/home/.spex/sessions');
 
     const { sessionsDir } = await fixtureDir();
     const firstStore = fixedStore(sessionsDir, tokenO);

@@ -143,6 +143,7 @@ export async function runPlaybookRun(options = {}) {
   }
   const bootstrapConfigNotices = [];
   let resolvedSessionsDir;
+  let migrateDefaultStore = false;
   if (options.sessionStore === undefined) {
     try {
       resolvedSessionsDir = resolveLaunchSessionsDir({
@@ -154,6 +155,7 @@ export async function runPlaybookRun(options = {}) {
           ? { sessionsDir: options.sessionsDir }
           : {}),
         preparePrimary: !continuing,
+        onDefault: () => { migrateDefaultStore = !(typeof env.SPEX_HOME === 'string' && env.SPEX_HOME.trim() !== ''); },
         onNotice: (line) => bootstrapConfigNotices.push(line),
       });
       await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
@@ -179,6 +181,11 @@ export async function runPlaybookRun(options = {}) {
           ? { createTempId: options.createSessionTempId }
           : {}),
       });
+    if (migrateDefaultStore) {
+      const migrated = await store.migrateLegacyDefault();
+      if (migrated.migrated.length > 0) await writeStream(stderr, `playbook run: migrated ${migrated.migrated.length} sessions from ${migrated.sourceDir}\n`);
+      for (const skipped of migrated.skipped) await writeStream(stderr, `playbook run: preserved legacy session ${skipped.sessionId} in ${migrated.sourceDir}: ${skipped.reason}\n`);
+    }
   } catch (error) {
     await writeStream(stderr, `playbook run: ${message(error)}\n`);
     return { code: EXIT.argument };

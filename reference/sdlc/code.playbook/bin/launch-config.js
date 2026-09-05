@@ -173,6 +173,7 @@ export function resolveLaunchSessionsDir({
   preparePrimary = false,
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
+  onDefault = () => {},
 }) {
   // The private injection used by tests and managed launch plumbing remains
   // authoritative over configuration, just like an injected store.
@@ -199,6 +200,7 @@ export function resolveLaunchSessionsDir({
   }
 
   if (locator === undefined) {
+    onDefault();
     return defaultCaptainSessionsDir(env, homeDir);
   }
   if (typeof locator !== "string" || locator.length === 0) {

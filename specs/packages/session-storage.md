@@ -17,7 +17,8 @@ History requires neither a provider conversation nor an application's project re
 The session store shall use these locations and files for each session's canonical lowercase UUID:
 
 - the default is `sessions/` under Spex home, selected by nonempty `SPEX_HOME` or otherwise `~/.spex`;
-- the shared configuration's `sessions` value selects another directory; an explicitly injected store takes precedence over that value [[playbook-cli-78](playbook-cli.md#playbook-cli-78)].
+- the shared configuration's `sessions` value selects another directory; an explicitly injected store takes precedence over that value [[playbook-cli-78](playbook-cli.md#playbook-cli-78)];
+- before using the ordinary unoverridden `~/.spex/sessions`, hosts migrate the former `${XDG_STATE_HOME:-~/.local/state}/playbook/sessions` through the shared cutover; explicit `SPEX_HOME`, `sessions` or store selections bypass discovery.
 
 | File | Contents | Portability |
 | --- | --- | --- |
@@ -142,6 +143,7 @@ When a provider hint is absent or definitively rejected before execution, the ho
 
 When opening a portable checkpoint on another device, the lifecycle shall allow continuation only if the recorded working directory, canonical module locators and repository/effect identities match the destination's validated execution context:
 
+- recorded path syntax accepts normalized POSIX and fully qualified Windows paths on every reader; execution still requires a matching native path;
 - schema 7 permits no rewriting of repository/module paths inside checkpoints, opaque snapshots or effect receipts; changed paths permit history only;
 - an application path alias associates history with a project; it cannot resolve a mismatch that prevents execution;
 - matching paths still require compatible runtimes, exact structural validation and repository/effect reconciliation;
@@ -156,7 +158,9 @@ When migrating a stopped legacy store, the shared migrator shall hold the sessio
 - schema 2–5 and desktop sidecars lacking complete durable recovery produce history-only manifests, retaining their replay or history reconstructed from journals and explaining why recovery is unavailable;
 - missing historical context remains missing; current validated context may be appended for a supported checkpoint without assigning it to earlier events;
 - malformed inputs remain unchanged and are reported; divergent destination bytes block replacement; identical completed outputs make retries idempotent;
-- old sidecar writers stop permanently at migration; ordinary opening does not silently downgrade unsupported recovery or clear an incomplete marker;
+- cross-directory migration also holds the source lease, reads the adjacent source replay, and removes source replay before the source manifest only after validated destination publication and source retention;
+- former-default discovery reports preserved unsupported inputs and blocks on active or unprovable ownership and destination collisions; a missing source directory is a no-op;
+- old writers stop permanently at migration; ordinary opening does not silently downgrade unsupported recovery or clear an incomplete marker;
 - no host tracks the migrated bundle in Git until token-free validation succeeds.
 
 ### session-storage-11
@@ -218,8 +222,8 @@ When the integration suite checkpoints a session with current and retained playe
 
 When the integration suite migrates legacy CLI/desktop fixtures and opens their copied bundles in another storage directory, it shall verify:
 
-- history-only access for unsupported path changes and reconciliation for matching paths [[session-storage-9](#session-storage-9)];
-- preserved original bytes, version/format refusals, idempotent migrations and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
+- history-only access for unsupported path changes, portable POSIX/Windows recorded paths, and reconciliation for matching native paths [[session-storage-9](#session-storage-9)];
+- preserved original bytes, version/format refusals, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
 
 ## References
 

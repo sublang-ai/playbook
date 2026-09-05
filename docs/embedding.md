@@ -401,6 +401,18 @@ The controller owns uncertainty, reconciliation, settlement and lease release;
 observers receive presentation events or exact appended envelopes through
 `onStoredRecord`. Keep the controller open for successive turns.
 
+`shared.readLeaseState(sessionId)` reports `active`, `idle` or `unknown` without
+changing files. Use it for presentation; mutations still require a lease.
+
+`shared.migrate(id, { sourcePath })` imports a legacy manifest and its adjacent
+replay while holding both stores' leases. `shared.migrateLegacyDefault()` imports
+the former XDG default and reports migrated and preserved unsupported IDs.
+Embedding applications select and migrate stores during startup;
+`openSessionHost()` does not discover old profiles. Stop old writers first.
+Automatic discovery belongs only to the ordinary
+`~/.spex/sessions` profile with no `SPEX_HOME` or `sessions` override; custom
+profiles require an explicit migration request.
+
 For an uncertain session, reopen with `mode:'retry'` and call `retry()`. It uses
 the exact recorded input and attempted configuration. Module-free
 `discardSessionUncertain(shared, sessionId)` restores the prior recovery only

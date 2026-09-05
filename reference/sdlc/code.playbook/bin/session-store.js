@@ -11,7 +11,7 @@ import {
   SESSION_MANIFEST_VERSION, EMPTY_REPLAY_SHA256, sha256,
   validateSessionManifest, recoveryFromManifest, manifestFromRecovery,
   contextFromRecovery, validateSessionContext, validateSessionHints,
-  projectRecovery,
+  projectRecovery, isRecordedAbsolutePath,
 } from './portable-codec.js';
 import { constants } from 'node:fs';
 import {
@@ -225,7 +225,7 @@ export function defaultCaptainSessionsDir(
   env = process.env,
   home = env.HOME ?? homedir(),
 ) {
-  return join(env.SPEX_HOME || join(home, '.spex'), 'sessions');
+  return join(typeof env.SPEX_HOME === 'string' && env.SPEX_HOME.trim() !== '' ? env.SPEX_HOME : join(home, '.spex'), 'sessions');
 }
 
 // PBCLI-78: front-end bootstrap checks the same private filesystem boundary
@@ -787,6 +787,7 @@ export function createCaptainSessionStore(options = {}) {
           }
         } catch { reasons.push('required session context is absent or unsupported'); }
       }
+      if (!isAbsolute(manifest.cwd) || resolve(manifest.cwd) !== manifest.cwd) reasons.push('recorded working directory is not native; checkpoint relocation is unsupported');
       if (context.cwd !== undefined && context.cwd !== manifest.cwd) reasons.push('recorded working directory differs; checkpoint relocation is unsupported');
       if (context.executionProjection !== undefined && manifest.state !== 'history-only') {
         try { assertCaptainSessionExecutionCompatible(manifest.structuralProjection, context.executionProjection); }
@@ -1474,21 +1475,43 @@ export function createCaptainSessionStore(options = {}) {
     await prepare();
     const sourcePath = migration.sourcePath ?? recordPathFor(sessionId);
     const sidecar = sourcePath.endsWith('.spex.json');
+    const sourceDir = dirname(sourcePath);
+    const sourceReplayPath = join(sourceDir, `${sessionId}.records.jsonl`);
+    const external = sourceDir !== sessionsDir;
+    if (!isAbsolute(sourcePath) || sourcePath !== join(sourceDir, `${sessionId}${sidecar ? '.spex' : ''}.json`)) throw new Error('migration source must be the canonical session file');
     const backupDir = migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId);
     const inputsDir = join(backupDir, 'inputs');
     const receiptPath = join(backupDir, 'receipt.json');
-    const lease = await acquire(sessionId, true);
+    let sourceLease, lease;
     try {
+      if (external) {
+        const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env, homeDir: home, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
+        await sourceStore.prepare();
+        sourceLease = await sourceStore.acquireManagement(sessionId);
+      }
+      lease = await acquire(sessionId, true);
       await lease.assertOwner();
       let sourceBytes;
       try { sourceBytes = await readPrivateRegularFile(sourcePath, 0o600, fs, 'migration source'); }
       catch (cause) {
-        if (!sidecar || cause?.code !== 'ENOENT') throw cause;
+        if ((!sidecar && !external) || cause?.code !== 'ENOENT') throw cause;
+        let receipt;
+        if (external) {
+          receipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt'));
+          if (receipt.v !== 1 || receipt.id !== sessionId || !Array.isArray(receipt.inputs) || receipt.inputs[0]?.path !== sourcePath || ![1, 2].includes(receipt.inputs.length)) throw new Error('missing migration source has no matching receipt');
+          for (const [index, input] of receipt.inputs.entries()) {
+            const bytes = await readPrivateRegularFile(join(inputsDir, String(index)), 0o600, fs, 'retained migration input', true);
+            if (sha256(bytes) !== input.sha256) throw new Error('retained migration input differs');
+          }
+        }
         const current = await validate(sessionId);
+        if (!current.integrityValid) throw new Error('completed migration destination failed validation');
+        if (receipt?.complete === false) await writePrivateJson(receiptPath, { ...receipt, complete: true }, fs);
         return { manifest: current.manifest, migrated: false, reasons: current.reasons };
       }
       const source = JSON.parse(sourceBytes);
       if (!sidecar && source.schemaVersion === 7) {
+        if (external) throw new Error('source is already portable; select its complete bundle instead of legacy migration');
         const current = await validate(sessionId);
         return { manifest: current.manifest, migrated: false, reasons: current.reasons };
       }
@@ -1506,9 +1529,10 @@ export function createCaptainSessionStore(options = {}) {
         }
         if (recovery && source.schemaVersion !== 6) throw new Error('only schema 6 supports executable migration');
       }
-      const snapshot = await readReplaySnapshot({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: 0, forceFullRead: true });
+      const sourceSnapshot = await readReplaySnapshot({ sessionsDir: sourceDir, path: sourceReplayPath, fs, afterSeq: 0, forceFullRead: true });
+      const snapshot = external ? await readReplaySnapshot({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: 0, forceFullRead: true }) : sourceSnapshot;
       const currentReplay = snapshot.absent ? undefined : snapshot.bytes;
-      let originalReplay = currentReplay;
+      let originalReplay = sourceSnapshot.absent ? undefined : sourceSnapshot.bytes;
       let priorReceipt;
       try { priorReceipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt')); }
       catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
@@ -1518,10 +1542,11 @@ export function createCaptainSessionStore(options = {}) {
         if (retainedSource !== sourceBytes) throw new Error('migration retained source differs');
         if (priorReceipt.inputs.length === 2) {
           originalReplay = await readPrivateRegularFile(join(inputsDir, '1'), 0o600, fs, 'retained migration replay', true);
-          if (priorReceipt.inputs[1].path !== recordsPathFor(sessionId) || sha256(originalReplay) !== priorReceipt.inputs[1].sha256) throw new Error('retained migration replay differs');
+          if (priorReceipt.inputs[1].path !== sourceReplayPath || sha256(originalReplay) !== priorReceipt.inputs[1].sha256) throw new Error('retained migration replay differs');
         } else if (priorReceipt.inputs.length === 1) originalReplay = undefined;
         else throw new Error('invalid migration inputs');
       }
+      if (external && priorReceipt && !sourceSnapshot.absent && !sourceSnapshot.bytes.equals(originalReplay ?? Buffer.alloc(0))) throw new Error('migration source replay differs from retained input');
       let replayBytes = originalReplay ?? Buffer.alloc(0);
       if (originalReplay === undefined) {
         const journal = metadata?.journal ?? recovery?.snapshot?.journal ?? [];
@@ -1544,14 +1569,15 @@ export function createCaptainSessionStore(options = {}) {
         manifest = validateSessionManifest({ schemaVersion: 7, kind: 'captain-session', sessionId, state: 'history-only', cwd: metadata.cwd, createdAt: metadata.createdAt, updatedAt: metadata.updatedAt, reason: metadata.reason, replay: { seq: history.lastReadableSeq, sha256: sha256(replayBytes), incomplete: history.incomplete || history.pendingTail }, contextSeq: null });
       }
       if (priorReceipt && currentReplay !== undefined && !currentReplay.equals(originalReplay ?? Buffer.alloc(0)) && !currentReplay.equals(replayBytes)) throw new Error('migration destination replay diverged');
-      if (sidecar) {
+      if (external && currentReplay !== undefined && !currentReplay.equals(replayBytes)) throw new Error('migration destination replay diverged');
+      if (sidecar || external) {
         try {
           const existing = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'migration destination');
           if (existing !== `${JSON.stringify(manifest)}\n`) throw new Error('migration destination manifest diverged');
         } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
       }
       await ensurePrivateDirectory(inputsDir, fs);
-      const inputs = [{ path: sourcePath, bytes: Buffer.from(sourceBytes, 'utf8') }, ...(originalReplay === undefined ? [] : [{ path: recordsPathFor(sessionId), bytes: originalReplay }])];
+      const inputs = [{ path: sourcePath, bytes: Buffer.from(sourceBytes, 'utf8') }, ...(originalReplay === undefined ? [] : [{ path: sourceReplayPath, bytes: originalReplay }])];
       for (const [index, input] of inputs.entries()) {
         const path = join(inputsDir, String(index));
         try {
@@ -1564,10 +1590,47 @@ export function createCaptainSessionStore(options = {}) {
       await lease.assertOwner();
       await writePrivateBytes(recordsPathFor(sessionId), replayBytes, fs);
       await writePrivateBytes(recordPathFor(sessionId), Buffer.from(`${JSON.stringify(manifest)}\n`), fs);
-      if (sidecar) { await fs.unlink(sourcePath); await syncDirectory(sessionsDir, fs); }
+      const published = await validate(sessionId);
+      if (!published.integrityValid) throw new Error('published migration bundle failed validation');
+      if (external) {
+        await sourceLease.assertOwner();
+        try { await assertPrivateRegularPath(sourceReplayPath, 0o600, fs, 'migration source replay'); await fs.unlink(sourceReplayPath); await syncDirectory(sourceDir, fs); }
+        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+      }
+      if (sidecar || external) { await fs.unlink(sourcePath); await syncDirectory(sourceDir, fs); }
       await writePrivateJson(receiptPath, { ...receipt, complete: true }, fs);
       return { manifest, migrated: true, reasons: [] };
-    } finally { await lease.release(); }
+    } finally {
+      try { await lease?.release(); } finally { await sourceLease?.release(); }
+    }
+  };
+
+  const migrateLegacyDefault = async (migration = {}) => {
+    const sourceEnv = migration.env ?? env;
+    const sourceHome = migration.homeDir ?? home;
+    const sourceDir = join(sourceEnv.XDG_STATE_HOME || join(sourceHome, '.local', 'state'), 'playbook', 'sessions');
+    const result = { sourceDir, migrated: [], skipped: [] };
+    if (sourceDir === sessionsDir) return result;
+    const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env: sourceEnv, homeDir: sourceHome, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
+    await sourceStore.prepare();
+    try { await assertPrivateDirectory(sourceDir, fs); }
+    catch (cause) { if (cause?.code === 'ENOENT') return result; throw cause; }
+    const names = await fs.readdir(sourceDir);
+    const ids = [...new Set(names.map((name) => name.endsWith('.records.jsonl') ? name.slice(0, -14) : name.endsWith('.json') ? name.slice(0, -5) : '').filter((id) => SESSION_ID_PATTERN.test(id)))].sort();
+    for (const sessionId of ids) {
+      const state = await sourceStore.readLeaseState(sessionId);
+      if (state !== 'idle') throw new Error(`legacy session ${sessionId} ownership is ${state}; stop all old writers before migration`);
+      const sourcePath = join(sourceDir, `${sessionId}.json`);
+      try {
+        const source = JSON.parse(await readPrivateRegularFile(sourcePath, 0o600, fs, 'legacy default manifest'));
+        if (![2, 3, 4, 5, 6].includes(source.schemaVersion)) throw new Error(`unsupported legacy schema ${source.schemaVersion}`);
+        try { validateCaptainSessionRecord(source); }
+        catch (cause) { if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause; }
+      } catch (cause) { result.skipped.push({ sessionId, reason: errorMessage(cause) }); continue; }
+      await migrate(sessionId, { sourcePath });
+      result.migrated.push(sessionId);
+    }
+    return result;
   };
 
   const remove = async (sessionId) => {
@@ -1580,6 +1643,7 @@ export function createCaptainSessionStore(options = {}) {
     sessionsDir,
     prepare,
     migrate,
+    migrateLegacyDefault,
     readManifest,
     readHistory,
     readLeaseState,
@@ -3846,12 +3910,7 @@ function validateCanonicalCaptainSessionRecord(
       'settled Captain session updatedAt must follow its creation marker',
     );
   }
-  if (typeof record.cwd !== 'string' || !isAbsolute(record.cwd)) {
-    throw new Error('Captain session record cwd must be an absolute path');
-  }
-  if (resolve(record.cwd) !== record.cwd) {
-    throw new Error('Captain session record cwd must be normalized');
-  }
+  if (!isRecordedAbsolutePath(record.cwd)) throw new Error('Captain session record cwd must be a normalized absolute path');
   const structural = validateCaptainSessionStructuralProjectionWithSchemas(
     record.structuralProjection,
     'Captain session record structuralProjection',
@@ -5045,12 +5104,7 @@ function assertReleasedSchema2CaptainSessionRecord(record) {
       'settled Captain session updatedAt must follow its creation marker',
     );
   }
-  if (typeof record.cwd !== 'string' || !isAbsolute(record.cwd)) {
-    throw new Error('Captain session record cwd must be an absolute path');
-  }
-  if (resolve(record.cwd) !== record.cwd) {
-    throw new Error('Captain session record cwd must be normalized');
-  }
+  if (!isRecordedAbsolutePath(record.cwd)) throw new Error('Captain session record cwd must be a normalized absolute path');
   requireRecord(record.config, 'Captain session record config');
   requireRecord(record.snapshot, 'Captain session record snapshot');
 

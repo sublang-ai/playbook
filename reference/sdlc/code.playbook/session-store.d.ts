@@ -244,6 +244,7 @@ export interface SharedSessionStore {
   acquireManagement(sessionId: string): Promise<{ readonly sessionId: string; readonly ownerToken: string; assertOwner(): Promise<unknown>; release(): Promise<void> }>;
   validate(sessionId: string, context?: { cwd?: string; executionProjection?: SessionExecutionProjection }): Promise<SessionValidation>;
   delete(sessionId: string): Promise<void>;
+  migrateLegacyDefault(options?: { env?: Readonly<Record<string, string | undefined>>; homeDir?: string }): Promise<{ sourceDir: string; migrated: readonly string[]; skipped: readonly { sessionId: string; reason: string }[] }>;
   migrate(sessionId: string, options?: { sourcePath?: string; cwd?: string; backupDir?: string }): Promise<{ manifest: SessionManifest; migrated: boolean; reasons: readonly string[] }>;
 }
 export declare function createSessionStore(options?: { sessionsDir?: string; env?: Readonly<Record<string, string | undefined>>; homeDir?: string; [key: string]: any }): SharedSessionStore;
