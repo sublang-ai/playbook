@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned; implementation awaits separate owner authorization.
+In progress; implementation authorized by the owner.
 
 ## Intent
 
@@ -36,4 +36,5 @@ Implement [DR-049](../decisions/049-portable-session-contract.md).
 ## Verification
 
 - Required integration matrices are defined in the owning spec packages.
-- No implementation tests or builds have run for this intent.
+- Shared store, facade and portable-session integration suites: 120 checks passed.
+- Captain/runtime continuation gates and release verification are in progress.

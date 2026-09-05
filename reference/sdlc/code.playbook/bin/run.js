@@ -7,6 +7,7 @@
 // presenter; it does not construct a registry runtime or PlaybookPorts itself.
 
 import { randomUUID } from "node:crypto";
+import { attachSessionHints, validateSessionContext } from "./portable-codec.js";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -1007,6 +1008,8 @@ export async function createCaptainSessionHost({
   restoreSnapshot,
   reconcileUncertainTurnReplay = false,
   signal,
+  graphs = [],
+  initialVisible = [],
 }) {
   const hostCapabilities = await createRepositoryEffectCapabilities({
     cwd,
@@ -1065,9 +1068,30 @@ export async function createCaptainSessionHost({
       "Captain session effect ledger requires reconciliation before source-state restoration",
     );
   }
+  if (sourceSnapshot !== undefined && typeof sessionLease.consumeHints === "function") {
+    sourceSnapshot = attachSessionHints(sourceSnapshot, await sessionLease.consumeHints());
+  }
+  const bufferedRecords = [];
+  let presentationReady = false;
+  const presentationTurnOffset = restoreSnapshot?.sequences.turn ?? 0;
+  const forwardRecord = async (record) => {
+    const projected = presentationTurnOffset > 0 && typeof record.turnId === "number"
+      ? { ...record, turnId: record.turnId + presentationTurnOffset, ...(record.type === "turn_started" ? { turn: { ...record.turn, id: record.turn.id + presentationTurnOffset } } : {}) }
+      : record;
+    for (const observer of observers ?? []) await observer.onRecord?.(projected);
+  };
+  const bufferedObservers = [{ async onRecord(record) {
+    if (!presentationReady) bufferedRecords.push(record);
+    else await forwardRecord(record);
+  } }];
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
     loadModule,
     hostCapabilities,
+    continuity: {
+      async beforeCall(participantId) { sessionLease.clearHint?.(participantId); await sessionLease.assertOwner(); },
+      acknowledged(participantId, token) { sessionLease.acknowledgeHint?.(participantId, token); },
+      async reset(participantId, reason) { await sessionLease.append({ type: "continuity_reset", timestamp: Date.now(), participantId, reason }); },
+    },
     unresolvedEffectSettlement: {
       begin: (input) => sessionLease.beginUnresolvedEffectAbandonment(input),
       complete: (input) =>
@@ -1092,7 +1116,7 @@ export async function createCaptainSessionHost({
         ...projectHostAgent(agent, `Captain execution config.players.${id}`),
       })),
       cwd,
-      observers,
+      observers: bufferedObservers,
       ...(signal ? { signal } : {}),
       ...(adapterImports ? { adapterImports } : {}),
     });
@@ -1111,6 +1135,15 @@ export async function createCaptainSessionHost({
     if (sessionId !== undefined) {
       assertLogicalSessionIdDistinct({ sessionId, snapshot });
     }
+    if (typeof sessionLease.recordContext === "function") {
+      await sessionLease.recordContext(validateSessionContext({
+        type: "session_context", timestamp: Date.now(), contextVersion: 1,
+        captainId: snapshot.captain.sessionId, configuration: config,
+        graphs: Object.keys(config.catalog).map((playbookId) => ({ playbookId, graph: graphs.find((item) => item.playbookId === playbookId)?.graph ?? null })), initialVisible,
+      }));
+    }
+    presentationReady = true;
+    for (const record of bufferedRecords) await forwardRecord(record);
     return { shell, host, snapshot, reconcileRepositoryEffects };
   } catch (error) {
     let cleanupError;

@@ -7,6 +7,12 @@
 // complete retained-generation map under guarded source-first publication.
 
 import { createHash, randomUUID } from 'node:crypto';
+import {
+  SESSION_MANIFEST_VERSION, EMPTY_REPLAY_SHA256, sha256,
+  validateSessionManifest, recoveryFromManifest, manifestFromRecovery,
+  contextFromRecovery, validateSessionContext, validateSessionHints,
+  projectRecovery,
+} from './portable-codec.js';
 import { constants } from 'node:fs';
 import {
   access,
@@ -219,8 +225,7 @@ export function defaultCaptainSessionsDir(
   env = process.env,
   home = env.HOME ?? homedir(),
 ) {
-  const stateHome = env.XDG_STATE_HOME || join(home, '.local', 'state');
-  return join(stateHome, 'playbook', 'sessions');
+  return join(env.SPEX_HOME || join(home, '.spex'), 'sessions');
 }
 
 // PBCLI-78: front-end bootstrap checks the same private filesystem boundary
@@ -235,6 +240,7 @@ export async function assertCaptainSessionsDirectoryUsable(
   }
   const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
   try {
+    await prepareSessionPermissions(sessionsDir, fs);
     await assertPrivateDirectory(sessionsDir, fs);
     await fs.access(
       sessionsDir,
@@ -630,6 +636,7 @@ export function createCaptainSessionStore(options = {}) {
   const fs = { ...DEFAULT_FS_OPERATIONS, ...(options.fsOps ?? {}) };
   const replayReadCursors = new Map();
   const replayReadQueues = new Map();
+  const portableWriters = new Map();
 
   if (!isAbsolute(sessionsDir)) {
     throw new Error('Captain session store path must be absolute');
@@ -690,7 +697,9 @@ export function createCaptainSessionStore(options = {}) {
     }
     let record;
     try {
-      record = validateCaptainSessionRecord(value);
+      record = value.schemaVersion === SESSION_MANIFEST_VERSION
+        ? recoveryFromManifest(value)
+        : validateCaptainSessionRecord(value);
     } catch (cause) {
       const context =
         `Captain session ${JSON.stringify(sessionId)} at ` +
@@ -732,6 +741,50 @@ export function createCaptainSessionStore(options = {}) {
       );
     }
     return record;
+  };
+
+  const readManifest = async (sessionId) => {
+    let bytes;
+    try { await assertPrivateDirectory(sessionsDir, fs); bytes = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record'); }
+    catch (cause) { if (cause?.code === 'ENOENT') throw new CaptainSessionNotFoundError(sessionId, recordPathFor(sessionId)); throw cause; }
+    const value = JSON.parse(bytes);
+    if (value.sessionId !== sessionId) throw new Error('session manifest identity does not match its filename');
+    return value.schemaVersion === 7 ? validateSessionManifest(value) : value;
+  };
+  const prepare = () => prepareSessionPermissions(sessionsDir, fs);
+  const readHistory = async (sessionId, options = {}) => {
+    assertSessionId(sessionId);
+    return readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: options.afterSeq ?? 0 });
+  };
+  const validate = async (sessionId, context = {}) => {
+    const manifest = await readManifest(sessionId);
+    const history = await readHistory(sessionId);
+    const reasons = [];
+    let integrityValid = !history.missing && !history.incomplete;
+    if (history.missing) reasons.push('session replay file is missing');
+    if (manifest.schemaVersion !== 7) reasons.push(`schema ${manifest.schemaVersion} requires explicit migration`);
+    else {
+      if (manifest.state === 'history-only') reasons.push(manifest.reason);
+      if (manifest.replay.incomplete || history.incomplete) reasons.push('session replay is incomplete');
+      if (history.digests[manifest.replay.seq] !== manifest.replay.sha256) { integrityValid = false; reasons.push('session replay checkpoint digest does not match'); }
+      if (manifest.contextSeq !== null) {
+        const contextRecord = history.entries.find((entry) => entry.seq === manifest.contextSeq)?.record;
+        try {
+          const supported = validateSessionContext(contextRecord);
+          if (manifest.state !== 'history-only') {
+            const execution = manifest.state === 'uncertain'
+              ? manifest.uncertain.attemptedExecutionProjection : manifest.lastAppliedExecutionProjection;
+            if (!isDeepStrictEqual(supported.configuration, execution) || supported.captainId !== manifest.snapshot.captain.sessionId) { integrityValid = false; reasons.push('required session context differs from checkpoint recovery'); }
+          }
+        } catch { reasons.push('required session context is absent or unsupported'); }
+      }
+      if (context.cwd !== undefined && context.cwd !== manifest.cwd) reasons.push('recorded working directory differs; checkpoint relocation is unsupported');
+      if (context.executionProjection !== undefined && manifest.state !== 'history-only') {
+        try { assertCaptainSessionExecutionCompatible(manifest.structuralProjection, context.executionProjection); }
+        catch (cause) { reasons.push(errorMessage(cause)); }
+      }
+    }
+    return Object.freeze({ sessionId, integrityValid, resumable: integrityValid && reasons.length === 0, reasons: Object.freeze(reasons), manifest, history });
   };
 
   const read = (sessionId) => readRecord(sessionId);
@@ -865,37 +918,24 @@ export function createCaptainSessionStore(options = {}) {
     );
   };
 
-  const readSummary = async (sessionId) =>
-    projectPlaybookSessionSummary(await readRecord(sessionId));
+  const readSummary = async (sessionId) => {
+    const manifest = await readManifest(sessionId);
+    if (manifest.schemaVersion !== 7) validateCaptainSessionRecord(manifest);
+    return projectPlaybookSessionSummary(manifest);
+  };
 
   const listSummaries = async () => {
-    const skipped = [];
-    const records = await listRecords({
-      onLegacyRecord: ({ sessionId, schemaVersion }) => {
-        skipped.push(
-          Object.freeze({
-            sessionId,
-            reason:
-              `Captain session schema ${schemaVersion} is below current ` +
-              `schema ${CAPTAIN_SESSION_RECORD_SCHEMA_VERSION}`,
-          }),
-        );
-      },
-      onInvalidRecord: ({ sessionId, reason }) => {
-        skipped.push(Object.freeze({ sessionId, reason }));
-      },
-      skipInvalidRecords: true,
-    });
-    return Object.freeze({
-      sessions: Object.freeze(
-        sortCaptainSessionRecords(records).map(projectPlaybookSessionSummary),
-      ),
-      skipped: Object.freeze(
-        skipped.sort((left, right) =>
-          left.sessionId.localeCompare(right.sessionId),
-        ),
-      ),
-    });
+    const sessions = [], skipped = [];
+    let names;
+    try { await assertPrivateDirectory(sessionsDir, fs); names = await fs.readdir(sessionsDir); }
+    catch (cause) { if (cause?.code === 'ENOENT') return { sessions, skipped }; throw cause; }
+    for (const name of names.sort()) {
+      const sessionId = name.slice(0, -5);
+      if (!name.endsWith('.json') || !SESSION_ID_PATTERN.test(sessionId)) continue;
+      try { sessions.push(await readSummary(sessionId)); }
+      catch (cause) { skipped.push({ sessionId, reason: errorMessage(cause) }); }
+    }
+    return Object.freeze({ sessions: Object.freeze(sortCaptainSessionRecords(sessions)), skipped: Object.freeze(skipped) });
   };
 
   const scanAdoptionPredecessor = async (
@@ -954,9 +994,12 @@ export function createCaptainSessionStore(options = {}) {
 
   const writeRecord = async (
     recordValue,
-    { noReplace, onPublished },
+    { noReplace, onPublished, portable = false },
   ) => {
-    const record = validateCaptainSessionRecord(recordValue);
+    const record = portable
+      ? validateSessionManifest(recordValue)
+      : await portableWriters.get(recordValue.sessionId)?.checkpoint(recordValue);
+    if (record === undefined) throw new Error('session persistence requires its owning lifecycle');
     const destination = recordPathFor(record.sessionId);
     await ensurePrivateDirectory(sessionsDir, fs);
 
@@ -1020,6 +1063,7 @@ export function createCaptainSessionStore(options = {}) {
         onPublished?.();
       }
       await syncDirectory(sessionsDir, fs);
+      portableWriters.get(record.sessionId)?.published(record);
       return record;
     } catch (cause) {
       try {
@@ -1039,10 +1083,11 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const deleteRecord = async (sessionId) => {
-    const path = recordPathFor(sessionId);
-    await assertPrivateRegularPath(path, 0o600, fs, 'record');
-    await fs.unlink(path);
-    await syncDirectory(sessionsDir, fs);
+    for (const suffix of ['.records.jsonl', '.hints.json', '.spex.json', '.json']) {
+      const path = join(sessionsDir, `${sessionId}${suffix}`);
+      try { await assertPrivateRegularPath(path, 0o600, fs, 'session file'); await fs.unlink(path); await syncDirectory(sessionsDir, fs); }
+      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+    }
   };
 
   const readLeaseDirectory = async (
@@ -1300,8 +1345,9 @@ export function createCaptainSessionStore(options = {}) {
     return publishedOwner;
   };
 
-  const acquire = async (sessionId) => {
+  const acquire = async (sessionId, management = false) => {
     assertSessionId(sessionId);
+    await prepareSessionPermissions(sessionsDir, fs, sessionId);
     let stage;
     let stagePublished = false;
     try {
@@ -1330,6 +1376,21 @@ export function createCaptainSessionStore(options = {}) {
       await publishLeaseStage(sessionId, stage, () => {
         stagePublished = true;
       });
+      if (management) {
+        let released = false;
+        const assertOwner = async () => {
+          if (released) throw new Error('session management lease was released');
+          const current = await readLeaseOwner(sessionId);
+          if (current.ownerToken !== stage.owner.ownerToken) throw new Error('session management ownership changed');
+          return current;
+        };
+        return Object.freeze({ sessionId, ownerToken: stage.owner.ownerToken, assertOwner, async release() {
+          if (released) return;
+          const current = await assertOwner();
+          await retireObservedLease(sessionId, current);
+          released = true;
+        } });
+      }
       return await createLease({
         sessionId,
         owner: stage.owner,
@@ -1338,6 +1399,10 @@ export function createCaptainSessionStore(options = {}) {
         replayFs: fs,
         readReplayStream: (options) => readStream(sessionId, options),
         readRecord,
+        readManifest,
+        readHistory,
+        validateSession: validate,
+        portableWriters,
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
@@ -1375,14 +1440,125 @@ export function createCaptainSessionStore(options = {}) {
     }
   };
 
+  const migrate = async (sessionId, migration = {}) => {
+    assertSessionId(sessionId);
+    await prepare();
+    const sourcePath = migration.sourcePath ?? recordPathFor(sessionId);
+    const sidecar = sourcePath.endsWith('.spex.json');
+    const backupDir = migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId);
+    const inputsDir = join(backupDir, 'inputs');
+    const receiptPath = join(backupDir, 'receipt.json');
+    const lease = await acquire(sessionId, true);
+    try {
+      await lease.assertOwner();
+      let sourceBytes;
+      try { sourceBytes = await readPrivateRegularFile(sourcePath, 0o600, fs, 'migration source'); }
+      catch (cause) {
+        if (!sidecar || cause?.code !== 'ENOENT') throw cause;
+        const current = await validate(sessionId);
+        return { manifest: current.manifest, migrated: false, reasons: current.reasons };
+      }
+      const source = JSON.parse(sourceBytes);
+      if (!sidecar && source.schemaVersion === 7) {
+        const current = await validate(sessionId);
+        return { manifest: current.manifest, migrated: false, reasons: current.reasons };
+      }
+      let recovery, metadata;
+      if (sidecar) {
+        const value = source.session ?? source;
+        if (source.v !== 1 || value.id !== sessionId || !Number.isFinite(value.createdAt) || typeof migration.cwd !== 'string' || !isAbsolute(migration.cwd) || resolve(migration.cwd) !== migration.cwd) throw new Error('invalid legacy desktop sidecar or missing normalized cwd');
+        metadata = { cwd: migration.cwd, createdAt: new Date(value.createdAt).toISOString(), updatedAt: new Date(value.endedAt ?? value.createdAt).toISOString(), reason: 'legacy desktop history lacks complete durable recovery', journal: value.snapshot?.shell?.journal ?? [] };
+      } else {
+        if (source.sessionId !== sessionId) throw new Error('migration session identity mismatch');
+        try { recovery = validateCaptainSessionRecord(source); }
+        catch (cause) {
+          if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause;
+          metadata = { cwd: source.cwd, createdAt: source.createdAt, updatedAt: source.updatedAt, reason: `legacy schema ${source.schemaVersion} has no supported recovery`, journal: source.snapshot?.journal ?? [] };
+        }
+        if (recovery && source.schemaVersion !== 6) throw new Error('only schema 6 supports executable migration');
+      }
+      const snapshot = await readReplaySnapshot({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: 0, forceFullRead: true });
+      const currentReplay = snapshot.absent ? undefined : snapshot.bytes;
+      let originalReplay = currentReplay;
+      let priorReceipt;
+      try { priorReceipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt')); }
+      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+      if (priorReceipt !== undefined) {
+        if (priorReceipt.v !== 1 || priorReceipt.id !== sessionId || !Array.isArray(priorReceipt.inputs) || priorReceipt.inputs[0]?.path !== sourcePath || priorReceipt.inputs[0]?.sha256 !== sha256(Buffer.from(sourceBytes))) throw new Error('migration source differs from retained input');
+        const retainedSource = await readPrivateRegularFile(join(inputsDir, '0'), 0o600, fs, 'retained migration source');
+        if (retainedSource !== sourceBytes) throw new Error('migration retained source differs');
+        if (priorReceipt.inputs.length === 2) {
+          originalReplay = await readPrivateRegularFile(join(inputsDir, '1'), 0o600, fs, 'retained migration replay', true);
+          if (priorReceipt.inputs[1].path !== recordsPathFor(sessionId) || sha256(originalReplay) !== priorReceipt.inputs[1].sha256) throw new Error('retained migration replay differs');
+        } else if (priorReceipt.inputs.length === 1) originalReplay = undefined;
+        else throw new Error('invalid migration inputs');
+      }
+      let replayBytes = originalReplay ?? Buffer.alloc(0);
+      if (originalReplay === undefined) {
+        const journal = metadata?.journal ?? recovery?.snapshot?.journal ?? [];
+        replayBytes = Buffer.from(journal.map((entry, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord({ type: 'legacy_journal', timestamp: Date.parse(source.updatedAt ?? metadata.updatedAt), entry }) })}\n`).join(''));
+      }
+      const history = parseSessionHistory(replayBytes);
+      replayBytes = replayBytes.subarray(0, history.completeBytes);
+      let manifest;
+      if (recovery && !history.incomplete && !history.pendingTail) {
+        const context = contextFromRecovery(recovery);
+        context.timestamp = Date.parse(recovery.updatedAt);
+        const contextSeq = history.lastReadableSeq + 1;
+        replayBytes = Buffer.concat([replayBytes, Buffer.from(`${JSON.stringify({v:1,seq:contextSeq,record:context})}\n`)]);
+        manifest = manifestFromRecovery(recovery, { seq: contextSeq, sha256: sha256(replayBytes), incomplete: false }, contextSeq);
+      } else {
+        if (recovery) metadata = { cwd: recovery.cwd, createdAt: recovery.createdAt, updatedAt: recovery.updatedAt, reason: 'legacy replay is incomplete' };
+        manifest = validateSessionManifest({ schemaVersion: 7, kind: 'captain-session', sessionId, state: 'history-only', cwd: metadata.cwd, createdAt: metadata.createdAt, updatedAt: metadata.updatedAt, reason: metadata.reason, replay: { seq: history.lastReadableSeq, sha256: sha256(replayBytes), incomplete: history.incomplete || history.pendingTail }, contextSeq: null });
+      }
+      if (priorReceipt && currentReplay !== undefined && !currentReplay.equals(originalReplay ?? Buffer.alloc(0)) && !currentReplay.equals(replayBytes)) throw new Error('migration destination replay diverged');
+      if (sidecar) {
+        try {
+          const existing = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'migration destination');
+          if (existing !== `${JSON.stringify(manifest)}\n`) throw new Error('migration destination manifest diverged');
+        } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+      }
+      await ensurePrivateDirectory(inputsDir, fs);
+      const inputs = [{ path: sourcePath, bytes: Buffer.from(sourceBytes, 'utf8') }, ...(originalReplay === undefined ? [] : [{ path: recordsPathFor(sessionId), bytes: originalReplay }])];
+      for (const [index, input] of inputs.entries()) {
+        const path = join(inputsDir, String(index));
+        try {
+          const retained = await readPrivateRegularFile(path, 0o600, fs, 'retained migration source', true);
+          if (!retained.equals(input.bytes)) throw new Error('migration retained source differs');
+        } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; await writePrivateBytes(path, input.bytes, fs); }
+      }
+      const receipt = { v: 1, id: sessionId, inputs: inputs.map(({ path, bytes }) => ({ path, sha256: sha256(bytes) })), complete: false };
+      await writePrivateJson(receiptPath, receipt, fs);
+      await lease.assertOwner();
+      await writePrivateBytes(recordsPathFor(sessionId), replayBytes, fs);
+      await writePrivateBytes(recordPathFor(sessionId), Buffer.from(`${JSON.stringify(manifest)}\n`), fs);
+      if (sidecar) { await fs.unlink(sourcePath); await syncDirectory(sessionsDir, fs); }
+      await writePrivateJson(receiptPath, { ...receipt, complete: true }, fs);
+      return { manifest, migrated: true, reasons: [] };
+    } finally { await lease.release(); }
+  };
+
+  const remove = async (sessionId) => {
+    const lease = await acquire(sessionId, true);
+    try { await lease.assertOwner(); await deleteRecord(sessionId); }
+    finally { await lease.release(); }
+  };
+
   return Object.freeze({
     sessionsDir,
+    prepare,
+    migrate,
+    readManifest,
+    readHistory,
+    validate,
+    delete: remove,
     listSummaries,
     readSummary,
     read,
     readStream,
     latest,
     acquire,
+    acquireManagement: (sessionId) => acquire(sessionId, true),
   });
 }
 
@@ -2203,6 +2379,10 @@ async function createLease({
   replayFs,
   readReplayStream,
   readRecord,
+  readManifest,
+  readHistory,
+  validateSession,
+  portableWriters,
   writeRecord,
   syncRecordDirectory,
   deleteRecord,
@@ -2253,9 +2433,99 @@ async function createLease({
     readStream: readReplayStream,
   });
 
+  let contextSeq;
+  let previousManifest;
+  let acknowledgedHints = { players: {} };
+  try { previousManifest = await readManifest(sessionId); contextSeq = previousManifest.contextSeq; }
+  catch { /* Unsupported recovery still permits leased migration/deletion. */ }
+
+  const recordContext = async (value) => {
+    const context = validateSessionContext(value);
+    if (contextSeq !== undefined && contextSeq !== null) {
+      const previous = (await readHistory(sessionId)).entries.find((entry) => entry.seq === contextSeq)?.record;
+      if (previous) {
+        const { timestamp: _previousTimestamp, ...oldContext } = previous;
+        const { timestamp: _newTimestamp, ...newContext } = context;
+        if (isDeepStrictEqual(oldContext, newContext)) return contextSeq;
+      }
+    }
+    await replayWriter.append(context);
+    await replayWriter.checkpoint();
+    const status = replayWriter.status();
+    if (status.incomplete || status.lastDurableSeq === null) throw new Error('cannot persist session execution context');
+    contextSeq = status.lastDurableSeq;
+    return contextSeq;
+  };
+  const checkpoint = async (value) => {
+    const recovery = validateCaptainSessionRecord(value);
+    const required = contextFromRecovery(recovery);
+    let contextHistory;
+    try { contextHistory = await readHistory(sessionId); } catch { /* Preserve the last proven context on replay failure. */ }
+    const applicable = contextHistory?.entries.findLast(({ record }) =>
+      record.type === 'session_context' && record.contextVersion === 1 &&
+      record.captainId === required.captainId && isDeepStrictEqual(record.configuration, required.configuration));
+    if (applicable) contextSeq = applicable.seq;
+    else if (contextSeq === undefined || contextSeq === null || !replayWriter.status().incomplete) await recordContext(required);
+    await replayWriter.checkpoint();
+    const status = replayWriter.status();
+    let history;
+    try { history = await readHistory(sessionId); }
+    catch { history = { digests: [], incomplete: true }; }
+    const durableSeq = status.lastDurableSeq ?? previousManifest?.replay?.seq ?? 0;
+    const seq = history.digests[durableSeq] === undefined ? previousManifest?.replay?.seq ?? 0 : durableSeq;
+    const digest = history.digests[seq] ?? previousManifest?.replay?.sha256 ?? EMPTY_REPLAY_SHA256;
+    const replay = { seq, sha256: digest, incomplete: previousManifest?.replay?.incomplete === true || status.incomplete || history.incomplete || history.digests[seq] === undefined };
+    const manifest = manifestFromRecovery(recovery, replay, contextSeq);
+    return manifest;
+  };
+  portableWriters.set(sessionId, { checkpoint, sync: replayWriter.checkpoint, published: (manifest) => { previousManifest = manifest; } });
+
+  const hintsPath = join(sessionsDir, `${sessionId}.hints.json`);
+  const readHints = async () => {
+    try {
+      const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
+      const manifest = validateSessionManifest(JSON.parse(bytes));
+      const hints = JSON.parse(await readPrivateRegularFile(hintsPath, 0o600, replayFs, 'hints'));
+      return validateSessionHints(hints, bytes, manifest);
+    } catch { return { players: {} }; }
+  };
+  const writeHints = async (hints) => {
+    const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
+    const manifest = validateSessionManifest(JSON.parse(bytes));
+    const value = { v: 1, sessionId, checkpointSha256: sha256(bytes), players: hints.players, ...(hints.captain ? { captain: hints.captain } : {}) };
+    validateSessionHints(value, bytes, manifest);
+    await writePrivateJson(hintsPath, value, replayFs);
+  };
+  const consumeHints = () => runExclusive(async () => {
+    await assertOwnerUnchecked();
+    const hints = await readHints();
+    await writeHints({ players: {} });
+    return hints;
+  });
+  const acknowledgeHint = (participantId, token) => {
+    if (typeof token !== 'string' || token.length === 0) return;
+    if (participantId === 'captain') acknowledgedHints.captain = { kind: 'pinned', token };
+    else acknowledgedHints.players[participantId] = token;
+  };
+  const clearHint = (participantId) => {
+    if (participantId === 'captain') delete acknowledgedHints.captain;
+    else delete acknowledgedHints.players[participantId];
+  };
+  const assertContinuable = async (context = {}) => {
+    const result = await validateSession(sessionId, context);
+    if (!result.resumable) throw new Error(result.reasons.join('; '));
+    return result;
+  };
+  const append = (record, role) => replayWriter.append(
+    contextSeq !== undefined && record?.type !== 'session_context' && typeof record?.type === 'string' && Number.isFinite(record?.timestamp)
+      ? { ...record, contextSeq } : record,
+    role,
+  );
+
   const finishSettlement = async (record) => {
     await replayWriter.checkpoint();
-    return record;
+    try { await writeHints(acknowledgedHints); } catch { /* Hints are optional; missing hints start fresh. */ }
+    return validateCaptainSessionRecord(projectRecovery(record));
   };
 
   const read = () =>
@@ -2367,6 +2637,7 @@ async function createLease({
   const initializeSettledWithPredecessor = (options = {}) =>
     runExclusive(async () => {
       const target = freshSettledRecord(options);
+      if (options.context !== undefined) await recordContext(options.context);
       await assertOwnerUnchecked();
       if (
         (await readRecord(sessionId, { missing: 'undefined' })) !== undefined
@@ -2602,6 +2873,7 @@ async function createLease({
         'Captain session attempted execution projection',
       );
       await assertOwnerUnchecked();
+      await assertContinuable();
       const prior = await readRecord(sessionId, { missing: 'undefined' });
       if (prior === undefined) {
         throw new Error('Captain session does not exist for continuation');
@@ -2649,6 +2921,7 @@ async function createLease({
         throw new Error('Captain session retry requires a fresh attempt id');
       }
       await assertOwnerUnchecked();
+      await assertContinuable();
       const prior = await requireUncertainRecord(
         await readRecord(sessionId, { missing: 'undefined' }),
         expectedAttemptId,
@@ -2937,7 +3210,7 @@ async function createLease({
   } = {}) =>
     runExclusive(async () => {
       assertUuid(attemptId, 'Captain session attempt id');
-      const updates = validateRetainedGenerationUpdates(retentionUpdates);
+      const rawUpdates = validateRetainedGenerationUpdates(retentionUpdates);
       const settledUnresolvedEffects = assertPlaybookCaptainUnresolvedEffects(
         unresolvedEffects,
       );
@@ -2960,7 +3233,19 @@ async function createLease({
           'Captain session abandonment settlement attempt differs from its durable marker',
         );
       }
-      const settledSnapshot = assertPlaybookCaptainShellSnapshot(snapshot);
+      // Compare durable recovery forms, not provider-local continuation hints.
+      // Validate before projection so removing a token cannot legalize bad input.
+      const rawSnapshot = assertPlaybookCaptainShellSnapshot(snapshot);
+      const rawRetained = applyRetainedGenerationUpdates(
+        current.retainedGenerations ?? {}, rawUpdates, current.structuralProjection);
+      validateRetainedGenerations(rawRetained, current.structuralProjection, current.effectLedger);
+      const projected = projectRecovery({ ...current, snapshot: rawSnapshot,
+        retainedGenerations: rawRetained,
+      });
+      const settledSnapshot = assertPlaybookCaptainShellSnapshot(projected.snapshot);
+      const updates = rawUpdates.map((update) => update.kind === 'retain'
+        ? { ...update, generation: projected.retainedGenerations[update.rootPlaybookId] }
+        : update);
       if (settledAbandonment !== undefined) {
         requireAbandonmentSettlement(
           settledAbandonment,
@@ -3186,8 +3471,7 @@ async function createLease({
         await assertOwnerUnchecked();
         return undefined;
       }
-      // writeRecord's stable key order reconstructs the exact prior settled
-      // bytes from the baseline carried by the uncertain record.
+      // Restore the prior recovery baseline while retaining attempt history.
       const record = validateCaptainSessionRecord({
         schemaVersion: prior.schemaVersion,
         kind: CAPTAIN_SESSION_RECORD_KIND,
@@ -3214,9 +3498,14 @@ async function createLease({
     replayWriter.closeAppendAdmission();
     return runExclusive(async () => {
       await replayWriter.prepareRelease();
+      if (replayWriter.status().incomplete && previousManifest?.replay?.incomplete !== true) {
+        const record = await readRecord(sessionId, { missing: 'undefined' });
+        if (record !== undefined) await writeRecord(record, { noReplace: false });
+      }
       const current = await assertOwnerUnchecked();
       await retireObservedLease(sessionId, current);
       released = true;
+      portableWriters.delete(sessionId);
       return replayWriter.status();
     });
   };
@@ -3224,7 +3513,13 @@ async function createLease({
   return Object.freeze({
     sessionId,
     ownerToken: owner.ownerToken,
-    append: replayWriter.append,
+    append,
+    recordContext,
+    consumeHints,
+    acknowledgeHint,
+    clearHint,
+    assertContinuable,
+    readManifest: () => readManifest(sessionId),
     readStream: replayWriter.read,
     streamStatus: replayWriter.status,
     read,
@@ -3401,6 +3696,7 @@ export function captainSessionSelectedMembers(value) {
 }
 
 export function validateCaptainSessionRecord(value) {
+  if (value?.schemaVersion === 7) return recoveryFromManifest(value);
   const record = requireRecord(
     snapshotJsonValue(value, 'Captain session record'),
     'Captain session record',
@@ -5900,8 +6196,8 @@ function nextTimestamp(value, previous) {
   return new Date(Date.parse(previous) + 1).toISOString();
 }
 
-async function readPrivateRegularFile(path, mode, fs, label) {
-  await assertPrivateRegularPath(path, mode, fs, label);
+async function readPrivateRegularFile(path, mode, fs, label, raw = false) {
+  const before = await assertPrivateRegularPath(path, mode, fs, label);
   const handle = await fs.open(
     path,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
@@ -5914,7 +6210,12 @@ async function readPrivateRegularFile(path, mode, fs, label) {
     if ((stat.mode & 0o7777) !== mode) {
       throw new Error(`${label} permissions must be ${octal(mode)}`);
     }
-    return await handle.readFile('utf8');
+    if (!sameFileIdentity(before, stat)) throw new Error(`${label} changed during open`);
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    const current = await assertPrivateRegularPath(path, mode, fs, label);
+    if (!sameFileIdentity(after, current) || after.size !== stat.size) throw new Error(`${label} changed during read`);
+    return raw ? bytes : new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } finally {
     await handle.close();
   }
@@ -6016,4 +6317,85 @@ async function assertDirectoryNotLink(path, fs) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Opening is the only permission preparation boundary. Strict readers never
+// change modes, and verified handles ensure tightening cannot follow links.
+async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId) {
+  let initial;
+  try { initial = await fs.lstat(sessionsDir); }
+  catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
+  const uid = process.getuid?.();
+  const verify = (stat, directory) => {
+    const required = directory ? 0o700 : 0o600;
+    if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) || (uid !== undefined && stat.uid !== uid) || (stat.mode & required) !== required) throw new Error('session permission preparation refuses unsafe ownership, links, type, or owner access');
+  };
+  const tighten = async (path, before, directory) => {
+    verify(before, directory);
+    const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (directory ? constants.O_DIRECTORY ?? 0 : 0));
+    try {
+      const opened = await handle.stat(); verify(opened, directory);
+      if (!sameFileIdentity(before, opened)) throw new Error('session entry changed during permission preparation');
+      const mode = directory ? 0o700 : 0o600;
+      if ((opened.mode & 0o7777) !== mode) await handle.chmod(mode);
+      const after = await handle.stat(); verify(after, directory);
+      const current = await fs.lstat(path); verify(current, directory);
+      if (!sameFileIdentity(after, current) || (after.mode & 0o7777) !== mode || (current.mode & 0o7777) !== mode) throw new Error('session permission tightening could not be verified');
+    } finally { await handle.close(); }
+  };
+  await tighten(sessionsDir, initial, true);
+  for (const name of await fs.readdir(sessionsDir)) {
+    if (!/^[0-9a-f-]{36}\.(?:json|records\.jsonl|hints\.json)$/.test(name) || (selectedSessionId !== undefined && !name.startsWith(`${selectedSessionId}.`))) continue;
+    const path = join(sessionsDir, name);
+    await tighten(path, await fs.lstat(path), false);
+  }
+}
+
+async function readSessionHistory({ sessionsDir, path, fs, afterSeq = 0 }) {
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('history afterSeq must be a nonnegative safe integer');
+  const snapshot = await readReplaySnapshot({ sessionsDir, path, fs, afterSeq: 0, forceFullRead: true });
+  const bytes = snapshot.absent ? Buffer.alloc(0) : snapshot.bytes;
+  return Object.freeze({ ...parseSessionHistory(bytes, afterSeq), missing: snapshot.absent === true });
+}
+
+function parseSessionHistory(bytes, afterSeq = 0) {
+  const entries = [], digests = [EMPTY_REPLAY_SHA256];
+  const hash = createHash('sha256');
+  let offset = 0, seq = 0, damage;
+  while (offset < bytes.length) {
+    const newline = bytes.indexOf(10, offset);
+    if (newline < 0) break;
+    let entry;
+    try { entry = parseReplayEnvelope(bytes.subarray(offset, newline), seq + 1); }
+    catch (cause) { damage = { seq: seq + 1, offset, reason: errorMessage(cause) }; break; }
+    hash.update(bytes.subarray(offset, newline + 1));
+    seq += 1; digests.push(hash.copy().digest('hex'));
+    if (seq > afterSeq) entries.push(entry);
+    offset = newline + 1;
+  }
+  return Object.freeze({ entries: Object.freeze(entries), lastReadableSeq: seq, incomplete: damage !== undefined, ...(damage ? { damage } : {}), pendingTail: damage === undefined && offset < bytes.length, digests: Object.freeze(digests), completeBytes: offset });
+}
+
+async function writePrivateJson(path, value, fs) {
+  return writePrivateBytes(path, Buffer.from(`${JSON.stringify(value)}\n`, 'utf8'), fs);
+}
+
+async function writePrivateBytes(path, bytes, fs) {
+  const directory = dirname(path);
+  await assertPrivateDirectory(directory, fs);
+  try { await assertPrivateRegularPath(path, 0o600, fs, 'session data'); }
+  catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+  const temporary = join(directory, `.${randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await fs.open(temporary, 'wx', 0o600);
+    await handle.chmod(0o600);
+    await handle.writeFile(bytes);
+    await handle.sync(); await handle.close(); handle = undefined;
+    await fs.rename(temporary, path);
+    await syncDirectory(directory, fs);
+  } finally {
+    await handle?.close();
+    try { await fs.unlink(temporary); } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+  }
 }

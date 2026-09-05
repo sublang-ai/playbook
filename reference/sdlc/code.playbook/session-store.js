@@ -111,3 +111,16 @@ function projectStatus(status) {
     incomplete: status.incomplete,
   });
 }
+
+export {
+  createCaptainSessionStore as createSessionStore,
+  projectCaptainSessionStructure,
+  validateCaptainSessionExecutionProjection,
+  validateCaptainSessionStructuralProjection,
+  assertCaptainSessionExecutionCompatible,
+} from './bin/session-store.js';
+export {
+  validateSessionManifest,
+  validateSessionContext,
+  attachSessionHints,
+} from './bin/portable-codec.js';

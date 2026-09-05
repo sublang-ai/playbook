@@ -113,7 +113,11 @@
     "reference/sdlc/dev.playbook/dev.registry.ts",
     "reference/sdlc/dev.playbook/dev.registry.js",
     "reference/sdlc/dev.playbook/dev.registry.d.ts",
-    "docs"
+    "docs",
+    "reference/sdlc/code.playbook/session-host.js",
+    "reference/sdlc/code.playbook/session-host.d.ts",
+    "reference/sdlc/code.playbook/bin/portable-codec.js",
+    "reference/sdlc/code.playbook/bin/session-host.js"
   ],
   "bin": {
     "playbook": "reference/sdlc/code.playbook/bin/playbook.js"
@@ -175,6 +179,10 @@
     "./dev/registry": {
       "types": "./reference/sdlc/dev.playbook/dev.registry.d.ts",
       "default": "./reference/sdlc/dev.playbook/dev.registry.js"
+    },
+    "./session-host": {
+      "types": "./reference/sdlc/code.playbook/session-host.d.ts",
+      "default": "./reference/sdlc/code.playbook/session-host.js"
     }
   },
   "scripts": {

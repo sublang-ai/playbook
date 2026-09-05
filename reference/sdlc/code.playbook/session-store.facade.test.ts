@@ -193,18 +193,14 @@ async function publishCredentialManifest(sessionsDir: string) {
     executionProjection: execution,
     snapshot: freshSnapshot(execution),
   });
+  const attemptId = '94000000-0000-4000-8000-000000000010';
+  await privateLease.beginTurn({input:'hello',attemptId,attemptedExecutionProjection:execution});
+  privateLease.acknowledgeHint('captain','captain-resume-secret');
+  privateLease.acknowledgeHint('dev.coder','player-resume-secret');
+  await privateLease.settle({attemptId,snapshot:credentialSnapshot(execution),unresolvedEffects:[]});
   await privateLease.release();
-  const path = join(sessionsDir, `${sessionId}.json`);
-  const initialized = JSON.parse(await readFile(path, 'utf8'));
-  const credentialRecord = validateCaptainSessionRecord({
-    ...initialized,
-    snapshot: credentialSnapshot(execution),
-  });
-  await writePrivateFile(
-    path,
-    `${JSON.stringify(credentialRecord)}\n`,
-  );
-  return credentialRecord;
+  return JSON.parse(await readFile(join(sessionsDir,`${sessionId}.json`),'utf8'));
+
 }
 
 async function writePrivateFile(path: string, text: string) {
@@ -322,30 +318,38 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
     }
   });
 
-  it('publishes only the exact narrow runtime capabilities', async () => {
+  it('publishes lifecycle APIs while keeping the narrow handles exact', async () => {
     expect(Object.keys(facadeModule).sort()).toEqual([
       'RECORDS_STREAM_VERSION',
+      'assertCaptainSessionExecutionCompatible',
+      'attachSessionHints',
+      'createSessionStore',
       'defaultSessionsDir',
       'openSessionStore',
+      'projectCaptainSessionStructure',
+      'validateCaptainSessionExecutionProjection',
+      'validateCaptainSessionStructuralProjection',
+      'validateSessionContext',
+      'validateSessionManifest',
     ]);
     expect(facadeModule).not.toHaveProperty('default');
     expect(facadeModule.RECORDS_STREAM_VERSION).toBe(1);
 
-    const priorStateHome = process.env.XDG_STATE_HOME;
+    const priorStateHome = process.env.SPEX_HOME;
     const priorHome = process.env.HOME;
     try {
-      process.env.XDG_STATE_HOME = '/tmp/playbook-state-one';
+      process.env.SPEX_HOME = '/tmp/playbook-state-one';
       expect(facadeModule.defaultSessionsDir()).toBe(
-        '/tmp/playbook-state-one/playbook/sessions',
+        '/tmp/playbook-state-one/sessions',
       );
-      delete process.env.XDG_STATE_HOME;
+      delete process.env.SPEX_HOME;
       process.env.HOME = '/tmp/playbook-home-two';
       expect(facadeModule.defaultSessionsDir()).toBe(
-        '/tmp/playbook-home-two/.local/state/playbook/sessions',
+        '/tmp/playbook-home-two/.spex/sessions',
       );
     } finally {
-      if (priorStateHome === undefined) delete process.env.XDG_STATE_HOME;
-      else process.env.XDG_STATE_HOME = priorStateHome;
+      if (priorStateHome === undefined) delete process.env.SPEX_HOME;
+      else process.env.SPEX_HOME = priorStateHome;
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;
     }
@@ -394,6 +398,8 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
     const invalidPath = join(sessionsDir, `${skippedSessionId}.json`);
     const {
       unresolvedEffects: _unresolvedEffects,
+      replay: _replay,
+      contextSeq: _contextSeq,
       ...preUnresolvedEffectsRecord
     } = manifest;
     await writePrivateFile(
@@ -433,7 +439,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
       'updatedAt',
     ]);
     expect(summary).toEqual({
-      schemaVersion: 6,
+      schemaVersion: 7,
       sessionId,
       state: 'settled',
       cwd: manifest.cwd,
@@ -481,7 +487,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
       expect(launch).not.toHaveBeenCalled();
       expect(frontEndStderr).toHaveBeenCalledTimes(1);
       expect(frontEndStderr).toHaveBeenCalledWith(
-        `${prefix} ${oldSchemaError.message}\n`,
+        expect.stringMatching(new RegExp(`^${prefix} .*schema 5`)),
       );
     }
     expect(await readFile(sidecarPath, 'utf8')).toBe(sidecarBytes);

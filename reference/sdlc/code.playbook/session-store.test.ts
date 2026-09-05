@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
 import {
   chmod,
   link,
@@ -773,7 +775,12 @@ async function writeRecordFixture(
   await chmod(sessionsDir, 0o700);
   const validated = validateCaptainSessionRecord(record);
   const path = join(sessionsDir, `${validated.sessionId}.json`);
-  await writeFile(path, `${JSON.stringify(validated)}\n`, { mode: 0o600 });
+  const context = contextFromRecovery(validated);
+  context.timestamp = Date.parse(validated.updatedAt);
+  const stream = `${JSON.stringify({v:1,seq:1,record:context})}\n`;
+  await writeFile(replayStreamPath(sessionsDir,validated.sessionId), stream, {mode:0o600});
+  const manifest = manifestFromRecovery(validated, {seq:1,sha256:createHash('sha256').update(stream).digest('hex'),incomplete:false},1);
+  await writeFile(path, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);
   return path;
 }
@@ -987,6 +994,8 @@ function legacyRecord(
   const {
     effectLedger: _effectLedger,
     unresolvedEffects: _unresolvedEffects,
+    replay: _replay,
+    contextSeq: _contextSeq,
     ...record
   } = value;
   return {
@@ -1006,6 +1015,8 @@ function legacyRecord(
 function preUnresolvedEffectsRecord(value: Record<string, any>) {
   const record = structuredClone(value);
   record.schemaVersion = 5;
+  delete record.replay;
+  delete record.contextSeq;
   delete record.unresolvedEffects;
   for (const projection of [
     record.structuralProjection,
@@ -1357,7 +1368,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         asker: { kind: 'role', roleId: 'coder' },
         question: 'May I continue?',
       },
-      playerContinuation: { token: 'player-continuation' },
+      playerContinuation: { v: 1, playerId: 'dev.coder' },
       checkpointRestorationEligible: true,
       logicalReceipt: receipt,
     };
@@ -1480,7 +1491,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(consumed.logicalOperations[0]).toMatchObject({
       checkpoint: after,
       pendingQuestion: { questionId: effectQuestionId },
-      playerContinuation: { token: 'player-continuation' },
+      playerContinuation: { v: 1, playerId: 'dev.coder' },
     });
 
     const rebound = {
@@ -2634,15 +2645,15 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     ).toThrow(/Captain envelope differs/);
   });
 
-  it('uses the XDG location and advances fresh, retry, settle, and exact discard boundaries', async () => {
+  it('uses Spex home and advances fresh, retry, settle, and exact discard boundaries', async () => {
     expect(
       defaultCaptainSessionsDir(
-        { XDG_STATE_HOME: '/state', HOME: '/home' },
+        { SPEX_HOME: '/state', HOME: '/home' },
         '/home',
       ),
-    ).toBe('/state/playbook/sessions');
+    ).toBe('/state/sessions');
     expect(defaultCaptainSessionsDir({ HOME: '/home' }, '/home')).toBe(
-      '/home/.local/state/playbook/sessions',
+      '/home/.spex/sessions',
     );
 
     const { sessionsDir } = await fixtureDir();
@@ -2753,7 +2764,10 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       firstSettled.retainedGenerations,
     );
     await secondLease.discard({ attemptId: attempt3 });
-    expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
+    const restored = JSON.parse(await readFile(recordPath, 'utf8'));
+    const original = JSON.parse(settledBytes);
+    expect({ ...restored, replay: original.replay }).toEqual(original);
+    expect(restored.replay.seq).toBeGreaterThan(original.replay.seq);
     await secondLease.release();
 
     const collisionLease = await fixedStore(
@@ -2765,7 +2779,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         freshBoundary(initialExecution),
       ),
     ).rejects.toThrow(/already exists/);
-    expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
+    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toEqual(restored);
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await collisionLease.release();
@@ -4667,7 +4681,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       state: 'settled',
       snapshot: {
         sequences: { turn: 2 },
-        captain: { conversation: { token: 'replacement settled' } },
+        captain: { conversation: { kind: 'needsSeeding' } },
       },
       retainedGenerations: {
         code: {
@@ -4843,7 +4857,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
 
     await writeFile(
       secondPath,
-      `${JSON.stringify({ ...wrongEmbeddedId, schemaVersion: 5 })}\n`,
+      `${JSON.stringify({ ...validateCaptainSessionRecord(wrongEmbeddedId), schemaVersion: 5 })}\n`,
       'utf8',
     );
     legacyRecords.length = 0;
@@ -4915,7 +4929,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await symlink(target, first.sessionsDir);
     await expect(
       fixedStore(first.sessionsDir, tokenO).acquire(sessionId),
-    ).rejects.toThrow(/not a real directory/);
+    ).rejects.toThrow(/unsafe|not a real directory/);
 
     const second = await fixtureDir();
     const store = fixedStore(second.sessionsDir, tokenO);
@@ -5605,7 +5619,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     const execution = executionProjection();
     await expect(
       lease.initializeSettledWithPredecessor(freshBoundary(execution)),
-    ).resolves.toMatchObject({ state: 'settled' });
+    ).rejects.toThrow(/cannot persist session execution context/);
     await expect(lease.release()).resolves.toEqual({
       lastReadableSeq: null,
       lastDurableSeq: null,
@@ -5651,23 +5665,23 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       ),
     ).resolves.toBeUndefined();
     expect(observed.counts().sessionsSyncs).toBe(
-      directorySyncsBeforePublication + 1,
+      directorySyncsBeforePublication,
     );
     expect(lease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
       incomplete: false,
     });
-    expect(await lease.readStream()).toEqual({
+    expect(await lease.readStream({afterSeq:1})).toEqual({
       entries: [
         replayEnvelope(
-          1,
+          2,
           { type: 'player_event', resume: false },
           'coder',
         ),
       ],
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
       incomplete: false,
     });
 
@@ -5679,8 +5693,8 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       }),
     ).resolves.toMatchObject({ state: 'settled' });
     expect(lease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 1,
+      lastReadableSeq: 2,
+      lastDurableSeq: 2,
       incomplete: false,
     });
     const settlementSyncs = observed.counts().replaySyncs;
@@ -5688,13 +5702,13 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
 
     await lease.append({ type: 'captain_reply', text: 'done' });
     expect(lease.streamStatus()).toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 1,
+      lastReadableSeq: 3,
+      lastDurableSeq: 2,
       incomplete: false,
     });
     await expect(lease.release()).resolves.toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 2,
+      lastReadableSeq: 3,
+      lastDurableSeq: 3,
       incomplete: false,
     });
     expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
@@ -6032,15 +6046,15 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       }),
     ).resolves.toMatchObject({ state: 'settled' });
     expect(checkpointLease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
       incomplete: true,
     });
     const checkpointSyncs = checkpointFs.counts().replaySyncs;
     await checkpointLease.append({ type: 'suppressed' });
     await expect(checkpointLease.release()).resolves.toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 0,
+      lastReadableSeq: 2,
+      lastDurableSeq: 1,
       incomplete: true,
     });
     expect(checkpointFs.counts().replaySyncs).toBe(checkpointSyncs);

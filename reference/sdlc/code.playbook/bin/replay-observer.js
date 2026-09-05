@@ -7,7 +7,7 @@ const PLAYER_RECORD_TYPES = new Set([
   'player_finished',
 ]);
 
-export function createReplayRecordObserver({ lease, onIncomplete }) {
+export function createReplayRecordObserver({ lease, onIncomplete, onStored }) {
   const activeFrames = new Map();
   let incompleteReported = false;
   let lastIncomplete = readIncomplete(lease);
@@ -35,7 +35,12 @@ export function createReplayRecordObserver({ lease, onIncomplete }) {
         // The writer sanitizer remains authoritative for hostile values.
       }
       try {
+        const before = lease.streamStatus().lastReadableSeq;
         await lease.append(record, ...(role === undefined ? [] : [role]));
+        if (onStored && typeof before === 'number' && lease.streamStatus().lastReadableSeq > before) {
+          const result = await lease.readStream({ afterSeq: before });
+          for (const entry of result.entries) await onStored(entry, lease.streamStatus());
+        }
       } catch {
         // The replay writer records failure in its live latch. The observer
         // remains installed so later host records and lifecycle work continue.
