@@ -1410,7 +1410,7 @@ function shellEntry(
 }
 
 type ShellCaptainReply =
-  | { status: string; finalText?: string; resumeToken?: string; error?: string }
+  | { status: string; finalText?: string; resumeToken?: string; error?: string; errorCode?: 'SESSION_RESUME_REJECTED' }
   | ((
       prompt: string,
       options: Record<string, unknown>,
@@ -1419,6 +1419,7 @@ type ShellCaptainReply =
       finalText?: string;
       resumeToken?: string;
       error?: string;
+      errorCode?: 'SESSION_RESUME_REJECTED';
     });
 
 function isShellDecisionPrompt(prompt: string): boolean {
@@ -4235,7 +4236,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
           finalText: 'I did not start docs because CODE is already engaged.',
           resumeToken: 'A3',
         },
-        { status: 'error', error: 'conversation lost before why' },
+        { status: 'error', error: 'conversation lost before why', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt, options) => {
           expect(options.resume).toBe(false);
           expect(prompt).toContain('[Conversation recap]');
@@ -4788,7 +4789,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
             finalText: 'The retry executed, but its returned state was invalid.',
           };
         },
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt, options) => {
           expect(options.resume).toBe(false);
           expect(prompt).toContain('[Conversation recap]');
@@ -4906,9 +4907,8 @@ describe('CAPTAIN-39 durable continuity', () => {
     expect(resumes).toEqual([false, false, 'A1', false, 'A2']);
   });
 
-  // A29-11 / A28-8: each unsynchronized shape re-issues only the failed call,
-  // exactly once, on a fresh journal-seeded conversation; the stack and the
-  // completed work survive.
+  // Ambiguous continuity loss stops this turn. The next Boss turn reseeds
+  // from the journal without repeating work from the failed turn.
   it.each([
     {
       label: 'a throw',
@@ -4928,7 +4928,7 @@ describe('CAPTAIN-39 durable continuity', () => {
         resumeToken: undefined,
       }),
     },
-  ])('re-issues only the failed call on one reseed for $label', async ({ broken }) => {
+  ])('makes no same-call retry after $label and reseeds the next turn', async ({ broken }) => {
     const code = shellEntry('code', 'code');
     const harness = makeShellHarness(
       [code],
@@ -4936,7 +4936,7 @@ describe('CAPTAIN-39 durable continuity', () => {
         { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
         broken as never,
         (prompt, options) => {
-          // The one re-issue: a fresh conversation carrying the reseed digest.
+          // A later Boss turn starts fresh with the complete journal.
           expect(options.resume).toBe(false);
           expect(prompt).toContain('[Conversation recap]');
           expect(prompt).toContain('This conversation was replaced');
@@ -4956,8 +4956,12 @@ describe('CAPTAIN-39 durable continuity', () => {
     await harness.init();
     await harness.turn('/code fix the parser', 1);
     await harness.turn('keep going', 2);
+    expect(harness.captainCalls).toHaveLength(2);
+    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser']);
+    expect(harness.surfaced.at(-1)).toMatch(/could not finish/i);
+    await harness.turn('later continuation', 3);
 
-    // Exactly one corrective — the reseed — and never a reseed plus a retry.
+    // Only the later turn carries the reseed.
     const reseeds = harness.captainCalls.filter((call) =>
       call.prompt.includes('[Conversation recap]'),
     );
@@ -4965,8 +4969,9 @@ describe('CAPTAIN-39 durable continuity', () => {
     // The stack, the engagement, and the completed work all survive.
     expect(code.runtimes).toHaveLength(1);
     expect(code.runtimes[0]?.disposeCount).toBe(0);
-    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser', 'keep going']);
-    expect(harness.surfaced).toEqual(['Started CODE.', 'Delivered.']);
+    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser', 'later continuation']);
+    expect(harness.surfaced).toHaveLength(3);
+    expect(harness.surfaced.at(-1)).toBe('Delivered.');
   });
 
   // A29-12: a fact stated before a forced reseed survives it — the reseed
@@ -4983,7 +4988,7 @@ describe('CAPTAIN-39 durable continuity', () => {
           action: 'respond',
           text: `Noted the tracking id ${nonce}.`,
         }),
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt) => {
           expect(prompt).toContain(nonce);
           expect(prompt).toContain(
@@ -5016,7 +5021,7 @@ describe('CAPTAIN-39 durable continuity', () => {
   });
 
   // A29-18: when `apply()` has executed and the result-phase durable call
-  // throws, the re-issued call's recap proves the action ran, and no second
+  // throws, a later turn's recap proves the action ran, and no second
   // `apply()` occurs — a settled `ok` is final for the turn.
   it('keeps an executed apply out of a second execution across the crash window', async () => {
     const applied: string[] = [];
@@ -5058,7 +5063,7 @@ describe('CAPTAIN-39 durable continuity', () => {
           expect(prompt).toContain('action:');
           return {
             status: 'ok',
-            finalText: 'Retried the failed step.',
+            finalText: JSON.stringify({ action: 'respond', text: 'Retried the failed step.' }),
             resumeToken: 'B1',
           };
         },
@@ -5067,6 +5072,9 @@ describe('CAPTAIN-39 durable continuity', () => {
     await harness.init();
     await harness.turn('/code fix the parser', 1);
     await harness.turn('retry and continue the iteration', 2);
+    expect(harness.captainCalls).toHaveLength(3);
+    expect(applied).toHaveLength(1);
+    await harness.turn('report the completed retry', 3);
 
     expect(applied).toHaveLength(1);
     expect(harness.surfaced.at(-1)).toBe('Retried the failed step.');
@@ -5084,7 +5092,7 @@ describe('CAPTAIN-39 durable continuity', () => {
       [
         decisionReply({ action: 'respond', text: `Noted ${nonce}.` }),
         // Turn 2 loses the conversation, and the one re-issue fails too.
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         { status: 'error', error: 'replacement refused' },
         // Turn 3's very first call: still owed a reseed, so it carries one.
         (prompt, options) => {
@@ -5127,7 +5135,7 @@ describe('CAPTAIN-39 durable continuity', () => {
       [code],
       [
         decisionReply({ action: 'respond', text: 'Understood.' }),
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt) => {
           expect(prompt).toContain('[Conversation recap]');
           return {
@@ -5169,7 +5177,7 @@ describe('CAPTAIN-39 durable continuity', () => {
           input: handoff,
         }),
         { status: 'ok', finalText: 'Started CODE with the agreed request.' },
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt, options) => {
           expect(options.resume).toBe(false);
           expect(prompt).toContain('[Conversation recap]');
@@ -5226,7 +5234,7 @@ describe('CAPTAIN-39 durable continuity', () => {
           resumeToken: 'A2',
         },
         // Turn 3 forces the reseed that renders the digest under inspection.
-        { status: 'error', error: 'conversation lost' },
+        { status: 'error', error: 'conversation lost', errorCode: 'SESSION_RESUME_REJECTED' },
         (prompt) => {
           expect(prompt).toContain('[Conversation recap]');
           return {
@@ -5252,10 +5260,9 @@ describe('CAPTAIN-39 durable continuity', () => {
     expect(recap).toMatch(/turn 2 outcome: .*leaf turn exploded/);
   });
 
-  // A29-25 / A28-8 continued: DR-028 §26 gives one durable call one
-  // corrective. When the reseed is that corrective and comes back empty, the
-  // boundary's empty-`ok` re-ask must not fire on top of it.
-  it('spends one corrective when a result is both empty and unsynchronized', async () => {
+  // Missing continuation is ambiguous even when the content is also empty;
+  // the empty-result correction cannot repeat that call.
+  it('makes no corrective when an empty result has no continuation token', async () => {
     const code = shellEntry('code', 'code');
     const harness = makeShellHarness(
       [code],
@@ -5263,12 +5270,6 @@ describe('CAPTAIN-39 durable continuity', () => {
         { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
         // The decision call: empty and tokenless — both faults at once.
         { status: 'ok', finalText: '', resumeToken: undefined },
-        // Its single corrective, the journal-seeded reseed, is empty too.
-        (prompt, options) => {
-          expect(options.resume).toBe(false);
-          expect(prompt).toContain('[Conversation recap]');
-          return { status: 'ok', finalText: '   ', resumeToken: 'reseed-1' };
-        },
       ],
     );
     await harness.init();
@@ -5276,27 +5277,21 @@ describe('CAPTAIN-39 durable continuity', () => {
     const callsAfterTurn1 = harness.captainCalls.length;
     await harness.turn('keep going', 2);
 
-    // Two calls for turn 2 — the decision call and its one reseed — never a
-    // third from the boundary's own empty-`ok` retry.
-    expect(harness.captainCalls.length - callsAfterTurn1).toBe(2);
+    // The tokenless response permits no immediate correction.
+    expect(harness.captainCalls.length - callsAfterTurn1).toBe(1);
     // Turn 1 opens the conversation and pins A1; turn 2's decision call
     // resumes it, and its one reseed is the only fresh call that follows.
     expect(harness.captainCalls.map((call) => call.options.resume)).toEqual([
       false,
       'A1',
-      false,
     ]);
     // Nothing settled, so the failure reply names that no action ran.
     expect(harness.surfaced.at(-1)).toMatch(/no action was selected or run/i);
     expect(code.runtimes[0]?.disposeCount).toBe(0);
   });
 
-  // The same ceiling from the other side: the *corrective* attempt re-arms the
-  // call-scoped mechanisms, so it too can reseed — and its reseed coming back
-  // empty ends the phase there. This is what makes the third call the last of
-  // any logical attempt, and therefore what makes six a ceiling rather than an
-  // open product (CAPTAIN-35).
-  it('spends no further call when a corrective attempt reseeds into empty', async () => {
+  // A malformed-reply corrective is subject to the same no-ambiguous-retry rule.
+  it('stops when a malformed-reply corrective loses continuity', async () => {
     const code = shellEntry('code', 'code');
     const harness = makeShellHarness(
       [code],
@@ -5307,12 +5302,6 @@ describe('CAPTAIN-39 durable continuity', () => {
         { status: 'ok', finalText: 'not json at all', resumeToken: 'A2' },
         // Attempt 2 (the corrective call): empty and tokenless at once.
         { status: 'ok', finalText: '', resumeToken: undefined },
-        // Its single corrective is the reseed, and the reseed is empty too.
-        (prompt, options) => {
-          expect(options.resume).toBe(false);
-          expect(prompt).toContain('[Conversation recap]');
-          return { status: 'ok', finalText: '', resumeToken: 'reseed-1' };
-        },
       ],
     );
     await harness.init();
@@ -5321,8 +5310,8 @@ describe('CAPTAIN-39 durable continuity', () => {
 
     await harness.turn('keep going', 2);
 
-    // Three calls, not four: the corrective attempt's reseed is its last.
-    expect(harness.captainCalls.length - callsAfterTurn1).toBe(3);
+    // One malformed reply and one tokenless corrective; no fresh reissue.
+    expect(harness.captainCalls.length - callsAfterTurn1).toBe(2);
     expect(harness.surfaced.at(-1)).toMatch(/could not finish/i);
     expect(code.runtimes).toHaveLength(1);
     expect(code.runtimes[0]?.disposeCount).toBe(0);
@@ -5343,9 +5332,9 @@ describe('CAPTAIN-39 durable continuity', () => {
         // (1) the attempt's own call: empty `ok` carrying a token, so the
         // boundary's empty-`ok` re-ask is the fault that fires.
         { status: 'ok', finalText: '', resumeToken: token },
-        // (2) that re-ask fails in transport, which is a different fault
+        // (2) that re-ask rejects the selected session before execution
         // class and spends the call's own corrective: the reseed.
-        { status: 'error', error: `transport down (${token})` },
+        { status: 'error', error: `rejected session (${token})`, errorCode: 'SESSION_RESUME_REJECTED' },
         // (3) the reseed comes back whole and malformed — a content fault the
         // runtime owns, which is what buys the second logical attempt.
         {
@@ -5465,9 +5454,8 @@ describe('CAPTAIN-39 durable continuity', () => {
     const harness = makeShellHarness(
       [code],
       [
-        // Turn 1: the decision call and its one reseeded re-issue both fail.
+        // Turn 1 fails ambiguously without an immediate fresh attempt.
         { status: 'error', error: 'transport down' },
-        { status: 'error', error: 'transport down again' },
         // Turn 2 opens on the owed reseed and carries the journal digest.
         decisionReply({ action: 'respond', text: 'Nothing is running yet.' }),
       ],
@@ -5508,9 +5496,8 @@ describe('CAPTAIN-39 durable continuity', () => {
           action: 'respond',
           text: 'The adjudicator is still deciding.',
         }),
-        // ...and the re-ask, with the reseed it triggers, fails in transport.
+        // ...and its ambiguous transport failure allows no fresh retry.
         { status: 'error', error: 'transport down' },
-        { status: 'error', error: 'transport down again' },
       ],
     );
     await harness.init();
@@ -6867,8 +6854,8 @@ describe('CAPTAIN-9 identifiers the shell supplies are guarded wherever it suppl
         { status: 'ok', finalText: 'Planning resumed.', resumeToken: 'A2' },
         decisionReply({ action: 'dismiss' }),
         { status: 'ok', finalText: 'Cleared.', resumeToken: 'A3' },
-        // Turn 4: the decision call fails, forcing the journal-seeded reseed.
-        { status: 'error', error: 'transport down' },
+        // Turn 4: definite rejection permits one journal-seeded fresh call.
+        { status: 'error', error: 'session rejected', errorCode: 'SESSION_RESUME_REJECTED' },
         decisionReply({
           action: 'respond',
           text: 'Earlier you ran jump:planAndImplement, so planning resumed.',
