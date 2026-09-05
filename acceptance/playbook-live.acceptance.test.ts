@@ -7,7 +7,7 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -470,6 +470,9 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(continuedRecord.snapshot?.playerSessions).toEqual(
           firstRecord.snapshot?.playerSessions,
         );
+        expect(sessionHints.get(continuedRecord)?.players).toEqual(
+          sessionHints.get(firstRecord)?.players,
+        );
         expect(continuedRecord.effectLedger).toEqual(firstRecord.effectLedger);
         expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
         expect(existsSync(tmuxGuard.marker)).toBe(false);
@@ -814,6 +817,9 @@ describe.sequential('installed playbook live acceptance', () => {
         );
         expect(continuedRecord.snapshot?.playerSessions).toEqual(
           interactiveRecord.snapshot?.playerSessions,
+        );
+        expect(sessionHints.get(continuedRecord)?.players).toEqual(
+          sessionHints.get(interactiveRecord)?.players,
         );
         expect(continuedRecord.effectLedger).toEqual(
           interactiveRecord.effectLedger,
@@ -1308,28 +1314,51 @@ interface DurableSessionRecord {
   snapshot?: any;
   effectLedger?: any;
   unresolvedEffects?: unknown;
+  contextSeq?: number;
+  replay?: { seq: number; sha256: string; incomplete: boolean };
 }
+
+const sessionHints = new WeakMap<DurableSessionRecord, any>();
 
 function readDurableSession(
   scenario: Scenario,
   sessionId: string,
 ): DurableSessionRecord {
-  return JSON.parse(
-    readFileSync(
-      join(
-        scenario.stateHome,
-        'playbook',
-        'sessions',
-        `${sessionId}.json`,
-      ),
-      'utf8',
-    ),
-  ) as DurableSessionRecord;
+  const sessionsDir = join(scenario.spexHome, 'sessions');
+  const bytes = readFileSync(join(sessionsDir, `${sessionId}.json`));
+  const record = JSON.parse(bytes.toString('utf8')) as DurableSessionRecord;
+  expect(record.schemaVersion).toBe(7);
+  const hints = JSON.parse(readFileSync(join(sessionsDir, `${sessionId}.hints.json`), 'utf8'));
+  expect(hints).toMatchObject({
+    v: 1, sessionId,
+    checkpointSha256: createHash('sha256').update(bytes).digest('hex'),
+  });
+  sessionHints.set(record, hints);
+  const replay = readFileSync(join(sessionsDir, `${sessionId}.records.jsonl`));
+  const lines = replay.toString('utf8').split('\n');
+  expect(lines.pop()).toBe('');
+  const entries = lines.map((line) => JSON.parse(line));
+  expect(record.replay).toEqual({
+    seq: entries.length,
+    sha256: createHash('sha256').update(replay).digest('hex'),
+    incomplete: false,
+  });
+  const context = entries.find((entry) => entry.seq === record.contextSeq)?.record;
+  expect(context).toMatchObject({
+    type: 'session_context', contextVersion: 1,
+    configuration: record.lastAppliedExecutionProjection,
+  });
+  for (const token of [hints.captain?.token, ...Object.values(hints.players ?? {})]) {
+    if (typeof token !== 'string') continue;
+    expect(bytes.toString('utf8')).not.toContain(token);
+    expect(replay.toString('utf8')).not.toContain(token);
+  }
+  return record;
 }
 
 // Every player `liveConfig` binds to an enabled playbook enters the session
 // roster and ledger; only the players the scenario's workflow actually
-// delegated to hold a conversation token. The roster ledger is exact on both
+// delegated to hold a local conversation hint. The roster ledger is exact on both
 // sides so a player that a case should never reach — the DEV Analyst in
 // REVIEW, CODE, and DECIDE — is proven idle rather than merely unasserted.
 const liveRosterPlayers = {
@@ -1360,14 +1389,12 @@ function expectSettledSessionBoundary(
   for (const [playerId, adapter] of Object.entries(liveRosterPlayers)) {
     const entry = record.snapshot?.playerSessions?.[playerId];
     expect(entry).toEqual(expect.objectContaining({ adapter }));
+    expect(entry).not.toHaveProperty('resumeToken');
+    const hints = sessionHints.get(record);
     if (actedPlayers.includes(playerId as keyof typeof liveRosterPlayers)) {
-      expect(entry).toEqual(
-        expect.objectContaining({
-          resumeToken: expect.stringMatching(/\S/),
-        }),
-      );
+      expect(hints?.players?.[playerId]).toEqual(expect.stringMatching(/\S/));
     } else {
-      expect(entry).not.toHaveProperty('resumeToken');
+      expect(hints?.players).not.toHaveProperty(playerId);
     }
   }
 }
@@ -1379,7 +1406,7 @@ function expectCanonicalEffectSession(
     classification: string;
   }[],
 ): void {
-  expect(record.schemaVersion).toBe(6);
+  expect(record.schemaVersion).toBe(7);
   expect(record.snapshot?.schemaVersion).toBe(4);
   expect(record.snapshot?.captain?.runtime?.schemaVersion).toBe(4);
   expect(record.effectLedger).toEqual(record.snapshot?.effectLedger);
@@ -2715,7 +2742,7 @@ async function expectLeaseRetired(
   sessionId: string,
   expectedTombstones: number,
 ): Promise<void> {
-  const sessionsDir = join(scenario.stateHome, 'playbook', 'sessions');
+  const sessionsDir = join(scenario.spexHome, 'sessions');
   const lease = join(sessionsDir, `.${sessionId}.lock`);
   const retiredPrefix = `.${sessionId}.lock.retired.`;
   const retired = (): string[] =>

@@ -2512,6 +2512,9 @@ async function createLease({
     await assertOwnerUnchecked();
     const hints = await readHints();
     await writeHints({ players: {} });
+    // Unused conversations cannot advance. Retain that proof until the
+    // participant's before-call hook clears it; crashes still lose the hints.
+    acknowledgedHints = structuredClone(hints);
     return hints;
   });
   const acknowledgeHint = (participantId, token) => {

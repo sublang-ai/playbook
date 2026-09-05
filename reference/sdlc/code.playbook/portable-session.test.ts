@@ -214,6 +214,19 @@ describe('shared portable session lifecycle', () => {
   await lease.release();
   expect((await store.read(id)).snapshot.captain.conversation).toEqual({kind:'needsSeeding'});
  });
+ it('retains unused player hints while retiring a called participant without acknowledgement',async()=>{
+  const {store,id,lease,file}=await fixture();let attemptId=randomUUID();
+  await lease.beginTurn({input:'first',attemptId,attemptedExecutionProjection:executionProjection()});
+  lease.acknowledgeHint('captain','captain-before');lease.acknowledgeHint('dev.coder','player-unchanged');
+  await lease.settle({attemptId,snapshot:shellSnapshot(executionProjection(),1),unresolvedEffects:[]});await lease.release();
+  const next=await store.acquire(id);await next.consumeHints();next.clearHint('captain');
+  attemptId=randomUUID();await next.beginTurn({input:'status',attemptId,attemptedExecutionProjection:executionProjection()});
+  await next.settle({attemptId,snapshot:shellSnapshot(executionProjection(),2),unresolvedEffects:[]});await next.release();
+  const hints=JSON.parse(await readFile(join(store.sessionsDir,`${id}.hints.json`),'utf8'));
+  expect(hints.players).toEqual({'dev.coder':'player-unchanged'});expect(hints).not.toHaveProperty('captain');
+  expect(hints.checkpointSha256).toBe(createHash('sha256').update(await readFile(file)).digest('hex'));
+  expect(await readFile(file,'utf8')).not.toContain('player-unchanged');
+ });
  it('ignores mismatched hints without damaging portable recovery',async()=>{
   const {store,id,lease}=await fixture();const hintPath=join(store.sessionsDir,`${id}.hints.json`);
   await writeFile(hintPath,JSON.stringify({v:1,sessionId:id,checkpointSha256:'0'.repeat(64),players:{'dev.coder':'stale'}}),{mode:0o600});
