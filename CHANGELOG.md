@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-09-05
+
+### Added
+
+- Public `session-host` and `session-store` APIs share the CLI's durable turn lifecycle, uncertainty recovery, migration, validation and deletion with embedding hosts.
+- Replay stores execution settings and host-provided state-machine graphs, so history remains readable without the original modules. Hosts without a graph retain observed history.
+
+### Changed
+
+- Sessions default to `${SPEX_HOME:-$HOME/.spex}/sessions` and use schema 7. The ordinary default imports the former XDG store after old writers stop; explicit profiles remain isolated. Migration retains original bytes and full replay; records without sufficient recovery state remain history-only.
+- Portable recovery excludes provider session tokens. Private hints bind tokens to the exact checkpoint; a missing hint starts fresh, and a proven pre-execution resume rejection permits one fresh attempt. Other failures do not trigger an automatic retry.
+- Continuation requires compatible execution settings and repository paths. A session copied to incompatible paths remains available as history.
+- Require Cligent 0.25 for typed resume-rejection results.
+
+### Fixed
+
+- Checkpoints bind to exact replay bytes, preserve incomplete-history evidence and deliver internal context and continuity records in sequence.
+- Store opening tightens safe Git-created entries to private permissions. Deletion acquires the shared lease and removes the manifest last, so interrupted cleanup can be retried.
+
 ## [12.3.0] - 2026-09-04
 
 ### Added
@@ -581,7 +600,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v12.3.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v13.0.0...HEAD
+[13.0.0]: https://github.com/sublang-ai/playbook/compare/v12.3.0...v13.0.0
 [12.3.0]: https://github.com/sublang-ai/playbook/compare/v12.2.2...v12.3.0
 [12.2.2]: https://github.com/sublang-ai/playbook/compare/v12.2.1...v12.2.2
 [12.2.1]: https://github.com/sublang-ai/playbook/compare/v12.2.0...v12.2.1

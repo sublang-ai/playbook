@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress; implementation authorized by the owner.
+In progress; required live release verification is pending.
 
 ## Intent
 
@@ -13,11 +13,11 @@ Implement [DR-049](../decisions/049-portable-session-contract.md).
 
 ## Deliverables
 
-- [ ] Implement schema-7 codec, migration and token-free nested recovery.
-- [ ] Publish the shared host lifecycle and adopt it in both CLI front ends.
-- [ ] Add context recording, durable replay digests and persistent incompleteness.
-- [ ] Implement local hint consumption and classified fresh fallback.
-- [ ] Verify cross-host continuation, migration, deletion and path-refusal matrices.
+- [x] Implement schema-7 codec, migration and token-free nested recovery.
+- [x] Publish the shared host lifecycle and adopt it in both CLI front ends.
+- [x] Add context recording, durable replay digests and persistent incompleteness.
+- [x] Implement local hint consumption and classified fresh fallback.
+- [x] Verify cross-host continuation, migration, deletion and path-refusal matrices.
 
 ## Tasks
 
@@ -36,5 +36,7 @@ Implement [DR-049](../decisions/049-portable-session-contract.md).
 ## Verification
 
 - Required integration matrices are defined in the owning spec packages.
-- Shared store, facade and portable-session integration suites: 120 checks passed.
-- Captain/runtime continuation gates and release verification are in progress.
+- Build, 1,717-test normal gate and 11-step packed smoke gate passed.
+- Later cutover changes passed 37 portable, 173 compatibility and 13 CLI checks; unchanged gates were reused.
+- Spec lint: no errors.
+- Live provider acceptance and publication remain pending.
