@@ -233,6 +233,8 @@ export interface SharedSessionStore {
   prepare(): Promise<void>;
   read(sessionId: string): Promise<SessionRecovery>;
   readManifest(sessionId: string): Promise<StoredSessionManifest>;
+  /** Observation only; mutations still require acquiring the lease. */
+  readLeaseState(sessionId: string): Promise<'active' | 'idle' | 'unknown'>;
   readHistory(sessionId: string, options?: ReplayStreamReadOptions): Promise<SessionHistory>;
   readStream(sessionId: string, options?: ReplayStreamReadOptions): Promise<ReplayStreamReadResult>;
   readSummary(sessionId: string): Promise<PlaybookSessionSummary>;

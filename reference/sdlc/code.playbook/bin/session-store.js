@@ -1151,6 +1151,26 @@ export function createCaptainSessionStore(options = {}) {
   const readLeaseOwner = (sessionId, path = leasePathFor(sessionId)) =>
     readLeaseDirectory(sessionId, path, [LEASE_OWNER_FILE]);
 
+  const readLeaseState = async (sessionId) => {
+    assertSessionId(sessionId);
+    try {
+      await assertPrivateDirectory(sessionsDir, fs);
+      await fs.lstat(leasePathFor(sessionId));
+    } catch (cause) { return cause?.code === 'ENOENT' ? 'idle' : 'unknown'; }
+    try {
+      const owner = await readLeaseOwner(sessionId);
+      if (owner.hostname !== localHostname) return 'unknown';
+      let state = 'active';
+      try { await probeProcess(owner.pid); }
+      catch (cause) {
+        if (cause?.code !== 'ESRCH') return 'unknown';
+        state = 'idle';
+      }
+      const current = await readLeaseOwner(sessionId);
+      return current.ownerToken === owner.ownerToken ? state : 'unknown';
+    } catch { return 'unknown'; }
+  };
+
   const activeLeaseErrorFor = async (sessionId, owner) => {
     if (owner.hostname !== localHostname) {
       return foreignCaptainSessionLeaseActiveError(
@@ -1562,6 +1582,7 @@ export function createCaptainSessionStore(options = {}) {
     migrate,
     readManifest,
     readHistory,
+    readLeaseState,
     validate,
     delete: remove,
     listSummaries,

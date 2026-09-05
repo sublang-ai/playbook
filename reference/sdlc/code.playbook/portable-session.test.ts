@@ -227,6 +227,23 @@ describe('shared portable session lifecycle', () => {
   expect(hints.checkpointSha256).toBe(createHash('sha256').update(await readFile(file)).digest('hex'));
   expect(await readFile(file,'utf8')).not.toContain('player-unchanged');
  });
+ it('observes live, dead and unprovable leases without acquiring or rewriting files',async()=>{
+  const {store,id,lease,file}=await fixture();const ownerPath=join(store.sessionsDir,`.${id}.lock`,'owner.json');
+  const before=await readFile(ownerPath);const manifest=await readFile(file);const names=await readdir(store.sessionsDir);
+  expect(await store.readLeaseState(id)).toBe('active');
+  const dead=createSessionStore({sessionsDir:store.sessionsDir,probeProcess(){throw Object.assign(new Error('dead'),{code:'ESRCH'});}});
+  expect(await dead.readLeaseState(id)).toBe('idle');
+  const denied=createSessionStore({sessionsDir:store.sessionsDir,probeProcess(){throw Object.assign(new Error('denied'),{code:'EPERM'});}});
+  expect(await denied.readLeaseState(id)).toBe('unknown');
+  expect(await createSessionStore({sessionsDir:store.sessionsDir,hostname:'another-host'}).readLeaseState(id)).toBe('unknown');
+  expect(await readFile(ownerPath)).toEqual(before);expect(await readFile(file)).toEqual(manifest);expect(await readdir(store.sessionsDir)).toEqual(names);
+  await lease.release();expect(await store.readLeaseState(id)).toBe('idle');
+ });
+ it('reports an incomplete lease as unknown without repairing it',async()=>{
+  const {store,id,lease}=await fixture();await lease.release();const lock=join(store.sessionsDir,`.${id}.lock`);
+  await mkdir(lock,{mode:0o700});expect(await store.readLeaseState(id)).toBe('unknown');expect(await readdir(lock)).toEqual([]);
+  await writeFile(join(lock,'owner.json'),'{',{mode:0o600});expect(await store.readLeaseState(id)).toBe('unknown');expect(await readFile(join(lock,'owner.json'),'utf8')).toBe('{');
+ });
  it('ignores mismatched hints without damaging portable recovery',async()=>{
   const {store,id,lease}=await fixture();const hintPath=join(store.sessionsDir,`${id}.hints.json`);
   await writeFile(hintPath,JSON.stringify({v:1,sessionId:id,checkpointSha256:'0'.repeat(64),players:{'dev.coder':'stale'}}),{mode:0o600});
