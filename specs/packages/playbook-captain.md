@@ -619,7 +619,7 @@ active frame's effective local-role-to-host-player binding.
 The frame shall resolve each local role only through its persisted explicit map, with no same-name, ancestor, or generated fallback ([DR-032](../decisions/032-explicit-roles-session-players.md)).
 Before each call, the shell shall combine the current normalized player instruction and permissions with that binding's complete model and effort selections plus optional effective fast mode, require the player's adapter to equal any established ledger adapter, and call `context.callPlayer(playerId, prompt, { resume, settings: { model, effort, fastMode?, instruction?, permissions? } })` with those complete tmux-play host settings and the selected token.
 The host shall interpret a value selection literally and a provider-default selection as an explicit reset rather than omission, interpret a present fast-mode boolean literally and absence as the provider default, and reject an unsupported present boolean before provider work; inability to enforce any selection on the resumed conversation shall reject the call.
-The wrapper shall route a sub-runtime `callPlayer(localRole, …, { resume })` to `context.callPlayer(<effectiveHostPlayerId>, …)`, return the host result's `resumeToken`, and reject a setting or provider-continuation failure without clearing the prior token or retrying fresh.
+The wrapper shall route a sub-runtime `callPlayer(localRole, …, { resume })` to `context.callPlayer(<effectiveHostPlayerId>, …)`, return the host result's `resumeToken`, and preserve ordinary setting/execution failures without retry; only the shared host's definite pre-execution session-rejection rule may clear a hint and attempt fresh within that logical call [[session-storage-8](session-storage.md#session-storage-8)].
 The shell shall track one delegated-call transaction by resolved player id across the logical session and reject a simultaneous second call to the same id rather than fork or serialize its continuation.
 A token-changing result shall remain logically in flight after the host promise resolves until the owning runtime synchronously validates it and `PlayerSessionStore.update` atomically publishes the exact returned transition ([[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)], [[playbook-runtime-58](playbook-runtime.md#playbook-runtime-58)]); no other frame, role, or unsourced store call may publish, clear, cancel, or reuse that lane meanwhile.
 A resolved result that is malformed, arrives after its runtime operation, or is not committed by that exact update shall quarantine the player lane for the rest of the logical session, block later calls on its uncertain prior token, and make snapshot capture unsafe; a rejected call that produced no result shall preserve and release the prior token after the provider promise settles.
@@ -987,7 +987,7 @@ restore a replacement conversation, not as an additional prompt on a
 healthy one.
 After every durable session-Captain call the shell shall pin the
 returned `resumeToken`, replacing the prior pin.
-When a durable call throws for a reason other than a typed complete-settings preflight rejection, returns a non-`ok` status, or returns `ok` without a token, the shell shall treat the conversation as unsynchronized and re-issue only that failed call once on a fresh conversation seeded from the complete recovery history and current runtime observation.
+When a durable call loses continuity, the shell shall mark the conversation for reseeding from the complete recovery history; only definite pre-execution session rejection permits the immediate single fresh attempt [[session-storage-8](session-storage.md#session-storage-8)], while a throw, ambiguous failure or missing successful token makes no same-call retry.
 When the exact Captain host call instead rejects with the typed complete-settings preflight error before provider work, the shell shall make no same-turn fresh fallback, retain the selected token or `false`, and record the latest journal sequence already represented to that conversation.
 The next supported durable call shall use that retained resume selection and one deterministic authoritative suffix containing only later journal records; repeated preflight rejections shall retain the same safe watermark so missed turns accumulate, while a successful call shall pin its new token and clear the catch-up obligation.
 An abort shall take precedence even when its reason carries the typed marker and shall propagate the exact signal reason.
@@ -1460,15 +1460,7 @@ with an enforcing or unrecognized adapter requests `allowedTools: []` on those s
 
 #### playbook-captain-36
 
-Where the integration suite forces durable session-Captain calls to
-fail, the suite shall fail unless each of the three unsynchronized
-shapes — a throw, a non-`ok` result, and an `ok` result without a
-resume token — clears the pin and re-issues only the failed call,
-exactly once, on a fresh conversation whose captured prompt carries
-the reseed digest plus the current ControlView digest; the
-engagement stack, player sessions, journal, and completed turn work
-survive; and the turn otherwise settles normally with the new token
-pinned.
+Where the integration suite forces durable session-Captain continuity failures, it shall fail unless only a classified pre-execution session rejection re-issues the failed call once with the recovery and current ControlView digests, while a throw, ambiguous non-`ok` result or `ok` without a token makes no same-call retry; each case preserves the engagement stack, player sessions, journal and completed turn work [[playbook-captain-35](#playbook-captain-35)].
 The suite shall fail unless the reseed digest is confined to that one
 re-issued call: no captured prompt before the reseed carries it, no
 later call on the replacement conversation carries it again, no

@@ -12,6 +12,7 @@ Refines [DR-011](011-composable-playbook-execution.md)'s same-worktree call coor
 Refines the artifact compatibility rollout of [DR-022](022-runtime-compatibility-contract.md) without changing its shared-engine ABI rule.
 Preserves [DR-020](020-spec-layout-agnostic-code-prompts.md): no repository layout or informal intent-progress notation becomes a generic effect fact.
 Preserves [DR-035](035-truthful-terminal-meaning.md) and [DR-037](037-terminal-result-meaning.md): unresolved-effect abandonment is not an FSM terminal outcome and publishes no invented final-state meaning.
+Amended by [DR-049](049-portable-session-contract.md): deferred-player identity independent of provider tokens.
 
 ## Context
 
