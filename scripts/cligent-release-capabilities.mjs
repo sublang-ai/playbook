@@ -68,6 +68,26 @@ export const use: (value: CaptainRunResult) => string | undefined =
   (value) => value.resumeToken;
 `,
   ),
+  ...['CaptainRunResult', 'PlayerRunResult'].map((owner) => typeCapability(
+    `${owner}.errorCode`,
+    `${owner === 'CaptainRunResult' ? 'captain' : 'player'}-run-result-error-code.ts`,
+    'Only definite pre-execution rejection permits one fresh provider call.',
+    `import type { ${owner} } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<${owner}, 'errorCode'> ? true : false>;
+type Exact = Assert<Equal<${owner}['errorCode'], 'SESSION_RESUME_REJECTED' | undefined>>;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  )),
   typeCapability(
     'Captain.prepareDispose',
     'captain-prepare-dispose.ts',

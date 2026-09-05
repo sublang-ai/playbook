@@ -35,6 +35,8 @@ function write(path: string, contents: string): void {
 interface FixtureShape {
   readonly emitReply?: string;
   readonly resumeToken?: string;
+  readonly captainErrorCode?: string;
+  readonly playerErrorCode?: string;
   readonly prepareDispose?: string;
   readonly callPlayer?: string;
   readonly callCaptain?: string;
@@ -78,6 +80,8 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
   const {
     emitReply = 'emitReply(text: string): Promise<void>;',
     resumeToken = 'readonly resumeToken?: string;',
+    captainErrorCode = "readonly errorCode?: 'SESSION_RESUME_REJECTED';",
+    playerErrorCode = "readonly errorCode?: 'SESSION_RESUME_REJECTED';",
     prepareDispose = 'prepareDispose?(): Promise<void>;',
     callPlayer =
       'callPlayer(playerId: string, prompt: string, options?: CallPlayerOptions): Promise<unknown>;',
@@ -298,7 +302,11 @@ export interface CaptainRunResult {
     readonly status: RunStatus;
     readonly turnId: number;
     ${resumeToken}
+    ${captainErrorCode}
     readonly finalText?: string;
+}
+export interface PlayerRunResult {
+    ${playerErrorCode}
 }
 `,
   );
@@ -354,6 +362,7 @@ ${runManagedSignature}
     `export interface UnrelatedCapabilityNames {
   emitReply: unknown;
   resumeToken: unknown;
+  errorCode: unknown;
   prepareDispose: unknown;
   callPlayer: unknown;
   callCaptain: unknown;
@@ -386,6 +395,7 @@ export type TuningSelectionDecoy =
 const NAIVE_REQUIRED_SPELLINGS = [
   'emitReply',
   'resumeToken',
+  'errorCode',
   'prepareDispose',
   'callPlayer',
   'callCaptain',
@@ -443,6 +453,8 @@ describe('the cligent release-capability guard', () => {
     expect(result.proven).toEqual([
       'CaptainContext.emitReply',
       'CaptainRunResult.resumeToken',
+      'CaptainRunResult.errorCode',
+      'PlayerRunResult.errorCode',
       'Captain.prepareDispose',
       'CaptainContext.callPlayer options',
       'CaptainContext.callCaptain options',
@@ -486,6 +498,18 @@ describe('the cligent release-capability guard', () => {
   });
 
   it.each([
+    ...(['CaptainRunResult', 'PlayerRunResult'] as const).flatMap((owner) =>
+      [
+        ['absent', ''],
+        ['required', "readonly errorCode: 'SESSION_RESUME_REJECTED';"],
+        ['widened', 'readonly errorCode?: string;'],
+        ['narrowed', 'readonly errorCode?: never;'],
+      ].map(([kind, declaration]) => [
+        `${kind} ${owner} resume rejection`,
+        { [owner === 'CaptainRunResult' ? 'captainErrorCode' : 'playerErrorCode']: declaration },
+        `${owner}.errorCode`,
+      ]),
+    ),
     [
       'required Captain reply emitter',
       { emitReply: 'emitReply?: (text: string) => Promise<void>;' },
