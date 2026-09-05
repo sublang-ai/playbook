@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package proposes the portable session format, local provider hints and shared lifecycle used by interactive, headless and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
+This package owns the portable session format, local provider hints and shared lifecycle used by interactive, headless and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
 It retains the frozen replay envelope and repository-effect authority while making neither a provider conversation nor an application-specific project registry necessary for history.
 
 ## External Behavior

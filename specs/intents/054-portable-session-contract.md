@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned; implementation awaits the owner's review of the coordinated storage paperwork.
+Planned; implementation awaits separate owner authorization.
 
 ## Intent
 

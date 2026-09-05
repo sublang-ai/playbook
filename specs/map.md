@@ -74,7 +74,7 @@ meta.md       The spec of specs
 | [DR-046](decisions/046-public-worktree-host-capabilities.md) | 046-public-worktree-host-capabilities.md | `@sublang/playbook/host-capabilities`: a typed facade over the CLI host's single repository-effect implementation, so every embedding host classifies receipts through the same code; every live capability it constructs binds the governed worktree lazily and observes an unborn HEAD as the null OID |
 | [DR-047](decisions/047-compiled-execution-contract-in-definitions.md) | 047-compiled-execution-contract-in-definitions.md | Each phase definition declares its compiled-execution contract with a run-time `<definition>` relay, so compiled phase bundles are stable control shells and rule edits need no rebuild |
 | [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
-| [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Proposed: Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
+| [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
 
 ## Packages
 
@@ -88,5 +88,5 @@ meta.md       The spec of specs
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
-| [session-storage.md](packages/session-storage.md) | Proposed: Shared session files, recovery, replay context, hints, migration and deletion |
+| [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |
 | [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |
