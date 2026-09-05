@@ -754,7 +754,15 @@ export function createCaptainSessionStore(options = {}) {
   const prepare = () => prepareSessionPermissions(sessionsDir, fs);
   const readHistory = async (sessionId, options = {}) => {
     assertSessionId(sessionId);
-    return readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: options.afterSeq ?? 0 });
+    const history = await readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: options.afterSeq ?? 0 });
+    if (!history.missing) return history;
+    let legacy;
+    try {
+      legacy = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'legacy record'));
+      if (![2, 3, 4, 5, 6].includes(legacy.schemaVersion)) return history;
+      if (legacy.kind !== CAPTAIN_SESSION_RECORD_KIND || legacy.sessionId !== sessionId || !Array.isArray(legacy.snapshot?.journal) || !Number.isFinite(Date.parse(legacy.updatedAt))) return history;
+    } catch { return history; }
+    return legacyJournalHistory(legacy, options.afterSeq ?? 0, history);
   };
   const validate = async (sessionId, context = {}) => {
     const manifest = await readManifest(sessionId);
@@ -762,6 +770,7 @@ export function createCaptainSessionStore(options = {}) {
     const reasons = [];
     let integrityValid = !history.missing && !history.incomplete;
     if (history.missing) reasons.push('session replay file is missing');
+    if (history.pendingTail) reasons.push('session replay has an unfinished final record');
     if (manifest.schemaVersion !== 7) reasons.push(`schema ${manifest.schemaVersion} requires explicit migration`);
     else {
       if (manifest.state === 'history-only') reasons.push(manifest.reason);
@@ -1496,7 +1505,10 @@ export function createCaptainSessionStore(options = {}) {
       let replayBytes = originalReplay ?? Buffer.alloc(0);
       if (originalReplay === undefined) {
         const journal = metadata?.journal ?? recovery?.snapshot?.journal ?? [];
-        replayBytes = Buffer.from(journal.map((entry, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord({ type: 'legacy_journal', timestamp: Date.parse(source.updatedAt ?? metadata.updatedAt), entry }) })}\n`).join(''));
+        const updatedAt = source.updatedAt ?? metadata.updatedAt;
+        const projected = legacyJournalHistory({ updatedAt, snapshot: { journal } }, 0, {}).entries;
+        const records = [...projected.map(({ record }) => record), ...journal.map((entry) => ({ type: 'legacy_journal', timestamp: Date.parse(updatedAt), entry }))];
+        replayBytes = Buffer.from(records.map((record, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord(record) })}\n`).join(''));
       }
       const history = parseSessionHistory(replayBytes);
       replayBytes = replayBytes.subarray(0, history.completeBytes);
@@ -6356,6 +6368,29 @@ async function readSessionHistory({ sessionsDir, path, fs, afterSeq = 0 }) {
   const snapshot = await readReplaySnapshot({ sessionsDir, path, fs, afterSeq: 0, forceFullRead: true });
   const bytes = snapshot.absent ? Buffer.alloc(0) : snapshot.bytes;
   return Object.freeze({ ...parseSessionHistory(bytes, afterSeq), missing: snapshot.absent === true });
+}
+
+
+function legacyJournalHistory(record, afterSeq, absentHistory) {
+  const entries = [];
+  const timestamp = Date.parse(record.updatedAt);
+  let activeTurn;
+  const emit = (event) => entries.push(Object.freeze({ v: 1, seq: entries.length + 1, record: Object.freeze(event) }));
+  const finish = () => {
+    if (activeTurn !== undefined) emit({ type: 'turn_finished', timestamp, turnId: activeTurn });
+    activeTurn = undefined;
+  };
+  for (const entry of record.snapshot?.journal ?? []) {
+    if (!Number.isSafeInteger(entry.turnId) || entry.turnId <= 0 || typeof entry.payload !== 'string') continue;
+    if (entry.kind === 'boss') {
+      finish(); activeTurn = entry.turnId;
+      emit({ type: 'turn_started', timestamp, turnId: entry.turnId, turn: { id: entry.turnId, prompt: entry.payload } });
+    } else if (entry.kind === 'reply' && entry.turnId === activeTurn) {
+      emit({ type: 'captain_reply', timestamp, turnId: entry.turnId, text: entry.payload });
+    }
+  }
+  finish();
+  return Object.freeze({ ...absentHistory, synthetic: true, lastReadableSeq: entries.length, entries: Object.freeze(entries.filter(({ seq }) => seq > afterSeq)) });
 }
 
 function parseSessionHistory(bytes, afterSeq = 0) {

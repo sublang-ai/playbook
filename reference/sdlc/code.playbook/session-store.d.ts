@@ -81,12 +81,25 @@ export interface PlaybookSessionLease {
   release(): Promise<ReplayStreamStatus>;
 }
 
-import type {
-  PlaybookCaptainShellSnapshot,
-  PlaybookCaptainRetentionUpdate,
-  PlaybookCaptainUnresolvedEffect,
-} from './playbook-captain.js';
-import type { PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch } from './host-capabilities.js';
+/** Recovery data is interpreted by the version-aware codec, not by live runtimes. */
+export type SessionSnapshot = Readonly<Record<string, any>>;
+export interface SessionEffectLedger {
+  readonly schemaVersion: 1;
+  readonly revision: number;
+  readonly boundaries: readonly Readonly<Record<string, any>>[];
+  readonly logicalOperations: readonly Readonly<Record<string, any>>[];
+}
+export interface SessionUnresolvedEffect {
+  readonly classification: 'one-descendant-commit' | 'multiple-commits' |
+    'rewritten-or-non-descendant' | 'worktree-only-change' |
+    'concurrent-or-foreign-change' | 'observation-ambiguous' | 'incomplete';
+  readonly baselineHead: string;
+  readonly afterHead?: string;
+  readonly commitOid?: string;
+}
+export type SessionRetentionUpdate =
+  | { readonly kind: 'retain'; readonly rootPlaybookId: string; readonly generation: Readonly<Record<string, any>> }
+  | { readonly kind: 'clear'; readonly rootPlaybookId: string };
 
 export interface SessionExecutionProjection {
   readonly schemaVersion: 2;
@@ -110,9 +123,9 @@ export interface SessionRecovery {
   readonly state: 'settled' | 'uncertain';
   readonly structuralProjection: SessionStructuralProjection;
   readonly lastAppliedExecutionProjection: SessionExecutionProjection;
-  readonly snapshot: PlaybookCaptainShellSnapshot;
-  readonly effectLedger: PlaybookEffectLedger;
-  readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
+  readonly snapshot: SessionSnapshot;
+  readonly effectLedger: SessionEffectLedger;
+  readonly unresolvedEffects: readonly SessionUnresolvedEffect[];
   readonly retainedGenerations?: Readonly<Record<string, any>>;
   readonly uncertain?: {
     readonly input: string;
@@ -145,6 +158,12 @@ export type SessionManifest = Omit<SessionRecovery, 'schemaVersion'> & {
   readonly contextSeq: number | null;
   readonly reason: string;
 };
+export type StoredSessionManifest = SessionManifest | {
+  readonly schemaVersion: number;
+  readonly sessionId: string;
+  readonly cwd?: unknown;
+  readonly [key: string]: unknown;
+};
 export interface SessionGraph {
   readonly initial: string;
   readonly nodes: readonly { readonly id: string; readonly kind: 'state' | 'final'; readonly tags: readonly string[]; readonly parent?: string; readonly role?: string; readonly description?: string }[];
@@ -160,6 +179,7 @@ export interface SessionContext {
   readonly initialVisible: readonly string[];
 }
 export interface SessionHistory extends ReplayStreamReadResult {
+  readonly synthetic?: true;
   readonly missing: boolean;
   readonly incomplete: boolean;
   readonly pendingTail: boolean;
@@ -172,7 +192,7 @@ export interface SessionValidation {
   readonly sessionId: string;
   readonly resumable: boolean;
   readonly reasons: readonly string[];
-  readonly manifest: SessionManifest;
+  readonly manifest: StoredSessionManifest;
   readonly history: SessionHistory;
 }
 export interface SessionHints {
@@ -183,24 +203,24 @@ export interface SessionFreshBoundary {
   readonly cwd: string;
   readonly structuralProjection: SessionStructuralProjection;
   readonly executionProjection: SessionExecutionProjection;
-  readonly snapshot: PlaybookCaptainShellSnapshot;
+  readonly snapshot: SessionSnapshot;
   readonly context?: SessionContext;
   readonly onLegacyRecord?: (record: any) => void | Promise<void>;
   readonly onInvalidRecord?: (record: any) => void | Promise<void>;
 }
 export interface PlaybookSessionLifecycle extends PlaybookSessionLease {
   read(): Promise<SessionRecovery | undefined>;
-  readManifest(): Promise<SessionManifest>;
+  readManifest(): Promise<StoredSessionManifest>;
   initializeSettledWithPredecessor(options: SessionFreshBoundary): Promise<SessionRecovery>;
   abandonFreshSettled(options: { expected: SessionRecovery }): Promise<boolean>;
   beginTurn(options: { input: string; attemptId: string; attemptedExecutionProjection: SessionExecutionProjection }): Promise<SessionRecovery>;
   beginRetry(options: { expectedAttemptId: string; nextAttemptId: string }): Promise<SessionRecovery>;
-  settle(options: { attemptId: string; snapshot: PlaybookCaptainShellSnapshot; unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[]; retentionUpdates?: readonly PlaybookCaptainRetentionUpdate[] }): Promise<SessionRecovery>;
+  settle(options: { attemptId: string; snapshot: SessionSnapshot; unresolvedEffects: readonly SessionUnresolvedEffect[]; retentionUpdates?: readonly SessionRetentionUpdate[] }): Promise<SessionRecovery>;
   discard(options: { attemptId: string }): Promise<SessionRecovery | undefined>;
   beginUnresolvedEffectAbandonment(options: any): Promise<any>;
   completeUnresolvedEffectAbandonment(options: any): Promise<any>;
   recoverUnresolvedEffectAbandonment(): Promise<SessionRecovery | undefined>;
-  writeEffectLedger(authority: any, commands: PlaybookEffectLedgerCommandBatch): Promise<PlaybookEffectLedger>;
+  writeEffectLedger(authority: any, commands: readonly Readonly<Record<string, any>>[]): Promise<SessionEffectLedger>;
   assertOwner(): Promise<any>;
   assertContinuable(context?: { cwd?: string; executionProjection?: SessionExecutionProjection }): Promise<SessionValidation>;
   recordContext(context: SessionContext): Promise<number>;
@@ -212,7 +232,7 @@ export interface SharedSessionStore {
   readonly sessionsDir: string;
   prepare(): Promise<void>;
   read(sessionId: string): Promise<SessionRecovery>;
-  readManifest(sessionId: string): Promise<SessionManifest>;
+  readManifest(sessionId: string): Promise<StoredSessionManifest>;
   readHistory(sessionId: string, options?: ReplayStreamReadOptions): Promise<SessionHistory>;
   readStream(sessionId: string, options?: ReplayStreamReadOptions): Promise<ReplayStreamReadResult>;
   readSummary(sessionId: string): Promise<PlaybookSessionSummary>;
@@ -231,4 +251,4 @@ export declare function projectCaptainSessionStructure(value: SessionExecutionPr
 export declare function validateCaptainSessionExecutionProjection(value: unknown): SessionExecutionProjection;
 export declare function validateCaptainSessionStructuralProjection(value: unknown): SessionStructuralProjection;
 export declare function assertCaptainSessionExecutionCompatible(structural: SessionStructuralProjection, execution: SessionExecutionProjection): SessionExecutionProjection;
-export declare function attachSessionHints(snapshot: PlaybookCaptainShellSnapshot, hints: SessionHints): PlaybookCaptainShellSnapshot;
+export declare function attachSessionHints(snapshot: SessionSnapshot, hints: SessionHints): SessionSnapshot;

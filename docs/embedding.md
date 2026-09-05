@@ -200,19 +200,11 @@ sequential call lane across every frame that names them, while distinct IDs
 remain isolated. Child return, frame disposal, and a later root engagement do
 not clear the session ledger.
 
-Runtime and complete shell snapshots are schema 4. Their role-resume
-projection remains role-local, while the composing shell persists the stable
-player ledger, every frame's exact role bindings, and the host's authoritative
-effect-ledger mirror. The bundled CLI wraps that shell state in Captain
-session-record schema 6. Do not restore an earlier snapshot or session record
-by guessing identity or effect evidence. This includes both pre-release
-schema-5 record shapes; the earlier one predates required `unresolvedEffects`,
-and neither is a canonical schema-6 boundary. Explicit selection rejects them,
-while fresh discovery reports and skips them. A fully validated nonresumable
-record participates in settled same-directory ordering and declines adoption
-only when it is newest; an older or different-directory record does not block a
-newer resumable predecessor. An unvalidatable record leaves ordering unproved,
-so discovery publishes an empty target without falling through. On a compatible
+Runtime and complete shell snapshots are schema 4. The shared store projects
+provider continuations out of nested snapshots and writes schema-7 manifests.
+Local hints may rehydrate the current checkpoint; retained generations never
+restore provider tokens. Use the shared migrator for older records instead of
+guessing identity or effect evidence. On a compatible
 restore, rebuild
 `promptIdentity` from the current model selection (or adapter for an explicit
 provider-default selection) and rebuild live host capabilities under the
@@ -304,12 +296,9 @@ lease, session record, resume credential, catalog, or recovery member
 
 ## Sharing the CLI session store
 
-An external host that needs the CLI's canonical session validation and
-token-free replay format can use the narrow, semver-stable
-`@sublang/playbook/session-store` facade. It shares the CLI's private store and
-validators by construction but exposes no canonical manifest, snapshot,
-provider credential, effect ledger, recovery operation, or turn-lifecycle
-operation:
+`@sublang/playbook/session-store` provides the shared lifecycle and management
+API. Its existing `openSessionStore()` facade remains available for narrow
+summary/replay consumers:
 
 ```ts
 import {
@@ -373,15 +362,10 @@ An `append()` suppressed before release by either unavailable initialization or
 a numeric incomplete latch resolves `undefined` without recording the supplied
 record, so fulfillment alone does not prove persistence.
 
-Always release a successfully acquired lease. `release()` closes append
-admission, drains earlier appends, attempts the final checkpoint, retires the
-lease, and returns the final `lastReadableSeq`, `lastDurableSeq`, and
-`incomplete` status. A replay initialization failure reports unavailable null
-boundaries; a later sanitization, repair, or persistence failure latches
-numeric `incomplete` status. Either state suppresses later replay work on that
-lease and remains isolated from canonical session lifecycle work. The facade
-writes no warning to stdout or stderr; the embedding host owns any presentation
-of that status.
+Always release a successfully acquired lease. Release drains admitted work,
+saves newly detected incompleteness and retires ownership. A failed save or
+unproved ownership leaves the lease held. The facade owns no presentation;
+embedding hosts decide how to display recording failures.
 
 For control flow, a missing canonical manifest from `read()` uses
 `Error.code === 'PLAYBOOK_SESSION_NOT_FOUND'`, and a competing live or foreign
@@ -390,10 +374,50 @@ messages or assume those codes for malformed input, unsafe storage, an
 indeterminate owner probe, or another storage failure
 ([[playbook-cli-73](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-73)]).
 
-See
-[`code.playbook.test.ts`](https://github.com/sublang-ai/playbook/blob/main/reference/sdlc/code.playbook/code.playbook.test.ts)
-for the full range of port shapes (classifier, judge, abort, interrupt,
-status/telemetry) the runtime is contract-tested against.
+For complete sessions, use `createSessionStore()` and `openSessionHost()`:
+
+```ts
+import { createSessionStore } from '@sublang/playbook/session-store';
+import { openSessionHost } from '@sublang/playbook/session-host';
+
+const shared = createSessionStore();
+await shared.prepare();
+const controller = await openSessionHost({
+  store: shared,
+  sessionId,
+  mode: 'continue',
+});
+try {
+  await controller.handleBossTurn('Continue the recorded work.');
+} finally {
+  await controller.dispose();
+}
+```
+
+A new host supplies a validated `SessionExecutionProjection` as `config`, or a
+plan from `loadLaunchPlan()`, and the working directory. Resolve a configured
+`sessions` path with `resolveLaunchSessionsDir()` and pass that store explicitly.
+The controller owns uncertainty, reconciliation, settlement and lease release;
+observers receive presentation events or exact appended envelopes through
+`onStoredRecord`. Keep the controller open for successive turns.
+
+For an uncertain session, reopen with `mode:'retry'` and call `retry()`. It uses
+the exact recorded input and attempted configuration. Module-free
+`discardSessionUncertain(shared, sessionId)` restores the prior recovery only
+when no effect-ledger advancement prevents discard.
+
+`readHistory()` returns readable history and a damaged boundary, including a
+clearly marked synthetic projection when a validated legacy journal has no
+stream. `validate()` separates byte integrity from resumability.
+`readManifest()` may return an older or unknown object; use
+`validateSessionManifest()` before interpreting schema-7 recovery.
+`migrate()` preserves original inputs before conversion. `delete()` removes the
+bundle under the shared lease, with the manifest last. Management needs no
+playbook module. A coordination-only `acquireManagement()` lease reserves even
+an absent ID and never checkpoints or rewrites selected bytes on release.
+
+The [storage contract](https://github.com/sublang-ai/playbook/blob/main/specs/packages/session-storage.md)
+defines the files, versions and compatibility rules.
 
 ## Reading the published spec contracts
 

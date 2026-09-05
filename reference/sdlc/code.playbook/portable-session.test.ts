@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
+import { createSessionStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
 import { discardSessionUncertain } from './session-host.js';
+import { createReplayRecordObserver } from './bin/replay-observer.js';
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, {recursive:true,force:true}))); });
@@ -242,7 +243,7 @@ describe('shared portable session lifecycle', () => {
   execFileSync('git',['-C',root,'-c','commit.gpgsign=false','-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','fixture']);
   const before=[await readFile(file),await readFile(stream)];await rm(file);await rm(stream);
   execFileSync('sh',['-c','umask 022; git checkout -- sessions'],{cwd:root});await chmod(store.sessionsDir,0o755);
-  expect((await stat(file)).mode&0o777).toBe(0o644);await store.prepare();
+  expect((await stat(file)).mode&0o777).toBe(0o644);expect((await openSessionStore(store.sessionsDir).list()).sessions).toHaveLength(1);
   expect((await stat(store.sessionsDir)).mode&0o777).toBe(0o700);expect((await stat(file)).mode&0o777).toBe(0o600);expect([await readFile(file),await readFile(stream)]).toEqual(before);
  });
  it.each(['symlink','hardlink','owner-bits'])('refuses unsafe permission preparation: %s',async(kind)=>{
@@ -322,6 +323,49 @@ describe('shared portable session lifecycle', () => {
   const publish=async()=>{const bytes=JSON.stringify(entry)+'\n';await writeFile(stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');await writeFile(file,JSON.stringify(manifest));};
   entry.record.contextVersion=99;await publish();const future=await store.validate(id);expect(future.integrityValid).toBe(true);expect(future.resumable).toBe(false);expect(future.history.entries).toHaveLength(1);
   entry.record.contextVersion=1;entry.record.captainId=randomUUID();await publish();const mismatch=await store.validate(id);expect(mismatch.integrityValid).toBe(false);expect(mismatch.reasons).toContain('required session context differs from checkpoint recovery');
+ });
+
+ it('projects a validated legacy journal without creating replay authority',async()=>{
+  const {store,id,lease,file,stream}=await fixture();const legacy:any=structuredClone(await lease.read());await lease.release();
+  legacy.snapshot=shellSnapshot(executionProjection(),2);
+  legacy.snapshot.journal=[{seq:1,turnId:1,kind:'boss',payload:'first'},{seq:2,turnId:1,kind:'reply',payload:'first reply'},{seq:3,turnId:2,kind:'boss',payload:'second'},{seq:4,turnId:2,kind:'reply',payload:'second reply'}];legacy.snapshot.sequences.journal=4;
+  const bytes=JSON.stringify(legacy);await writeFile(file,bytes);await rm(stream);
+  const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.missing).toBe(true);expect(history.entries.map(e=>e.record.type)).toEqual(['turn_started','captain_reply','turn_finished','turn_started','captain_reply','turn_finished']);
+  expect(await readFile(file,'utf8')).toBe(bytes);await expect(readFile(stream)).rejects.toMatchObject({code:'ENOENT'});expect((await store.validate(id)).resumable).toBe(false);
+ });
+
+ it('presents legacy journal-only records without granting recovery',async()=>{
+  const {store,id,lease,file,stream}=await fixture();await lease.release();const legacy={schemaVersion:3,kind:'captain-session',sessionId:id,updatedAt:new Date(0).toISOString(),snapshot:{journal:[{turnId:1,kind:'boss',payload:'old request'},{turnId:1,kind:'reply',payload:'old reply'},{turnId:'invalid',kind:'boss',payload:'skip'}]}};
+  await writeFile(file,JSON.stringify(legacy));await rm(stream);const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.entries).toHaveLength(3);await expect(store.read(id)).rejects.toThrow();
+ });
+ it('temporarily refuses an unfinished replay tail without saving damage',async()=>{
+  const {store,id,lease,file,stream}=await fixture();await lease.release();const before=await readFile(file);const entry=JSON.stringify({v:1,seq:2,record:{opaque:true}});await writeFile(stream,(await readFile(stream,'utf8'))+entry);
+  const pending=await store.validate(id);expect(pending.integrityValid).toBe(true);expect(pending.resumable).toBe(false);expect(pending.history.pendingTail).toBe(true);expect(await readFile(file)).toEqual(before);
+  await writeFile(stream,(await readFile(stream,'utf8'))+'\n');expect((await store.validate(id)).resumable).toBe(true);expect(await readFile(file)).toEqual(before);
+ });
+
+ it('delivers internal replay records without gaps or callback deadlock',async()=>{
+  const {lease}=await fixture();const delivered:any[]=[];
+  const channel=createReplayRecordObserver({lease,onIncomplete:()=>{},onStored:async(entry:any)=>{delivered.push(entry);if(entry.record.type==='continuity_reset')await lease.append({type:'host_notice',timestamp:2});}});
+  await lease.append({type:'continuity_reset',timestamp:1,participantId:'captain',reason:'missing_hint'});
+  await channel.observer.onRecord({type:'captain_reply',timestamp:2,text:'fresh reply'});
+  await channel.flushStoredRecords();
+  expect(delivered.map(entry=>entry.seq)).toEqual([2,3,4]);expect(delivered.map(entry=>entry.record.type)).toEqual(['continuity_reset','captain_reply','host_notice']);await lease.release();
+ });
+
+ it('keeps migrated journal history visible and retains opaque entries',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'desktop-journal-migration-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});await mkdir(store.sessionsDir,{mode:0o700});const id=randomUUID();const sidecar=join(store.sessionsDir,`${id}.spex.json`);
+  const journal=[{seq:1,turnId:1,kind:'boss',payload:'historic request'},{seq:2,turnId:1,kind:'reply',payload:'historic reply'},{seq:3,turnId:1,kind:'action',payload:{details:'original action'}}];
+  await writeFile(sidecar,JSON.stringify({v:1,id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[],snapshot:{v:1,shell:{journal}}}),{mode:0o600});
+  await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});const history=await store.readHistory(id);expect(history.entries.slice(0,3).map(e=>e.record.type)).toEqual(['turn_started','captain_reply','turn_finished']);expect(history.entries.filter(e=>e.record.type==='legacy_journal').map(e=>e.record.entry)).toEqual(journal);expect((await store.readManifest(id)).state).toBe('history-only');
+ });
+
+ it('replays saved graph and configuration with the project module absent',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'portable-graph-history-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});const id=randomUUID();const execution=executionProjection();execution.catalog.code.from='file:///unavailable/project/code.registry.mjs';
+  const lease=await store.acquire(id);await lease.initializeSettledWithPredecessor(freshBoundary(execution) as any);
+  const context:any=structuredClone((await store.readHistory(id)).entries[0].record);context.graphs[0].graph={initial:'start',nodes:[{id:'start',kind:'state',tags:['working'],role:'coder'},{id:'done',kind:'final',tags:[]}],edges:[{id:'finish',from:'start',to:'done',event:'DONE'}]};
+  const contextSeq=await lease.recordContext(context);await lease.beginTurn({input:'show graph',attemptId:randomUUID(),attemptedExecutionProjection:execution});await lease.append({type:'state_entered',timestamp:3,stateId:'start'});await lease.release();
+  const history=await store.readHistory(id);expect(history.entries.find(entry=>entry.seq===contextSeq)?.record).toEqual(context);expect(history.entries.at(-1)?.record.contextSeq).toBe(contextSeq);expect((await store.validate(id)).resumable).toBe(true);
  });
 
 });

@@ -40,6 +40,7 @@ export async function openSessionHost(options) {
     created = await createCaptainSessionHost({ ...options, config, sessionId, cwd, sessionLease: lease, loadModule, observers: [observe], restoreSnapshot: record?.snapshot, reconcileUncertainTurnReplay: retryPending });
     await installRetainedGenerationsForLaunch({ lease, shell: created.shell, ...(record === undefined ? { freshBoundary: { cwd, structuralProjection: structure, executionProjection: config, snapshot: created.snapshot } } : {}), retainedGenerations: record?.retainedGenerations ?? {}, reconcileRepositoryEffects: created.reconcileRepositoryEffects });
     record = await lease.read();
+    await replay.flushStoredRecords();
     const execute = async (input, retry) => {
       if (closed || closing) throw new Error('session host is closing');
       if (active) throw new Error('session turn is already active');
@@ -56,6 +57,7 @@ export async function openSessionHost(options) {
         const attemptId = options.createAttemptId?.() ?? randomUUID();
         const marked = retry ? await lease.beginRetry({ expectedAttemptId: prior.uncertain.attemptId, nextAttemptId: attemptId }) : await lease.beginTurn({ input, attemptId, attemptedExecutionProjection: config });
         retryPending = false;
+        await replay.flushStoredRecords();
         await options.onCheckpoint?.(marked);
         await lease.assertOwner();
         await created.host.runBossTurn(input);
@@ -63,6 +65,7 @@ export async function openSessionHost(options) {
         const settlement = created.shell.exportSettlement();
         if (settlement === undefined) throw new Error('Captain turn ended without durable settlement; session remains uncertain');
         record = await lease.settle({ attemptId, snapshot: settlement.snapshot, unresolvedEffects: settlement.unresolvedEffects, retentionUpdates: settlement.retentionUpdates });
+        await replay.flushStoredRecords();
         await options.onCheckpoint?.(record);
         return record;
       })();

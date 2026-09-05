@@ -11,6 +11,21 @@ export function createReplayRecordObserver({ lease, onIncomplete, onStored }) {
   const activeFrames = new Map();
   let incompleteReported = false;
   let lastIncomplete = readIncomplete(lease);
+  let lastDeliveredSeq = 0;
+  try { lastDeliveredSeq = lease.streamStatus().lastReadableSeq ?? 0; } catch { /* Unavailable replay has no delivery cursor. */ }
+  let deliveryQueue = Promise.resolve();
+  const flushStoredRecords = () => {
+    if (!onStored) return Promise.resolve();
+    const operation = deliveryQueue.then(async () => {
+      const result = await lease.readStream({ afterSeq: lastDeliveredSeq });
+      for (const entry of result.entries) {
+        await onStored(entry, lease.streamStatus());
+        lastDeliveredSeq = entry.seq;
+      }
+    });
+    deliveryQueue = operation.catch(() => reportIfIncomplete());
+    return deliveryQueue;
+  };
 
   const reportIfIncomplete = async (knownStatus) => {
     if (incompleteReported) return;
@@ -35,12 +50,8 @@ export function createReplayRecordObserver({ lease, onIncomplete, onStored }) {
         // The writer sanitizer remains authoritative for hostile values.
       }
       try {
-        const before = lease.streamStatus().lastReadableSeq;
         await lease.append(record, ...(role === undefined ? [] : [role]));
-        if (onStored && typeof before === 'number' && lease.streamStatus().lastReadableSeq > before) {
-          const result = await lease.readStream({ afterSeq: before });
-          for (const entry of result.entries) await onStored(entry, lease.streamStatus());
-        }
+        await flushStoredRecords();
       } catch {
         // The replay writer records failure in its live latch. The observer
         // remains installed so later host records and lifecycle work continue.
@@ -53,7 +64,7 @@ export function createReplayRecordObserver({ lease, onIncomplete, onStored }) {
     },
   });
 
-  return Object.freeze({ observer, reportIfIncomplete });
+  return Object.freeze({ observer, reportIfIncomplete, flushStoredRecords });
 }
 
 function readIncomplete(lease, knownStatus) {

@@ -57,6 +57,7 @@ Every host shall preserve the frozen v1 replay envelope and removal of provider 
 - only `v`, `seq`, optional string `role`, and object `record` are envelope fields; v1 does not require `type` or `timestamp` inside `record`;
 - presentation skips unsupported records without reporting damage; new context and reset kinds require their declared headers [[session-storage-5](#session-storage-5)] [[session-storage-8](#session-storage-8)];
 - the shared history reader returns the valid newline-terminated prefix and reports the first damaged boundary without modifying the file; an incomplete final line waits for completion;
+- absent legacy replay may be presented from supported legacy journal fields, validating Boss/reply entries and marking the result synthetic; this read-only projection proves no durable replay boundary;
 - new writers emit context records only after all host readers implement these rules.
 
 ### session-storage-4

@@ -21,14 +21,17 @@ export function openSessionStore(sessionsDir) {
 }
 
 function wrapStore(store) {
+  let preparation;
+  const prepared = async (operation) => {
+    await (preparation ??= store.prepare());
+    return operation();
+  };
   return Object.freeze({
     sessionsDir: store.sessionsDir,
-    list: async () => projectListResult(await store.listSummaries()),
-    read: async (sessionId) =>
-      projectSummary(await store.readSummary(sessionId)),
-    readStream: async (sessionId, options) =>
-      projectReadResult(await store.readStream(sessionId, options)),
-    acquire: async (sessionId) => wrapLease(await store.acquire(sessionId)),
+    list: () => prepared(async () => projectListResult(await store.listSummaries())),
+    read: (sessionId) => prepared(async () => projectSummary(await store.readSummary(sessionId))),
+    readStream: (sessionId, options) => prepared(async () => projectReadResult(await store.readStream(sessionId, options))),
+    acquire: (sessionId) => prepared(async () => wrapLease(await store.acquire(sessionId))),
   });
 }
 

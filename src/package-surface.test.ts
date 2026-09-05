@@ -424,6 +424,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(result.proven).toEqual([
         'CaptainContext.emitReply',
         'CaptainRunResult.resumeToken',
+        'CaptainRunResult.errorCode',
+        'PlayerRunResult.errorCode',
         'Captain.prepareDispose',
         'CaptainContext.callPlayer options',
         'CaptainContext.callCaptain options',
@@ -1276,8 +1278,16 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     ],
     './session-store': [
       'RECORDS_STREAM_VERSION',
+      'assertCaptainSessionExecutionCompatible',
+      'attachSessionHints',
+      'createSessionStore',
       'defaultSessionsDir',
       'openSessionStore',
+      'projectCaptainSessionStructure',
+      'validateCaptainSessionExecutionProjection',
+      'validateCaptainSessionStructuralProjection',
+      'validateSessionContext',
+      'validateSessionManifest',
     ],
     './host-capabilities': [
       'REPOSITORY_RECEIPT_CLASSIFICATIONS',
@@ -1316,6 +1326,20 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'devStateCountLabels',
       'devSummaryPolicy',
       'validateDevOptions',
+    ],
+    './session-host': [
+      'composeGenericConfig',
+      'createCaptainSessionHost',
+      'discardSessionUncertain',
+      'driveHeadlessCaptainTurn',
+      'executionConfigFromPlan',
+      'installRetainedGenerationsForLaunch',
+      'loadLaunchPlan',
+      'normalizeLaunchPlan',
+      'openSessionHost',
+      'projectTmuxConfig',
+      'resolveLaunchSessionsDir',
+      'validateFrozenExecutionConfig',
     ],
   };
 
@@ -1556,6 +1580,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './session-store': [
       'LeaseReplayStreamReadResult',
       'PlaybookSessionLease',
+      'PlaybookSessionLifecycle',
       'PlaybookSessionListResult',
       'PlaybookSessionStore',
       'PlaybookSessionSummary',
@@ -1566,9 +1591,34 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'ReplayStreamReadOptions',
       'ReplayStreamReadResult',
       'ReplayStreamStatus',
+      'SessionContext',
+      'SessionEffectLedger',
+      'SessionExecutionProjection',
+      'SessionFreshBoundary',
+      'SessionGraph',
+      'SessionHints',
+      'SessionHistory',
+      'SessionManifest',
+      'SessionRecovery',
+      'SessionReplayCheckpoint',
+      'SessionRetentionUpdate',
+      'SessionSnapshot',
+      'SessionStructuralProjection',
+      'SessionUnresolvedEffect',
+      'SessionValidation',
+      'SharedSessionStore',
       'SkippedPlaybookSession',
+      'StoredSessionManifest',
+      'assertCaptainSessionExecutionCompatible',
+      'attachSessionHints',
+      'createSessionStore',
       'defaultSessionsDir',
       'openSessionStore',
+      'projectCaptainSessionStructure',
+      'validateCaptainSessionExecutionProjection',
+      'validateCaptainSessionStructuralProjection',
+      'validateSessionContext',
+      'validateSessionManifest',
     ],
     // DR-046: the worktree host-capability facade. Its ledger, receipt,
     // observation, and question types are re-declared name for name from
@@ -1730,6 +1780,24 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'devStateCountLabels',
       'devSummaryPolicy',
       'validateDevOptions',
+    ],
+    './session-host': [
+      'OpenSessionHostOptions',
+      'SessionHost',
+      'SessionHostController',
+      'SessionHostOptions',
+      'composeGenericConfig',
+      'createCaptainSessionHost',
+      'discardSessionUncertain',
+      'driveHeadlessCaptainTurn',
+      'executionConfigFromPlan',
+      'installRetainedGenerationsForLaunch',
+      'loadLaunchPlan',
+      'normalizeLaunchPlan',
+      'openSessionHost',
+      'projectTmuxConfig',
+      'resolveLaunchSessionsDir',
+      'validateFrozenExecutionConfig',
     ],
   };
 
@@ -1910,7 +1978,7 @@ async function consume(): Promise<void> {
   const summary = await store.read(lease.sessionId);
   const schemaVersion: number = summary.schemaVersion;
   const sessionId: string = summary.sessionId;
-  const state: 'settled' | 'uncertain' = summary.state;
+  const state: 'settled' | 'uncertain' | 'history-only' = summary.state;
   const cwd: string = summary.cwd;
   const updatedAt: string = summary.updatedAt;
   // @ts-expect-error the facade cannot expose the canonical snapshot

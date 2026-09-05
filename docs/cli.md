@@ -235,7 +235,7 @@ module's directory is a git repository, add `node_modules/` to its
 
 Interactive and headless commands write the same logical-session records in
 the configured [`sessions` directory](configuration.md#session-storage), whose
-default is `${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`. A fresh
+default is `${SPEX_HOME:-$HOME/.spex}/sessions/`. A fresh
 interactive child persists turn zero before printing `playbook: session <id>`
 and opening Boss input; a fresh headless turn returns the same kind of ID in
 `--json`. After the current writer exits or explicitly hands off, either
@@ -259,7 +259,7 @@ uncertainty rules below still apply to whichever record is selected
 ([DR-041](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/041-working-directory-aware-continuation.md)).
 
 A missing headless reply is read verbatim from stdin. Reopening restores the
-compiled Captain conversation, engagement stack, nested child boundary,
+Captain recovery journal, engagement stack, nested child boundary,
 stable-player ledger, and absolute working directory without replaying a
 settled or pending child start. One exclusive writer owns the session, so a
 detached interactive pane child remains the owner until it shuts down; a
@@ -272,8 +272,9 @@ current `model`, `effort`, and optional `fastMode` settings apply to the next
 call. Boolean `false` explicitly resets model or effort to the provider
 default, but `fastMode: false` is a literal disabled request; omission selects
 the fast-mode provider default or inherits the player value at a role binding.
-The retained provider token is never silently replaced by a fresh conversation
-if a requested setting is not supported
+Provider conversations are local hints. Missing hints start fresh from stored
+context; a definite pre-execution rejection permits one fresh attempt.
+Unsupported settings and ambiguous failures do not trigger that fallback
 ([[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
 [DR-032](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/032-explicit-roles-session-players.md)).
 
@@ -287,36 +288,28 @@ one unambiguously. The stream is a mode-`0600` regular non-symlink file inside
 the private sessions directory. Readers consume only the complete
 newline-terminated prefix; a final partial line is not presented as a record.
 
-The replay projection recursively removes provider `resumeToken` fields and
-string-valued `resume` selections while preserving `resume: false`. It is
-therefore useful for following and presentation, but it cannot resume an agent
-conversation and does not replace the private canonical manifest. External
-hosts can follow this stream without taking the writer lease through the
-published [`@sublang/playbook/session-store`
-facade](embedding.md#sharing-the-cli-session-store).
+Manifests use schema 7 and contain token-free recovery. The matching replay
+stream carries immutable configuration and graph records, so history does not
+require installed modules. Provider continuation hints live separately in
+`<session-id>.hints.json` and stay local. A hint is consumed before use and
+accepted only for the exact checkpoint that created it.
 
-Streams are unbounded in this version: neither front end prunes them, and
-retention remains tied to the deferred session-deletion policy. Removing
-provider credentials does not make the remaining replay content non-sensitive;
-protect the prompts, replies, tool calls, events, and timestamps it contains as
-sensitive session data.
+The manifest hashes its exact durable replay prefix. Missing or changed bytes,
+saved incompleteness, or unsupported required context block continuation while
+preserving readable history. A partial final line waits for completion; valid
+unknown record kinds are skipped for presentation. New session creation fails
+if its required context cannot be saved before work.
 
-Replay recording is fail-soft after the canonical session lease is valid. If
-initialization, sanitization, append, repair, publication synchronization, or a
-checkpoint fails, recording stops for that lease without changing the agent
-turn, durable session settlement, reply, or exit outcome. The headless command
-attempts this warning once on stderr:
+After work begins, replay failure stops recording and reports an incomplete
+history warning without authorizing a repeated action. Recovery and uncertainty
+remain durable; the incomplete marker persists across process restarts.
+Release retains the lease if that marker cannot be saved.
 
-```text
-playbook run: warning: replay history for session "<session-id>" may be incomplete; recording has stopped
-```
-
-The interactive child instead presents one Captain status with the same
-`warning: replay history ...` text and writes no raw stderr diagnostic. A later
-lease gets its own warning only if its replay writer independently becomes
-incomplete. The public facade emits no warning; an embedding host decides how
-to present the `incomplete` status it receives
-([[playbook-cli-84](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-84)]).
+Copy the manifest and matching replay together. Do not copy hints or leases.
+Continuation also requires matching working-directory/module paths and
+compatible runtimes; changed paths allow history only. Prompts, replies and
+tool content remain sensitive even after structured continuation fields have
+been removed. See the [shared storage contract](https://github.com/sublang-ai/playbook/blob/main/specs/packages/session-storage.md).
 
 ### Reconciling possible repository effects
 
@@ -359,23 +352,14 @@ current config cannot retune that attempt, and retry may duplicate external
 effects. Discard
 reads no input and runs no model: it restores the exact prior settled boundary,
 or deletes a never-settled fresh session, while abandoning the attempted work.
-An interrupted interactive turn uses the same uncertain record and is
-recovered with these headless commands. Current sessions use Captain-session
-record schema 6. Records from the removed direct v6 runner and released record
-schema 2 have incompatible player identity; Playbook 9 record schema 3, the
-historical schema-4 retention shape, and both pre-release schema-5 shapes
-predate the canonical schema-6 record boundary; the earlier schema-5 shape also
-lacks `unresolvedEffects` and cannot prove whether governed work may replay.
-Explicit selection rejects
-all of them before registry construction or governed work with the applicable
-cutover explanation. Implicit `--continue` reports and skips each fully
-validated nonresumable record with its session id, path, applicable reason, and
-an archive-or-remove remedy while leaving the file intact. Fresh-session
-discovery likewise leaves and reports nonresumable, malformed, unsafe, or
-unknown-schema files. A fully validated nonresumable record participates in
-settled same-directory predecessor ordering: it declines adoption only when it
-is newest, while an older or different-directory record does not block a newer
-resumable predecessor. A record whose directory or order cannot be validated
-publishes an empty fresh boundary without falling through. Those invalid
-records still fail closed when explicitly selected or encountered by
-`--continue`; no path converts or restores them.
+An interrupted interactive turn uses the same uncertain record and these
+headless recovery commands. Discard preserves the attempt's replay history and
+refuses if the effect ledger has advanced beyond the prior checkpoint.
+
+Older stores require explicit migration through the
+[shared API](embedding.md#sharing-the-cli-session-store). Valid schema-6 recovery
+is converted without provider tokens; schemas 2–5 and incomplete desktop
+sidecars become history only. Original bytes are preserved outside the portable
+session directory before publication. Unknown or malformed formats remain
+unchanged. Ordinary continuation never guesses missing identity or effect
+evidence.

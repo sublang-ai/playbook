@@ -596,7 +596,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
 
     const unsafeFixture = await fixtureDir();
     await mkdir(unsafeFixture.sessionsDir, { mode: 0o755 });
-    await chmod(unsafeFixture.sessionsDir, 0o755);
+    await chmod(unsafeFixture.sessionsDir, 0o500);
     const unsafeStore = facadeModule.openSessionStore(
       unsafeFixture.sessionsDir,
     );

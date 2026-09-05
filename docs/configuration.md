@@ -250,7 +250,7 @@ attempted settings already stored with that turn.
 ## Session storage
 
 Both front ends select canonical session manifests and write replay streams in
-one directory, where external hosts may keep their own sidecars too. Set the
+one directory, shared with embedding hosts. Set the
 optional top-level `sessions` key to move that shared store:
 
 ```yaml
@@ -259,7 +259,7 @@ sessions: ./state/playbook-sessions
 
 The value must be a nonempty filesystem path. When the key is absent, the
 directory is
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions`. An absolute path is
+`${SPEX_HOME:-$HOME/.spex}/sessions`. An absolute path is
 used as given; `~` and `~/...` expand from the home directory, while `~user`
 is rejected. Every other value, including a bare relative path such as the one
 above, resolves against the primary config file's directory rather than the
