@@ -1797,7 +1797,7 @@ function stepHermetic(root, state) {
   expectOneOrderedLifecycle(first.stderr, 'smoke');
   assertProvisionedEngineTree(repo, state.optinPrefix);
   const firstEnvelope = parseExactHeadlessReply(first.stdout, smokeToken);
-  const sessionsDir = join(env.XDG_STATE_HOME, 'playbook', 'sessions');
+  const sessionsDir = join(env.SPEX_HOME, 'sessions');
   const sessionPath = join(sessionsDir, `${firstEnvelope.sessionId}.json`);
   const firstRecord = readJson(sessionPath);
   const frozenCwd = realpathSync(repo);
@@ -1805,7 +1805,7 @@ function stepHermetic(root, state) {
     (player) => player.id,
   );
   if (
-    firstRecord.schemaVersion !== 6 ||
+    firstRecord.schemaVersion !== 7 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
@@ -1818,9 +1818,8 @@ function stepHermetic(root, state) {
     firstRecord.structuralProjection?.catalog?.lanes?.roles?.isolated?.playerId !==
       'release.isolated' ||
     JSON.stringify(firstRecord.retainedGenerations) !== '{}' ||
-    firstRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
-    firstRecord.snapshot?.captain?.conversation?.token !==
-      'release-smoke:closing:first:1'
+    firstRecord.snapshot?.captain?.conversation?.kind !== 'needsSeeding' ||
+    readJson(join(sessionsDir, `${firstEnvelope.sessionId}.hints.json`)).captain?.token !== 'release-smoke:closing:first:1'
   ) {
     fail(
       'the first headless turn did not persist its schema-3 identity boundary',
@@ -1863,9 +1862,8 @@ function stepHermetic(root, state) {
   if (
     secondRecord.state !== 'settled' ||
     secondRecord.cwd !== frozenCwd ||
-    secondRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
-    secondRecord.snapshot?.captain?.conversation?.token !==
-      'release-smoke:selection:continued:1'
+    secondRecord.snapshot?.captain?.conversation?.kind !== 'needsSeeding' ||
+    readJson(join(sessionsDir, `${firstEnvelope.sessionId}.hints.json`)).captain?.token !== 'release-smoke:selection:continued:1'
   ) {
     fail(
       'continuation replaced the frozen cwd or lost Captain continuity',
@@ -1909,6 +1907,7 @@ function stepHermetic(root, state) {
   expectOneOrderedLifecycle(laneB.stderr, 'lanes');
   parseExactHeadlessReply(laneB.stdout, smokeToken, firstEnvelope.sessionId);
   const finalRecord = readJson(sessionPath);
+  const finalHints = readJson(join(sessionsDir, `${firstEnvelope.sessionId}.hints.json`));
   const finalExecution = finalRecord.lastAppliedExecutionProjection;
   const finalPlayers = Object.fromEntries(
     (finalExecution?.players ?? []).map((player) => [player.id, player]),
@@ -1920,7 +1919,7 @@ function stepHermetic(root, state) {
   const finalPlayerIds = Object.keys(finalPlayers).sort();
   const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
   if (
-    finalRecord.schemaVersion !== 6 ||
+    finalRecord.schemaVersion !== 7 ||
     finalRecord.kind !== 'captain-session' ||
     finalRecord.sessionId !== firstEnvelope.sessionId ||
     finalRecord.state !== 'settled' ||
@@ -1934,13 +1933,12 @@ function stepHermetic(root, state) {
     JSON.stringify(finalRoleIds) !==
       JSON.stringify(['first', 'isolated', 'second']) ||
     JSON.stringify(finalRecord.retainedGenerations) !== '{}' ||
-    finalRecord.snapshot?.playerSessions?.['release.shared']?.resumeToken !==
-      'release-lane:shared:4' ||
-    finalRecord.snapshot?.playerSessions?.['release.isolated']?.resumeToken !==
-      'release-lane:isolated:2' ||
-    finalRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
-    finalRecord.snapshot?.captain?.conversation?.token !==
-      'release-smoke:closing:lane-b:4' ||
+    finalRecord.snapshot?.playerSessions?.['release.shared']?.resumeToken !== undefined ||
+    finalRecord.snapshot?.playerSessions?.['release.isolated']?.resumeToken !== undefined ||
+    finalRecord.snapshot?.captain?.conversation?.kind !== 'needsSeeding' ||
+    finalHints.players?.['release.shared'] !== 'release-lane:shared:4' ||
+    finalHints.players?.['release.isolated'] !== 'release-lane:isolated:2' ||
+    finalHints.captain?.token !== 'release-smoke:closing:lane-b:4' ||
     finalExecution?.captain?.model?.value !== 'release-smoke-captain-b' ||
     finalExecution?.captain?.effort?.value !== 'max' ||
     finalExecution?.captain?.fastMode !== true ||
@@ -2094,14 +2092,12 @@ function stepHermetic(root, state) {
   }
 
   const credentials = [
-    finalRecord.snapshot?.captain?.conversation?.token,
-    ...Object.values(finalRecord.snapshot?.playerSessions ?? {}).map(
-      (entry) => entry?.resumeToken,
-    ),
+    finalHints.captain?.token,
+    ...Object.values(finalHints.players ?? {}),
   ].filter((value) => typeof value === 'string' && value.length > 0);
   if (credentials.length < 3) {
     fail(
-      'the CLI-written session-store fixture is not credential-bearing',
+      'the CLI-written session has no acknowledged local hints',
       JSON.stringify(credentials),
     );
   }
@@ -2278,7 +2274,7 @@ function stepEffectReconciliation(root, state) {
       );
     }
   };
-  const sessionsDir = join(stateHome, 'playbook', 'sessions');
+  const sessionsDir = join(env.SPEX_HOME, 'sessions');
   const sessionRecord = (id) => readJson(join(sessionsDir, `${id}.json`));
 
   const resolvedBaseline = head();
@@ -2313,7 +2309,7 @@ function stepEffectReconciliation(root, state) {
     label: 'resolved effect row',
   });
   if (
-    resolvedRecord.schemaVersion !== 6 ||
+    resolvedRecord.schemaVersion !== 7 ||
     resolvedRecord.state !== 'settled' ||
     resolvedRecord.snapshot?.mode !== 'chat' ||
     resolvedRecord.unresolvedEffects?.length !== 0
@@ -2383,7 +2379,7 @@ function stepEffectReconciliation(root, state) {
     'parked effect row',
   );
   if (
-    parkedRecord.schemaVersion !== 6 ||
+    parkedRecord.schemaVersion !== 7 ||
     parkedRecord.state !== 'settled' ||
     parkedRecord.snapshot?.mode !== 'engaged.parked' ||
     parkedRecord.snapshot?.frames?.at(-1)?.playbookId !== 'effect'
@@ -2457,7 +2453,7 @@ function stepEffectReconciliation(root, state) {
   );
   const abandonedRecord = sessionRecord(parkedEnvelope.sessionId);
   if (
-    abandonedRecord.schemaVersion !== 6 ||
+    abandonedRecord.schemaVersion !== 7 ||
     abandonedRecord.state !== 'settled' ||
     abandonedRecord.snapshot?.mode !== 'chat' ||
     (abandonedRecord.snapshot?.frames?.length ?? 0) !== 0 ||
@@ -3015,7 +3011,7 @@ function stepPackedSessionStore(root, state) {
   }
   const oldManifest = readJson(fixture.oldSessionPath);
   if (
-    oldManifest.schemaVersion !== 6 ||
+    oldManifest.schemaVersion !== 7 ||
     oldManifest.sessionId !== fixture.oldSessionId
   ) {
     fail(
@@ -3028,6 +3024,8 @@ function stepPackedSessionStore(root, state) {
   }
   const {
     unresolvedEffects: _unresolvedEffects,
+    replay: _replay,
+    contextSeq: _contextSeq,
     ...preUnresolvedEffectsManifest
   } = oldManifest;
   const oldSchemaBytes = `${JSON.stringify({

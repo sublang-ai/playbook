@@ -2237,7 +2237,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     tempDirs.push(root);
     const sessionsDir = join(root, 'sessions');
     await mkdir(sessionsDir, { mode: 0o700 });
-    await chmod(sessionsDir, 0o755);
+    await chmod(sessionsDir, 0o500);
     let imports = 0;
     let launches = 0;
 
@@ -2255,7 +2255,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
 
     expect(out.result).toEqual({ code: 1 });
-    expect(out.stderr.text()).toMatch(/permissions must be 0700/);
+    expect(out.stderr.text()).toMatch(/unsafe ownership, links, type, or owner access/);
     expect(imports).toBe(0);
     expect(launches).toBe(0);
   });

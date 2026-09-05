@@ -108,7 +108,7 @@ function structuralProjection(plan: any) {
 }
 
 describe('sessions locator bootstrap (PBCLI-78)', () => {
-  it('keeps the unset locator on the XDG or home-state default', async () => {
+  it('keeps the unset locator under Spex home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'playbook-sessions-default-'));
     tempDirs.push(root);
     const configPath = join(root, 'config', 'playbook.config.yaml');
@@ -117,10 +117,10 @@ describe('sessions locator bootstrap (PBCLI-78)', () => {
     expect(
       await launchConfig.resolveLaunchSessionsDir({
         userConfigPath: configPath,
-        env: { XDG_STATE_HOME: join(root, 'xdg-state') },
+        env: { SPEX_HOME: join(root, 'spex-home') },
         homeDir: join(root, 'home'),
       }),
-    ).toBe(join(root, 'xdg-state', 'playbook', 'sessions'));
+    ).toBe(join(root, 'spex-home', 'sessions'));
     expect(
       await launchConfig.resolveLaunchSessionsDir({
         userConfigPath: configPath,
@@ -128,7 +128,7 @@ describe('sessions locator bootstrap (PBCLI-78)', () => {
         homeDir: join(root, 'home'),
       }),
     ).toBe(
-      join(root, 'home', '.local', 'state', 'playbook', 'sessions'),
+      join(root, 'home', '.spex', 'sessions'),
     );
   });
 

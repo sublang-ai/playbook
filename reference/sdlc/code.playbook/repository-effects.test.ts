@@ -79,7 +79,7 @@ function exec(
 }
 
 function git(repo: string, ...args: string[]): Promise<string> {
-  return exec('git', args, { cwd: repo });
+  return exec('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: repo });
 }
 
 async function initRepository(prefix = 'playbook-effects-'): Promise<string> {
