@@ -831,6 +831,89 @@ function warningCount(text: string, warning: string) {
   return text.split(warning).length - 1;
 }
 
+async function formerDefaultSession(useXdg = true) {
+  const home = await mkdtemp(join(tmpdir(), 'playbook-former-default-'));
+  tempDirs.push(home);
+  const env = {
+    ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o',
+    ...(useXdg ? { XDG_STATE_HOME: join(home, 'xdg') } : {}),
+  };
+  const sourceDir = join(
+    useXdg ? join(home, 'xdg') : join(home, '.local', 'state'),
+    'playbook', 'sessions',
+  );
+  const first = await headlessHarness(['run', 'remember the original task'], {
+    sessionsDir: sourceDir, homeDir: home, env,
+    createCaptainRuntime: undefined,
+  });
+  expect(first.result.code, first.stderr).toBe(0);
+  const id = first.result.sessionId;
+  const record = await createCaptainSessionStore({ sessionsDir: sourceDir }).read(id);
+  expect(record.schemaVersion).toBe(6);
+  const sourcePath = join(sourceDir, `${id}.json`);
+  const sourceBytes = `${JSON.stringify(record)}\n`;
+  await writeFile(sourcePath, sourceBytes);
+  const replayBytes = await readFile(join(sourceDir, `${id}.records.jsonl`));
+  return { home, env, sourceDir, sourcePath, sourceBytes, replayBytes, id, configPath: first.configPath };
+}
+
+describe('former-default headless migration', () => {
+  it.each([false, true])('migrates and continues complete history (XDG override: %s)', async (useXdg) => {
+    const f = await formerDefaultSession(useXdg);
+    const callOffset = FakeAdapter.calls.length;
+    const continued = await headlessHarness(['run', '--session', f.id, 'continue the original task'], {
+      injectSessionsDir: false, homeDir: f.home, env: f.env,
+      userConfigPath: f.configPath, createCaptainRuntime: undefined,
+    });
+    expect(continued.result.code, continued.stderr).toBe(0);
+    expect(continued.result.sessionId).toBe(f.id);
+    expect(continued.stderr).toContain(`migrated 1 sessions from ${f.sourceDir}`);
+    const calls = FakeAdapter.calls.slice(callOffset);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].resume).toBeUndefined();
+    expect(calls[0].prompt).toContain('remember the original task');
+    const destination = join(f.home, '.spex', 'sessions');
+    const record = JSON.parse(await readFile(join(destination, `${f.id}.json`), 'utf8'));
+    expect(record).toMatchObject({ schemaVersion: 7, state: 'settled' });
+    expect(record.snapshot.sequences.turn).toBe(2);
+    const replay = await readFile(join(destination, `${f.id}.records.jsonl`));
+    expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
+    await expect(stat(f.sourcePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(join(f.sourceDir, `${f.id}.records.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['SPEX_HOME', 'directory', 'store', 'config', 'overlay'] as const)(
+    'leaves the former default untouched with an explicit %s', async (kind) => {
+      const f = await formerDefaultSession();
+      const destination = join(f.home, 'explicit', 'sessions');
+      const extra: Record<string, unknown> = {
+        injectSessionsDir: false, homeDir: f.home, env: f.env,
+        userConfigPath: f.configPath,
+      };
+      const argv = ['run', '--session', f.id, 'must not start'];
+      if (kind === 'SPEX_HOME') extra.env = { ...f.env, SPEX_HOME: join(f.home, 'explicit') };
+      if (kind === 'directory') extra.sessionsDir = destination;
+      if (kind === 'store') extra.sessionStore = createCaptainSessionStore({ sessionsDir: destination });
+      if (kind === 'config') {
+        extra.userConfigPath = await writeConfig(`sessions: ${JSON.stringify(destination)}\n${sharedConfig()}`);
+      }
+      if (kind === 'overlay') {
+        const overlay = await writeConfig(`sessions: ${JSON.stringify(destination)}\n`);
+        argv.splice(1, 0, '--with', overlay);
+      }
+      const beforeCalls = FakeAdapter.calls.length;
+      const result = await headlessHarness(argv, extra);
+      expect(result.result.code, result.stderr).toBe(1);
+      expect(result.stderr).toContain('does not exist');
+      expect(result.stderr).not.toContain('migrated');
+      expect(FakeAdapter.calls).toHaveLength(beforeCalls);
+      expect(await readFile(f.sourcePath, 'utf8')).toBe(f.sourceBytes);
+      expect(await readFile(join(f.sourceDir, `${f.id}.records.jsonl`))).toEqual(f.replayBytes);
+      await expect(stat(join(destination, `${f.id}.json`))).rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
+});
+
 describe('headless sessions locator (PBCLI-78/81)', () => {
   it('selects and persists through a configured relative directory without projecting the locator', async () => {
     const configPath = await writeConfig(

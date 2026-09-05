@@ -22,6 +22,7 @@ import { pathToFileURL } from 'node:url';
 import {
   AGENT_RUNTIME_TARGETS,
   classifyRuntime,
+  createEvent,
   type RuntimeReadiness,
   type RuntimeTarget,
 } from '@sublang/cligent';
@@ -46,6 +47,7 @@ const { executionConfigFromPlan } = await import(
   new URL('./bin/run.js', import.meta.url).href
 );
 const {
+  createCaptainSessionStore,
   projectCaptainSessionStructure,
   validateCaptainSessionRecord,
 } = await import(new URL('./bin/session-store.js', import.meta.url).href);
@@ -2949,6 +2951,114 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(settledResult).toEqual({ code: 1 });
     expect(events).toEqual(['read', 'acquire', 'recover', 'release', 'launch']);
   });
+});
+
+async function formerDefaultInteractiveSession() {
+  const home = await makeTempHome();
+  const env = { HOME: home, ANTHROPIC_API_KEY: 'a', XDG_STATE_HOME: join(home, 'xdg') };
+  const sourceDir = join(env.XDG_STATE_HOME, 'playbook', 'sessions');
+  const configPath = join(home, 'custom-config.yaml');
+  const config = [
+    'captain: claude',
+    'players: { dev.coder: claude }',
+    'playbooks:',
+    '  code: { from: mod://code, roles: { coder: dev.coder } }',
+    '',
+  ].join('\n');
+  await writeFile(configPath, config);
+  class MigrationAdapter {
+    readonly agent = 'claude-code' as const;
+    async *run() {
+      yield createEvent('done', this.agent, {
+        status: 'success', result: JSON.stringify({ action: 'respond', text: 'Remembered the task.' }),
+        resumeToken: 'legacy-provider-token', usage: { toolUses: 0 }, durationMs: 1,
+      }, 'migration-fixture');
+    }
+  }
+  const stderr = writer();
+  const initial = await runPlaybookCli({
+    argv: ['run', 'remember this task'], homeDir: home, env,
+    userConfigPath: configPath, sessionsDir: sourceDir,
+    loadModule: loader({ 'mod://code': { default: { ...fakeEntry, requiredRoleIds: ['coder'] } } }),
+    adapterImports: { claude: async () => MigrationAdapter },
+    probeAdapterSdk: async () => true,
+    createLogicalSessionId: () => '96000000-0000-4000-8000-000000000011',
+    stdout: writer(), stderr,
+  });
+  expect(initial.code, stderr.text()).toBe(0);
+  const id = initial.sessionId;
+  const record = await createCaptainSessionStore({ sessionsDir: sourceDir }).read(id);
+  expect(record.schemaVersion).toBe(6);
+  const sourcePath = join(sourceDir, `${id}.json`);
+  const sourceBytes = `${JSON.stringify(record)}\n`;
+  await writeFile(sourcePath, sourceBytes);
+  const replayBytes = await readFile(join(sourceDir, `${id}.records.jsonl`));
+  return { home, env, sourceDir, configPath, config, id, sourcePath, sourceBytes, replayBytes };
+}
+
+describe('former-default interactive migration', () => {
+  it('selects the migrated checkpoint and complete replay before managed launch', async () => {
+    const f = await formerDefaultInteractiveSession();
+    const stderr = writer();
+    let descriptor: any;
+    const result = await runPlaybookCli({
+      argv: ['--session', f.id], homeDir: f.home, env: f.env,
+      userConfigPath: f.configPath, stderr, stdout: writer(),
+      tmuxPlayBin: '/tmp/tmux-play.js', probeAdapterSdk: async () => true,
+      publishManagedReadinessWitness: async () => {},
+      loadModule: async () => { throw new Error('selected outer launch must remain data-only'); },
+      launchManagedTmuxPlay: async (options: any) => {
+        const workDir = await requestManagedSessionCommand(options);
+        descriptor = JSON.parse(await readFile(join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE), 'utf8'));
+        return { sessionId: f.id, workDir, async cancel() {}, async attach() {} };
+      },
+    });
+    expect(result, stderr.text()).toEqual({ code: 0 });
+    expect(stderr.text()).toContain(`migrated 1 sessions from ${f.sourceDir}`);
+    const destination = join(f.home, '.spex', 'sessions');
+    expect(descriptor).toMatchObject({ sessionId: f.id, sessionsDir: destination });
+    const manifest = JSON.parse(await readFile(join(destination, `${f.id}.json`), 'utf8'));
+    expect(manifest).toMatchObject({ schemaVersion: 7, state: 'settled' });
+    expect(manifest.snapshot.sequences.turn).toBe(1);
+    expect(JSON.stringify(manifest)).not.toContain('legacy-provider-token');
+    const replay = await readFile(join(destination, `${f.id}.records.jsonl`));
+    expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
+    expect(existsSync(f.sourcePath)).toBe(false);
+    expect(existsSync(join(f.sourceDir, `${f.id}.records.jsonl`))).toBe(false);
+  });
+
+  it.each(['SPEX_HOME', 'directory', 'store', 'config', 'overlay'] as const)(
+    'leaves the former default untouched with an explicit %s', async (kind) => {
+      const f = await formerDefaultInteractiveSession();
+      const destination = join(f.home, 'explicit', 'sessions');
+      const options: any = { env: f.env };
+      const argv = ['--session', f.id];
+      if (kind === 'SPEX_HOME') options.env = { ...f.env, SPEX_HOME: join(f.home, 'explicit') };
+      if (kind === 'directory') options.sessionsDir = destination;
+      if (kind === 'store') options.sessionStore = createCaptainSessionStore({ sessionsDir: destination });
+      if (kind === 'config') await writeFile(f.configPath, `sessions: ${JSON.stringify(destination)}\n${f.config}`);
+      if (kind === 'overlay') {
+        const overlay = join(f.home, 'overlay.yaml');
+        await writeFile(overlay, `sessions: ${JSON.stringify(destination)}\n`);
+        argv.unshift('--with', overlay);
+      }
+      const stderr = writer();
+      let launches = 0;
+      const result = await runPlaybookCli({
+        argv, homeDir: f.home, userConfigPath: f.configPath,
+        stderr, stdout: writer(), tmuxPlayBin: '/tmp/tmux-play.js',
+        launchManagedTmuxPlay: async () => { launches += 1; throw new Error('must not launch'); },
+        ...options,
+      });
+      expect(result, stderr.text()).toEqual({ code: 1 });
+      expect(stderr.text()).toContain('does not exist');
+      expect(stderr.text()).not.toContain('migrated');
+      expect(launches).toBe(0);
+      expect(await readFile(f.sourcePath, 'utf8')).toBe(f.sourceBytes);
+      expect(await readFile(join(f.sourceDir, `${f.id}.records.jsonl`))).toEqual(f.replayBytes);
+      expect(existsSync(join(destination, `${f.id}.json`))).toBe(false);
+    },
+  );
 });
 
 async function managedCliHarness(options: any) {
