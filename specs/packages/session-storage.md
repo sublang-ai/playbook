@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package owns the portable session format, local provider hints and shared lifecycle used by interactive, headless and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
+This package proposes the portable session format, local provider hints and shared lifecycle used by interactive, headless and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
 It retains the frozen replay envelope and repository-effect authority while making neither a provider conversation nor an application-specific project registry necessary for history.
 
 ## External Behavior
@@ -21,7 +21,10 @@ The session store shall use `${SPEX_HOME:-$HOME/.spex}/sessions` by default, hon
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
 
-- manifests and hints use the same private regular-file and atomic publication rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; neither symlinks nor unsafe modes are repaired by weakening the boundary.
+- manifests and hints use the same private regular-file and atomic publication rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; shared opening prepares permissions before strict reads or lease admission:
+  - only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified handles tighten the directory first to `0700` and files to `0600`, removing permissions only;
+  - wrong ownership, links, special files, insufficient owner permissions or failed verification refuse; no content, ownership or lease metadata is repaired;
+  - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
 - both hosts record the normalized absolute `cwd`; no Spex project ID or registry access participates in the format.
 
 ### session-storage-2
@@ -168,7 +171,7 @@ The shared lifecycle shall use one version-aware codec for validation, projectio
 
 ### session-storage-14
 
-When the integration suite creates, continues and deletes sessions through interactive, headless and embedding hosts against one real store, it shall verify common path/override resolution [[session-storage-1](#session-storage-1)], closed manifest variants [[session-storage-2](#session-storage-2)], shared lifecycle and leases [[session-storage-11](#session-storage-11)], deletion interruption/retry and retained guards [[session-storage-12](#session-storage-12)], and one codec across hosts [[session-storage-13](#session-storage-13)].
+When the integration suite creates, continues and deletes sessions through interactive, headless and embedding hosts against one real store, it shall verify common path/override resolution [[session-storage-1](#session-storage-1)], permission tightening after Git creates `0755`/`0644` entries, unchanged bytes, and refusal of unsafe paths or insufficient owner access [[session-storage-1](#session-storage-1)], closed manifest variants [[session-storage-2](#session-storage-2)], shared lifecycle and leases [[session-storage-11](#session-storage-11)], deletion interruption/retry and retained guards [[session-storage-12](#session-storage-12)], and one codec across hosts [[session-storage-13](#session-storage-13)].
 
 ### session-storage-15
 

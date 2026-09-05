@@ -754,7 +754,7 @@ Where a session has a replay stream, that stream shall be one file beside the se
 | Version | a line whose `v` is missing or not `1` shall be rejected rather than migrated or skipped |
 
 Because the writer assigns the sequence, contiguity shall be an invariant rather than a signal, and a missing sequence shall be malformed input rather than a loss report.
-The store shall reject an incompatible mode, symlink, or non-regular file rather than relax the file and directory privacy boundary.
+Strict store reads shall reject an incompatible mode, symlink, or non-regular file; shared opening may first remove excess permissions under its preparation rules [[session-storage-1](session-storage.md#session-storage-1)], never relax the privacy boundary.
 A trace bracket shall be observed as a `captain_telemetry` record whose `topic` is `playbook.trace` and whose `payload` is the schema-4 trace event of [[playbook-runtime-37](playbook-runtime.md#playbook-runtime-37)].
 Because the CLI's explicit role bindings of [[playbook-cli-4](#playbook-cli-4)] reach runtime trace with their resolved host player identities under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], the Playbook writer shall key each active player-call frame by that event's `(sessionId, callId)`, retain its `payload.playerId` and `payload.roleId`, and close only the exactly matching frame; it shall add envelope `role` to each observed `player_prompt`, `player_event`, and `player_finished` only when the active frames for that player establish exactly one local role, and shall omit it from every other, malformed, or indeterminate record.
 

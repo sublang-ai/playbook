@@ -8,7 +8,6 @@
 Accepted.
 Takes up [DR-010](010-playbook-session-tracing-and-resume.md) §6's deferral of durable trace storage to a separate decision, and preserves its resume-token credential posture by persisting a token-free projection instead of the trace itself.
 Extends [DR-031](031-shared-captain-session-front-ends.md) §2's one shared configuration with an optional `sessions` bootstrap locator.
-Amended by [DR-049](049-portable-session-contract.md): shared manifest lifecycle, default location, persisted replay status and local hints.
 
 ## Context
 

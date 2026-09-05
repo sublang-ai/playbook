@@ -5,8 +5,8 @@
 
 ## Status
 
-Accepted (2026-09-05); implementation awaits the owner's review of the coordinated storage specifications.
-Amends [DR-031](031-shared-captain-session-front-ends.md) for embedding-host lifecycle parity, [DR-042](042-shared-session-store-and-replay-stream.md) for manifest ownership, defaults, durable replay status and local hints, [DR-040](040-outcome-authority-effect-reconciliation.md) for token-free deferred-player identity, and [DR-029](029-session-scoped-conversational-captain.md) for definite-rejection-only immediate fresh retry.
+Proposed; awaiting owner review.
+Proposes amendments to [DR-031](031-shared-captain-session-front-ends.md) for embedding-host lifecycle parity, [DR-042](042-shared-session-store-and-replay-stream.md) for manifest ownership, defaults, durable replay status and local hints, [DR-040](040-outcome-authority-effect-reconciliation.md) for token-free deferred-player identity, and [DR-029](029-session-scoped-conversational-captain.md) for definite-rejection-only immediate fresh retry.
 
 ## Context
 
@@ -20,6 +20,7 @@ Amends [DR-031](031-shared-captain-session-front-ends.md) for embedding-host lif
 - Local hints belong to an exact checkpoint and are consumed before use; deferred operations bind player identity, never a provider token [[session-storage-6](../packages/session-storage.md#session-storage-6)] [[session-storage-7](../packages/session-storage.md#session-storage-7)].
 - Only definite pre-execution session rejection permits one fresh attempt; ambiguous execution preserves uncertainty [[session-storage-8](../packages/session-storage.md#session-storage-8)].
 - The initial format supports no checkpoint path relocation: differing repository/module paths permit history only [[session-storage-9](../packages/session-storage.md#session-storage-9)].
+- Shared opening removes excess permissions from verified owned entries before strict reads or lease admission; unsafe paths still refuse [[session-storage-1](../packages/session-storage.md#session-storage-1)].
 - Shared migration retains ignored originals; deletion keeps retired guards and removes the manifest last [[session-storage-10](../packages/session-storage.md#session-storage-10)] [[session-storage-12](../packages/session-storage.md#session-storage-12)].
 
 ## Consequences
