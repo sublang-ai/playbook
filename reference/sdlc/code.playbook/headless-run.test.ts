@@ -61,6 +61,7 @@ afterEach(async () => {
   FakeAdapter.calls = [];
   FakeAdapter.options = [];
   FakeAdapter.decision = undefined;
+  FakeAdapter.failure = undefined;
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -80,6 +81,7 @@ function writer() {
 class FakeAdapter implements AgentAdapter {
   static calls: Array<{ prompt: string; resume: string | undefined }> = [];
   static options: Array<AgentOptions | undefined> = [];
+  static failure: 'rejected' | 'ambiguous' | undefined;
   static decision: ((prompt: string) => unknown) | undefined;
   readonly agent = 'claude-code';
 
@@ -89,6 +91,14 @@ class FakeAdapter implements AgentAdapter {
   ): AsyncGenerator<AgentEvent, void, void> {
     FakeAdapter.calls.push({ prompt, resume: options?.resume });
     FakeAdapter.options.push(options);
+    if (options?.resume && FakeAdapter.failure) {
+      yield createEvent('error', this.agent, {
+        code: FakeAdapter.failure === 'rejected' ? 'SESSION_RESUME_REJECTED' : 'PROVIDER_ERROR',
+        message: 'fixture provider failure', recoverable: true,
+      });
+      yield createEvent('done', this.agent, { status: 'error', usage: { toolUses: 0 }, durationMs: 1 });
+      return;
+    }
     const result = prompt.includes(
       'Select exactly one action from the closed set',
     )
@@ -186,6 +196,8 @@ function preEffectSessionRecord(
     delete runtime.effectLedger;
   };
   record.schemaVersion = schemaVersion;
+  delete record.replay;
+  delete record.contextSeq;
   delete record.effectLedger;
   delete record.unresolvedEffects;
   record.snapshot.schemaVersion = 3;
@@ -211,6 +223,8 @@ function preEffectSessionRecord(
 function preUnresolvedEffectsSessionRecord(value: any) {
   const record = JSON.parse(JSON.stringify(value));
   record.schemaVersion = 5;
+  delete record.replay;
+  delete record.contextSeq;
   delete record.unresolvedEffects;
   for (const projection of [
     record.structuralProjection,
@@ -685,7 +699,7 @@ async function initializeHeadlessTestRepository(cwd: string) {
   ]);
   await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
   await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
-  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
+  await execFileAsync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline']);
 }
 
 function sharedConfig() {
@@ -918,7 +932,7 @@ describe('headless sessions locator (PBCLI-78/81)', () => {
     expect(out.stdout).toBe('');
     expect(calls).toEqual({ prepare: 0, load: 0, host: 0 });
     expect(out.stderr).toContain(
-      'Captain session store path is not a real directory',
+      'session permission preparation refuses unsafe ownership, links, type, or owner access',
     );
   });
 
@@ -1060,7 +1074,8 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
 
     const firstObservedCount = observed.length;
     const firstEntries = await readReplayEntries(sessionsDir, replaySessionId);
-    expect(firstEntries).toHaveLength(firstObservedCount);
+    expect(firstEntries.filter(({ record }: any) => !['session_context', 'continuity_reset'].includes(record.type))).toHaveLength(firstObservedCount);
+    expect(firstEntries[0]?.record.type).toBe('session_context');
     expect(firstEntries.map(({ seq }: any) => seq)).toEqual(
       Array.from({ length: firstEntries.length }, (_, index) => index + 1),
     );
@@ -1083,8 +1098,11 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
     expect(entries.map(({ seq }: any) => seq)).toEqual(
       Array.from({ length: entries.length }, (_, index) => index + 1),
     );
-    expect(entries.map(({ record }: any) => record)).toEqual(
-      observed.map((record) => sanitizeReplayRecord(record)),
+    expect(entries.filter(({ record }: any) => !['session_context', 'continuity_reset'].includes(record.type)).map(({ record: { contextSeq: _contextSeq, ...record } }: any) => record)).toEqual(
+      observed.map((record, index) => sanitizeReplayRecord(index < firstObservedCount || typeof record.turnId !== 'number' ? record : {
+        ...record, turnId: record.turnId + 1,
+        ...(record.type === 'turn_started' ? { turn: { ...record.turn, id: record.turn.id + 1 } } : {}),
+      })),
     );
 
     const types = new Set(entries.map(({ record }: any) => record.type));
@@ -1130,39 +1148,27 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
     expect(serialized).toContain('"resume":false');
   });
 
-  it('warns once and still completes against an unavailable initial stream', async () => {
-    const stateRoot = await mkdtemp(
-      join(tmpdir(), 'playbook-headless-invalid-replay-'),
-    );
+  it('refuses a new session when its required context cannot be recorded', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-headless-invalid-replay-'));
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
     await mkdir(sessionsDir, { mode: 0o700 });
     const streamPath = join(sessionsDir, `${replaySessionId}.records.jsonl`);
     const invalid = '{"v":1,"seq":1,"record":[]}\n';
     await writeFile(streamPath, invalid, { mode: 0o600 });
-
-    const out = await headlessHarness(['run', 'continue without replay'], {
+    let turns = 0;
+    const out = await headlessHarness(['run', 'cannot record context'], {
       sessionsDir,
       createLogicalSessionId: () => replaySessionId,
-    });
-    const warning = headlessReplayWarning(replaySessionId);
-    expect(out.result.code).toBe(0);
-    expect(out.stdout).toBe('Captain acknowledged the message.\n');
-    expect(warningCount(out.stderr, warning)).toBe(1);
-    expect(out.stderr.replace(warning, '')).toBe('');
-    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
-
-    const successor = await headlessHarness(
-      ['run', '--session', replaySessionId, 'continue once more'],
-      {
-        sessionsDir,
-        userConfigPath: out.configPath,
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return { runBossTurn: async (...args: Parameters<typeof host.runBossTurn>) => { turns += 1; return host.runBossTurn(...args); }, dispose: () => host.dispose() };
       },
-    );
-    expect(successor.result.code).toBe(0);
-    expect(successor.stdout).toBe('Captain acknowledged the message.\n');
-    expect(warningCount(successor.stderr, warning)).toBe(1);
-    expect(successor.stderr.replace(warning, '')).toBe('');
+    });
+    expect(out.result.code, out.stderr).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(out.stderr).toContain('cannot persist session execution context');
+    expect(turns).toBe(0);
     expect(await readFile(streamPath, 'utf8')).toBe(invalid);
   });
 
@@ -2254,7 +2260,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const thirdId = '90000000-0000-4000-8000-000000000013';
   const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v6 record before stdout without semantic disposal', async () => {
+  it('persists a closed v7 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -2313,7 +2319,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
@@ -3162,7 +3168,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         now: () => new Date('2026-08-11T20:20:02.000Z'),
       },
     );
-    expect(continued.result.code).toBe(0);
+    expect(continued.result.code, continued.stderr).toBe(0);
     expect(continued.result.sessionId).toBe(secondId);
     expect(continued.inputs).toEqual(['latest reply']);
     expect(continued.stderr).toContain(
@@ -4236,7 +4242,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
             asker: { kind: 'role', roleId: 'coder' },
             question: 'May I continue?',
           },
-          playerContinuation: 'coder-token',
+          playerContinuation: { v: 1, playerId: 'dev.coder' },
         },
       }),
     });
@@ -5303,4 +5309,43 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       ).toBe(roots['@sublang/playbook']);
     }
   });
+});
+
+
+describe('portable CLI provider hints', () => {
+  it.each(['missing', 'rejected', 'ambiguous'] as const)(
+    'continues a saved Captain with a %s local hint safely', async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'playbook-cli-hints-'));
+      tempDirs.push(root);
+      const sessionsDir = join(root, 'sessions');
+      const id = '95000000-0000-4000-8000-000000000011';
+      const initial = await headlessHarness(['run', 'remember the original task'], {
+        sessionsDir, createLogicalSessionId: () => id, createCaptainRuntime: undefined,
+      });
+      expect(initial.result.code, initial.stderr).toBe(0);
+      const hintPath = join(sessionsDir, `${id}.hints.json`);
+      const hints = JSON.parse(await readFile(hintPath, 'utf8'));
+      expect(hints.captain.kind).toBe('pinned');
+      const priorRecords = await readReplayEntries(sessionsDir, id);
+      if (mode === 'missing') await rm(hintPath);
+      else FakeAdapter.failure = mode;
+      const callOffset = FakeAdapter.calls.length;
+      const continued = await headlessHarness(['run', '--session', id, 'continue safely'], {
+        sessionsDir, userConfigPath: initial.configPath, createCaptainRuntime: undefined,
+      });
+      expect(continued.result.code, continued.stderr).toBe(0);
+      const calls = FakeAdapter.calls.slice(callOffset);
+      expect(calls.map(({ resume }) => resume)).toEqual(
+        mode === 'missing' ? [undefined] : mode === 'rejected' ? [hints.captain.token, undefined] : [hints.captain.token],
+      );
+      if (mode !== 'ambiguous') expect(calls.at(-1)?.prompt).toContain('remember the original task');
+      const manifest = JSON.parse(await readFile(join(sessionsDir, `${id}.json`), 'utf8'));
+      expect(manifest.schemaVersion).toBe(7);
+      expect(manifest.snapshot.captain.conversation).toEqual({ kind: 'needsSeeding' });
+      expect(JSON.stringify(manifest)).not.toContain(hints.captain.token);
+      const resets = (await readReplayEntries(sessionsDir, id)).slice(priorRecords.length)
+        .filter(({ record }: any) => record.type === 'continuity_reset').map(({ record }: any) => ({ participantId: record.participantId, reason: record.reason }));
+      expect(resets).toEqual(mode === 'ambiguous' ? [] : [{ participantId: 'captain', reason: `${mode}_hint` }]);
+    },
+  );
 });

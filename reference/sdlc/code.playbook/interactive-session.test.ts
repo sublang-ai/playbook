@@ -50,9 +50,20 @@ const predecessorSessionId = '90000000-0000-4000-8000-000000000043';
 const olderPredecessorSessionId =
   '90000000-0000-4000-8000-000000000044';
 const tempDirs: string[] = [];
+// Quarantine fixtures have no live host work; keep their leases through the
+// ownership assertions, then close them explicitly instead of relying on GC.
+const quarantineCleanup: Array<{ release(): Promise<unknown> }> = [];
+function quarantineFixtureStore(store: ReturnType<typeof createCaptainSessionStore>) {
+  return { ...store, async acquire(id: string) {
+    const lease = await store.acquire(id);
+    quarantineCleanup.push(lease);
+    return lease;
+  } };
+}
 const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
+  for (const lease of quarantineCleanup.splice(0)) await lease.release();
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -203,6 +214,8 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
       const warningAttempts: unknown[] = [];
       const rawStderr: string[] = [];
       let snapshot = shellSnapshot(fixture.execution, 0);
+      let emitSourceRecords = async () => {};
+      const sourceBoundary = ['sanitization', 'append', 'first-publication directory sync'].includes(boundary);
       let liveStatus = {
         lastReadableSeq: 0,
         lastDurableSeq: 0,
@@ -246,6 +259,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
             return {
               ...owned,
               async append(record: unknown, role: unknown) {
+                if ((record as any)?.type === 'session_context') return owned.append(record, role);
                 if (liveStatus.incomplete) return;
                 if (sourceFailurePending) {
                   sourceFailurePending = false;
@@ -296,17 +310,16 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
             topic: 'fixture.trigger',
             payload: {},
           };
-          for (const observer of options.observers) {
-            await observer.onRecord(initializationRecord);
-          }
-          const laterRecord = {
-            ...initializationRecord,
-            timestamp: 2,
-            topic: 'fixture.later',
+          emitSourceRecords = async () => {
+            for (const observer of options.observers) {
+              await observer.onRecord(initializationRecord);
+            }
+            const laterRecord = { ...initializationRecord, timestamp: 2, topic: 'fixture.later' };
+            for (const observer of options.observers) {
+              await observer.onRecord(laterRecord);
+            }
           };
-          for (const observer of options.observers) {
-            await observer.onRecord(laterRecord);
-          }
+          if (!sourceBoundary) await emitSourceRecords();
           return {
             host: fakeHost([]),
             shell: {
@@ -329,6 +342,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
         ...fixture.context,
         observers: [presentationGate],
       });
+      if (sourceBoundary) await emitSourceRecords();
       if (boundary === 'settlement checkpoint') {
         await lifecycle.beforeNonEmptyTurn({
           sessionId: logicalSessionId,
@@ -359,11 +373,6 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
           message: warningMessage,
         },
       ]);
-      const sourceBoundary = [
-        'sanitization',
-        'append',
-        'first-publication directory sync',
-      ].includes(boundary);
       if (sourceBoundary) {
         expect(events.indexOf('source:fixture.trigger')).toBeLessThan(
           events.indexOf('warning'),
@@ -1266,7 +1275,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
   it('quarantines the writer lease when partial host disposal cannot be proved', async () => {
     const fixture = await lifecycleFixture();
     const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
-      sessionStore: fixture.store,
+      sessionStore: quarantineFixtureStore(fixture.store),
       createSessionHost: async () => ({
         host: {
           ...fakeHost([]),
@@ -1295,7 +1304,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
     const fixture = await lifecycleFixture();
     const snapshot = shellSnapshot(fixture.execution, 0);
     const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
-      sessionStore: fixture.store,
+      sessionStore: quarantineFixtureStore(fixture.store),
       createSessionHost: async () => ({
         host: {
           ...fakeHost([]),
@@ -1324,7 +1333,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
     const lifecycle = createManagedInteractiveLifecycle(
       { ...fixture.payload, cwd: process.cwd() },
       {
-        sessionStore: fixture.store,
+        sessionStore: quarantineFixtureStore(fixture.store),
         loadModule: async () => ({
           default: {
             ...registryEntry(fixture.execution),
@@ -1703,7 +1712,7 @@ async function lifecycleFixture(
   ]);
   await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
   await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
-  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
+  await execFileAsync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline']);
   const controls = await controlBoundary(cwd);
   const payload = {
     schemaVersion: MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
@@ -1975,6 +1984,8 @@ function retainedGeneration() {
 function preUnresolvedEffectsRecord(value: Record<string, any>) {
   const record = structuredClone(value);
   record.schemaVersion = 5;
+  delete record.replay;
+  delete record.contextSeq;
   delete record.unresolvedEffects;
   for (const projection of [
     record.structuralProjection,

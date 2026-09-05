@@ -100,9 +100,8 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     expect(effect).not.toHaveProperty('resume');
     const visible = await first.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
-    expect(visible.durableSnapshot.playerSessions['dev.coder']).toMatchObject({
-      resumeToken: 'player-token:interactive-a:1',
-    });
+    expect(visible.durableSnapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
+    expect(await localHints(fixture)).toMatchObject({ players: { 'dev.coder': 'player-token:interactive-a:1' } });
     const interactiveCaptainSessionId =
       visible.durableSnapshot.captain.sessionId;
 
@@ -155,9 +154,8 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       interactiveCaptainSessionId,
     );
     expect(settled.snapshot.sequences.turn).toBe(2);
-    expect(settled.snapshot.playerSessions['dev.coder']).toMatchObject({
-      resumeToken: 'player-token:headless-b:1',
-    });
+    expect(settled.snapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
+    expect(await localHints(fixture)).toMatchObject({ players: { 'dev.coder': 'player-token:headless-b:1' } });
   }, CROSS_FRONT_TEST_TIMEOUT_MS);
 
   it('reopens a headless-fresh session interactively, fences its reply, and holds ownership until child shutdown', async () => {
@@ -184,9 +182,8 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     expect(headless.code, firstStderr.text()).toBe(0);
     expect(headless.sessionId).toBe(fixture.sessionId);
     const headlessRecord = await fixture.store.read(fixture.sessionId);
-    expect(headlessRecord.snapshot.playerSessions).toMatchObject({
-      'dev.coder': { resumeToken: 'player-token:headless-a:1' },
-    });
+    expect(headlessRecord.snapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
+    expect(await localHints(fixture)).toMatchObject({ players: { 'dev.coder': 'player-token:headless-a:1' } });
     const headlessCaptainSessionId = headlessRecord.snapshot.captain.sessionId;
 
     const selected = await startManagedChild(fixture, {
@@ -248,9 +245,8 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
     });
     const visible = await selected.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
-    expect(visible.durableSnapshot.playerSessions['dev.coder']).toMatchObject({
-      resumeToken: 'player-token:interactive-b:1',
-    });
+    expect(visible.durableSnapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
+    expect(await localHints(fixture)).toMatchObject({ players: { 'dev.coder': 'player-token:interactive-b:1' } });
     await expect(fixture.store.acquire(fixture.sessionId)).rejects.toThrow(
       /lease is active/,
     );
@@ -470,9 +466,9 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       .map((message) => message.record);
     const replay = await fixture.store.readStream(fixture.sessionId);
     expect(replay.entries.map(({ seq }) => seq)).toEqual(
-      observedRecords.map((_, index) => index + 1),
+      replay.entries.map((_, index) => index + 1),
     );
-    expect(replay.entries.map(({ record }) => record)).toEqual(
+    expect(replay.entries.filter(({ record }) => !['session_context', 'continuity_reset'].includes(String(record.type))).map(({ record: { contextSeq: _contextSeq, ...record } }) => record)).toEqual(
       observedRecords.map((record) => sanitizeReplayRecord(record)),
     );
     expect(
@@ -578,7 +574,7 @@ async function crossFrontFixture(sessionId: string) {
   ]);
   await writeFile(join(cwd, 'tracked.txt'), 'baseline\n', 'utf8');
   await execFileAsync('git', ['-C', cwd, 'add', 'tracked.txt']);
-  await execFileAsync('git', ['-C', cwd, 'commit', '-qm', 'baseline']);
+  await execFileAsync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline']);
   const controls = await managedControlBoundary(root, sessionId);
   const configAPath = join(root, 'playbook-a.yaml');
   const configBPath = join(root, 'playbook-b.yaml');
@@ -757,6 +753,10 @@ async function managedControlBoundary(root: string, sessionId: string) {
     shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
     shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
   };
+}
+
+async function localHints(fixture: { sessionsDir: string; sessionId: string }) {
+  return JSON.parse(await readFile(join(fixture.sessionsDir, `${fixture.sessionId}.hints.json`), 'utf8'));
 }
 
 async function assertSettledTurnZero(

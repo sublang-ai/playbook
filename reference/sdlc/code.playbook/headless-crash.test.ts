@@ -58,6 +58,8 @@ async function crashFixture() {
       'user.name=Playbook Fixture',
       '-c',
       'user.email=fixture@sublang.test',
+      '-c',
+      'commit.gpgsign=false',
       'commit',
       '--quiet',
       '-m',

@@ -60,6 +60,8 @@ async function initializeTestRepository(root: string) {
       'user.name=Playbook Test',
       '-c',
       'user.email=playbook-test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
       'commit',
       '--quiet',
       '-m',
