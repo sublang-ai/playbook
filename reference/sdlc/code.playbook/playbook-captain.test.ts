@@ -1148,6 +1148,7 @@ function makeShell(
     loadModule?: (specifier: string) => Promise<unknown>;
     hostCapabilities?: PlaybookCaptainDeps['hostCapabilities'];
     unresolvedEffectSettlement?: PlaybookCaptainDeps['unresolvedEffectSettlement'];
+    continuity?: PlaybookCaptainDeps['continuity'];
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
@@ -1243,6 +1244,7 @@ function makeShell(
         );
       },
       hostCapabilities,
+      ...(opts.continuity ? { continuity: opts.continuity } : {}),
       ...(opts.unresolvedEffectSettlement
         ? {
             unresolvedEffectSettlement: opts.unresolvedEffectSettlement,
@@ -8458,7 +8460,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           originalBaseline: observation,
           checkpoint: observation,
           pendingQuestion,
-          playerContinuation: 'coder-root-token',
+          playerContinuation: { v: 1, playerId: 'code-coder' },
           checkpointRestorationEligible: false,
         },
       ],
@@ -8600,7 +8602,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       restoredToken = runtime.session?.playerSessions?.select('coder');
       expect(
         targetLedger.logicalOperations[0]?.playerContinuation,
-      ).toBe(restoredToken);
+      ).toEqual({ v: 1, playerId: 'code-coder' });
       if (targetInvocation === 1) {
         runtime.snapshot = runtimeSnapshot(
           'code',
@@ -12266,4 +12268,159 @@ describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
     );
     expect(context.replies).toHaveLength(1);
   });
+});
+
+
+describe('portable provider continuity (session-storage-8)', () => {
+  const rejected = {
+    status: 'error', turnId: 1, error: 'provider session absent',
+    errorCode: 'SESSION_RESUME_REJECTED',
+  } as const;
+
+  function continuityLog() {
+    const events: unknown[][] = [];
+    return {
+      events,
+      continuity: {
+        beforeCall: async (id: string) => { events.push(['before', id]); },
+        acknowledged: (id: string, token: string) => { events.push(['ack', id, token]); },
+        reset: async (id: string, reason: 'missing_hint' | 'rejected_hint') => {
+          events.push(['reset', id, reason]);
+        },
+      },
+    };
+  }
+
+  it('retries a rejected Captain hint once with full history without repeating settled work', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), { turn: 1 });
+      return quiescentResult();
+    });
+    const log = continuityLog();
+    const shell = makeShell(registry, { continuity: log.continuity });
+    await shell.init!(stubSession().session);
+    const seed = stubContext([{ status: 'ok', turnId: 1, finalText: 'Work parked.', resumeToken: 'old-captain' }]);
+    await shell.handleBossTurn(turn('/code original task'), seed.context);
+    const before = shell.exportSnapshot()!;
+    log.events.length = 0;
+    const retry = stubContext([
+      rejected,
+      { ...captainJson({ action: 'respond', text: 'Still parked.' }), resumeToken: 'new-captain' },
+    ]);
+    await shell.handleBossTurn(turn('explain the current state', 2), retry.context);
+    expect(retry.captainCalls.map((call) => call.options?.resume)).toEqual(['old-captain', false]);
+    expect(retry.captainCalls[0]?.prompt).not.toContain('Conversation recap');
+    expect(retry.captainCalls[1]?.prompt).toContain('Conversation recap');
+    expect(retry.captainCalls[1]?.prompt).toContain('original task');
+    expect(retry.captainCalls[1]?.prompt).toContain('[ControlView digest]');
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual(['original task']);
+    const after = shell.exportSnapshot()!;
+    expect('frames' in after && after.frames).toEqual('frames' in before && before.frames);
+    expect(after.journal.slice(0, before.journal.length)).toEqual(before.journal);
+    expect(after.captain.conversation).toEqual({ kind: 'pinned', token: 'new-captain' });
+    expect(log.events).toEqual([
+      ['before', 'captain'], ['reset', 'captain', 'rejected_hint'],
+      ['before', 'captain'], ['ack', 'captain', 'new-captain'],
+    ]);
+    const next = stubContext([captainJson({ action: 'respond', text: 'Ready.' })]);
+    await shell.handleBossTurn(turn('next', 3), next.context);
+    expect(next.captainCalls[0]?.options?.resume).toBe('new-captain');
+    expect(next.captainCalls[0]?.prompt).not.toContain('Conversation recap');
+    await shell.dispose?.();
+  });
+
+  it.each(['throw', 'ordinary error', 'missing token', 'empty token', 'second rejection', 'second throw'])(
+    'does not reissue an ambiguous Captain failure or loop after %s', async (kind) => {
+      const shell = makeShell(fakeCodeEntry());
+      await shell.init!(stubSession().session);
+      await shell.handleBossTurn(turn('remember this'), stubContext([captainJson({ action: 'respond', text: 'Saved.' })]).context);
+      let calls = 0;
+      const failed = stubContext();
+      failed.context.callCaptain = async () => {
+        calls += 1;
+        if (kind.startsWith('second') && calls === 1) return rejected;
+        if (kind === 'throw' || kind === 'second throw') throw new Error('SESSION_RESUME_REJECTED is merely diagnostic text');
+        if (kind === 'second rejection') return rejected;
+        if (kind === 'ordinary error') return { status: 'error', turnId: 1, error: 'SESSION_RESUME_REJECTED' };
+        return { status: 'ok', turnId: 1, finalText: '{}', ...(kind === 'empty token' ? { resumeToken: '' } : {}) };
+      };
+      await shell.handleBossTurn(turn('failed turn', 2), failed.context);
+      expect(calls).toBe(kind.startsWith('second') ? 2 : 1);
+      expect(shell.exportSnapshot()?.captain.conversation).toEqual({ kind: 'needsSeeding' });
+      const next = stubContext([captainJson({ action: 'respond', text: 'Recovered.' })]);
+      await shell.handleBossTurn(turn('later turn', 3), next.context);
+      expect(next.captainCalls).toHaveLength(1);
+      expect(next.captainCalls[0]?.options?.resume).toBe(false);
+      expect(next.captainCalls[0]?.prompt).toContain('remember this');
+      expect(next.captainCalls[0]?.prompt).toContain('failed turn');
+      await shell.dispose?.();
+    },
+  );
+
+  it('does not retry a classified Captain rejection without a selected hint', async () => {
+    const shell = makeShell(fakeCodeEntry());
+    await shell.init!(stubSession().session);
+    const context = stubContext([rejected]);
+    await shell.handleBossTurn(turn('first turn'), context.context);
+    expect(context.captainCalls).toHaveLength(1);
+    expect(context.captainCalls[0]?.options?.resume).toBe(false);
+    await shell.dispose?.();
+  });
+
+  it.each(['success', 'ordinary error', 'throw', 'second rejection', 'aborted rejection'])(
+    'handles player %s within one logical runtime call', async (kind) => {
+      const runtimeResults: unknown[] = [];
+      const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        const store = runtime.session!.playerSessions!;
+        const result = await runtime.ports!.callPlayer('coder', 'complete task and question answers', runtimeTurn.signal, { resume: store.select('coder') });
+        runtimeResults.push(result);
+        if (result.status === 'ok' || result.resumeToken !== undefined) store.update('coder', result.resumeToken);
+      });
+      registry.entry.requiredRoleIds = ['coder'];
+      const log = continuityLog();
+      const shell = makeShell(registry, { continuity: log.continuity });
+      await shell.init!(stubSession().session);
+      const seed = stubContext();
+      let participantId = '';
+      seed.context.callPlayer = async (playerId) => {
+        participantId = playerId;
+        return { status: 'ok', playerId, turnId: 1, finalText: 'seed', resumeToken: 'old-player' };
+      };
+      await shell.handleBossTurn(turn('/code seed'), seed.context);
+      log.events.length = 0;
+      const context = stubContext();
+      const calls: { prompt: string; options: CallPlayerOptions | undefined }[] = [];
+      context.context.callPlayer = async (playerId, prompt, options) => {
+        calls.push({ prompt, options });
+        if (kind === 'throw') throw new Error('SESSION_RESUME_REJECTED diagnostic');
+        if (kind === 'ordinary error') return { status: 'error', playerId, turnId: 1, error: 'SESSION_RESUME_REJECTED diagnostic' };
+        if (kind === 'aborted rejection') context.controller.abort(new Error('cancelled'));
+        if (calls.length === 1 || kind === 'second rejection') return { ...rejected, playerId };
+        return { status: 'ok', playerId, turnId: 1, finalText: 'completed', resumeToken: 'new-player' };
+      };
+      await shell.handleBossTurn(turn('/code continue', 2), context.context).catch((error: unknown) => {
+        if (kind !== 'aborted rejection') throw error;
+      });
+      const retry = kind === 'success' || kind === 'second rejection';
+      expect(calls.map((call) => call.options?.resume)).toEqual(retry ? ['old-player', false] : ['old-player']);
+      if (retry) {
+        expect(calls[1]?.prompt).toBe(calls[0]?.prompt);
+        expect(calls[1]?.options?.settings).toEqual(calls[0]?.options?.settings);
+      }
+      expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual(['seed', 'continue']);
+      const participantEvents = log.events.filter((event) => event[1] === participantId);
+      expect(participantEvents).toEqual([
+        ['before', participantId],
+        ...(retry ? [['reset', participantId, 'rejected_hint'], ['before', participantId]] : []),
+        ...(kind === 'success' ? [['ack', participantId, 'new-player']] : []),
+      ]);
+      for (const result of runtimeResults) expect(result).not.toHaveProperty('errorCode');
+      if (kind !== 'aborted rejection') {
+        expect(registry.runtimes[0]?.session?.playerSessions?.select('coder')).toBe(
+          kind === 'success' ? 'new-player' : kind === 'second rejection' ? false : 'old-player',
+        );
+      }
+      await shell.dispose?.();
+    },
+  );
 });

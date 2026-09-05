@@ -4523,7 +4523,7 @@ export function createXStatePlaybookRuntime<
       playerId: string | undefined,
     ): JsonValue {
       return snapshotJsonValue(
-        selectPlayerResume(roleId, playerId),
+        { v: 1, playerId: playerId ?? roleId },
         `${label} deferred player continuation`,
       );
     }
@@ -7324,6 +7324,15 @@ export function createXStatePlaybookRuntime<
         );
       }
       const effectBoundary = continuationBoundarySeed(operation, turnId);
+      const boundPlayerId = resolvedPlayerId(effectBoundary.roleId);
+      const validateBinding = (value: unknown): void => {
+        if (!isPlainObject(value) || Object.keys(value).length !== 2 ||
+            value.v !== 1 ||
+            value.playerId !== (boundPlayerId ?? effectBoundary.roleId)) {
+          throw new TypeError(`${label} bound deferred player continuation is invalid`);
+        }
+      };
+      validateBinding(operation.playerContinuation);
       const continuation: NonNullable<typeof activeDeferredContinuation> = {
         operationId: operation.operationId,
         effectBoundary,
@@ -7349,26 +7358,10 @@ export function createXStatePlaybookRuntime<
           operationId: operation.operationId,
           effectBoundary,
           operation: async ({ playerContinuation }) => {
-            const selectedContinuation =
-              retainedEffectSourceSessionId === undefined
-                ? playerContinuation
-                : selectPlayerResume(
-                    effectBoundary.roleId,
-                    resolvedPlayerId(effectBoundary.roleId),
-                  );
-            if (
-              selectedContinuation !== false &&
-              (typeof selectedContinuation !== 'string' ||
-                selectedContinuation.trim().length === 0)
-            ) {
-              throw new TypeError(
-                `${label} bound deferred player continuation is invalid`,
-              );
-            }
-            // Retained adoption owns a fresh Captain-session player ledger;
-            // no source token becomes target ownership. Same-engagement
-            // continuation still uses the exact durable binding.
-            continuation.playerContinuation = selectedContinuation;
+            validateBinding(playerContinuation);
+            continuation.playerContinuation = selectPlayerResume(
+              effectBoundary.roleId, boundPlayerId,
+            );
             continuationStarted = true;
             actor!.send(event);
             // The host has durably started this boundary and the FSM has

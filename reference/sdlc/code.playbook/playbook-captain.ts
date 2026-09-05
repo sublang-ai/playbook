@@ -103,6 +103,11 @@ type SnapshotAgentEnvelope = DeepReadonly<
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 
 export interface PlaybookCaptainDeps {
+  continuity?: {
+    beforeCall(participantId: string): Promise<void>;
+    acknowledged(participantId: string, token: string): void;
+    reset(participantId: string, reason: 'missing_hint' | 'rejected_hint'): Promise<void>;
+  };
   loadModule?: (specifier: string) => Promise<unknown>;
   createSessionId?: () => string;
   hostCapabilities?: Readonly<
@@ -1819,6 +1824,7 @@ function normalizeHostPlayerResult(
     'resumeToken',
     'finalText',
     'error',
+    'errorCode',
   ]);
   const normalized: Record<string, unknown> = {};
   for (const key of Reflect.ownKeys(descriptors)) {
@@ -1841,13 +1847,18 @@ function normalizeHostPlayerResult(
   const record = snapshotRecord(snapshotJsonValue(normalized, path), path);
   rejectSnapshotKeys(
     record,
-    ['status', 'playerId', 'turnId', 'resumeToken', 'finalText', 'error'],
+    ['status', 'playerId', 'turnId', 'resumeToken', 'finalText', 'error', 'errorCode'],
     path,
   );
   if (record.playerId !== expectedPlayerId) {
     throw new TypeError(`${path}.playerId does not match the requested player`);
   }
   snapshotInteger(record.turnId, `${path}.turnId`, 1);
+  if (record.errorCode !== undefined &&
+      (record.errorCode !== 'SESSION_RESUME_REJECTED' ||
+       record.status !== 'error' || record.resumeToken !== undefined)) {
+    throw new TypeError(`${path}.errorCode is not a definite resume rejection`);
+  }
   return validatePlayerResult(
     {
       status: record.status,
@@ -2988,6 +2999,7 @@ export function createPlaybookCaptainShell(
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
   const unresolvedEffectSettlement = deps.unresolvedEffectSettlement;
+  const continuity = deps.continuity;
   let pendingHostCapabilities = deps.hostCapabilities;
   let currentEffectLedger = () => emptyPlaybookEffectLedger();
   // The returned shell must not retain the caller's aggregate dependency
@@ -4376,16 +4388,37 @@ export function createPlaybookCaptainShell(
       try {
         let rawResult: unknown;
         try {
-          rawResult = await trackHostCall(
-            frame,
-            classifySettingsCall(() =>
-              context.callPlayer(binding.playerId, prompt, {
-                resume: options.resume,
-                settings,
-              }),
-            ),
-          );
-          hostResolved = true;
+          const call = async (resume: string | false): Promise<unknown> => {
+            await continuity?.beforeCall(binding.playerId);
+            signal.throwIfAborted();
+            const raw = await trackHostCall(
+              frame,
+              classifySettingsCall(() =>
+                context.callPlayer(binding.playerId, prompt, { resume, settings }),
+              ),
+            );
+            hostResolved = true;
+            return raw;
+          };
+          if (options.resume === false) {
+            await continuity?.reset(binding.playerId, 'missing_hint');
+          }
+          rawResult = await call(options.resume);
+          normalizeHostPlayerResult(rawResult, binding.playerId);
+          if (typeof options.resume === 'string' && options.resume.length > 0 &&
+              Object.getOwnPropertyDescriptor(rawResult as object, 'errorCode')?.value ===
+                'SESSION_RESUME_REJECTED') {
+            if (playerTransactions.get(binding.playerId) !== calling ||
+                calling.abandoned || signal.aborted || activeTurn !== admittedTurn ||
+                frame.playerCallScope !== scope || !frames.includes(frame)) {
+              signal.throwIfAborted();
+              throw new Error(`${frameLabel(frame)} player rejection arrived after its runtime operation ended`);
+            }
+            delete ledger.resumeToken;
+            await continuity?.reset(binding.playerId, 'rejected_hint');
+            hostResolved = false;
+            rawResult = await call(false);
+          }
         } catch (error) {
           if (error instanceof AgentSettingsPreflightError) {
             if (
@@ -4739,6 +4772,9 @@ export function createPlaybookCaptainShell(
       try {
         if (resumeToken === undefined) delete ledger.resumeToken;
         else ledger.resumeToken = resumeToken;
+        if (pending.status === 'ok' && resumeToken !== undefined) {
+          continuity?.acknowledged(binding.playerId, resumeToken);
+        }
       } finally {
         playerTransactions.delete(binding.playerId);
       }
@@ -6161,7 +6197,7 @@ export function createPlaybookCaptainShell(
   class CaptainContinuityError extends Error {
     constructor(cause: unknown) {
       super(
-        'the session Captain conversation could not be resynchronized after one reseeded re-issue',
+        'the session Captain conversation lost continuity',
         { cause },
       );
       this.name = 'CaptainContinuityError';
@@ -6185,8 +6221,11 @@ export function createPlaybookCaptainShell(
     finalText?: string;
     resumeToken?: string;
     error?: string;
+    errorCode?: 'SESSION_RESUME_REJECTED';
   }> => {
     const queued = captainQueue.add(async () => {
+      context.signal.throwIfAborted();
+      await continuity?.beforeCall('captain');
       context.signal.throwIfAborted();
       attempt.providerBoundaryEntered = true;
       const result = await classifySettingsCall(() =>
@@ -6205,14 +6244,12 @@ export function createPlaybookCaptainShell(
       finalText?: string;
       resumeToken?: string;
       error?: string;
+      errorCode?: 'SESSION_RESUME_REJECTED';
     }>;
   };
 
-  // CAPTAIN-35: unsynchronized when the call throws, returns non-`ok`, or
-  // returns `ok` without a token. Exactly one re-issue on a fresh conversation
-  // seeded with the reseed digest plus the current ControlView digest. A
-  // conversation that is owed a reseed carries the digest on its very next
-  // call, so the turn after a failed reseed starts seeded rather than blank.
+  // Only proven pre-execution rejection permits an immediate fresh call.
+  // Other continuity loss leaves the journal reseed for the next Boss turn.
   const durableCall = async (
     context: CaptainContext,
     compose: (options: { reseedDigest?: string }) => string,
@@ -6229,10 +6266,11 @@ export function createPlaybookCaptainShell(
     const representedJournalSeq = journalSeq;
     const firstAttempt = { providerBoundaryEntered: false };
     let result:
-      | { status: string; finalText?: string; resumeToken?: string; error?: string }
+      | { status: string; finalText?: string; resumeToken?: string; error?: string; errorCode?: 'SESSION_RESUME_REJECTED' }
       | undefined;
     let failure: unknown;
     try {
+      if (resume === false) await continuity?.reset('captain', 'missing_hint');
       result = await rawDurableCall(
         context,
         compose(
@@ -6279,9 +6317,10 @@ export function createPlaybookCaptainShell(
       failure !== undefined ||
       result === undefined ||
       result.status !== 'ok' ||
-      result.resumeToken === undefined;
+      typeof result.resumeToken !== 'string' || result.resumeToken.trim().length === 0;
     if (!unsynchronized) {
       conversation = { kind: 'pinned', token: result!.resumeToken! };
+      continuity?.acknowledged('captain', result!.resumeToken!);
       if (activeTurn) {
         activeTurn.captainSyncedJournalSeq = representedJournalSeq;
       }
@@ -6297,9 +6336,16 @@ export function createPlaybookCaptainShell(
     // stays `needsSeeding` until a call comes back with a token, so a reseed
     // that itself fails leaves the obligation standing for the next turn.
     conversation = { kind: 'needsSeeding' };
+    if (typeof resume !== 'string' || resume.length === 0 ||
+        result?.status !== 'error' || result.errorCode !== 'SESSION_RESUME_REJECTED') {
+      throw markControlFailure(new CaptainContinuityError(
+        failure ?? result?.error ?? 'callCaptain did not establish continuation',
+      ));
+    }
+    await continuity?.reset('captain', 'rejected_hint');
     const recap = reseedDigest();
     let reissued:
-      | { status: string; finalText?: string; resumeToken?: string; error?: string }
+      | { status: string; finalText?: string; resumeToken?: string; error?: string; errorCode?: 'SESSION_RESUME_REJECTED' }
       | undefined;
     const reissueAttempt = { providerBoundaryEntered: false };
     try {
@@ -6319,7 +6365,7 @@ export function createPlaybookCaptainShell(
       }
       throw markControlFailure(new CaptainContinuityError(error));
     }
-    if (reissued.status !== 'ok' || reissued.resumeToken === undefined) {
+    if (reissued.status !== 'ok' || typeof reissued.resumeToken !== 'string' || reissued.resumeToken.trim().length === 0) {
       throw markControlFailure(
         new CaptainContinuityError(
           reissued.error ??
@@ -6328,6 +6374,7 @@ export function createPlaybookCaptainShell(
       );
     }
     conversation = { kind: 'pinned', token: reissued.resumeToken };
+    continuity?.acknowledged('captain', reissued.resumeToken);
     if (activeTurn) activeTurn.captainSyncedJournalSeq = journalSeq;
     return {
       ...(reissued.finalText !== undefined

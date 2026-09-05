@@ -3190,7 +3190,7 @@ describe('DR-032 shared role runtime transition', () => {
             asker: { kind: 'role', roleId: 'coder' },
             question: 'Which target?',
           },
-          playerContinuation: false,
+          playerContinuation: { v: 1, playerId: 'coder' },
           checkpointRestorationEligible: false,
         },
       ],
@@ -5235,7 +5235,7 @@ describe('DR-040 deferred Boss continuation', () => {
         sourceItem: 'ROLE-DEFERRED-1',
         question: 'Choose a format.',
       },
-      playerContinuation: 'thread-question',
+      playerContinuation: { v: 1, playerId: 'coder' },
     });
     expect(initialLedger.boundaries[0]?.logicalOperationId).toBe(
       open.operationId,
@@ -5285,6 +5285,76 @@ describe('DR-040 deferred Boss continuation', () => {
       semanticCandidate: { guard: 'complete' },
     });
     await runtime.dispose();
+  });
+
+  it.each([false, 'current-device-token'] as const)(
+    'selects current continuation %s for a token-free bound operation after restore', async (currentToken) => {
+      const hostCapabilities = emptyLedgerHostCapabilities({ classifications: ['unchanged', 'one-descendant-commit'] });
+      const harness = deferredTestPorts([
+        { status: 'ok', finalText: 'Choose a format.', resumeToken: 'old-device-token' },
+        { status: 'ok', finalText: 'Committed.', resumeToken: 'finished-token' },
+      ], ['{"guard":"needsBossReply"}', '{"guard":"complete"}']);
+      let token: string | false = false;
+      const playerSessions: PlayerSessionStore = {
+        select: () => token,
+        update: (_role, next) => { token = next ?? false; },
+        snapshot: () => token === false ? {} : { coder: token },
+        restore: () => {},
+      };
+      const boundSession = session(harness.ports, { playerSessions });
+      const createRuntime = () => createXStatePlaybookRuntime<EmptyOptions, object>(
+        deferredBossMachine, deferredBossSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+      const source = createRuntime();
+      await source.init(boundSession);
+      await source.handleBossInput(bossTurn('original task'));
+      const snapshot = source.exportSnapshot!()!;
+      const operation = hostCapabilities.effectLedger.snapshot().logicalOperations[0]!;
+      expect(operation.playerContinuation).toEqual({ v: 1, playerId: 'coder' });
+      expect(JSON.stringify(operation)).not.toContain('old-device-token');
+      await source.dispose();
+      token = currentToken;
+      const restored = createRuntime();
+      await restored.restore!(boundSession, { ...snapshot, roleResumeTokens: token === false ? {} : { coder: token } });
+      expect(harness.callPlayer).toHaveBeenCalledOnce();
+      await restored.handleBossInput(bossTurn('markdown'));
+      expect(harness.resumes).toEqual([false, currentToken]);
+      const completed = hostCapabilities.effectLedger.snapshot();
+      expect(completed.logicalOperations[0]?.operationId).toBe(operation.operationId);
+      expect(completed.logicalOperations[0]?.originalBaseline).toEqual(operation.originalBaseline);
+      expect(completed.boundaries).toHaveLength(2);
+      expect(harness.callPlayer.mock.calls[1]?.[1]).toContain('original task');
+      expect(harness.callPlayer.mock.calls[1]?.[1]).toContain('markdown');
+      await restored.dispose();
+    },
+  );
+
+  it('refuses a mismatched player binding before starting a deferred boundary', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({ classifications: ['unchanged'] });
+    const harness = deferredTestPorts([
+      { status: 'ok', finalText: 'Choose a format.', resumeToken: 'private-token' },
+    ], ['{"guard":"needsBossReply"}']);
+    const createRuntime = () => createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine, deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(harness.ports);
+    const source = createRuntime();
+    await source.init(boundSession);
+    await source.handleBossInput(bossTurn('task'));
+    const snapshot = source.exportSnapshot!()!;
+    const ledger = hostCapabilities.effectLedger.snapshot();
+    const mismatched = assertPlaybookEffectLedger({ ...ledger, logicalOperations: ledger.logicalOperations.map((operation) => ({
+      ...operation, playerContinuation: { v: 1, playerId: 'different-player' },
+    })) });
+    await source.dispose();
+    hostCapabilities.replaceEffectLedger(mismatched);
+    const restored = createRuntime();
+    await restored.restore!(boundSession, { ...snapshot, effectLedger: mismatched });
+    await expect(restored.handleBossInput(bossTurn('markdown'))).rejects.toThrow('bound deferred player continuation is invalid');
+    expect(hostCapabilities.effectLedger.snapshot()).toEqual(mismatched);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+    await restored.dispose();
   });
 
   it('discards a mismatched answer and restores the same wait across restart without a call', async () => {
@@ -5420,7 +5490,7 @@ describe('DR-040 deferred Boss continuation', () => {
     expect(repeated.logicalOperations[0]).toMatchObject({
       operationId: first.operationId,
       originalBaseline: first.originalBaseline,
-      playerContinuation: 'thread-2',
+      playerContinuation: { v: 1, playerId: 'coder' },
       pendingQuestion: { question: 'Second question?' },
     });
     expect(repeated.boundaries).toHaveLength(2);

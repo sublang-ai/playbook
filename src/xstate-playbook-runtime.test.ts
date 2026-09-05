@@ -5753,7 +5753,7 @@ describe('parked-session snapshot over the shared factory', () => {
         question: 'Which path?',
         sourceItem: 'TEST-1',
       },
-      playerContinuation: false,
+      playerContinuation: { v: 1, playerId: 'coder' },
       checkpointRestorationEligible: true,
     };
     const operationCheckpoint: PlaybookEffectLedger = {
