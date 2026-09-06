@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Sessions default to `${SPEX_HOME:-$HOME/.spex}/sessions` and use schema 7. The ordinary default imports the former XDG store after old writers stop; explicit profiles remain isolated. Migration retains original bytes and full replay; records without sufficient recovery state remain history-only.
-- Portable recovery excludes provider session tokens. Private hints bind tokens to the exact checkpoint; a missing hint starts fresh, and a proven pre-execution resume rejection permits one fresh attempt. Other failures do not trigger an automatic retry.
+- Sessions default to `${SPEX_HOME:-$HOME/.spex}/sessions` and use schema 7. The ordinary default imports the former XDG store after old writers stop; explicit profiles remain isolated. Migration retains the original files and converts full replay; records without sufficient recovery state remain history-only.
+- Portable recovery and replay exclude provider session tokens while preserving logical session and tool-data identifiers. Private hints bind tokens to the exact checkpoint; a missing hint starts fresh, and a proven pre-execution resume rejection permits one fresh attempt. Other failures do not trigger an automatic retry.
 - Continuation requires compatible execution settings and repository paths. A session copied to incompatible paths remains available as history.
 - Require Cligent 0.25 for typed resume-rejection results.
 
