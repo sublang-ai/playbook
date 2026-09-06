@@ -155,6 +155,7 @@ When opening a portable checkpoint on another device, the lifecycle shall allow 
 When migrating a stopped legacy store, the shared migrator shall hold the session lease and preserve source bytes outside the portable session namespace before publishing a validated schema-7 bundle:
 
 - source permission preparation uses the same verified tighten-only rules as opening, including legacy desktop sidecars [[session-storage-1](#session-storage-1)];
+- source-format and required working-directory checks precede lease acquisition, so unchanged refusals create no lease residue; publication requires rereading and revalidating the source under the lease, and changed source bytes or migration context may retry;
 - supported schema-6 recovery is validated with its legacy codec, then converted and revalidated with the current codec under the token-free rule [[session-storage-7](#session-storage-7)] without losing uncertainty, journals, counters, retained generations or effect evidence;
 - legacy tokens are discarded as usable hints, since the old format cannot prove the provider still matches that checkpoint; original inputs remain ignored;
 - a valid final replay envelope lacking only its LF gains that LF in the converted output; invalid or torn tails remain in the retained originals and cannot prove recovery;
@@ -228,7 +229,7 @@ When the integration suite checkpoints a session with current and retained playe
 When the integration suite migrates legacy CLI/desktop fixtures and opens their copied bundles in another storage directory, it shall verify:
 
 - history-only access for unsupported path changes, portable POSIX/Windows recorded paths, and reconciliation for matching native paths [[session-storage-9](#session-storage-9)];
-- safe `0644` desktop-source tightening, refusal of unsafe sources, retained complete unterminated records, preserved original bytes, version/format refusals, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
+- safe `0644` desktop-source tightening, refusal of unsafe sources, retained complete unterminated records, preserved original bytes, version/format refusals without repeated lease residue, retry after source/context changes, lease-protected source revalidation, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
 
 ## References
 

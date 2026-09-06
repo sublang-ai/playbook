@@ -1500,11 +1500,37 @@ export function createCaptainSessionStore(options = {}) {
     const backupDir = migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId);
     const inputsDir = join(backupDir, 'inputs');
     const receiptPath = join(backupDir, 'receipt.json');
+    const decodeSource = (sourceBytes) => {
+      const source = JSON.parse(sourceBytes);
+      if (!sidecar && source.schemaVersion === 7) {
+        if (external) throw new Error('source is already portable; select its complete bundle instead of legacy migration');
+        return { source };
+      }
+      let recovery, metadata;
+      if (sidecar) {
+        const value = source.session ?? source;
+        if (source.v !== 1 || value.id !== sessionId || !Number.isFinite(value.createdAt) || typeof migration.cwd !== 'string' || !isAbsolute(migration.cwd) || resolve(migration.cwd) !== migration.cwd) throw new Error('invalid legacy desktop sidecar or missing normalized cwd');
+        metadata = { cwd: migration.cwd, createdAt: new Date(value.createdAt).toISOString(), updatedAt: new Date(value.endedAt ?? value.createdAt).toISOString(), reason: 'legacy desktop history lacks complete durable recovery', journal: value.snapshot?.shell?.journal ?? [] };
+      } else {
+        if (source.sessionId !== sessionId) throw new Error('migration session identity mismatch');
+        try { recovery = validateCaptainSessionRecord(source); }
+        catch (cause) {
+          if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause;
+          metadata = { cwd: source.cwd, createdAt: source.createdAt, updatedAt: source.updatedAt, reason: `legacy schema ${source.schemaVersion} has no supported recovery`, journal: source.snapshot?.journal ?? [] };
+        }
+        if (recovery && source.schemaVersion !== 6) throw new Error('only schema 6 supports executable migration');
+      }
+      return { source, recovery, metadata };
+    };
+    if (external) await prepareSessionPermissions(sourceDir, fs, sessionId, true);
+    // Refusal needs no ownership or persistent memo. Reread after acquiring
+    // the lease below; a preflight read never authorizes migration writes.
+    try { decodeSource(await readPrivateRegularFile(sourcePath, 0o600, fs, 'migration source')); }
+    catch (cause) { if (cause?.code !== 'ENOENT' || !sidecar && !external) throw cause; }
     let sourceLease, lease;
     try {
       if (external) {
         const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env, homeDir: home, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
-        await prepareSessionPermissions(sourceDir, fs, sessionId, true);
         sourceLease = await sourceStore.acquireManagement(sessionId);
       }
       lease = await acquire(sessionId, true);
@@ -1527,25 +1553,10 @@ export function createCaptainSessionStore(options = {}) {
         if (receipt?.complete === false) await writePrivateJson(receiptPath, { ...receipt, complete: true }, fs);
         return { manifest: current.manifest, migrated: false, reasons: current.reasons };
       }
-      const source = JSON.parse(sourceBytes);
+      let { source, recovery, metadata } = decodeSource(sourceBytes);
       if (!sidecar && source.schemaVersion === 7) {
-        if (external) throw new Error('source is already portable; select its complete bundle instead of legacy migration');
         const current = await validate(sessionId);
         return { manifest: current.manifest, migrated: false, reasons: current.reasons };
-      }
-      let recovery, metadata;
-      if (sidecar) {
-        const value = source.session ?? source;
-        if (source.v !== 1 || value.id !== sessionId || !Number.isFinite(value.createdAt) || typeof migration.cwd !== 'string' || !isAbsolute(migration.cwd) || resolve(migration.cwd) !== migration.cwd) throw new Error('invalid legacy desktop sidecar or missing normalized cwd');
-        metadata = { cwd: migration.cwd, createdAt: new Date(value.createdAt).toISOString(), updatedAt: new Date(value.endedAt ?? value.createdAt).toISOString(), reason: 'legacy desktop history lacks complete durable recovery', journal: value.snapshot?.shell?.journal ?? [] };
-      } else {
-        if (source.sessionId !== sessionId) throw new Error('migration session identity mismatch');
-        try { recovery = validateCaptainSessionRecord(source); }
-        catch (cause) {
-          if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause;
-          metadata = { cwd: source.cwd, createdAt: source.createdAt, updatedAt: source.updatedAt, reason: `legacy schema ${source.schemaVersion} has no supported recovery`, journal: source.snapshot?.journal ?? [] };
-        }
-        if (recovery && source.schemaVersion !== 6) throw new Error('only schema 6 supports executable migration');
       }
       const sourceSnapshot = await readReplaySnapshot({ sessionsDir: sourceDir, path: sourceReplayPath, fs, afterSeq: 0, forceFullRead: true });
       const snapshot = external ? await readReplaySnapshot({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: 0, forceFullRead: true }) : sourceSnapshot;

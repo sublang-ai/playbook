@@ -15,7 +15,7 @@ import {
   type AgentEvent,
   type AgentOptions,
 } from '@sublang/cligent';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import codePlaybookRegistryEntry from './code.registry.js';
 import type {
   PlaybookRuntime,
@@ -28,14 +28,20 @@ const { runPlaybookCli } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
 );
 
-const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
 
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  );
-});
+// The test body owns cleanup: a runner timeout must not remove files while
+// an awaited CLI call is still retiring its writer lease.
+function withFixture(prefix: string, run: (dir: string) => Promise<void>) {
+  return async () => {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    try {
+      await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+}
 
 function writer() {
   const chunks: string[] = [];
@@ -252,11 +258,9 @@ function scriptedCaptainRuntime(receipts: unknown[]) {
 }
 
 describe('headless failure retry across a continued session (DR-034)', () => {
-  it('advertises and applies the retry the first process could not keep', async () => {
+  it('advertises and applies the retry the first process could not keep', withFixture('playbook-retry-', async (dir) => {
     ScriptedAdapter.playerScript = ['error'];
     ScriptedAdapter.playerCalls = 0;
-    const dir = await mkdtemp(join(tmpdir(), 'playbook-retry-'));
-    tempDirs.push(dir);
     const cwd = await initializeTestRepository(dir);
     const configPath = join(dir, 'playbook.config.yaml');
     await writeFile(
@@ -350,15 +354,13 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     expect(recovered.snapshot.frames[0].runtime.state.stateId).toBe(
       'awaitBossReply',
     );
-  });
+  }), 30_000);
 
-  it('settles and recovers a failure reached after an answered Boss question', async () => {
+  it('settles and recovers a failure reached after an answered Boss question', withFixture('playbook-replyfail-', async (dir) => {
     // The coder asks first, then fails on the resumed call, then recovers:
     // ok (asks) → error (after the answer) → ok (asks again).
     ScriptedAdapter.playerScript = ['ok', 'error'];
     ScriptedAdapter.playerCalls = 0;
-    const dir = await mkdtemp(join(tmpdir(), 'playbook-replyfail-'));
-    tempDirs.push(dir);
     const cwd = await initializeTestRepository(dir);
     const configPath = join(dir, 'playbook.config.yaml');
     await writeFile(
@@ -467,5 +469,5 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     expect(
       recovered.snapshot.frames[0].runtime.pendingBossQuestions,
     ).toHaveLength(1);
-  });
+  }), 30_000);
 });

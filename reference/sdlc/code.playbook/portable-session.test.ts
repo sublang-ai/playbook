@@ -600,4 +600,50 @@ describe('shared portable session lifecycle', () => {
   const history=await store.readHistory(id);expect(history.entries.find(entry=>entry.seq===contextSeq)?.record).toEqual(context);expect(history.entries.at(-1)?.record.contextSeq).toBe(contextSeq);expect((await store.validate(id)).resumable).toBe(true);
  });
 
+ it.each([false,true])('preflights refused desktop sources without accumulating leases (external=%s)',async(external)=>{
+  const root=await mkdtemp(join(tmpdir(),'migration-refusal-'));roots.push(root);
+  const sessionsDir=join(root,'target');const sourceDir=external?join(root,'source'):sessionsDir;
+  await mkdir(sessionsDir,{mode:0o700});if(external)await mkdir(sourceDir,{mode:0o700});
+  const id=randomUUID();const sourcePath=join(sourceDir,`${id}.spex.json`);
+  const valid={v:1,id,createdAt:1,endedAt:2,players:[],initialVisible:[]};
+  const guards=async(dir:string)=>(await readdir(dir)).filter(name=>name.startsWith(`.${id}.lock`)).sort();
+  for(const input of [{bytes:'{bad JSON',cwd:process.cwd()},{bytes:JSON.stringify({...valid,v:99}),cwd:process.cwd()},{bytes:JSON.stringify(valid),cwd:undefined}]){
+   await writeFile(sourcePath,input.bytes,{mode:0o600});
+   for(let restart=0;restart<3;restart++){
+    const store=createSessionStore({sessionsDir});
+    await expect(store.migrate(id,{sourcePath,...(input.cwd?{cwd:input.cwd}:{})})).rejects.toThrow();
+    expect(await readFile(sourcePath,'utf8')).toBe(input.bytes);
+    expect(await guards(sessionsDir)).toEqual([]);expect(await guards(sourceDir)).toEqual([]);
+   }
+  }
+  // Supplying newly available context is sufficient; no refusal memo to clear.
+  const store=createSessionStore({sessionsDir});
+  const migrated=await store.migrate(id,{sourcePath,cwd:process.cwd()});expect(migrated.manifest.state).toBe('history-only');
+  expect(await guards(sessionsDir)).toHaveLength(1);if(external)expect(await guards(sourceDir)).toHaveLength(1);
+  const before=await guards(sessionsDir);expect(await readFile(join(sessionsDir,`${id}.json`),'utf8')).toContain('history-only');
+  await expect(readFile(sourcePath)).rejects.toMatchObject({code:'ENOENT'});
+  expect(await guards(sessionsDir)).toEqual(before);
+ });
+
+ it('revalidates migration source after acquiring ownership and retries repaired bytes',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'migration-preflight-race-'));roots.push(root);
+  const sessionsDir=join(root,'sessions');await mkdir(sessionsDir,{mode:0o700});
+  const id=randomUUID();const sourcePath=join(sessionsDir,`${id}.spex.json`);
+  const valid=JSON.stringify({v:1,id,createdAt:1,endedAt:2,players:[],initialVisible:[]});
+  const invalid=JSON.stringify({v:99,id,createdAt:1});await writeFile(sourcePath,valid,{mode:0o600});
+  let replace=true;
+  const store=createSessionStore({sessionsDir,fsOps:{rename:async(from:string,to:string)=>{
+   await rename(from,to);
+   if(replace&&to===join(sessionsDir,`.${id}.lock`)){replace=false;await writeFile(sourcePath,invalid);}
+  }}});
+  await expect(store.migrate(id,{sourcePath,cwd:process.cwd()})).rejects.toThrow('invalid legacy desktop');
+  await expect(readFile(join(sessionsDir,`${id}.json`))).rejects.toMatchObject({code:'ENOENT'});
+  const guards=async()=>(await readdir(sessionsDir)).filter(name=>name.startsWith(`.${id}.lock`)).sort();
+  const refused=await guards();expect(refused).toHaveLength(1);
+  for(let restart=0;restart<3;restart++)await expect(createSessionStore({sessionsDir}).migrate(id,{sourcePath,cwd:process.cwd()})).rejects.toThrow('invalid legacy desktop');
+  expect(await guards()).toEqual(refused);expect(await readFile(sourcePath,'utf8')).toBe(invalid);
+  await writeFile(sourcePath,valid);expect((await createSessionStore({sessionsDir}).migrate(id,{sourcePath,cwd:process.cwd()})).migrated).toBe(true);
+  expect(await guards()).toHaveLength(2);
+ });
+
 });

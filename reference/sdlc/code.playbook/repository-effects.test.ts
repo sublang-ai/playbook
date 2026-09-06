@@ -2531,7 +2531,7 @@ describe('schema-3 repository host capabilities', () => {
     },
   );
 
-  it('persists recovery before the shared host refuses stale source restoration', async () => {
+  it.each([true, false])('gates shared-host recovery on portable validation (%s)', async (continuable) => {
     const repo = await initRepository('playbook-effects-host-recovery-');
     const baseline = await observeGitRepository(repo);
     const initial = assertPlaybookEffectLedger({
@@ -2561,7 +2561,7 @@ describe('schema-3 repository host capabilities', () => {
       ],
       logicalOperations: [],
     });
-    const { service } = fakeEffectLedgerService(initial);
+    const { service, writeAhead } = fakeEffectLedgerService(initial);
     const catalog = {
       code: {
         id: 'code',
@@ -2570,31 +2570,51 @@ describe('schema-3 repository host capabilities', () => {
         concurrentRoleSets: [],
       },
     };
+    const config = { catalog };
+    const assertContinuable = vi.fn(async () => {
+      if (!continuable) throw new Error('portable checkpoint rejected');
+    });
+    const createEffectLedgerWriteAhead = vi.fn(() => service);
     const createHostRuntime = vi.fn();
+    const loadModule = vi.fn();
 
     await expect(
       createCaptainSessionHost({
-        config: { catalog },
+        config,
         sessionId: '10000000-0000-4000-8000-000000000001',
         cwd: repo,
         sessionLease: {
           sessionId: '10000000-0000-4000-8000-000000000001',
           ownerToken: '20000000-0000-4000-8000-000000000002',
           assertOwner: async () => undefined,
+          assertContinuable,
         },
-        loadModule: vi.fn(),
+        loadModule,
         observers: [],
         createHostRuntime,
-        createEffectLedgerWriteAhead: () => service,
+        createEffectLedgerWriteAhead,
         restoreSnapshot: { effectLedger: initial },
       } as any),
     ).rejects.toThrow(
-      /effect ledger requires reconciliation before source-state restoration/,
+      continuable
+        ? /effect ledger requires reconciliation before source-state restoration/
+        : 'portable checkpoint rejected',
     );
-    expect(service.snapshot().boundaries[0]).toHaveProperty(
-      'physicalReceipt.classification',
-      'unchanged',
-    );
+    expect(assertContinuable).toHaveBeenCalledExactlyOnceWith({ cwd: repo, executionProjection: config });
+    if (continuable) {
+      expect(assertContinuable.mock.invocationCallOrder[0]).toBeLessThan(
+        createEffectLedgerWriteAhead.mock.invocationCallOrder[0],
+      );
+      expect(service.snapshot().boundaries[0]).toHaveProperty(
+        'physicalReceipt.classification',
+        'unchanged',
+      );
+    } else {
+      expect(createEffectLedgerWriteAhead).not.toHaveBeenCalled();
+      expect(writeAhead).not.toHaveBeenCalled();
+      expect(service.snapshot()).toEqual(initial);
+    }
+    expect(loadModule).not.toHaveBeenCalled();
     expect(createHostRuntime).not.toHaveBeenCalled();
   });
 
