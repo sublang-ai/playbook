@@ -2159,6 +2159,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     const recordPath = join(root, 'sessions', `${id}.json`);
     await writeFile(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
     await chmod(recordPath, 0o600);
+    await createCaptainSessionStore({ sessionsDir }).migrate(id);
     let descriptor: any;
     let hostProjection: any;
     let imports = 0;
@@ -2731,6 +2732,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
 
     let reads = 0;
     const sessionStore = {
+      async prepare() {},
+      async validate() { return { resumable: true, reasons: [] }; },
       async read() {
         reads += 1;
         return reads === 1 ? settled : uncertain;
@@ -2895,6 +2898,8 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     const events: string[] = [];
     let selected = uncertain;
     const sessionStore = {
+      async prepare() {},
+      async validate() { return { resumable: true, reasons: [] }; },
       async read() {
         events.push('read');
         return selected;
@@ -2903,6 +2908,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
         expect(acquiredId).toBe(id);
         events.push('acquire');
         return {
+          async assertContinuable() {},
           async recoverUnresolvedEffectAbandonment() {
             events.push('recover');
             return recovered;

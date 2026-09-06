@@ -3556,7 +3556,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(rejected.result.code).toBe(1);
     expect(rejected.stdout).toBe('');
     expect(rejected.stderr).toContain(
-      'does not reproduce the stored structural projection',
+      'no longer matches its recorded manifest identity',
     );
     expect(rejected.inputs).toEqual([]);
   });

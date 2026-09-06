@@ -154,8 +154,10 @@ When opening a portable checkpoint on another device, the lifecycle shall allow 
 
 When migrating a stopped legacy store, the shared migrator shall hold the session lease and preserve source bytes outside the portable session namespace before publishing a validated schema-7 bundle:
 
+- source permission preparation uses the same verified tighten-only rules as opening, including legacy desktop sidecars [[session-storage-1](#session-storage-1)];
 - supported schema-6 recovery is validated with its legacy codec, then converted and revalidated with the current codec under the token-free rule [[session-storage-7](#session-storage-7)] without losing uncertainty, journals, counters, retained generations or effect evidence;
 - legacy tokens are discarded as usable hints, since the old format cannot prove the provider still matches that checkpoint; original inputs remain ignored;
+- a valid final replay envelope lacking only its LF gains that LF in the converted output; invalid or torn tails remain in the retained originals and cannot prove recovery;
 - replay uses the shared token-free projection; clean lines keep their exact bytes, changed lines receive new checkpoint digests, and ignored backups retain every original byte;
 - schema 2–5 and desktop sidecars lacking complete durable recovery produce history-only manifests, retaining their replay or history reconstructed from journals and explaining why recovery is unavailable;
 - missing historical context remains missing; current validated context may be appended for a supported checkpoint without assigning it to earlier events;
@@ -169,6 +171,7 @@ When migrating a stopped legacy store, the shared migrator shall hold the sessio
 
 The published session API shall offer applications the same create, open, begin-turn, settle, retry, discard, abandonment and release operations as both CLIs, using the same store, validators, writer leases and durable effect ledger [[playbook-cli-23](playbook-cli.md#playbook-cli-23)]:
 
+- opening validates required replay/context and destination compatibility before module imports, shell restoration, hint consumption or repository reconciliation [[session-storage-4](#session-storage-4)] [[session-storage-9](#session-storage-9)];
 - hosts supply agent calls, module loading, presentation and repository dependencies; they do not reimplement manifest writes, journal authority or recovery decisions;
 - create/open returns the session ID and a lease-bound lifecycle; begin/settle/retry/discard/abandonment preserve existing state-machine preconditions and durability boundaries;
 - release closes admission and drains earlier work before retiring ownership; an ended runtime does not imply a settled checkpoint;
@@ -225,7 +228,7 @@ When the integration suite checkpoints a session with current and retained playe
 When the integration suite migrates legacy CLI/desktop fixtures and opens their copied bundles in another storage directory, it shall verify:
 
 - history-only access for unsupported path changes, portable POSIX/Windows recorded paths, and reconciliation for matching native paths [[session-storage-9](#session-storage-9)];
-- preserved original bytes, version/format refusals, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
+- safe `0644` desktop-source tightening, refusal of unsafe sources, retained complete unterminated records, preserved original bytes, version/format refusals, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
 
 ## References
 

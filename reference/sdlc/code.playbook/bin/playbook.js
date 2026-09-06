@@ -82,6 +82,31 @@ export async function runPlaybookCli(options = {}) {
   const userConfigPath =
     options.userConfigPath ?? resolveUserConfigPath(env, home);
 
+  if (argv[0] === "migrate-session") {
+    try {
+      const { withPaths, rest } = extractWithFlags(argv.slice(1));
+      if (rest.length === 1 && ["--help", "-h"].includes(rest[0])) {
+        stdout.write("Usage: playbook migrate-session <id> [--with <path>]...\n");
+        return { code: 0 };
+      }
+      if (rest.length !== 1 || !SESSION_ID_PATTERN.test(rest[0])) throw new Error("expected one canonical session UUID: playbook migrate-session <id> [--with <path>]...");
+      const sessionsDir = options.sessionStore === undefined ? resolveLaunchSessionsDir({
+        userConfigPath, overlayPaths: withPaths, env, homeDir: home,
+        ...(options.sessionsDir !== undefined ? { sessionsDir: options.sessionsDir } : {}),
+        preparePrimary: false,
+      }) : options.sessionStore.sessionsDir;
+      const store = options.sessionStore ?? createCaptainSessionStore({ sessionsDir, env, homeDir: home });
+      const result = await store.migrate(rest[0]);
+      stdout.write(`playbook: ${result.migrated ? 'migrated' : 'already portable'} session ${rest[0]} in ${sessionsDir} (${result.manifest.state})\n`);
+      if (result.manifest.state === 'history-only') stderr.write(`playbook: ${result.manifest.reason}\n`);
+      for (const reason of result.reasons) stderr.write(`playbook: ${reason}\n`);
+      return { code: 0 };
+    } catch (error) {
+      stderr.write(`playbook migrate-session: ${errorMessage(error)}\n`);
+      return { code: COMPOSITION_FAILURE_EXIT_CODE };
+    }
+  }
+
   // PBCLI-18: `playbook run ...` is the non-interactive presentation of the
   // same generic-config Captain session. It never resolves or launches the
   // tmux presenter, but it receives the launch inputs shared with this host.
@@ -261,6 +286,9 @@ export async function runPlaybookCli(options = {}) {
   if (interactiveArgs.sessionId !== undefined) {
     try {
       store = await createInteractiveStore(options, env, home, resolvedSessionsDir, migrateDefaultStore, stderr);
+      await store.prepare();
+      const validation = await store.validate(interactiveArgs.sessionId);
+      if (!validation.resumable) throw new Error(validation.reasons.join('; '));
       selectedRecord = validateCaptainSessionRecord(
         await store.read(interactiveArgs.sessionId),
       );
@@ -278,6 +306,7 @@ export async function runPlaybookCli(options = {}) {
         const recoveryLease = await store.acquire(interactiveArgs.sessionId);
         let recoveryError;
         try {
+          await recoveryLease.assertContinuable();
           selectedRecord = validateCaptainSessionRecord(
             await recoveryLease.recoverUnresolvedEffectAbandonment(),
           );
@@ -895,6 +924,7 @@ function helpText({
     "  playbook run (--continue | --session <id>) [reply]",
     "  playbook run --session <id> --retry-uncertain",
     "  playbook run --session <id> --discard-uncertain",
+    "  playbook migrate-session <id> [--with <path>]...",
     "  playbook --help",
     "",
     `Default config: ${userConfigPath}`,

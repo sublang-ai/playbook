@@ -31,6 +31,7 @@ import {
   checkReadiness,
   invalidRegistryEntryReason,
   loadLaunchPlan,
+  loadSelectedLaunchPlanDataOnly,
   projectHostAgent,
   resolveLaunchSessionsDir,
   relocateLegacyUserConfig,
@@ -51,7 +52,6 @@ import {
 import {
   assertCaptainSessionExecutionCompatible,
   assertCaptainSessionsDirectoryUsable,
-  captainSessionSelectedMembers,
   createCaptainSessionStore,
   projectCaptainSessionStructure,
   SESSION_ID_PATTERN,
@@ -234,6 +234,8 @@ export async function runPlaybookRun(options = {}) {
       }
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
+      if (!args.discardUncertain) await lease.assertContinuable();
+      else if ((await lease.readManifest()).schemaVersion !== 7) throw new Error(`session requires explicit migration; run playbook migrate-session ${sessionId}`);
       replayChannel = createHeadlessReplayChannel({
         lease,
         sessionId,
@@ -351,20 +353,20 @@ export async function runPlaybookRun(options = {}) {
     const configNotices = [...bootstrapConfigNotices];
     try {
       throwIfAborted(options.signal);
-      plan = await loadLaunchPlan({
-        userConfigPath,
-        overlayPaths: args.withPaths,
-        loadModule,
-        prepareRegistryModule,
-        onNotice: (line) => configNotices.push(line),
-        ...(continuing
-          ? {
-              selectedMembers: captainSessionSelectedMembers(
-                priorRecord.structuralProjection,
-              ),
-            }
-          : {}),
-      });
+      plan = continuing
+        ? await loadSelectedLaunchPlanDataOnly({
+            userConfigPath,
+            overlayPaths: args.withPaths,
+            structuralProjection: priorRecord.structuralProjection,
+            onNotice: (line) => configNotices.push(line),
+          })
+        : await loadLaunchPlan({
+            userConfigPath,
+            overlayPaths: args.withPaths,
+            loadModule,
+            prepareRegistryModule,
+            onNotice: (line) => configNotices.push(line),
+          });
       throwIfAborted(options.signal);
     } catch (error) {
       for (const line of configNotices) await writeStream(stderr, line);
@@ -384,9 +386,10 @@ export async function runPlaybookRun(options = {}) {
     try {
       const current = executionConfigFromPlan(plan);
       if (continuing) {
-        config = assertCaptainSessionExecutionCompatible(
+        config = await validateFrozenExecutionConfig(
           priorRecord.structuralProjection,
           current,
+          { loadModule, prepareRegistryModule },
         );
       } else {
         sessionId = (options.createLogicalSessionId ?? randomUUID)();
@@ -1018,6 +1021,7 @@ export async function createCaptainSessionHost({
   graphs = [],
   initialVisible = [],
 }) {
+  if (restoreSnapshot !== undefined) await sessionLease.assertContinuable({ cwd, executionProjection: config });
   const hostCapabilities = await createRepositoryEffectCapabilities({
     cwd,
     catalog: config.catalog,
@@ -1739,7 +1743,7 @@ export async function reportSkippedCaptainSession(
   { sessionId, path, schemaVersion, reason },
 ) {
   const explanation =
-    kind === "legacy" ? legacyCaptainSessionReason(schemaVersion) : reason;
+    kind === "legacy" ? reason ?? legacyCaptainSessionReason(schemaVersion) : reason;
   await writeStream(
     stderr,
     `${commandName}: skipping ${kind} Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} because ${explanation}; move it outside the sessions directory or remove it to silence this warning\n`,

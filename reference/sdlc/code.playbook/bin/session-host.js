@@ -16,7 +16,9 @@ export async function openSessionHost(options) {
   let created;
   let retryPending = options.mode === 'retry';
   try {
-    let record = await lease.recoverUnresolvedEffectAbandonment();
+    let record = await lease.read();
+    if (record !== undefined) await lease.assertContinuable({ cwd: options.cwd });
+    record = await lease.recoverUnresolvedEffectAbandonment();
     if (options.mode === 'new' && record !== undefined) throw new Error('session already exists');
     if (options.mode !== 'new' && options.sessionId && record === undefined) throw new Error('session does not exist');
     if (record?.state === 'uncertain' && !retryPending) throw new Error('session has an uncertain turn; select Retry or Discard');
@@ -25,8 +27,8 @@ export async function openSessionHost(options) {
     const selected = retryPending ? record.uncertain.attemptedExecutionProjection : options.config ?? (options.plan ? executionConfigFromPlan(options.plan) : record?.lastAppliedExecutionProjection);
     if (!selected) throw new Error('a new session requires a validated execution configuration');
     const structure = record?.structuralProjection ?? projectCaptainSessionStructure(selected);
+    if (record !== undefined) await lease.assertContinuable({ cwd, executionProjection: selected });
     const config = await validateFrozenExecutionConfig(structure, selected, { loadModule, prepareRegistryModule: options.prepareRegistryModule });
-    if (record !== undefined) await lease.assertContinuable({ cwd, executionProjection: config });
     const replay = createReplayRecordObserver({ lease, onIncomplete: options.onIncomplete ?? (() => {}), onStored: options.onStoredRecord });
     let terminal, replies = [];
     const observe = {

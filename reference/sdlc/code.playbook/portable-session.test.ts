@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
-import { discardSessionUncertain } from './session-host.js';
+import { discardSessionUncertain, openSessionHost } from './session-host.js';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
@@ -359,6 +359,21 @@ describe('shared portable session lifecycle', () => {
   expect(await readFile(stream)).toEqual(bytes);await store.delete(id);
   const missing=await store.acquireManagement(randomUUID());await missing.release();
  });
+ it('keeps unknown manifests inspectable without interpreting or rewriting recovery',async()=>{
+  const {store,id,lease,file,stream}=await fixture();await lease.release();
+  const unknown={schemaVersion:99,sessionId:id,recovery:{future:true}};
+  const bytes=JSON.stringify(unknown);await writeFile(file,bytes);const replayBytes=await readFile(stream);
+  const validation=await store.validate(id);
+  expect(validation.manifest).toEqual(unknown);expect(validation.resumable).toBe(false);
+  expect(validation.reasons).toEqual(['unsupported session schema 99']);
+  expect(validation.history.entries.length).toBeGreaterThan(0);
+  expect(await readFile(file,'utf8')).toBe(bytes);expect(await readFile(stream)).toEqual(replayBytes);
+  await unlink(stream);const missing=await store.validate(id);
+  expect(missing.manifest).toEqual(unknown);expect(missing.integrityValid).toBe(false);expect(missing.resumable).toBe(false);
+  expect(missing.reasons).toContain('unsupported session schema 99');
+  expect(await readFile(file,'utf8')).toBe(bytes);await store.delete(id);
+  await expect(readFile(file)).rejects.toMatchObject({code:'ENOENT'});
+ });
  it('tightens a real Git checkout created under umask022 without changing bytes',async()=>{
   const {store,id,lease,root,file,stream}=await fixture();await lease.release();
   execFileSync('git',['init','-q',root]);execFileSync('git',['-C',root,'add','sessions/'+id+'.json','sessions/'+id+'.records.jsonl']);
@@ -426,6 +441,60 @@ describe('shared portable session lifecycle', () => {
   const root=await mkdtemp(join(tmpdir(),'desktop-migrate-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});await mkdir(store.sessionsDir,{mode:0o700});const id=randomUUID();
   const sidecar=join(store.sessionsDir,`${id}.spex.json`);const source=JSON.stringify({v:1,id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[]});await writeFile(sidecar,source,{mode:0o600});
   const result=await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});expect(result.manifest.state).toBe('history-only');expect((await store.validate(id)).resumable).toBe(false);await expect(readFile(sidecar)).rejects.toMatchObject({code:'ENOENT'});
+ });
+ it.each([false, true])('tightens legacy desktop inputs before migration (external=%s)',async(external)=>{
+  const root=await mkdtemp(join(tmpdir(),'desktop-modes-'));roots.push(root);
+  const target=join(root,'target');const sourceDir=external?join(root,'source'):target;
+  await mkdir(sourceDir,{mode:0o755});const store=createSessionStore({sessionsDir:target});const id=randomUUID();
+  const sidecar=join(sourceDir,`${id}.spex.json`);const stream=join(sourceDir,`${id}.records.jsonl`);
+  const source=JSON.stringify({v:1,session:{id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[]}});
+  const replay=JSON.stringify({v:1,seq:1,record:{type:'captain_reply',timestamp:2,text:'desktop history'}})+'\n';
+  await writeFile(sidecar,source,{mode:0o644});await writeFile(stream,replay,{mode:0o644});await chmod(sourceDir,0o755);
+  const result=await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});expect(result.manifest.state).toBe('history-only');
+  expect((await stat(sourceDir)).mode&0o777).toBe(0o700);expect((await stat(join(target,`${id}.json`))).mode&0o777).toBe(0o600);
+  expect(await readFile(join(root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
+  expect(await readFile(join(root,'local','migrations',id,'inputs','1'),'utf8')).toBe(replay);
+  expect(await readFile(join(target,`${id}.records.jsonl`),'utf8')).toBe(replay);
+ });
+ it.each(['symlink','hardlink','owner-read-only'])('refuses unsafe %s desktop migration sources',async(kind)=>{
+  const root=await mkdtemp(join(tmpdir(),'desktop-unsafe-'));roots.push(root);const sessionsDir=join(root,'sessions');await mkdir(sessionsDir,{mode:0o700});
+  const store=createSessionStore({sessionsDir});const id=randomUUID();const original=join(root,'original');const sidecar=join(sessionsDir,`${id}.spex.json`);
+  const source=JSON.stringify({v:1,id,createdAt:1,endedAt:2});await writeFile(original,source,{mode:0o600});
+  if(kind==='symlink')await symlink(original,sidecar);else if(kind==='hardlink')await link(original,sidecar);else await writeFile(sidecar,source,{mode:0o400});
+  await expect(store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()})).rejects.toThrow('permission preparation refuses');
+  expect(await readFile(original,'utf8')).toBe(source);expect(await readFile(sidecar,'utf8')).toBe(source);
+  await expect(readFile(join(sessionsDir,`${id}.json`))).rejects.toMatchObject({code:'ENOENT'});
+ });
+ it.each([false,true])('retains a valid unterminated legacy replay record (external=%s)',async(external)=>{
+  const f=await fixture();const legacy=await f.lease.read();await f.lease.release();await writeFile(f.file,JSON.stringify(legacy));
+  const prefix=await readFile(f.stream);const tail=JSON.stringify({v:1,seq:2,record:{type:'captain_reply',timestamp:7,text:'last complete record'}});
+  const original=Buffer.concat([prefix,Buffer.from(tail)]);await writeFile(f.stream,original);
+  const target=external?createSessionStore({sessionsDir:join(f.root,'destination')}):f.store;
+  const result=await target.migrate(f.id,{sourcePath:f.file});expect(result.manifest.state).toBe('settled');expect((await target.validate(f.id)).resumable).toBe(true);
+  const replay=await readFile(join(target.sessionsDir,`${f.id}.records.jsonl`));expect(replay.subarray(0,original.length+1)).toEqual(Buffer.concat([original,Buffer.from('\n')]));
+  expect(await readFile(join(f.root,'local','migrations',f.id,'inputs','1'))).toEqual(original);
+  expect((await target.readHistory(f.id)).entries[1].record.text).toBe('last complete record');
+ });
+ it('skips history-only and unmigrated schema6 during discovery and fresh adoption',async()=>{
+  const f=await fixture();const legacy=await f.lease.read();await f.lease.release();
+  const legacyId=randomUUID();await writeFile(join(f.store.sessionsDir,`${legacyId}.json`),JSON.stringify({...legacy,sessionId:legacyId}),{mode:0o600});
+  const historyId=randomUUID();const source=join(f.store.sessionsDir,`${historyId}.spex.json`);
+  await writeFile(source,JSON.stringify({v:1,id:historyId,createdAt:Date.now()+1000,endedAt:Date.now()+2000}),{mode:0o644});
+  await f.store.migrate(historyId,{sourcePath:source,cwd:process.cwd()});
+  const skipped:any[]=[];expect((await f.store.latest({onLegacyRecord:r=>{skipped.push(r);}})).sessionId).toBe(f.id);
+  expect(skipped.find(r=>r.sessionId===legacyId).reason).toContain('requires explicit migration');
+  expect(skipped.find(r=>r.sessionId===historyId).reason).toContain('lacks complete durable recovery');
+  const next=await f.store.acquire(randomUUID());const record=await next.initializeSettledWithPredecessor(freshBoundary() as any);expect(record.state).toBe('settled');await next.release();
+  await f.store.delete(f.id);await f.store.delete(record.sessionId);await expect(f.store.latest()).rejects.toThrow('no resumable Captain session exists');
+ });
+ it.each(['digest','incomplete','context','path'])('refuses %s before embedding host imports or reconciliation',async(kind)=>{
+  const f=await fixture();await f.lease.release();const manifest=JSON.parse(await readFile(f.file,'utf8'));
+  if(kind==='digest')manifest.replay.sha256='0'.repeat(64);else if(kind==='incomplete')manifest.replay.incomplete=true;
+  else if(kind==='context'){const entry=JSON.parse(await readFile(f.stream,'utf8'));entry.record.contextVersion=99;const bytes=JSON.stringify(entry)+'\n';await writeFile(f.stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');}
+  else manifest.cwd=String.raw`C:\Users\other\project`;
+  await writeFile(f.file,JSON.stringify(manifest));let imports=0,hosts=0;
+  await expect(openSessionHost({store:f.store,sessionId:f.id,mode:'continue',loadModule:async()=>{imports++;throw new Error('must not import');},createHostRuntime:async()=>{hosts++;throw new Error('must not start');}} as any)).rejects.toThrow();
+  expect(imports).toBe(0);expect(hosts).toBe(0);expect(await f.store.readLeaseState(f.id)).toBe('idle');
  });
  it('refuses changed paths without changing checkpoints or history',async()=>{
   const {store,id,lease,file}=await fixture();await lease.release();const before=await readFile(file);const validation=await store.validate(id,{cwd:'/different/path'});expect(validation.resumable).toBe(false);expect(validation.reasons.some(r=>r.includes('relocation'))).toBe(true);expect(await readFile(file)).toEqual(before);

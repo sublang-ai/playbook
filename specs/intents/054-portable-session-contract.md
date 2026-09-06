@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress; required live release verification is pending.
+Implementation and review fixes complete; final release verification and publication pending.
 
 ## Intent
 
@@ -36,7 +36,7 @@ Implement [DR-049](../decisions/049-portable-session-contract.md).
 ## Verification
 
 - Required integration matrices are defined in the owning spec packages.
-- Build, 1,717-test normal gate and 11-step packed smoke gate passed.
-- Later cutover changes passed 37 portable, 173 compatibility and 13 CLI checks; unchanged gates were reused.
-- Spec lint: no errors.
-- Live provider acceptance and publication remain pending.
+- Review fixes: 381 applicable integration cases passed, including unknown-version history preservation; two packed-document link checks passed.
+- Spec lint: no errors; 232 existing style warnings.
+- Historical `3444353` gates: CI `34001590898` passed 1,743 tests, Node 20/22 builds, generated-artifact checks, SPDX checks and installation smoke; local packed smoke passed 11 steps and live acceptance passed 6/6.
+- Final-candidate release checks, manual terminal verification [[release-26](../packages/release.md#release-26)] and publication remain pending; historical results do not verify the review fixes.

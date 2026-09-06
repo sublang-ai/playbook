@@ -311,6 +311,22 @@ compatible runtimes; changed paths allow history only. Prompts, replies and
 tool content remain sensitive even after structured continuation fields have
 been removed. See the [shared storage contract](https://github.com/sublang-ai/playbook/blob/main/specs/packages/session-storage.md).
 
+### Migrating older sessions
+
+Stop old writers and snapshot Spex home and `${XDG_STATE_HOME:-$HOME/.local/state}/playbook` before upgrading.
+The ordinary default migrates known legacy formats into `~/.spex/sessions`, retaining history even when recovery is unavailable; explicit store overrides remain isolated.
+Migration retains original files under `local/migrations/` beside the destination sessions directory, validates the new bundle, then removes the former replay and manifest.
+Unknown or unsafe inputs stay in place with a diagnostic.
+
+For an explicitly configured store, migrate each selected legacy session before continuing it:
+
+```sh
+playbook migrate-session <id> [--with <path>]...
+```
+
+Schema 6 may retain execution; older CLI records and desktop sidecars lacking complete recovery remain readable history.
+Discovery skips these histories and unmigrated records with a reason; they do not block other sessions.
+
 ### Reconciling possible repository effects
 
 For each governed player call, Playbook records a Git baseline before the call

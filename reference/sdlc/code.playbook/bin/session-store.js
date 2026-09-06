@@ -672,7 +672,7 @@ export function createCaptainSessionStore(options = {}) {
     return join(sessionsDir, `.${sessionId}.lock.retired.${ownerToken}`);
   };
 
-  const readRecord = async (sessionId, { missing = 'error' } = {}) => {
+  const readRecord = async (sessionId, { missing = 'error', requirePortable = false } = {}) => {
     const path = recordPathFor(sessionId);
     let text;
     try {
@@ -697,9 +697,16 @@ export function createCaptainSessionStore(options = {}) {
     }
     let record;
     try {
+      if (value.schemaVersion === SESSION_MANIFEST_VERSION && value.state === 'history-only') {
+        const manifest = validateSessionManifest(value);
+        throw new CaptainSessionRecordNonresumableError(7, manifest.reason, captainSessionOrderingBoundary(manifest));
+      }
       record = value.schemaVersion === SESSION_MANIFEST_VERSION
         ? recoveryFromManifest(value)
         : validateCaptainSessionRecord(value);
+      if (requirePortable && value.schemaVersion !== SESSION_MANIFEST_VERSION) {
+        throw new CaptainSessionRecordNonresumableError(value.schemaVersion, `schema ${value.schemaVersion} requires explicit migration; run playbook migrate-session ${sessionId}`, captainSessionOrderingBoundary(record));
+      }
     } catch (cause) {
       const context =
         `Captain session ${JSON.stringify(sessionId)} at ` +
@@ -771,7 +778,13 @@ export function createCaptainSessionStore(options = {}) {
     let integrityValid = !history.missing && !history.incomplete;
     if (history.missing) reasons.push('session replay file is missing');
     if (history.pendingTail) reasons.push('session replay has an unfinished final record');
-    if (manifest.schemaVersion !== 7) reasons.push(`schema ${manifest.schemaVersion} requires explicit migration`);
+    if (manifest.schemaVersion !== 7) {
+      if ([2, 3, 4, 5, 6].includes(manifest.schemaVersion)) {
+        try { validateCaptainSessionRecord(manifest); }
+        catch (cause) { if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause; reasons.push(cause.message); }
+        reasons.push(`schema ${manifest.schemaVersion} requires explicit migration; run playbook migrate-session ${sessionId}`);
+      } else reasons.push(`unsupported session schema ${manifest.schemaVersion}`);
+    }
     else {
       if (history.entries.some(({ record }) => !isDeepStrictEqual(record, sanitizeReplayRecord(record)))) {
         integrityValid = false;
@@ -890,15 +903,16 @@ export function createCaptainSessionStore(options = {}) {
       // Canonically named records are store-owned. Corruption must not make
       // --continue silently select an older logical session.
       try {
-        candidates.push(await readRecord(sessionId));
+        candidates.push(await readRecord(sessionId, { requirePortable: true }));
       } catch (error) {
         if (error instanceof CaptainSessionRecordNonresumableError) {
-          await onLegacyOrderingBoundary?.(error.orderingBoundary);
+          if (error.orderingBoundary) await onLegacyOrderingBoundary?.(error.orderingBoundary);
           await onLegacyRecord?.(
             Object.freeze({
               sessionId,
               path: recordPathFor(sessionId),
               schemaVersion: error.schemaVersion,
+              ...(error.schemaVersion >= 6 ? { reason: error.cause?.message ?? error.message } : {}),
             }),
           );
           continue;
@@ -984,7 +998,7 @@ export function createCaptainSessionStore(options = {}) {
       ...legacyOrderingBoundaries.filter(
         (candidate) =>
           candidate.sessionId !== target.sessionId &&
-          candidate.state === 'settled' &&
+          candidate.state !== 'uncertain' &&
           candidate.cwd === target.cwd,
       ),
     ]);
@@ -1476,7 +1490,7 @@ export function createCaptainSessionStore(options = {}) {
 
   const migrate = async (sessionId, migration = {}) => {
     assertSessionId(sessionId);
-    await prepare();
+    await prepareSessionPermissions(sessionsDir, fs, sessionId, true);
     const sourcePath = migration.sourcePath ?? recordPathFor(sessionId);
     const sidecar = sourcePath.endsWith('.spex.json');
     const sourceDir = dirname(sourcePath);
@@ -1490,7 +1504,7 @@ export function createCaptainSessionStore(options = {}) {
     try {
       if (external) {
         const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env, homeDir: home, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
-        await sourceStore.prepare();
+        await prepareSessionPermissions(sourceDir, fs, sessionId, true);
         sourceLease = await sourceStore.acquireManagement(sessionId);
       }
       lease = await acquire(sessionId, true);
@@ -1559,7 +1573,14 @@ export function createCaptainSessionStore(options = {}) {
         const records = [...projected.map(({ record }) => record), ...journal.map((entry) => ({ type: 'legacy_journal', timestamp: Date.parse(updatedAt), entry }))];
         replayBytes = Buffer.from(records.map((record, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord(record) })}\n`).join(''));
       }
-      const history = parseSessionHistory(replayBytes);
+      let history = parseSessionHistory(replayBytes);
+      if (history.pendingTail) {
+        try {
+          parseReplayEnvelope(replayBytes.subarray(history.completeBytes), history.lastReadableSeq + 1);
+          replayBytes = Buffer.concat([replayBytes, Buffer.from('\n')]);
+          history = parseSessionHistory(replayBytes);
+        } catch { /* Preserve a torn or invalid tail in the retained input only. */ }
+      }
       const completeReplay = replayBytes.subarray(0, history.completeBytes);
       let offset = 0;
       replayBytes = Buffer.concat(history.entries.map((entry) => {
@@ -6439,7 +6460,7 @@ function errorMessage(error) {
 
 // Opening is the only permission preparation boundary. Strict readers never
 // change modes, and verified handles ensure tightening cannot follow links.
-async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId) {
+async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId, includeSidecars = false) {
   let initial;
   try { initial = await fs.lstat(sessionsDir); }
   catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
@@ -6463,7 +6484,9 @@ async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId) {
   };
   await tighten(sessionsDir, initial, true);
   for (const name of await fs.readdir(sessionsDir)) {
-    if (!/^[0-9a-f-]{36}\.(?:json|records\.jsonl|hints\.json)$/.test(name) || (selectedSessionId !== undefined && !name.startsWith(`${selectedSessionId}.`))) continue;
+    const eligible = /^[0-9a-f-]{36}\.(?:json|records\.jsonl|hints\.json)$/.test(name)
+      || (includeSidecars && /^[0-9a-f-]{36}\.spex\.json$/.test(name));
+    if (!eligible || (selectedSessionId !== undefined && !name.startsWith(`${selectedSessionId}.`))) continue;
     const path = join(sessionsDir, name);
     await tighten(path, await fs.lstat(path), false);
   }

@@ -378,6 +378,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       let host;
       try {
         lease = await store.acquire(payload.sessionId);
+        if (payload.mode === 'selected') await lease.assertContinuable({ cwd: payload.cwd, executionProjection: payload.executionProjection });
         replayChannel = createManagedReplayChannel({
           lease,
           sessionId: payload.sessionId,
