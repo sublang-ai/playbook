@@ -2464,7 +2464,7 @@ function sanitizeReplayValue(value, path, ancestors, scope = 'record') {
   for (const key of keys) {
     if (typeof key !== 'string') continue;
     if (key === 'resumeToken') continue;
-    if (provider && (['sessionid', 'threadid', 'conversationid'].includes(key.replaceAll('_', '').toLowerCase()) || (scope === 'identity' && key === 'id'))) continue;
+    if (provider && (['sessionid', 'nativesessionid', 'threadid', 'conversationid'].includes(key.replaceAll('_', '').toLowerCase()) || (scope === 'identity' && key === 'id'))) continue;
     const descriptor = descriptors[key];
     if (
       descriptor === undefined ||

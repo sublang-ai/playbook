@@ -215,6 +215,17 @@ describe('shared portable session lifecycle', () => {
   expect(event.sessionId).toBe('secret-provider-normalized');
   expect((await store.validate(id)).integrityValid).toBe(true);
  });
+ it.each(['captain_event','player_event'])('removes native OpenCode permission identities from %s while preserving tool inputs',async(type)=>{
+  const {store,id,lease,stream}=await fixture();const delivered:any[]=[];
+  const channel=createReplayRecordObserver({lease,onStored:async(entry:any)=>{delivered.push(entry);}});
+  const payload={requestId:'permission-request',nativeSessionId:'secret-native-session',permission:'edit',patterns:['fixture.txt'],toolUseId:'logical-tool',decision:'once',automated:true,input:{nativeSessionId:'business-session',sessionID:'business-record'}};
+  await channel.observer.onRecord({type,timestamp:1,playerId:'dev.coder',event:{type:'opencode:permission_decision',agent:'opencode',timestamp:1,sessionId:'secret-normalized-session',payload}});
+  const prior=await lease.read();await lease.beginTurn({input:'next',attemptId:randomUUID(),attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});await lease.release();
+  const history=await store.readHistory(id);expect(delivered).toEqual(history.entries.slice(1));
+  const {nativeSessionId,...retained}=payload;expect(history.entries[1]!.record.event.payload).toEqual(retained);
+  expect(await readFile(stream,'utf8')).not.toContain('secret-');
+  expect((await store.validate(id)).integrityValid).toBe(true);
+ });
  it('refuses provider identities in an existing portable replay without changing its bytes',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
   const original=await readFile(stream);const record={type:'captain_event',timestamp:1,event:{type:'init',agent:'claude-code',timestamp:1,sessionId:'secret-provider-existing',payload:{}}};
@@ -231,7 +242,7 @@ describe('shared portable session lifecycle', () => {
  it('sanitizes legacy provider events while retaining original replay and clean line bytes',async()=>{
   const {root,store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();
   await writeFile(file,JSON.stringify(legacy));
-  const original=Buffer.concat([await readFile(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
+  const original=Buffer.concat([await readFile(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"nativeSessionId":"secret-provider-native","thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
   await writeFile(stream,original);
   const result=await store.migrate(id);expect(result.migrated).toBe(true);
   const migrated=await readFile(stream,'utf8');expect(migrated).not.toContain('secret-provider-');
