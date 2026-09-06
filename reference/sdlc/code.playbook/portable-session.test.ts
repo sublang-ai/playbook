@@ -267,6 +267,18 @@ describe('shared portable session lifecycle', () => {
   expect(()=>validateSessionManifest({...manifest,extra:true})).toThrow();
   await lease.release();
  });
+ it('keeps later presentation outside the saved replay checkpoint',async()=>{
+  const {store,id,lease,file,stream}=await fixture();const checkpointBytes=await readFile(file);const prefix=await readFile(stream);
+  const checkpoint=JSON.parse(checkpointBytes.toString()).replay;
+  await lease.append({type:'captain_telemetry',timestamp:1,topic:'playbook.trace',payload:{type:'session.disposed',sessionId:captainRuntimeId}});
+  await lease.release();const history=await store.readHistory(id);const bytes=await readFile(stream);
+  expect(history.lastReadableSeq).toBe(checkpoint.seq+1);
+  expect(bytes.subarray(0,prefix.length)).toEqual(prefix);
+  expect(createHash('sha256').update(prefix).digest('hex')).toBe(checkpoint.sha256);
+  expect(createHash('sha256').update(bytes).digest('hex')).not.toBe(checkpoint.sha256);
+  expect(await readFile(file)).toEqual(checkpointBytes);
+  expect(await store.validate(id)).toMatchObject({integrityValid:true,resumable:true});
+ });
  it('keeps valid opaque kinds and stops at damage without modifying history',async()=>{
   const {store,id,lease,stream}=await fixture(); await lease.release();
   const before=await readFile(stream,'utf8');

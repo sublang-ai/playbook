@@ -1338,9 +1338,16 @@ function readDurableSession(
   const lines = replay.toString('utf8').split('\n');
   expect(lines.pop()).toBe('');
   const entries = lines.map((line) => JSON.parse(line));
+  expect(entries.map((entry) => entry.seq)).toEqual(entries.map((_, index) => index + 1));
+  const checkpointSeq = record.replay?.seq ?? -1;
+  expect(Number.isSafeInteger(checkpointSeq)).toBe(true);
+  expect(checkpointSeq).toBeGreaterThanOrEqual(0);
+  expect(checkpointSeq).toBeLessThanOrEqual(entries.length);
+  let prefixEnd = 0;
+  for (let index = 0; index < checkpointSeq; index += 1) prefixEnd = replay.indexOf(0x0a, prefixEnd) + 1;
   expect(record.replay).toEqual({
-    seq: entries.length,
-    sha256: createHash('sha256').update(replay).digest('hex'),
+    seq: checkpointSeq,
+    sha256: createHash('sha256').update(replay.subarray(0, prefixEnd)).digest('hex'),
     incomplete: false,
   });
   const context = entries.find((entry) => entry.seq === record.contextSeq)?.record;
