@@ -5,7 +5,7 @@
 
 ## Status
 
-Implementation and review fixes complete; final release verification and publication pending.
+Done (2026-09-06): published as `@sublang/playbook` 13.0.0 from tag `v13.0.0` at `ad6a411`.
 
 ## Intent
 
@@ -39,4 +39,4 @@ Implement [DR-049](../decisions/049-portable-session-contract.md).
 - Review fixes: 381 applicable integration cases passed, including unknown-version history preservation; two packed-document link checks passed.
 - Spec lint: no errors; 232 existing style warnings.
 - Historical `3444353` gates: CI `34001590898` passed 1,743 tests, Node 20/22 builds, generated-artifact checks, SPDX checks and installation smoke; local packed smoke passed 11 steps and live acceptance passed 6/6.
-- Final-candidate release checks, manual terminal verification [[release-26](../packages/release.md#release-26)] and publication remain pending; historical results do not verify the review fixes.
+- Final candidate `ad6a411`: `pnpm test` 1681+86 passed with spec lint clean, `pnpm smoke:release` 11/11, `pnpm test:acceptance` 6/6 with real Claude and Codex adapters, the manual terminal check [[release-26](../packages/release.md#release-26)] passed at 120x40, 80x24 and 160x50 with a clean Ctrl-C exit, compiled siblings in sync, CI `34021079897` success; release workflow `34021987115` published 13.0.0 with provenance and created the GitHub release.
