@@ -56,6 +56,7 @@ Every host shall preserve the frozen v1 replay envelope and removal of provider 
 
 - valid unknown kinds and headerless records count in sequence and digest checks;
 - only `v`, `seq`, optional string `role`, and object `record` are envelope fields; v1 does not require `type` or `timestamp` inside `record`;
+- portable validation rejects structured provider continuation fields; legacy history stays readable without rewriting its bytes;
 - presentation skips unsupported records without reporting damage; new context and reset kinds require their declared headers [[session-storage-5](#session-storage-5)] [[session-storage-8](#session-storage-8)];
 - the shared history reader returns the valid newline-terminated prefix and reports the first damaged boundary without modifying the file; an incomplete final line waits for completion;
 - absent legacy replay may be presented from supported legacy journal fields, validating Boss/reply entries and marking the result synthetic; this read-only projection proves no durable replay boundary;
@@ -155,6 +156,7 @@ When migrating a stopped legacy store, the shared migrator shall hold the sessio
 
 - supported schema-6 recovery is validated with its legacy codec, then converted and revalidated with the current codec under the token-free rule [[session-storage-7](#session-storage-7)] without losing uncertainty, journals, counters, retained generations or effect evidence;
 - legacy tokens are discarded as usable hints, since the old format cannot prove the provider still matches that checkpoint; original inputs remain ignored;
+- replay uses the shared token-free projection; clean lines keep their exact bytes, changed lines receive new checkpoint digests, and ignored backups retain every original byte;
 - schema 2–5 and desktop sidecars lacking complete durable recovery produce history-only manifests, retaining their replay or history reconstructed from journals and explaining why recovery is unavailable;
 - missing historical context remains missing; current validated context may be appended for a supported checkpoint without assigning it to earlier events;
 - malformed inputs remain unchanged and are reported; divergent destination bytes block replacement; identical completed outputs make retries idempotent;

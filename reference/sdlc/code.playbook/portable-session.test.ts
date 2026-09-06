@@ -181,6 +181,65 @@ function freshBoundary(execution = executionProjection()) {
 
 
 describe('shared portable session lifecycle', () => {
+ it.each(['captain_event', 'player_event'])('removes provider identities from %s before replay delivery and checkpointing', async (type) => {
+  const {store,id,lease,file,stream}=await fixture();
+  const delivered:any[]=[];
+  const channel=createReplayRecordObserver({lease,onStored:async(entry:any)=>{delivered.push(entry);}});
+  const event={type:'provider:raw',agent:'codex',timestamp:1,sessionId:'secret-provider-normalized',payload:{
+   session_id:'secret-provider-snake',sessionID:'secret-provider-acronym',threadId:'secret-provider-thread',thread_id:'secret-provider-thread-snake',
+   conversationId:'secret-provider-conversation',conversation_id:'secret-provider-conversation-snake',
+   session:{id:'secret-provider-session-object',status:'idle'},thread:{id:'secret-provider-thread-object'},conversation:{id:'secret-provider-conversation-object'},
+   metadata:[{sessionId:'secret-provider-nested'}],
+   input:{sessionId:'business-session',thread:{id:'business-thread'}},output:{conversationId:'business-conversation'},
+   toolUseId:'logical-tool',resume:false,
+  }};
+  await channel.observer.onRecord({type,timestamp:1,playerId:'dev.coder',event});
+  const trace={type:'captain_telemetry',timestamp:2,topic:'playbook.trace',payload:{sessionId:'logical-session',rootSessionId:'logical-root',parentSessionId:'logical-parent',callId:'logical-call',payload:{resume:false}}};
+  await channel.observer.onRecord(trace);
+  // Direct normalized events can also appear in stored observed payloads.
+  await channel.observer.onRecord({type:'opaque_history',timestamp:3,observed:event});
+  const prior=await lease.read();
+  await lease.beginTurn({input:'next',attemptId:randomUUID(),attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});
+  await lease.release();
+  const bytes=await readFile(stream,'utf8');const manifest=JSON.parse(await readFile(file,'utf8'));
+  expect(bytes).not.toContain('secret-provider-');
+  expect(manifest.replay.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+  const history=await store.readHistory(id);
+  expect(delivered).toEqual(history.entries.slice(1));
+  expect(history.entries[1]!.record.event).toEqual({type:'provider:raw',agent:'codex',timestamp:1,payload:{
+   session:{status:'idle'},thread:{},conversation:{},metadata:[{}],input:{sessionId:'business-session',thread:{id:'business-thread'}},
+   output:{conversationId:'business-conversation'},toolUseId:'logical-tool',resume:false,
+  }});
+  expect(history.entries[2]!.record).toMatchObject(trace);
+  expect(history.entries[3]!.record.observed).toEqual(history.entries[1]!.record.event);
+  expect(event.sessionId).toBe('secret-provider-normalized');
+  expect((await store.validate(id)).integrityValid).toBe(true);
+ });
+ it('refuses provider identities in an existing portable replay without changing its bytes',async()=>{
+  const {store,id,lease,file,stream}=await fixture();await lease.release();
+  const original=await readFile(stream);const record={type:'captain_event',timestamp:1,event:{type:'init',agent:'claude-code',timestamp:1,sessionId:'secret-provider-existing',payload:{}}};
+  const bytes=Buffer.concat([original,Buffer.from(`${JSON.stringify({v:1,seq:2,record})}\n`)]);
+  await writeFile(stream,bytes);const manifest=JSON.parse(await readFile(file,'utf8'));
+  manifest.replay={seq:2,sha256:createHash('sha256').update(bytes).digest('hex'),incomplete:false};
+  await writeFile(file,JSON.stringify(manifest));const manifestBytes=await readFile(file);
+  const result=await store.validate(id);
+  expect(result).toMatchObject({integrityValid:false,resumable:false});
+  expect(result.reasons).toContain('session replay contains provider continuation fields');
+  expect(result.history.entries[1]!.record).toEqual(record);
+  expect(await readFile(stream)).toEqual(bytes);expect(await readFile(file)).toEqual(manifestBytes);
+ });
+ it('sanitizes legacy provider events while retaining original replay and clean line bytes',async()=>{
+  const {root,store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();
+  await writeFile(file,JSON.stringify(legacy));
+  const original=Buffer.concat([await readFile(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
+  await writeFile(stream,original);
+  const result=await store.migrate(id);expect(result.migrated).toBe(true);
+  const migrated=await readFile(stream,'utf8');expect(migrated).not.toContain('secret-provider-');
+  expect(migrated).toContain(' {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n');
+  expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(original);
+  expect((await store.validate(id)).integrityValid).toBe(true);
+  expect((await store.readHistory(id)).entries[1]!.record).toEqual({type:'player_event',event:{payload:{thread:{}},type:'init'}});
+ });
  it('writes exact schema7 checkpoints over byte-identical replay and context', async () => {
   const {store,id,lease,file,stream}=await fixture();
   await lease.append({type:'captain_reply',timestamp:1,text:'hello'});

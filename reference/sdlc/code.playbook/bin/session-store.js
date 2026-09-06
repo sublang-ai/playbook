@@ -773,6 +773,10 @@ export function createCaptainSessionStore(options = {}) {
     if (history.pendingTail) reasons.push('session replay has an unfinished final record');
     if (manifest.schemaVersion !== 7) reasons.push(`schema ${manifest.schemaVersion} requires explicit migration`);
     else {
+      if (history.entries.some(({ record }) => !isDeepStrictEqual(record, sanitizeReplayRecord(record)))) {
+        integrityValid = false;
+        reasons.push('session replay contains provider continuation fields');
+      }
       if (manifest.state === 'history-only') reasons.push(manifest.reason);
       if (manifest.replay.incomplete || history.incomplete) reasons.push('session replay is incomplete');
       if (history.digests[manifest.replay.seq] !== manifest.replay.sha256) { integrityValid = false; reasons.push('session replay checkpoint digest does not match'); }
@@ -1556,7 +1560,16 @@ export function createCaptainSessionStore(options = {}) {
         replayBytes = Buffer.from(records.map((record, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord(record) })}\n`).join(''));
       }
       const history = parseSessionHistory(replayBytes);
-      replayBytes = replayBytes.subarray(0, history.completeBytes);
+      const completeReplay = replayBytes.subarray(0, history.completeBytes);
+      let offset = 0;
+      replayBytes = Buffer.concat(history.entries.map((entry) => {
+        const end = completeReplay.indexOf(0x0a, offset) + 1;
+        const line = completeReplay.subarray(offset, end);
+        offset = end;
+        const record = sanitizeReplayRecord(entry.record);
+        return isDeepStrictEqual(record, entry.record)
+          ? line : Buffer.from(`${JSON.stringify({ ...entry, record })}\n`);
+      }));
       let manifest;
       if (recovery && !history.incomplete && !history.pendingTail) {
         const context = contextFromRecovery(recovery);
@@ -2350,7 +2363,7 @@ function canonicalReplayJson(value) {
   return JSON.stringify(value);
 }
 
-function sanitizeReplayValue(value, path, ancestors) {
+function sanitizeReplayValue(value, path, ancestors, scope = 'record') {
   if (
     value === null ||
     typeof value === 'string' ||
@@ -2405,6 +2418,7 @@ function sanitizeReplayValue(value, path, ancestors) {
           descriptor.value,
           `${path}[${index}]`,
           nextAncestors,
+          scope,
         ),
       );
     }
@@ -2438,10 +2452,19 @@ function sanitizeReplayValue(value, path, ancestors) {
     throw new TypeError(`${path} must not contain symbol-keyed properties`);
   }
   const nextAncestors = new Set(ancestors).add(value);
+  // Cligent session IDs are provider continuations. Playbook trace and
+  // checkpoint session IDs are logical identities and must survive.
+  const type = descriptors.type?.value;
+  const adapterEvent = scope !== 'content' &&
+    typeof type === 'string' && typeof descriptors.agent?.value === 'string' &&
+    Number.isFinite(descriptors.timestamp?.value) && Object.hasOwn(descriptors, 'payload');
+  const provider = scope === 'provider' || scope === 'identity' || adapterEvent;
+  const observed = type === 'captain_event' || type === 'player_event';
   const copy = {};
   for (const key of keys) {
     if (typeof key !== 'string') continue;
     if (key === 'resumeToken') continue;
+    if (provider && (['sessionid', 'threadid', 'conversationid'].includes(key.replaceAll('_', '').toLowerCase()) || (scope === 'identity' && key === 'id'))) continue;
     const descriptor = descriptors[key];
     if (
       descriptor === undefined ||
@@ -2459,6 +2482,11 @@ function sanitizeReplayValue(value, path, ancestors) {
         descriptor.value,
         `${path}.${key}`,
         nextAncestors,
+        scope === 'content' || (provider && (key === 'input' || key === 'output'))
+          ? 'content'
+          : provider
+            ? ['session', 'thread', 'conversation'].includes(key) ? 'identity' : 'provider'
+            : observed && key === 'event' ? 'provider' : 'record',
       ),
       enumerable: true,
       configurable: true,
