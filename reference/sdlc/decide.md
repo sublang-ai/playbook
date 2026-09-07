@@ -15,6 +15,8 @@ When the caller gives a topic, Captain shall relay the complete topic in quotes 
 Captain shall not wait for either proposal before requesting the other.
 Captain shall give the player bound to each role the following instruction:
 
+> Original topic: <caller-topic>
+
 ```markdown
 Assess whether the topic is better expressed as a few spec items under @specs/packages/ or requires one or more DRs under @specs/decisions/.
 Propose your design.

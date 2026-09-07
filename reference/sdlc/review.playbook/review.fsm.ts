@@ -113,7 +113,7 @@ const INITIAL_REVIEW_PROMPT = [
   'Keep to the original intent and follow what it asks.',
   'When the scope names commits, read each commit message for its context and rationale; otherwise use repository history and commit messages wherever they help establish that context.',
   '',
-  '> <caller-input>',
+  '> Original request: <caller-input>',
   '',
   SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
@@ -123,9 +123,9 @@ const POST_COMMIT_REVIEW_PROMPT = [
   'Keep to the original intent and follow what it asks.',
   "Read the latest review-fix commit's message and see Coder's feedback below.",
   '',
-  '> <caller-input>',
-  '> <latest-commit>',
-  '> <coder-output>',
+  '> Original request: <caller-input>',
+  '> Latest commit: <latest-commit>',
+  '> Coder output: <coder-output>',
   '',
   SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
@@ -134,15 +134,15 @@ const REBUTTAL_REVIEW_PROMPT = [
   'No new commit was made because Coder rejected every finding.',
   "See Coder's feedback below.",
   '',
-  '> <caller-input>',
-  '> <coder-output>',
+  '> Original request: <caller-input>',
+  '> Coder output: <coder-output>',
   '',
   SHARED_REVIEW_INSTRUCTION,
 ].join('\n');
 
 const CODER_DISPOSITION_PROMPT = [
-  '> <caller-input>',
-  '> <reviewer-output>',
+  '> Original request: <caller-input>',
+  '> Reviewer findings: <reviewer-output>',
   '',
   'For each review item, accept or reject it.',
   'Before deciding, understand the full picture and think systematically about the underlying design.',

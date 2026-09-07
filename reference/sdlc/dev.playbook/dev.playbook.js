@@ -11,11 +11,10 @@
 //                carried verbatim
 // Nested calls:  literal code and decide targets through the shared bridge
 // Compat:        artifact schema 3 / runtime ABI 1
-import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
+import { createXStatePlaybookRuntime, composePlayerContinuation, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { devMachine, } from './dev.fsm.js';
 const OPTION_KEYS = new Set(['runResults']);
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
-const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     'planningResult',
 ]);
@@ -54,13 +53,13 @@ function quotedContinuation(value) {
  * override additionally keeps a multiline value inside that quote and drops
  * the optional relays that have no value yet.
  */
-function composePlayerPrompt(input) {
+function composePlayerPrompt(input, resuming = false) {
     const fields = input;
     const template = input.prompt
         .split('\n')
-        .filter((line) => !(line === '> <discussion-context>' &&
-        input.discussionContext.length === 0) &&
-        !(line === '> <run-results>' && input.runResults.length === 0))
+        .filter((line) => !(line === '> Prior discussion: <discussion-context>' &&
+        (input.discussionContext.length === 0 || resuming)) &&
+        !(line === '> Run results: <run-results>' && input.runResults.length === 0))
         .join('\n');
     const body = template.replace(PLACEHOLDER, (match, token, offset, source) => {
         const value = fields[placeholderField(token)];
@@ -68,18 +67,9 @@ function composePlayerPrompt(input) {
             return match;
         const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
         const literal = source.slice(lineStart, offset);
-        return literal === '> ' ? quotedContinuation(value) : value;
+        return literal.startsWith('> ') ? quotedContinuation(value) : value;
     });
-    if (input.pendingBossQuestion === undefined ||
-        input.bossReply === undefined) {
-        return body;
-    }
-    return [
-        CONTINUATION_PREAMBLE,
-        `Boss question:\n${input.pendingBossQuestion.question}`,
-        `Boss reply:\n${input.bossReply}`,
-        body,
-    ].join('\n\n');
+    return composePlayerContinuation(input, body, resuming);
 }
 export const _internal = {
     composePlayerPrompt,
@@ -133,7 +123,7 @@ const runtimeSpec = {
             },
         },
     },
-    composePlayerPrompt: (input) => composePlayerPrompt(input),
+    composePlayerPrompt: (input, _identity, resuming) => composePlayerPrompt(input, resuming),
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
     controlContextFields: [],
     unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,

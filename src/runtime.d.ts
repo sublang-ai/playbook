@@ -6,6 +6,8 @@ export interface PlayerResult {
 }
 export interface PlayerCallOptions {
     resume: string | false;
+    /** Complete task and clarification context if the host must start fresh. */
+    freshPrompt?: string;
 }
 export interface PlayerSessionStore {
     select(roleId: string): string | false;

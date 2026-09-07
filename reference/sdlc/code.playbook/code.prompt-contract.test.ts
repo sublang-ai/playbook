@@ -32,8 +32,8 @@ function firstInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
     role: 'coder',
     sourceItem: 'CODE-1',
     prompt: [
-      '> <caller-input>',
-      '> <run-results>',
+      '> Original request: <caller-input>',
+      '> Run results: <run-results>',
       '',
       'Implement the phase.',
       'Coder is <coder-llm>.',
@@ -59,9 +59,9 @@ describe('CODE player prompt composition', () => {
   it('keeps every line of relayed values inside Markdown quotes', () => {
     expect(composePlayerPrompt(firstInput(), promptIdentity)).toBe(
       [
-        '> line one',
+        '> Original request: line one',
         '> line two',
-        '> test one',
+        '> Run results: test one',
         '> test two',
         '',
         'Implement the phase.',
@@ -77,7 +77,7 @@ describe('CODE player prompt composition', () => {
     );
     expect(prompt).not.toContain('<run-results>');
     expect(prompt).not.toContain('\n> \n');
-    expect(prompt).toContain('> line one\n> line two');
+    expect(prompt).toContain('> Original request: line one\n> line two');
   });
 
   it('substitutes caller input, IR number, and Coder identity once', () => {
@@ -86,9 +86,9 @@ describe('CODE player prompt composition', () => {
       role: 'coder',
       sourceItem: 'CODE-3',
       prompt: [
-        '> <caller-input>',
-        '> <ir-number>',
-        '> <run-results>',
+        '> Original request: <caller-input>',
+        '> IR number: <ir-number>',
+        '> Run results: <run-results>',
         '',
         'Read the identified IR.',
         'Coder is <coder-llm>.',
@@ -100,9 +100,9 @@ describe('CODE player prompt composition', () => {
     };
     expect(composePlayerPrompt(input, promptIdentity)).toBe(
       [
-        '> Use literal <coder-llm> and $&.',
+        '> Original request: Use literal <coder-llm> and $&.',
         '> Then finish.',
-        '> 040',
+        '> IR number: 040',
         '',
         'Read the identified IR.',
         'Coder is GPT-5.6 Sol.',
@@ -125,7 +125,7 @@ describe('CODE player prompt composition', () => {
       promptIdentity,
     );
     expect(prompt).toMatch(
-      /^You previously paused this task[\s\S]*Boss question:\nWhich branch\?\n\nBoss reply:\nUse the narrow branch\.\n\n> line one/,
+      /^Continue the same task[\s\S]*Your previous question:\nWhich branch\?\n\nBoss reply:\nUse the narrow branch\.\n\n> Original request: line one/,
     );
   });
 });

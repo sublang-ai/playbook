@@ -1005,8 +1005,8 @@ describe('generic strategy defaults', () => {
     });
     expect(prompt).toBe(
       [
-        'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.',
-        'Boss question:\nWhich color?',
+        'Continue the same task using Boss’s reply below.',
+        'Your previous question:\nWhich color?',
         'Boss reply:\nBlue.',
         'Continue.',
       ].join('\n\n'),
@@ -1867,7 +1867,7 @@ describe('player + script workflow over the shared factory', () => {
     // The continuation preamble and exact Boss answer preceded the second
     // player prompt.
     expect(playerInputsSeen[1]).toContain(
-      'Boss question:\nWhich database should I use?',
+      'Your previous question:\nWhich database should I use?',
     );
     expect(playerInputsSeen[1]).toContain('Boss reply:\nuse sqlite');
     await runtime.dispose();

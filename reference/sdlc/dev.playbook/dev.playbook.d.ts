@@ -11,7 +11,7 @@ export type DevPlaybookHostCapabilities = PlaybookHostConstructionCapabilities &
  * override additionally keeps a multiline value inside that quote and drops
  * the optional relays that have no value yet.
  */
-declare function composePlayerPrompt(input: PlayerInput): string;
+declare function composePlayerPrompt(input: PlayerInput, resuming?: boolean): string;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;

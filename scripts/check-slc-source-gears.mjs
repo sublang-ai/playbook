@@ -223,6 +223,14 @@ export function checkSourceGearsContract(sourceText, gearsText) {
         promptIndex: fragmentIndex(item.prompt, fragment.lines),
       }))
       .filter((entry) => entry.promptIndex >= 0)
+      // A repeated relay inside a complete authored fragment has that
+      // fragment's position, not the position of its earlier standalone use.
+      .filter((entry, _index, entries) => !entries.some((other) =>
+        other.fragment.lines.length > entry.fragment.lines.length &&
+        other.promptIndex <= entry.promptIndex &&
+        other.promptIndex + other.fragment.lines.length >=
+          entry.promptIndex + entry.fragment.lines.length,
+      ))
       .sort((left, right) => left.promptIndex - right.promptIndex);
     for (let index = 1; index < matches.length; index++) {
       if (matches[index - 1].fragment.start > matches[index].fragment.start) {

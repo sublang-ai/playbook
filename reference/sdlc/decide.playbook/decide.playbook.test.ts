@@ -1190,7 +1190,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     ]);
     for (const call of playerCalls) {
       expect(call.prompt).toContain(
-        '> Choose <coder-llm> behavior.\n> Keep mapped roles shared.',
+        '> Original topic: Choose <coder-llm> behavior.\n> Keep mapped roles shared.',
       );
       expect(call.prompt).toContain('Propose your design.');
       expect(call.prompt).not.toContain(coderProposal);
@@ -1396,7 +1396,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       'reviewer',
     ]);
     for (const call of restarted) {
-      expect(call.prompt).toContain('> New topic');
+      expect(call.prompt).toContain('> Original topic: New topic');
       expect(call.prompt).not.toContain('> Old topic');
       expect(call.options.resume).toBe(`${call.roleId}-token-1`);
     }

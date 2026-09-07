@@ -391,7 +391,7 @@ describe('linked CODE runtime', () => {
       resume: false,
     });
     expect(host.playerCalls[0]?.prompt).toContain(
-      '> Fix the bug.\n> Preserve compatibility.',
+      '> Original request: Fix the bug.\n> Preserve compatibility.',
     );
     expect(host.playerCalls[0]?.prompt).toContain('Coder is GPT-5.6 Sol.');
     expect(host.playerCalls[0]?.prompt).not.toContain('`Commit: `');
@@ -639,14 +639,14 @@ describe('linked CODE runtime', () => {
       'coder-2',
     ]);
     expect(host.playerCalls[1]?.prompt).toContain(
-      '> Implement the large change.\n> 040\n\nRead the identified IR',
+      '> Original request: Implement the large change.\n> IR number: 040\n\nRead the identified IR',
     );
+    expect(host.playerCalls[2]?.prompt).not.toContain('Which compatibility boundary should I use?');
     expect(host.playerCalls[2]?.prompt).toContain(
-      'Boss question:\nWhich compatibility boundary should I use?\n\n' +
-        'Boss reply:\nPreserve the narrow compatibility boundary.',
+      'Boss reply:\nPreserve the narrow compatibility boundary.',
     );
     expect(host.playerCalls[3]?.prompt).toContain(
-      '> Implement the large change.\n> 040\n\nRead the identified IR',
+      '> Original request: Implement the large change.\n> IR number: 040\n\nRead the identified IR',
     );
     expect(host.childRequests.map(({ text }) => text)).toEqual([
       '> Original intent: Implement the large change.\n' +
@@ -976,9 +976,9 @@ describe('linked CODE runtime', () => {
       false,
       'coder-question',
     ]);
+    expect(host.playerCalls[1]?.prompt).not.toContain('Which branch should I use?');
     expect(host.playerCalls[1]?.prompt).toContain(
-      'Boss question:\nWhich branch should I use?\n\n' +
-        'Boss reply:\nUse the narrow branch.',
+      'Boss reply:\nUse the narrow branch.',
     );
     expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
       operationId: openOperation?.operationId,

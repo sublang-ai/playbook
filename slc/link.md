@@ -489,6 +489,7 @@ interface PlaybookPorts {
 
 interface PlayerCallOptions {
   resume: string | false;
+  freshPrompt?: string;
 }
 
 interface CaptainCallOptions {
@@ -865,30 +866,17 @@ Those blocks are outside the domain prompt body.
 The composer shall not inject a player-visible Boss-question instruction.
 Boss-question detection is adjudicator-facing: it comes from the state's `needsBossReply` result description, not from extra prompt text.
 
-When `PlayerInput` carries both `pendingBossQuestion` and `bossReply`, the
-composer shall prepend the continuation preamble and labelled Q&A blocks before
-ordinary structured blocks and before the domain prompt body:
+When `PlayerInput` carries both `pendingBossQuestion` and `bossReply`, the composer receives an optional third `resuming` boolean after `promptIdentity`; absent means fresh.
+The shared `composePlayerContinuation(input, body, resuming)` helper prefixes the verbatim Boss reply and, only for a fresh conversation, the pending question labeled `Your previous question:`.
+A resumed call omits that question; a fresh call includes it before `Boss reply:`.
+Both retain the authored task body exactly once, with two newlines between blocks.
+These framework blocks never enter `invoke.input.prompt` or persisted FSM context.
 
-```text
-You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.
-
-Boss question:
-<pendingBossQuestion.question>
-
-Boss reply:
-<bossReply>
-
-```
-
-The continuation preamble is framework text supplied by the runtime.
-It is not part of the GEARS blockquote and shall not appear in `invoke.input.prompt`.
-The composer shall retain the blank line after the Boss reply before the next
-structured block or domain prompt, producing exactly two newline characters at
-that boundary.
-When implementing the prefix as an array joined with `"\n"`, the array needs
-two trailing empty strings after `bossReply`; one trailing empty string emits
-only one newline and is nonconformant. Equivalently, append `"\n\n"` exactly
-once before the following block or domain body.
+The runtime chooses the compact prompt only after selecting a conversation token and carries the complete prompt as optional `PlayerCallOptions.freshPrompt`.
+A host starting fresh after a definite pre-execution token rejection uses `freshPrompt`, when supplied, instead of the compact prompt.
+Without that option, the given prompt remains complete.
+Traces and host observations record the respective prompts actually sent.
+Old composers may ignore the optional argument and retain their full prompt.
 
 ## Captain prompt composition
 

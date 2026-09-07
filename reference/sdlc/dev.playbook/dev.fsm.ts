@@ -137,9 +137,9 @@ export type DevEvent =
     };
 
 const PLAN_ANALYSIS_PROMPT = [
-  '> <development-request>',
-  '> <discussion-context>',
-  '> <run-results>',
+  '> Original request: <development-request>',
+  '> Prior discussion: <discussion-context>',
+  '> Run results: <run-results>',
   '',
   'Inspect the request and the relevant repository and specs only as needed to determine the smallest sound next step.',
   'Do not change files or commit while planning or discussing the request.',
@@ -590,11 +590,11 @@ function archivedExchanges(
   ];
 }
 
-function quotedRelay(values: readonly string[]): string {
+function quotedRelay(values: readonly (readonly [string, string])[]): string {
   return values
-    .filter((value) => value.length > 0)
-    .map((value) =>
-      value
+    .filter(([, value]) => value.length > 0)
+    .map(([label, value]) =>
+      `${label}: ${value}`
         .split('\n')
         .map((line) => `> ${line}`)
         .join('\n'),
@@ -602,11 +602,11 @@ function quotedRelay(values: readonly string[]): string {
     .join('\n');
 }
 
-function planningRelayValues(context: DevContext): readonly string[] {
+function planningRelayValues(context: DevContext): readonly (readonly [string, string])[] {
   return [
-    context.developmentRequest ?? '',
-    renderDiscussionContext(context.discussionExchanges),
-    context.planningResult ?? '',
+    ['Original request', context.developmentRequest ?? ''],
+    ['Prior discussion', renderDiscussionContext(context.discussionExchanges)],
+    ['Planning result', context.planningResult ?? ''],
   ];
 }
 
@@ -621,8 +621,8 @@ function decideCallText(context: DevContext): string {
 function codeAfterDecideCallText(context: DevContext): string {
   return quotedRelay([
     ...planningRelayValues(context),
-    context.decideCommit ?? '',
-    context.evaluatedRevision ?? '',
+    ['DECIDE commit', context.decideCommit ?? ''],
+    ['Evaluated revision', context.evaluatedRevision ?? ''],
   ]);
 }
 

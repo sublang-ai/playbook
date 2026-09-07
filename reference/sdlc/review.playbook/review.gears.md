@@ -23,7 +23,7 @@ When the caller starts a review, Captain shall relay the complete caller input t
 > Keep to the original intent and follow what it asks.
 > When the scope names commits, read each commit message for its context and rationale; otherwise use repository history and commit messages wherever they help establish that context.
 >
-> > <caller-input>
+> > Original request: <caller-input>
 >
 > Understand the full picture and think systematically about the underlying design.
 > Continue to identify issues or improvements, if any, without duplication.
@@ -50,8 +50,8 @@ Results:
 
 When Reviewer raises or keeps any finding, Captain shall relay the caller input and Reviewer's findings to Coder with the disposition prompt:
 
-> > <caller-input>
-> > <reviewer-output>
+> > Original request: <caller-input>
+> > Reviewer findings: <reviewer-output>
 >
 > For each review item, accept or reject it.
 > Before deciding, understand the full picture and think systematically about the underlying design.
@@ -82,9 +82,9 @@ When Coder makes a review-fix commit, Captain shall relay the caller input, the 
 > Keep to the original intent and follow what it asks.
 > Read the latest review-fix commit's message and see Coder's feedback below.
 >
-> > <caller-input>
-> > <latest-commit>
-> > <coder-output>
+> > Original request: <caller-input>
+> > Latest commit: <latest-commit>
+> > Coder output: <coder-output>
 >
 > Understand the full picture and think systematically about the underlying design.
 > Continue to identify issues or improvements, if any, without duplication.
@@ -114,8 +114,8 @@ When Coder rejects every finding and makes no commit, Captain shall relay the ca
 > No new commit was made because Coder rejected every finding.
 > See Coder's feedback below.
 >
-> > <caller-input>
-> > <coder-output>
+> > Original request: <caller-input>
+> > Coder output: <coder-output>
 >
 > Understand the full picture and think systematically about the underlying design.
 > Continue to identify issues or improvements, if any, without duplication.

@@ -4361,6 +4361,9 @@ export function createPlaybookCaptainShell(
           `${frameLabel(frame)} resolved absent session player ${JSON.stringify(binding.playerId)}`,
         );
       }
+      if (options.freshPrompt !== undefined && typeof options.freshPrompt !== 'string') {
+        throw new TypeError('player freshPrompt must be a string');
+      }
       const expectedResume = ledger.resumeToken ?? false;
       if (options.resume !== expectedResume) {
         throw new Error(
@@ -4394,7 +4397,7 @@ export function createPlaybookCaptainShell(
             const raw = await trackHostCall(
               frame,
               classifySettingsCall(() =>
-                context.callPlayer(binding.playerId, prompt, { resume, settings }),
+                context.callPlayer(binding.playerId, resume === false ? options.freshPrompt ?? prompt : prompt, { resume, settings }),
               ),
             );
             hostResolved = true;

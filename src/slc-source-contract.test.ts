@@ -181,6 +181,35 @@ describe('SLC Source -> GEARS prompt contract', () => {
     );
   });
 
+  it('preserves a reused labeled relay inside a later complete instruction', () => {
+    const source = [
+      'Captain shall relay the request in quotes (`>`):',
+      '',
+      '> Original request: <caller-input>',
+      '',
+      'Captain shall later give Coder this instruction:',
+      '',
+      '```markdown',
+      'Implement the request below.',
+      '> Original request: <caller-input>',
+      '```',
+    ].join('\n');
+    const gears = `### FLOW-1
+
+When work starts, Captain shall prompt Coder:
+
+> > Original request: <caller-input>
+
+### FLOW-2
+
+After planning, Captain shall prompt Coder:
+
+> Implement the request below.
+> > Original request: <caller-input>
+`;
+    expect(checkSourceGearsContract(source, gears)).toEqual([]);
+  });
+
   it('fails when Source order is lost', () => {
     const reordered = GEARS.replace(
       '> Review the result.\n> Do not change files.\n>\n> > Coder output: <coder-output>',

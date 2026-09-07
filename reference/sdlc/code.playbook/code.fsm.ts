@@ -156,8 +156,8 @@ const APPENDED_PHASE_PROMPT = [
 ];
 
 const FIRST_PHASE_PROMPT = [
-  '> <caller-input>',
-  '> <run-results>',
+  '> Original request: <caller-input>',
+  '> Run results: <run-results>',
   '',
   'First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.',
   'If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.',
@@ -178,9 +178,9 @@ const FIRST_PHASE_PROMPT = [
 ].join('\n');
 
 const IR_TASK_PROMPT = [
-  '> <caller-input>',
-  '> <ir-number>',
-  '> <run-results>',
+  '> Original request: <caller-input>',
+  '> IR number: <ir-number>',
+  '> Run results: <run-results>',
   '',
   'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
   'Do not implement a later task in this phase.',

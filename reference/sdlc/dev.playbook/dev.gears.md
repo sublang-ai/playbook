@@ -16,9 +16,9 @@ It coordinates existing playbooks and owns no repository commit itself.
 
 At the start of `dev` and after each Boss reply, Captain shall relay the development request, relevant discussion context, and any relevant run results to Analyst in quotes (`>`), along with the planning instruction:
 
-> > <development-request>
-> > <discussion-context>
-> > <run-results>
+> > Original request: <development-request>
+> > Prior discussion: <discussion-context>
+> > Run results: <run-results>
 >
 > Inspect the request and the relevant repository and specs only as needed to determine the smallest sound next step.
 > Do not change files or commit while planning or discussing the request.
@@ -40,7 +40,7 @@ Results:
 Workflow outcomes:
 - The planning result has four semantic outcomes: needs Boss reply, discussion complete, code, and decide then code.
 - Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support, and no outcome depends on a fixed presentation format of Analyst's reply.
-- Needs Boss reply uses the standard Boss-question suspension with Analyst's complete response; after Boss replies, `dev` resumes with the question and answer in the same Analyst conversation.
+- Needs Boss reply uses the standard Boss-question suspension with Analyst's complete response; after Boss replies, `dev` resumes with the answer in the same Analyst conversation; the previous question is included only when that conversation must start fresh.
 - Discussion complete is available only after a Boss reply, when any useful analysis has already been presented through needs Boss reply; it completes `dev` without a child call or repository change.
 - `dev` acts on the accepted outcome itself and does not return to the session Captain for another routing decision.
 
@@ -50,9 +50,9 @@ Workflow outcomes:
 
 When the accepted planning result selects `code`, Captain shall call playbook `code`:
 
-> > <development-request>
-> > <discussion-context>
-> > <planning-result>
+> > Original request: <development-request>
+> > Prior discussion: <discussion-context>
+> > Planning result: <planning-result>
 
 Workflow outcomes:
 - `code` success completes `dev` with the successful `code` result.
@@ -64,9 +64,9 @@ Workflow outcomes:
 
 When the accepted planning result selects `decide then code`, Captain shall call playbook `decide`:
 
-> > <development-request>
-> > <discussion-context>
-> > <planning-result>
+> > Original request: <development-request>
+> > Prior discussion: <discussion-context>
+> > Planning result: <planning-result>
 
 Workflow outcomes:
 - `decide` success provides the `decide`-owned commit and the exact evaluated repository revision from `decide`'s canonical structured result and continues with the `code` call.
@@ -78,11 +78,11 @@ Workflow outcomes:
 
 When `decide` succeeds, Captain shall call playbook `code`:
 
-> > <development-request>
-> > <discussion-context>
-> > <planning-result>
-> > <decide-commit>
-> > <evaluated-revision>
+> > Original request: <development-request>
+> > Prior discussion: <discussion-context>
+> > Planning result: <planning-result>
+> > DECIDE commit: <decide-commit>
+> > Evaluated revision: <evaluated-revision>
 
 Workflow outcomes:
 - `code` success completes `dev` with the successful `code` result.

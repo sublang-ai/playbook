@@ -22,7 +22,7 @@ Parallel group: independent-proposals
 
 When the caller gives a topic, Captain shall relay the complete topic to Coder in quotes and prompt Coder:
 
-> > <caller-topic>
+> > Original topic: <caller-topic>
 >
 > Assess whether the topic is better expressed as a few spec items under @specs/packages/ or requires one or more DRs under @specs/decisions/.
 > Propose your design.
@@ -39,7 +39,7 @@ Parallel group: independent-proposals
 
 When the caller gives a topic, Captain shall relay the complete topic to Reviewer in quotes and prompt Reviewer:
 
-> > <caller-topic>
+> > Original topic: <caller-topic>
 >
 > Assess whether the topic is better expressed as a few spec items under @specs/packages/ or requires one or more DRs under @specs/decisions/.
 > Propose your design.

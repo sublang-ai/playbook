@@ -15,6 +15,10 @@ It coordinates existing playbooks and owns no repository commit itself.
 
 At the start of `dev` and after each Boss reply, Captain shall relay the development request, relevant discussion context, and any relevant run results to Analyst in quotes (`>`), along with the following instruction:
 
+> Original request: <development-request>
+> Prior discussion: <discussion-context>
+> Run results: <run-results>
+
 ```markdown
 Inspect the request and the relevant repository and specs only as needed to determine the smallest sound next step.
 Do not change files or commit while planning or discussing the request.
@@ -35,15 +39,31 @@ No outcome depends on a fixed presentation format of Analyst's reply.
 `dev` shall act on the accepted outcome itself and shall not return to the session Captain for another routing decision.
 
 For needs Boss reply, `dev` shall use the standard Boss-question suspension with Analyst's complete response.
-The session Captain shall present that response to Boss and, after Boss replies, resume `dev` with the question and answer in the same Analyst conversation.
+The session Captain shall present that response to Boss and, after Boss replies, resume `dev` with the answer in the same Analyst conversation; include the previous question only when that conversation must start fresh.
 
 Discussion complete is available only after a Boss reply, when any useful analysis has already been presented through needs Boss reply.
 It completes `dev` without a child call or repository change.
 
 For code, `dev` shall directly call playbook `code` with the development request, relevant discussion context, and planning result in quotes (`>`).
 
+> Original request: <development-request>
+> Prior discussion: <discussion-context>
+> Planning result: <planning-result>
+
 For decide then code, `dev` shall call playbook `decide` with the development request, relevant discussion context, and planning result in quotes (`>`).
+
+> Original request: <development-request>
+> Prior discussion: <discussion-context>
+> Planning result: <planning-result>
+
 Only after `decide` succeeds shall `dev` call playbook `code` with the development request, relevant discussion context, planning result, `decide`-owned commit, and exact evaluated repository revision in quotes (`>`).
+
+> Original request: <development-request>
+> Prior discussion: <discussion-context>
+> Planning result: <planning-result>
+> DECIDE commit: <decide-commit>
+> Evaluated revision: <evaluated-revision>
+
 `dev` shall not separately call `review` for the design scope already reviewed by `decide`.
 
 `dev` completes with the successful result of its final child call.

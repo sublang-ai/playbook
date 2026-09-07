@@ -12370,9 +12370,11 @@ describe('portable provider continuity (session-storage-8)', () => {
   it.each(['success', 'ordinary error', 'throw', 'second rejection', 'aborted rejection'])(
     'handles player %s within one logical runtime call', async (kind) => {
       const runtimeResults: unknown[] = [];
+      const compact = 'Boss reply: choose tier 3.\n\nOriginal request: expose accurate model capabilities.';
+      const complete = 'Your previous question: Which tier?\n\n' + compact;
       const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
         const store = runtime.session!.playerSessions!;
-        const result = await runtime.ports!.callPlayer('coder', 'complete task and question answers', runtimeTurn.signal, { resume: store.select('coder') });
+        const result = await runtime.ports!.callPlayer('coder', compact, runtimeTurn.signal, { resume: store.select('coder'), freshPrompt: complete });
         runtimeResults.push(result);
         if (result.status === 'ok' || result.resumeToken !== undefined) store.update('coder', result.resumeToken);
       });
@@ -12382,7 +12384,8 @@ describe('portable provider continuity (session-storage-8)', () => {
       await shell.init!(stubSession().session);
       const seed = stubContext();
       let participantId = '';
-      seed.context.callPlayer = async (playerId) => {
+      seed.context.callPlayer = async (playerId, prompt) => {
+        expect(prompt).toBe(complete);
         participantId = playerId;
         return { status: 'ok', playerId, turnId: 1, finalText: 'seed', resumeToken: 'old-player' };
       };
@@ -12404,7 +12407,8 @@ describe('portable provider continuity (session-storage-8)', () => {
       const retry = kind === 'success' || kind === 'second rejection';
       expect(calls.map((call) => call.options?.resume)).toEqual(retry ? ['old-player', false] : ['old-player']);
       if (retry) {
-        expect(calls[1]?.prompt).toBe(calls[0]?.prompt);
+        expect(calls[0]?.prompt).toBe(compact);
+        expect(calls[1]?.prompt).toBe(complete);
         expect(calls[1]?.options?.settings).toEqual(calls[0]?.options?.settings);
       }
       expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual(['seed', 'continue']);

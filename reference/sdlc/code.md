@@ -25,6 +25,9 @@ When the nested `review` call fails outside that authored result contract, `code
 
 At the start of the first phase, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
 
+> Original request: <caller-input>
+> Run results: <run-results>
+
 ```markdown
 First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.
 If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.
@@ -43,6 +46,10 @@ Consult @specs/map.md for relevant context and @specs/meta.md for spec requireme
 ```
 
 At the start of every later IR-task phase, Captain shall relay to Coder the original caller input, the IR identity, and any relevant run results in quotes (`>`), along with the following instruction:
+
+> Original request: <caller-input>
+> IR number: <ir-number>
+> Run results: <run-results>
 
 ```markdown
 Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.

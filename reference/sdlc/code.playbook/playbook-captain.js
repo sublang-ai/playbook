@@ -2599,6 +2599,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (!ledger) {
                 throw new Error(`${frameLabel(frame)} resolved absent session player ${JSON.stringify(binding.playerId)}`);
             }
+            if (options.freshPrompt !== undefined && typeof options.freshPrompt !== 'string') {
+                throw new TypeError('player freshPrompt must be a string');
+            }
             const expectedResume = ledger.resumeToken ?? false;
             if (options.resume !== expectedResume) {
                 throw new Error(`${frameLabel(frame)} player continuation changed before dispatch`);
@@ -2625,7 +2628,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     const call = async (resume) => {
                         await continuity?.beforeCall(binding.playerId);
                         signal.throwIfAborted();
-                        const raw = await trackHostCall(frame, classifySettingsCall(() => context.callPlayer(binding.playerId, prompt, { resume, settings })));
+                        const raw = await trackHostCall(frame, classifySettingsCall(() => context.callPlayer(binding.playerId, resume === false ? options.freshPrompt ?? prompt : prompt, { resume, settings })));
                         hostResolved = true;
                         return raw;
                     };

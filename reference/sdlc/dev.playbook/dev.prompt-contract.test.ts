@@ -28,9 +28,9 @@ function planInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
     role: 'analyst',
     sourceItem: 'DEV-1',
     prompt: [
-      '> <development-request>',
-      '> <discussion-context>',
-      '> <run-results>',
+      '> Original request: <development-request>',
+      '> Prior discussion: <discussion-context>',
+      '> Run results: <run-results>',
       '',
       'Plan the smallest sound next step.',
     ].join('\n'),
@@ -58,11 +58,11 @@ describe('DEV player prompt composition', () => {
   it('keeps every line of relayed values inside Markdown quotes', () => {
     expect(composePlayerPrompt(planInput())).toBe(
       [
-        '> line one',
+        '> Original request: line one',
         '> line two',
-        '> Analyst question: Which?',
+        '> Prior discussion: Analyst question: Which?',
         '> Boss reply: The first.',
-        '> test one',
+        '> Run results: test one',
         '> test two',
         '',
         'Plan the smallest sound next step.',
@@ -77,7 +77,7 @@ describe('DEV player prompt composition', () => {
     expect(prompt).not.toContain('<discussion-context>');
     expect(prompt).not.toContain('<run-results>');
     expect(prompt).not.toContain('\n> \n');
-    expect(prompt).toContain('> line one\n> line two\n\nPlan');
+    expect(prompt).toContain('> Original request: line one\n> line two\n\nPlan');
   });
 
   it('feeds the machine-tracked discussion context into the relay', () => {
@@ -87,7 +87,7 @@ describe('DEV player prompt composition', () => {
       renderDiscussionContext(ACTUAL_CONTEXT.discussionExchanges),
     );
     expect(composePlayerPrompt(input)).toContain(
-      '> Analyst question: Narrow or broad?\n> Boss reply: Narrow.',
+      '> Prior discussion: Analyst question: Narrow or broad?\n> Boss reply: Narrow.',
     );
   });
 
@@ -105,7 +105,7 @@ describe('DEV player prompt composition', () => {
       }),
     );
     expect(prompt).toMatch(
-      /^You previously paused this task[\s\S]*Boss question:\nWhich scope\?\n\nBoss reply:\nUse the narrow scope\.\n\n> line one/,
+      /^Continue the same task[\s\S]*Your previous question:\nWhich scope\?\n\nBoss reply:\nUse the narrow scope\.\n\n> Original request: line one/,
     );
   });
 });

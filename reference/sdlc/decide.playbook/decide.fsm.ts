@@ -148,7 +148,7 @@ const NEEDS_BOSS_REPLY_DESCRIPTION =
   "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const INDEPENDENT_PROPOSAL_PROMPT = [
-  '> <caller-topic>',
+  '> Original topic: <caller-topic>',
   '',
   'Assess whether the topic is better expressed as a few spec items under @specs/packages/ or requires one or more DRs under @specs/decisions/.',
   'Propose your design.',

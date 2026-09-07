@@ -232,6 +232,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'resumeToken?:string',
     );
     expect(interfaceProperties(runtimeDts, 'PlayerCallOptions')).toEqual([
+      'freshPrompt?:string',
       'resume:string|false',
     ]);
     expect(interfaceProperties(runtimeDts, 'PlayerCallOptions')).toEqual(

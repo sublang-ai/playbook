@@ -13,6 +13,7 @@
 
 import {
   createXStatePlaybookRuntime,
+  composePlayerContinuation,
   snapshotJsonValue,
   type PlaybookPlayerInput,
   type XStatePlaybookRuntimeFactory,
@@ -84,8 +85,6 @@ export type ReviewPlaybookHostCapabilities =
     XStatePlaybookRuntimeConstruction<ReviewPlaybookOptions, object>['hostCapabilities'];
 
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
-const CONTINUATION_PREAMBLE =
-  'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 
 const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'reviewerOutput',
@@ -124,6 +123,7 @@ function quotedContinuation(value: string): string {
 function composePlayerPrompt(
   input: PlayerInput,
   promptIdentity: XStatePromptIdentity,
+  resuming = false,
 ): string {
   const fields = input as unknown as Record<string, unknown>;
   const body = input.prompt.replace(
@@ -137,23 +137,12 @@ function composePlayerPrompt(
             : fields[placeholderField(token)];
       if (typeof value !== 'string') return match;
       const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-      return source.slice(lineStart, offset) === '> '
+      return source.slice(lineStart, offset).startsWith('> ')
         ? quotedContinuation(value)
         : value;
     },
   );
-  if (
-    input.pendingBossQuestion === undefined ||
-    input.bossReply === undefined
-  ) {
-    return body;
-  }
-  return [
-    CONTINUATION_PREAMBLE,
-    `Boss question:\n${input.pendingBossQuestion.question}`,
-    `Boss reply:\n${input.bossReply}`,
-    body,
-  ].join('\n\n');
+  return composePlayerContinuation(input, body, resuming);
 }
 
 export const _internal = {
@@ -271,7 +260,8 @@ const runtimeSpec = {
   composePlayerPrompt: (
     input: PlaybookPlayerInput,
     promptIdentity: XStatePromptIdentity,
-  ) => composePlayerPrompt(input as PlayerInput, promptIdentity),
+    resuming?: boolean,
+  ) => composePlayerPrompt(input as PlayerInput, promptIdentity, resuming),
   verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
   controlContextFields: [],
   unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,

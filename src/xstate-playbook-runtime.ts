@@ -776,6 +776,7 @@ interface XStatePlaybookRuntimeSpecBase<TOptions> {
   composePlayerPrompt?: (
     input: PlaybookPlayerInput,
     promptIdentity: XStatePromptIdentity,
+    resuming?: boolean,
   ) => string;
   /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
   composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
@@ -1064,20 +1065,29 @@ export function pendingBossQuestionFromContext(
 // ---------------------------------------------------------------------------
 
 const CONTINUATION_PREAMBLE =
-  'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
+  'Continue the same task using Boss’s reply below.';
 
 function continuationBlocks(input: {
   pendingBossQuestion?: { readonly question: string };
   bossReply?: string;
-}): string[] {
+}, resuming = false): string[] {
   if (input.pendingBossQuestion === undefined || input.bossReply === undefined) {
     return [];
   }
   return [
     CONTINUATION_PREAMBLE,
-    `Boss question:\n${input.pendingBossQuestion.question}`,
+    ...(resuming ? [] : [`Your previous question:\n${input.pendingBossQuestion.question}`]),
     `Boss reply:\n${input.bossReply}`,
   ];
+}
+
+/** Add clarification context without repeating the question in a live conversation. */
+export function composePlayerContinuation(
+  input: Pick<PlaybookPlayerInput, 'pendingBossQuestion' | 'bossReply'>,
+  body: string,
+  resuming = false,
+): string {
+  return [...continuationBlocks(input, resuming), body].join('\n\n');
 }
 
 const PLACEHOLDER_PATTERN = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
@@ -1104,16 +1114,15 @@ function placeholderFieldName(
 export function defaultComposePlayerPrompt(
   input: PlaybookPlayerInput,
   placeholderFields: Readonly<Record<string, string>> = {},
+  resuming = false,
 ): string {
-  const blocks = continuationBlocks(input);
   const fields = input as unknown as Record<string, unknown>;
   const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, token) => {
     const value =
       fields[placeholderFieldName(token as string, placeholderFields)];
     return typeof value === 'string' ? value : match;
   });
-  blocks.push(body);
-  return blocks.join('\n\n');
+  return composePlayerContinuation(input, body, resuming);
 }
 
 function sortJson(value: JsonValue): JsonValue {
@@ -3158,8 +3167,8 @@ export function createXStatePlaybookRuntime<
   }
   const composePlayerPrompt =
     spec.composePlayerPrompt ??
-    ((input: PlaybookPlayerInput) =>
-      defaultComposePlayerPrompt(input, spec.placeholderFields));
+    ((input: PlaybookPlayerInput, _identity: XStatePromptIdentity, resuming = false) =>
+      defaultComposePlayerPrompt(input, spec.placeholderFields, resuming));
   const composeCaptainPrompt =
     spec.composeCaptainPrompt ??
     ((input: PlaybookCaptainInput) =>
@@ -4074,7 +4083,7 @@ export function createXStatePlaybookRuntime<
       return session?.roleBindings?.[roleId]?.promptIdentity ?? roleId;
     }
 
-    function composeBoundPlayerPrompt(input: PlaybookPlayerInput): string {
+    function composeBoundPlayerPrompt(input: PlaybookPlayerInput, resuming = false): string {
       let active = true;
       const lookup: XStatePromptIdentity = (roleId) => {
         if (!active) {
@@ -4085,7 +4094,7 @@ export function createXStatePlaybookRuntime<
         return promptIdentity(roleId);
       };
       try {
-        return composePlayerPrompt(input, lookup);
+        return composePlayerPrompt(input, lookup, resuming);
       } finally {
         active = false;
       }
@@ -5321,7 +5330,7 @@ export function createXStatePlaybookRuntime<
       async callPlayer(
         input,
         roleId,
-        prompt,
+        freshPrompt,
         signal,
       ): Promise<PlayerResult> {
         // State-entry telemetry/status must precede the call they describe.
@@ -5356,6 +5365,8 @@ export function createXStatePlaybookRuntime<
           if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
           throw error;
         }
+        const prompt = selectedResume === false
+          ? freshPrompt : composeBoundPlayerPrompt(input, true);
         const callId =
           deferredContinuation?.effectBoundary.callId ??
           `player-${++playerCallSequence}`;
@@ -5401,10 +5412,11 @@ export function createXStatePlaybookRuntime<
             resume: string | false = selectedResume,
           ): Promise<PlayerResult> => {
             const identity = callIdentity(resume);
+            const callPrompt = resume === false ? freshPrompt : prompt;
             await emitCallStarted(
               'player.call.started',
               'player.call.finished',
-              { ...identity, prompt },
+              { ...identity, prompt: callPrompt },
               position,
               signal,
             );
@@ -5418,9 +5430,9 @@ export function createXStatePlaybookRuntime<
               signal.throwIfAborted();
               rawResult = await requireHostPorts().callPlayer(
                 roleId,
-                prompt,
+                callPrompt,
                 signal,
-                { resume },
+                { resume, ...(callPrompt === freshPrompt ? {} : { freshPrompt }) },
               );
               // A host promise is not required to honor cancellation. Do not
               // let a late result mutate continuity or publish a successful

@@ -27,6 +27,10 @@ Keep to the original intent and follow what it asks.
 When the scope names commits, read each commit message for its context and rationale; otherwise use repository history and commit messages wherever they help establish that context.
 ```
 
+Captain shall append the caller’s input in quotes (`>`):
+
+> Original request: <caller-input>
+
 After every review-fix commit, Captain shall give Reviewer the following instruction:
 
 ```markdown
@@ -35,12 +39,23 @@ Keep to the original intent and follow what it asks.
 Read the latest review-fix commit's message and see Coder's feedback below.
 ```
 
+Captain shall append the round’s context in quotes (`>`):
+
+> Original request: <caller-input>
+> Latest commit: <latest-commit>
+> Coder output: <coder-output>
+
 When Coder rejects every finding and makes no commit, Captain shall give Reviewer the following instruction:
 
 ```markdown
 No new commit was made because Coder rejected every finding.
 See Coder's feedback below.
 ```
+
+Captain shall append the round’s context in quotes (`>`):
+
+> Original request: <caller-input>
+> Coder output: <coder-output>
 
 At the start of *every* review round, Captain shall relay to Reviewer the original intent, the review scope and context, the exact repository revision being evaluated, any Coder feedback from the preceding round, and any relevant run results, in quotes (`>`) after the instruction.
 
@@ -69,6 +84,9 @@ Finding numbers are references within this review only.
 No review transition shall depend on numbering or any fixed presentation format of either player's reply.
 
 When Reviewer raises or keeps any finding, Captain shall relay the original intent, the review scope and context, the exact repository revision being evaluated, the Reviewer's findings, and any relevant run results to Coder, in quotes (`>`), along with the following prompt:
+
+> Original request: <caller-input>
+> Reviewer findings: <reviewer-output>
 
 ```markdown
 For each review item, accept or reject it.

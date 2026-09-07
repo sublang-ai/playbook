@@ -402,16 +402,20 @@ export function pendingBossQuestionFromContext(context) {
 // ---------------------------------------------------------------------------
 // Generic strategy defaults.
 // ---------------------------------------------------------------------------
-const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
-function continuationBlocks(input) {
+const CONTINUATION_PREAMBLE = 'Continue the same task using Boss’s reply below.';
+function continuationBlocks(input, resuming = false) {
     if (input.pendingBossQuestion === undefined || input.bossReply === undefined) {
         return [];
     }
     return [
         CONTINUATION_PREAMBLE,
-        `Boss question:\n${input.pendingBossQuestion.question}`,
+        ...(resuming ? [] : [`Your previous question:\n${input.pendingBossQuestion.question}`]),
         `Boss reply:\n${input.bossReply}`,
     ];
+}
+/** Add clarification context without repeating the question in a live conversation. */
+export function composePlayerContinuation(input, body, resuming = false) {
+    return [...continuationBlocks(input, resuming), body].join('\n\n');
 }
 const PLACEHOLDER_PATTERN = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
 function placeholderFieldName(token, fields) {
@@ -429,15 +433,13 @@ function placeholderFieldName(token, fields) {
  * placeholder-looking text inside a value is never re-substituted. The
  * continuation preamble and Q/A blocks precede the domain body on resume.
  */
-export function defaultComposePlayerPrompt(input, placeholderFields = {}) {
-    const blocks = continuationBlocks(input);
+export function defaultComposePlayerPrompt(input, placeholderFields = {}, resuming = false) {
     const fields = input;
     const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, token) => {
         const value = fields[placeholderFieldName(token, placeholderFields)];
         return typeof value === 'string' ? value : match;
     });
-    blocks.push(body);
-    return blocks.join('\n\n');
+    return composePlayerContinuation(input, body, resuming);
 }
 function sortJson(value) {
     if (Array.isArray(value))
@@ -1901,7 +1903,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         }
     }
     const composePlayerPrompt = spec.composePlayerPrompt ??
-        ((input) => defaultComposePlayerPrompt(input, spec.placeholderFields));
+        ((input, _identity, resuming = false) => defaultComposePlayerPrompt(input, spec.placeholderFields, resuming));
     const composeCaptainPrompt = spec.composeCaptainPrompt ??
         ((input) => defaultComposeCaptainPrompt(input, spec.placeholderFields));
     const extractFields = spec.extractRequiredFields ?? defaultExtractRequiredFields;
@@ -2522,7 +2524,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             return session?.roleBindings?.[roleId]?.promptIdentity ?? roleId;
         }
-        function composeBoundPlayerPrompt(input) {
+        function composeBoundPlayerPrompt(input, resuming = false) {
             let active = true;
             const lookup = (roleId) => {
                 if (!active) {
@@ -2531,7 +2533,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 return promptIdentity(roleId);
             };
             try {
-                return composePlayerPrompt(input, lookup);
+                return composePlayerPrompt(input, lookup, resuming);
             }
             finally {
                 active = false;
@@ -3372,7 +3374,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             failedGovernedAttemptId = attemptIds.values().next().value;
         }
         const boundary = {
-            async callPlayer(input, roleId, prompt, signal) {
+            async callPlayer(input, roleId, freshPrompt, signal) {
                 // State-entry telemetry/status must precede the call they describe.
                 await drainEmissions();
                 signal.throwIfAborted();
@@ -3399,6 +3401,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         controlPlaneError ??= error;
                     throw error;
                 }
+                const prompt = selectedResume === false
+                    ? freshPrompt : composeBoundPlayerPrompt(input, true);
                 const callId = deferredContinuation?.effectBoundary.callId ??
                     `player-${++playerCallSequence}`;
                 const callIdentity = (resume) => ({
@@ -3427,7 +3431,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 try {
                     const runTracedPlayerCall = async (resume = selectedResume) => {
                         const identity = callIdentity(resume);
-                        await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position, signal);
+                        const callPrompt = resume === false ? freshPrompt : prompt;
+                        await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt: callPrompt }, position, signal);
                         let rawResult;
                         try {
                             // An abort may land while the awaited started emission drains
@@ -3435,7 +3440,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // never start after abort, so settle the already-started pair
                             // as `aborted` through the catch below.
                             signal.throwIfAborted();
-                            rawResult = await requireHostPorts().callPlayer(roleId, prompt, signal, { resume });
+                            rawResult = await requireHostPorts().callPlayer(roleId, callPrompt, signal, { resume, ...(callPrompt === freshPrompt ? {} : { freshPrompt }) });
                             // A host promise is not required to honor cancellation. Do not
                             // let a late result mutate continuity or publish a successful
                             // finish.

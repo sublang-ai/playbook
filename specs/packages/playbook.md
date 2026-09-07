@@ -35,7 +35,7 @@ Where a workflow FSM declares an ordered transition arm, the arm shall be reacha
 
 #### playbook-5
 
-Where a compiled prompt combines authored instruction blocks and relayed runtime values, the composer shall retain their source order, preserve each quoted relay value as a blockquote, and keep a literal quote marker that the source authors outside a substituted value.
+Where a compiled prompt combines authored instruction blocks and relayed runtime values, the composer shall retain their source order, preserve each quoted relay value as a blockquote with its purpose labeled, and keep a literal quote marker that the source authors outside a substituted value.
 
 #### playbook-6
 

@@ -359,7 +359,7 @@ describe('linked REVIEW runtime', () => {
       'reviewer-1',
     ]);
     expect(playerCalls[0].prompt).toContain(
-      '> Review the feature.\n> Run result: focused suite passed.',
+      '> Original request: Review the feature.\n> Run result: focused suite passed.',
     );
     expect(playerCalls[0].prompt).toContain(
       'A new review begins for the review scope.',
@@ -374,10 +374,10 @@ describe('linked REVIEW runtime', () => {
       'For any rebuttal, accept or challenge it.',
     );
     expect(playerCalls[1].prompt).toContain(
-      '> Review the feature.\n> Run result: focused suite passed.',
+      '> Original request: Review the feature.\n> Run result: focused suite passed.',
     );
     expect(playerCalls[1].prompt).toContain(
-      '> 1. First finding\n>    Evidence.',
+      '> Reviewer findings: 1. First finding\n>    Evidence.',
     );
     expect(playerCalls[1].prompt).toContain(
       'Keep to the original intent and follow what it asks.',
@@ -398,12 +398,12 @@ describe('linked REVIEW runtime', () => {
       "Read the latest review-fix commit's message and see Coder's feedback below.",
     );
     expect(playerCalls[2].prompt).toContain(
-      '> Review the feature.\n> Run result: focused suite passed.',
+      '> Original request: Review the feature.\n> Run result: focused suite passed.',
     );
     // The relayed evaluated revision is the exact receipt-derived commit OID.
-    expect(playerCalls[2].prompt).toContain(`> ${host.commitOids[0]}`);
+    expect(playerCalls[2].prompt).toContain(`> Latest commit: ${host.commitOids[0]}`);
     expect(playerCalls[2].prompt).toContain(
-      '> Accepted; fixed in abc123.\n> Tests: focused pass.',
+      '> Coder output: Accepted; fixed in abc123.\n> Tests: focused pass.',
     );
     expect(playerCalls[2].prompt).toContain(
       'For any rebuttal, accept or challenge it.',
@@ -501,7 +501,7 @@ describe('linked REVIEW runtime', () => {
     );
     expect(playerCalls[2].prompt).toContain("See Coder's feedback below.");
     expect(playerCalls[2].prompt).toContain(
-      '> Review the latest contract commit.',
+      '> Original request: Review the latest contract commit.',
     );
     expect(
       playerCalls[2].prompt.match(/For any rebuttal, accept or challenge it\./g),
@@ -510,7 +510,7 @@ describe('linked REVIEW runtime', () => {
       'State which findings, if any, remain.',
     );
     expect(playerCalls[2].prompt).toContain(
-      '> Rejected item 1: the cited contract already requires it.\n' +
+      '> Coder output: Rejected item 1: the cited contract already requires it.\n' +
         '> No files changed and no commit was made.',
     );
     expect(playerCalls[2].prompt).not.toContain(
@@ -938,8 +938,8 @@ describe('linked REVIEW runtime', () => {
     const resumed = playerCalls[scenario.resumedCall];
     expect(resumed?.playerId).toBe(scenario.resumedPlayer);
     expect(resumed?.options.resume).toBe(scenario.resumedToken);
-    expect(resumed?.prompt).toContain(
-      'Boss question:\nWhich release target should govern?',
+    expect(resumed?.prompt).not.toContain(
+      'Your previous question:\nWhich release target should govern?',
     );
     expect(resumed?.prompt).toContain(
       'Boss reply:\nTarget version 6.0.0.',
@@ -994,7 +994,7 @@ describe('linked REVIEW runtime', () => {
 
     expect(completed.outcome).toBe('terminal');
     expect(playerCalls[1]?.prompt).toContain(
-      '> Review the replacement commit instead.',
+      '> Original request: Review the replacement commit instead.',
     );
     expect(playerCalls[1]?.prompt).not.toContain('Boss question:');
     expect(playerCalls[1]?.prompt).not.toContain('Boss reply:');
@@ -1036,7 +1036,7 @@ describe('linked REVIEW runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
-    expect(playerCalls[1]?.prompt).toContain('> Review the replacement commit.');
+    expect(playerCalls[1]?.prompt).toContain('> Original request: Review the replacement commit.');
     expect(playerCalls[1]?.prompt).not.toContain('old release commit');
     expect(runtime.describe!().lastError).toBeUndefined();
     await runtime.dispose();

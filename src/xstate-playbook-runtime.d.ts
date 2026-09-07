@@ -329,7 +329,7 @@ interface XStatePlaybookRuntimeSpecBase<TOptions> {
     /** Complete FSM-derived Boss-facing metadata for every `player` state. */
     roleStates?: Readonly<Record<string, XStateRoleStateStatus>>;
     /** Compose the player prompt. Default: continuation blocks + `<field>` placeholder substitution. */
-    composePlayerPrompt?: (input: PlaybookPlayerInput, promptIdentity: XStatePromptIdentity) => string;
+    composePlayerPrompt?: (input: PlaybookPlayerInput, promptIdentity: XStatePromptIdentity, resuming?: boolean) => string;
     /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
     composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
     /** Linker-known exceptions to the default kebab-token → camel-field mapping. */
@@ -388,6 +388,8 @@ export declare function normalizeErrorFull(err: unknown): {
 } | undefined;
 /** Read the FSM context's single pending Boss question, when well-formed. */
 export declare function pendingBossQuestionFromContext(context: Record<string, unknown>): PlaybookPendingBossQuestionContext | undefined;
+/** Add clarification context without repeating the question in a live conversation. */
+export declare function composePlayerContinuation(input: Pick<PlaybookPlayerInput, 'pendingBossQuestion' | 'bossReply'>, body: string, resuming?: boolean): string;
 /**
  * Default player-prompt composer (slc/link.md §Player prompt composition).
  * One callback-based pass substitutes each `<fieldName>` placeholder whose
@@ -395,7 +397,7 @@ export declare function pendingBossQuestionFromContext(context: Record<string, u
  * placeholder-looking text inside a value is never re-substituted. The
  * continuation preamble and Q/A blocks precede the domain body on resume.
  */
-export declare function defaultComposePlayerPrompt(input: PlaybookPlayerInput, placeholderFields?: Readonly<Record<string, string>>): string;
+export declare function defaultComposePlayerPrompt(input: PlaybookPlayerInput, placeholderFields?: Readonly<Record<string, string>>, resuming?: boolean): string;
 /**
  * Default direct-Captain prompt composer (slc/link.md §Captain prompt
  * composition). Placeholder substitution is presence-based: string fields

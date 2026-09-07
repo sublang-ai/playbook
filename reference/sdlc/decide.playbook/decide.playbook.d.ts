@@ -10,7 +10,7 @@ export interface DecidePlaybookRuntimeConstruction {
     readonly hostCapabilities: DecidePlaybookHostCapabilities;
 }
 type PromptIdentity = (roleId: RoleId) => string;
-declare function composePlayerPrompt(input: PlayerInput, promptIdentity: PromptIdentity): string;
+declare function composePlayerPrompt(input: PlayerInput, promptIdentity: PromptIdentity, resuming?: boolean): string;
 declare function requiredFieldsFor(description: string): string[];
 declare function extractJson(raw: string): Record<string, unknown> | null;
 declare function buildClassifierPrompt(text: string, ctx: {
@@ -67,7 +67,6 @@ export declare const _internal: {
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
     BOSS_INTERRUPT_TARGETS: readonly ["independentProposals"];
     UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string>;
-    CONTINUATION_PREAMBLE: string;
     TELEMETRY_TOPIC: string;
 };
 export default createPlaybookRuntime;

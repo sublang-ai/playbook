@@ -457,32 +457,32 @@ describe('REVIEW GEARS to FSM compilation', () => {
   it('keeps every round relay quoted, ordered, and receipt- or player-owned', () => {
     // Every round relays the complete caller input (original intent, review
     // scope, and context) before the round-specific evidence.
-    expect(gears.get('REVIEW-1')?.prompt).toContain('> <caller-input>');
+    expect(gears.get('REVIEW-1')?.prompt).toContain('> Original request: <caller-input>');
     expect(gears.get('REVIEW-2')?.prompt).toEqual(
-      expect.arrayContaining(['> <caller-input>', '> <reviewer-output>']),
+      expect.arrayContaining(['> Original request: <caller-input>', '> Reviewer findings: <reviewer-output>']),
     );
     expect(gears.get('REVIEW-3')?.prompt).toEqual(
       expect.arrayContaining([
-        '> <caller-input>',
-        '> <latest-commit>',
-        '> <coder-output>',
+        '> Original request: <caller-input>',
+        '> Latest commit: <latest-commit>',
+        '> Coder output: <coder-output>',
       ]),
     );
     expect(gears.get('REVIEW-4')?.prompt).toEqual(
-      expect.arrayContaining(['> <caller-input>', '> <coder-output>']),
+      expect.arrayContaining(['> Original request: <caller-input>', '> Coder output: <coder-output>']),
     );
     // The evaluated revision relays only where a receipt-derived review-fix
     // commit exists; no other round leaves a placeholder without a producer.
     for (const [id, item] of gears) {
       if (id === 'REVIEW-3') continue;
-      expect(item.prompt, id).not.toContain('> <latest-commit>');
+      expect(item.prompt, id).not.toContain('> Latest commit: <latest-commit>');
     }
     const review3 = gears.get('REVIEW-3')?.prompt ?? [];
-    expect(review3.indexOf('> <caller-input>')).toBeLessThan(
-      review3.indexOf('> <latest-commit>'),
+    expect(review3.indexOf('> Original request: <caller-input>')).toBeLessThan(
+      review3.indexOf('> Latest commit: <latest-commit>'),
     );
-    expect(review3.indexOf('> <latest-commit>')).toBeLessThan(
-      review3.indexOf('> <coder-output>'),
+    expect(review3.indexOf('> Latest commit: <latest-commit>')).toBeLessThan(
+      review3.indexOf('> Coder output: <coder-output>'),
     );
 
     const text = readFileSync(

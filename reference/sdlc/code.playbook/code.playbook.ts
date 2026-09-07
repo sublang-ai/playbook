@@ -13,6 +13,7 @@
 
 import {
   createXStatePlaybookRuntime,
+  composePlayerContinuation,
   snapshotJsonValue,
   type PlaybookPlayerInput,
   type XStatePlaybookRuntimeFactory,
@@ -85,8 +86,6 @@ export type CodePlaybookHostCapabilities =
 
 const OPTION_KEYS = new Set(['runResults']);
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
-const CONTINUATION_PREAMBLE =
-  'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 
 const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'coderOutput',
@@ -135,12 +134,13 @@ function quoteContinuation(value: string): string {
 function composePlayerPrompt(
   input: PlayerInput,
   promptIdentity: XStatePromptIdentity,
+  resuming = false,
 ): string {
   const fields = input as unknown as Record<string, unknown>;
   const template = input.prompt
     .split('\n')
     .filter(
-      (line) => !(line === '> <run-results>' && input.runResults.length === 0),
+      (line) => !(line === '> Run results: <run-results>' && input.runResults.length === 0),
     )
     .join('\n');
   const body = template.replace(
@@ -153,21 +153,10 @@ function composePlayerPrompt(
       if (typeof value !== 'string') return match;
       const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
       const literal = source.slice(lineStart, offset);
-      return literal === '> ' ? quoteContinuation(value) : value;
+      return literal.startsWith('> ') ? quoteContinuation(value) : value;
     },
   );
-  if (
-    input.pendingBossQuestion === undefined ||
-    input.bossReply === undefined
-  ) {
-    return body;
-  }
-  return [
-    CONTINUATION_PREAMBLE,
-    `Boss question:\n${input.pendingBossQuestion.question}`,
-    `Boss reply:\n${input.bossReply}`,
-    body,
-  ].join('\n\n');
+  return composePlayerContinuation(input, body, resuming);
 }
 
 export const _internal = {
@@ -273,7 +262,8 @@ const runtimeSpec = {
   composePlayerPrompt: (
     input: PlaybookPlayerInput,
     promptIdentity: XStatePromptIdentity,
-  ) => composePlayerPrompt(input as PlayerInput, promptIdentity),
+    resuming?: boolean,
+  ) => composePlayerPrompt(input as PlayerInput, promptIdentity, resuming),
   verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
   controlContextFields: ['phase'],
   unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,

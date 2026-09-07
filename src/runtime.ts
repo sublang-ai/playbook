@@ -17,6 +17,8 @@ export interface PlayerResult {
 
 export interface PlayerCallOptions {
   resume: string | false;
+  /** Complete task and clarification context if the host must start fresh. */
+  freshPrompt?: string;
 }
 
 // DR-032: a composing host may supply one frame-local role view of the

@@ -2774,7 +2774,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     ]);
     expect(target.harness.playerResumes[0]).toBe(false);
     expect(target.harness.playerPrompts[0]).toContain(
-      `Boss question:\n${CODE_QUESTION}`,
+      `Your previous question:\n${CODE_QUESTION}`,
     );
     expect(target.harness.playerPrompts[0]).toContain(
       'Boss reply:\nUse the narrow release target.',

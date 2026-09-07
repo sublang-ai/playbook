@@ -134,7 +134,7 @@ When saving recovery, the store shall remove provider tokens from the current ch
 
 When a provider hint is absent or definitively rejected before execution, the host shall start a fresh conversation for the same logical call, preserving its operation ID and effect authority:
 
-- supply the Captain's full recovery journal, or the player's complete task and pending questions and answers;
+- supply the Captain's full recovery journal, or the player's `freshPrompt` when supplied, otherwise its complete call prompt, preserving task and clarification context [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)];
 - a rejected hint permits exactly one fresh attempt only on Cligent's `SESSION_RESUME_REJECTED` classification [[1]]; unrelated errors, timeouts and ambiguous execution never take this path;
 - the reset emits `{type:'continuity_reset',timestamp,contextSeq,participantId,reason}`, with finite timestamp and reason `missing_hint` or `rejected_hint`, without the token;
 - a second failure uses ordinary failure and uncertainty handling, and the reset never repeats already acknowledged actions;
@@ -222,7 +222,7 @@ When the integration suite checkpoints a session with current and retained playe
 
 - hints tied to exact checkpoints and removed before provider calls, stale-manifest rejection and fresh conversations after crashes [[session-storage-6](#session-storage-6)];
 - token-free current/nested/retained storage with unchanged operation and external-action IDs [[session-storage-7](#session-storage-7)];
-- one fresh attempt only for definite pre-execution rejection, with no repeated actions after ambiguous failure [[session-storage-8](#session-storage-8)].
+- one fresh attempt only for definite pre-execution rejection, using full clarification context after a compact resumed prompt, with no repeated actions after ambiguous failure [[session-storage-8](#session-storage-8)].
 
 ### session-storage-17
 

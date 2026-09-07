@@ -10,11 +10,10 @@
 //                the first phase decides among four semantic outcomes
 // Nested call:   literal review target through the shared bridge
 // Compat:        artifact schema 3 / runtime ABI 1
-import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
+import { createXStatePlaybookRuntime, composePlayerContinuation, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { codingMachine, } from './code.fsm.js';
 const OPTION_KEYS = new Set(['runResults']);
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
-const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     'coderOutput',
 ]);
@@ -52,11 +51,11 @@ function quoteContinuation(value) {
  * runtime text. The generic composer preserves the marker itself; CODE's
  * override additionally keeps a multiline value inside that quote.
  */
-function composePlayerPrompt(input, promptIdentity) {
+function composePlayerPrompt(input, promptIdentity, resuming = false) {
     const fields = input;
     const template = input.prompt
         .split('\n')
-        .filter((line) => !(line === '> <run-results>' && input.runResults.length === 0))
+        .filter((line) => !(line === '> Run results: <run-results>' && input.runResults.length === 0))
         .join('\n');
     const body = template.replace(PLACEHOLDER, (match, token, offset, source) => {
         const value = token === 'coder-llm'
@@ -66,18 +65,9 @@ function composePlayerPrompt(input, promptIdentity) {
             return match;
         const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
         const literal = source.slice(lineStart, offset);
-        return literal === '> ' ? quoteContinuation(value) : value;
+        return literal.startsWith('> ') ? quoteContinuation(value) : value;
     });
-    if (input.pendingBossQuestion === undefined ||
-        input.bossReply === undefined) {
-        return body;
-    }
-    return [
-        CONTINUATION_PREAMBLE,
-        `Boss question:\n${input.pendingBossQuestion.question}`,
-        `Boss reply:\n${input.bossReply}`,
-        body,
-    ].join('\n\n');
+    return composePlayerContinuation(input, body, resuming);
 }
 export const _internal = {
     composePlayerPrompt,
@@ -177,7 +167,7 @@ const runtimeSpec = {
             },
         },
     },
-    composePlayerPrompt: (input, promptIdentity) => composePlayerPrompt(input, promptIdentity),
+    composePlayerPrompt: (input, promptIdentity, resuming) => composePlayerPrompt(input, promptIdentity, resuming),
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
     controlContextFields: ['phase'],
     unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,

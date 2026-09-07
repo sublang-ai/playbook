@@ -80,7 +80,7 @@ That module shall also export `renderGovernedOutcomeContract`, the judge-facing 
 `PlaybookPendingBossQuestion` shall carry `questionId`, exact `question`, optional `sourceItem`, and an `asker` discriminated as `{ kind: 'captain' }` or `{ kind: 'role', roleId: string }`; it shall expose no overloaded player field.
 `PlayerResult.status` shall be the union `'ok' | 'aborted' | 'error'`,
 `PlayerResult` shall expose optional `resumeToken`, `PlayerCallOptions`
-shall require `resume: string | false`, `CaptainResult.status` shall be the
+shall require `resume: string | false` and permit an optional full-context `freshPrompt: string` for fresh fallback, `CaptainResult.status` shall be the
 same union without a resume token, `CaptainCallOptions` shall require
 `visibility: 'visible' | 'hidden'` and `resume: string | false`, and shall
 expose optional `allowedTools?: readonly string[]` so an explicit empty list
@@ -282,6 +282,16 @@ The runtime shall parse the judge reply with the tolerance of [[playbook-runtime
 When resolving a compiled workflow's player invocation, the runtime shall use the invocation's compiler-supplied canonical local role id unchanged — `coder` for Coder and `reviewer` for Reviewer in the current workflows — while leaving the host to resolve that local role to the frame's effective binding per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
 
 ### Captain bridge
+
+#### playbook-runtime-92
+
+When composing a player call after a Boss reply, the runtime shall select the clarification prompt from the actual continuation choice:
+
+- a selected conversation receives the verbatim Boss reply and labeled task context without repeating the player's pending question;
+- a fresh conversation receives that context and the verbatim pending question labeled `Your previous question:`;
+- the composer receives an optional invocation-local `resuming` boolean, never stored in FSM state; absent means fresh;
+- a compact call carries its full prompt as `PlayerCallOptions.freshPrompt`, which the host uses if the selected conversation is definitively rejected [[session-storage-8](session-storage.md#session-storage-8)]; runtime traces and host observations record the respective prompts actually sent;
+- an old composer that ignores the optional argument retains its complete prompt.
 
 #### playbook-runtime-9
 
@@ -1003,6 +1013,10 @@ Applying `abandon:unresolved-effect` shall move no FSM state, start no player, j
 The `unresolved-effect` arm shall carry no `stateDescription`, output, pending call, error, repository receipt, effect ledger, semantic evidence, or other bounded effect fact, shall not represent an authored final state, and shall claim neither workflow outcome nor completion.
 
 ## Verification
+
+### playbook-runtime-93
+
+When the integration suite resumes maintained players after clarification, it shall verify the selected live conversation receives no repeated pending question, a fresh conversation receives the correctly attributed question, labeled original task text occurs once, the full fallback prompt survives the runtime/host boundary, and emitted call traces match the prompt sent [[playbook-runtime-92](#playbook-runtime-92)].
 
 ### Runtime
 

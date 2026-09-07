@@ -166,6 +166,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
     playerId: string;
     prompt: string;
     resume: string | false;
+    freshPrompt?: string;
   }> = [];
   const judgePrompts: string[] = [];
   const childRequests: Array<{
@@ -189,7 +190,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
   };
   const ports: PlaybookPorts = {
     async callPlayer(playerId, prompt, _signal, options) {
-      playerCalls.push({ playerId, prompt, resume: options.resume });
+      playerCalls.push({ playerId, prompt, resume: options.resume, ...(options.freshPrompt === undefined ? {} : { freshPrompt: options.freshPrompt }) });
       const fixture = players.shift();
       if (fixture === undefined) throw new Error('missing player fixture');
       // DEV owns no repository commit, so planning fixtures default to the
@@ -369,7 +370,7 @@ describe('linked DEV runtime', () => {
       resume: false,
     });
     expect(host.playerCalls[0]?.prompt).toContain(
-      '> Add the new command.\n> Keep the CLI stable.',
+      '> Original request: Add the new command.\n> Keep the CLI stable.',
     );
     expect(host.playerCalls[0]?.prompt).toContain(
       'Do not change files or commit while planning or discussing the request.',
@@ -379,8 +380,8 @@ describe('linked DEV runtime', () => {
         callId: expect.any(String),
         playbookId: 'code',
         text:
-          '> Add the new command.\n> Keep the CLI stable.\n' +
-          '> Proceed under the existing decisions.',
+          '> Original request: Add the new command.\n> Keep the CLI stable.\n' +
+          '> Planning result: Proceed under the existing decisions.',
       },
     ]);
     expect(host.statuses).toContain('→ code');
@@ -478,14 +479,14 @@ describe('linked DEV runtime', () => {
       host.childRequests.map(({ playbookId }) => playbookId),
     ).toEqual(['decide', 'code']);
     expect(host.childRequests[0]?.text).toBe(
-      '> Introduce a new workflow.\n> A durable decision is required first.',
+      '> Original request: Introduce a new workflow.\n> Planning result: A durable decision is required first.',
     );
     expect(host.childRequests[1]?.text).toBe(
       [
-        '> Introduce a new workflow.',
-        '> A durable decision is required first.',
-        '> decide123',
-        '> rev456',
+        '> Original request: Introduce a new workflow.',
+        '> Planning result: A durable decision is required first.',
+        '> DECIDE commit: decide123',
+        '> Evaluated revision: rev456',
       ].join('\n'),
     );
     expect(acceptedOutcomes(host)).toContainEqual({
@@ -496,13 +497,13 @@ describe('linked DEV runtime', () => {
     await runtime.dispose();
   });
 
-  it('keeps one Analyst conversation through a Boss question', async () => {
+  it.each([true, false])('preserves Analyst clarification context (resumed=%s)', async (resumed) => {
     const host = await harness({
       players: [
         {
           status: 'ok',
           finalText: 'Should this wait for the release freeze?',
-          resumeToken: 'analyst-question',
+          ...(resumed ? { resumeToken: 'analyst-question' } : {}),
         },
         {
           status: 'ok',
@@ -545,12 +546,20 @@ describe('linked DEV runtime', () => {
     });
     expect(host.playerCalls.map(({ resume }) => resume)).toEqual([
       false,
-      'analyst-question',
+      resumed ? 'analyst-question' : false,
     ]);
-    expect(host.playerCalls[1]?.prompt).toContain(
-      'Boss question:\nShould this wait for the release freeze?\n\n' +
-        'Boss reply:\nYes, wait for the freeze and stop planning.',
-    );
+    const prompt = host.playerCalls[1]!.prompt;
+    expect(prompt).toContain('Boss reply:\nYes, wait for the freeze and stop planning.');
+    expect(prompt).toContain('> Original request: Should we redesign the trace format?');
+    expect(prompt.split('Should we redesign the trace format?')).toHaveLength(2);
+    expect(prompt.includes('Should this wait for the release freeze?')).toBe(!resumed);
+    expect(prompt).not.toContain('Boss question:');
+    const full = host.playerCalls[1]!.freshPrompt ?? prompt;
+    expect(full).toContain('Your previous question:\nShould this wait for the release freeze?');
+    expect(full.split('Should we redesign the trace format?')).toHaveLength(2);
+    const calls = host.telemetry.filter(({ topic }) => topic === 'playbook.trace').map(({ payload }) => payload as any).filter(({ type }) => type === 'player.call.started');
+    expect(calls[1]?.payload.prompt).toBe(prompt);
+    if (!resumed) expect(prompt).toContain('Your previous question:\nShould this wait for the release freeze?');
     expect(host.childRequests).toEqual([]);
     await runtime.dispose();
   });
@@ -682,7 +691,7 @@ describe('linked DEV runtime', () => {
         childOutput: CODE_COMPLETE,
       },
     );
-    expect(host.childRequests[1]?.text).toContain('> decide123\n> rev456');
+    expect(host.childRequests[1]?.text).toContain('> DECIDE commit: decide123\n> Evaluated revision: rev456');
     await runtime.dispose();
   });
 

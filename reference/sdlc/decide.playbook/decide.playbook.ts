@@ -32,6 +32,7 @@ import {
   assertPlaybookEffectLedger,
   assertPlaybookRuntimeSnapshot,
   combineAbortSignals,
+  composePlayerContinuation,
   createNestedPlaybookBridge,
   detachPersistedMachineSnapshot,
   normalizeError,
@@ -286,8 +287,6 @@ const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID =
 const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID =
   'abandon:unresolved-effect';
 
-const CONTINUATION_PREAMBLE =
-  'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 
 const PLACEHOLDER_FIELDS: ReadonlyArray<readonly [string, keyof PlayerInput]> =
   [
@@ -306,23 +305,8 @@ type PromptIdentity = (roleId: RoleId) => string;
 function composePlayerPrompt(
   input: PlayerInput,
   promptIdentity: PromptIdentity,
+  resuming = false,
 ): string {
-  const blocks: string[] = [];
-
-  if (input.pendingBossQuestion && input.bossReply !== undefined) {
-    blocks.push(
-      [
-        CONTINUATION_PREAMBLE,
-        '',
-        'Boss question:',
-        input.pendingBossQuestion.question,
-        '',
-        'Boss reply:',
-        input.bossReply,
-      ].join('\n'),
-    );
-  }
-
   const replacements = new Map<string, string>();
   for (const [placeholder, field] of PLACEHOLDER_FIELDS) {
     const value = input[field];
@@ -348,8 +332,7 @@ function composePlayerPrompt(
     },
   );
 
-  blocks.push(body);
-  return blocks.join('\n\n');
+  return composePlayerContinuation(input, body, resuming);
 }
 
 // A `result` description names required payload fields in its
@@ -1518,7 +1501,7 @@ function createDecidePlaybookRuntime(
   const promptIdentity = (roleId: RoleId): string =>
     requireSessionIdentity().roleBindings?.[roleId]?.promptIdentity ?? roleId;
 
-  const composeInvocationPrompt = (input: PlayerInput): string => {
+  const composeInvocationPrompt = (input: PlayerInput, resuming = false): string => {
     let active = true;
     const lookup: PromptIdentity = (roleId) => {
       if (!active) {
@@ -1534,7 +1517,7 @@ function createDecidePlaybookRuntime(
       return promptIdentity(roleId);
     };
     try {
-      return composePlayerPrompt(input, lookup);
+      return composePlayerPrompt(input, lookup, resuming);
     } finally {
       active = false;
     }
@@ -2182,7 +2165,7 @@ function createDecidePlaybookRuntime(
     const roleId = input.role;
     const playerId = resolvedPlayerId(roleId);
     const playerKey = continuationKey(roleId, playerId);
-    const prompt = composeInvocationPrompt(input);
+    const freshPrompt = composeInvocationPrompt(input);
     let resume: PlayerCallOptions['resume'];
     try {
       signal.throwIfAborted();
@@ -2195,6 +2178,7 @@ function createDecidePlaybookRuntime(
       latchControlPlaneError(error, signal);
       throw error;
     }
+    const prompt = resume === false ? freshPrompt : composeInvocationPrompt(input, true);
     const callId =
       continuation?.callId ?? `player-${++playerCallSequence}`;
     const identity = {
@@ -2249,7 +2233,7 @@ function createDecidePlaybookRuntime(
       try {
         signal.throwIfAborted();
         const boundary = Promise.resolve(
-          requirePorts().callPlayer(roleId, prompt, signal, { resume }),
+          requirePorts().callPlayer(roleId, prompt, signal, { resume, ...(prompt === freshPrompt ? {} : { freshPrompt }) }),
         );
         rawResult = await boundary;
         // An XState sibling cancellation does not cancel an arbitrary coder
@@ -5081,7 +5065,6 @@ export const _internal = {
   VERBATIM_PAYLOAD_FIELDS,
   BOSS_INTERRUPT_TARGETS,
   UNFINISHED_FINAL_STATE_IDS,
-  CONTINUATION_PREAMBLE,
   TELEMETRY_TOPIC,
 };
 

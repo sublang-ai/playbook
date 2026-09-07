@@ -10,7 +10,7 @@ export type CodePlaybookHostCapabilities = PlaybookHostConstructionCapabilities 
  * runtime text. The generic composer preserves the marker itself; CODE's
  * override additionally keeps a multiline value inside that quote.
  */
-declare function composePlayerPrompt(input: PlayerInput, promptIdentity: XStatePromptIdentity): string;
+declare function composePlayerPrompt(input: PlayerInput, promptIdentity: XStatePromptIdentity, resuming?: boolean): string;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;

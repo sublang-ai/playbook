@@ -6,7 +6,7 @@ export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, Pla
 export type ReviewPlaybookOptions = ReviewInput;
 export type ReviewPlaybookHostCapabilities = PlaybookHostConstructionCapabilities & XStatePlaybookRuntimeConstruction<ReviewPlaybookOptions, object>['hostCapabilities'];
 /** Keep every line of a relayed runtime value inside its authored quote. */
-declare function composePlayerPrompt(input: PlayerInput, promptIdentity: XStatePromptIdentity): string;
+declare function composePlayerPrompt(input: PlayerInput, promptIdentity: XStatePromptIdentity, resuming?: boolean): string;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
