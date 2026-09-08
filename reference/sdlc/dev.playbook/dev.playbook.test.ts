@@ -502,6 +502,11 @@ describe('linked DEV runtime', () => {
       players: [
         {
           status: 'ok',
+          finalText: 'Should the analysis cover rendering or storage?',
+          ...(resumed ? { resumeToken: 'analyst-scope' } : {}),
+        },
+        {
+          status: 'ok',
           finalText: 'Should this wait for the release freeze?',
           ...(resumed ? { resumeToken: 'analyst-question' } : {}),
         },
@@ -514,10 +519,12 @@ describe('linked DEV runtime', () => {
       judges: [
         { guard: 'needsBossReply' },
         { type: 'BOSS_REPLY' },
+        { guard: 'needsBossReply' },
+        { type: 'BOSS_REPLY' },
         { guard: 'discussionComplete' },
       ],
     });
-    const runtime = linkedRuntime(host);
+    const runtime = linkedRuntime(host, { runResults: 'Trace integration checks passed.' });
     await runtime.init(rootSession(host.ports));
 
     const parked = await runtime.handleBossInput({
@@ -529,6 +536,13 @@ describe('linked DEV runtime', () => {
     // The Analyst question is governed `unchanged`, not `deferred`: no
     // checkpoint-bound logical operation opens for it.
     expect(host.effectLedger.snapshot().logicalOperations).toEqual([]);
+
+    const parkedAgain = await runtime.handleBossInput({
+      text: 'Cover storage only; leave rendering unchanged.',
+      signal: new AbortController().signal,
+    });
+    expect(parkedAgain.outcome).toBe('quiescent');
+    expect(parkedAgain.state.stateId).toBe('awaitBossReply');
 
     const result = await runtime.handleBossInput({
       text: 'Yes, wait for the freeze and stop planning.',
@@ -546,19 +560,27 @@ describe('linked DEV runtime', () => {
     });
     expect(host.playerCalls.map(({ resume }) => resume)).toEqual([
       false,
+      resumed ? 'analyst-scope' : false,
       resumed ? 'analyst-question' : false,
     ]);
-    const prompt = host.playerCalls[1]!.prompt;
+    const prompt = host.playerCalls[2]!.prompt;
     expect(prompt).toContain('Boss reply:\nYes, wait for the freeze and stop planning.');
     expect(prompt).toContain('> Original request: Should we redesign the trace format?');
     expect(prompt.split('Should we redesign the trace format?')).toHaveLength(2);
     expect(prompt.includes('Should this wait for the release freeze?')).toBe(!resumed);
     expect(prompt).not.toContain('Boss question:');
-    const full = host.playerCalls[1]!.freshPrompt ?? prompt;
+    const priorDiscussion = '> Prior discussion: Analyst question: Should the analysis cover rendering or storage?\n> Boss reply: Cover storage only; leave rendering unchanged.';
+    expect(prompt).toContain(priorDiscussion);
+    expect(prompt.split('Should the analysis cover rendering or storage?')).toHaveLength(2);
+    expect(prompt).toContain('> Run results: Trace integration checks passed.');
+    const full = host.playerCalls[2]!.freshPrompt ?? prompt;
+    expect(full).toContain(priorDiscussion);
+    expect(full.split('Should the analysis cover rendering or storage?')).toHaveLength(2);
+    expect(full).toContain('> Run results: Trace integration checks passed.');
     expect(full).toContain('Your previous question:\nShould this wait for the release freeze?');
     expect(full.split('Should we redesign the trace format?')).toHaveLength(2);
     const calls = host.telemetry.filter(({ topic }) => topic === 'playbook.trace').map(({ payload }) => payload as any).filter(({ type }) => type === 'player.call.started');
-    expect(calls[1]?.payload.prompt).toBe(prompt);
+    expect(calls[2]?.payload.prompt).toBe(prompt);
     if (!resumed) expect(prompt).toContain('Your previous question:\nShould this wait for the release freeze?');
     expect(host.childRequests).toEqual([]);
     await runtime.dispose();

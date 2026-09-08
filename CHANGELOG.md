@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `composePlayerContinuation` and optional `PlayerCallOptions.freshPrompt` let prompt composers preserve complete clarification context when a selected provider conversation requires a fresh attempt.
+
+### Fixed
+
+- CODE, REVIEW, DEV and DECIDE label relayed requests and context. Clarification prompts attribute the player's question correctly and omit only the pending question when resuming; fresh conversations retain it. DEV preserves prior discussion and run results on both paths.
+- Source-to-GEARS checks accept a reused labeled relay inside a later complete instruction while still rejecting dropped text and reordered fragments.
+
 ## [13.0.0] - 2026-09-05
 
 ### Added

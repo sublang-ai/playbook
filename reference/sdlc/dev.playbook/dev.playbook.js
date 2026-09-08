@@ -58,7 +58,7 @@ function composePlayerPrompt(input, resuming = false) {
     const template = input.prompt
         .split('\n')
         .filter((line) => !(line === '> Prior discussion: <discussion-context>' &&
-        (input.discussionContext.length === 0 || resuming)) &&
+        input.discussionContext.length === 0) &&
         !(line === '> Run results: <run-results>' && input.runResults.length === 0))
         .join('\n');
     const body = template.replace(PLACEHOLDER, (match, token, offset, source) => {

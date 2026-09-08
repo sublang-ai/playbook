@@ -140,7 +140,7 @@ function composePlayerPrompt(input: PlayerInput, resuming = false): string {
       (line) =>
         !(
           line === '> Prior discussion: <discussion-context>' &&
-          (input.discussionContext.length === 0 || resuming)
+          input.discussionContext.length === 0
         ) &&
         !(line === '> Run results: <run-results>' && input.runResults.length === 0),
     )
