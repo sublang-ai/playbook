@@ -1016,7 +1016,7 @@ The `unresolved-effect` arm shall carry no `stateDescription`, output, pending c
 
 ### playbook-runtime-93
 
-When the integration suite resumes maintained players after clarification, it shall verify the selected live conversation receives no repeated pending question, a fresh conversation receives the correctly attributed question, labeled original task text occurs once, prior discussion and run results remain on both paths, the full fallback prompt survives the runtime/host boundary, and emitted call traces match the prompt sent [[playbook-runtime-92](#playbook-runtime-92)].
+When the integration suite resumes maintained players after clarification, it shall verify the selected live conversation receives no repeated pending question, a fresh conversation receives the correctly attributed question, labeled original task text occurs once, all supplied task-context relays remain on both paths, the full fallback prompt survives the runtime/host boundary, and emitted call traces match the prompt sent [[playbook-runtime-92](#playbook-runtime-92)].
 
 ### Runtime
 
