@@ -170,6 +170,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
     playerId: string;
     prompt: string;
     resume: string | false;
+    freshPrompt?: string;
   }> = [];
   const judgePrompts: string[] = [];
   const childRequests: Array<{
@@ -218,7 +219,14 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
   };
   const ports: PlaybookPorts = {
     async callPlayer(playerId, prompt, _signal, options) {
-      playerCalls.push({ playerId, prompt, resume: options.resume });
+      playerCalls.push({
+        playerId,
+        prompt,
+        resume: options.resume,
+        ...(options.freshPrompt === undefined
+          ? {}
+          : { freshPrompt: options.freshPrompt }),
+      });
       const fixture = players.shift();
       if (fixture === undefined) throw new Error('missing player fixture');
       const { repositoryEffect = 'commit', ...result } = fixture;
@@ -645,6 +653,13 @@ describe('linked CODE runtime', () => {
     expect(host.playerCalls[2]?.prompt).toContain(
       'Boss reply:\nPreserve the narrow compatibility boundary.',
     );
+    for (const prompt of [
+      host.playerCalls[2]?.prompt,
+      host.playerCalls[2]?.freshPrompt,
+    ]) {
+      expect(prompt).toContain('> Original request: Implement the large change.');
+      expect(prompt).toContain('> IR number: 040');
+    }
     expect(host.playerCalls[3]?.prompt).toContain(
       '> Original request: Implement the large change.\n> IR number: 040\n\nRead the identified IR',
     );
@@ -980,6 +995,12 @@ describe('linked CODE runtime', () => {
     expect(host.playerCalls[1]?.prompt).toContain(
       'Boss reply:\nUse the narrow branch.',
     );
+    for (const prompt of [
+      host.playerCalls[1]?.prompt,
+      host.playerCalls[1]?.freshPrompt,
+    ]) {
+      expect(prompt).toContain('> Original request: Implement it.');
+    }
     expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
       operationId: openOperation?.operationId,
       originalBaseline: openOperation?.originalBaseline,

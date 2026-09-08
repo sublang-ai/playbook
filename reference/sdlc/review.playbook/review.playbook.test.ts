@@ -944,6 +944,19 @@ describe('linked REVIEW runtime', () => {
     expect(resumed?.prompt).toContain(
       'Boss reply:\nTarget version 6.0.0.',
     );
+    for (const prompt of [resumed?.prompt, resumed?.options.freshPrompt]) {
+      expect(prompt).toContain('> Original request: Review the release commit.');
+      if (scenario.origin === 'addressFindings') {
+        expect(prompt).toContain(
+          '> Reviewer findings: 1. The target is ambiguous.',
+        );
+      } else if (scenario.origin === 'reviewAfterCommit') {
+        expect(prompt).toContain(`> Latest commit: ${host.commitOids[0]}`);
+        expect(prompt).toContain('> Coder output: Fixed and committed.');
+      } else if (scenario.origin === 'reviewAfterRebuttal') {
+        expect(prompt).toContain('> Coder output: Rejected with evidence.');
+      }
+    }
     if (scenario.deferred) {
       expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
         operationId: openOperation?.operationId,

@@ -2375,6 +2375,18 @@ describe('DECIDE deferred effect continuation', () => {
       }),
     ).resolves.toMatchObject({ outcome: 'suspended' });
     expect(fixture.playerCalls.at(-1)?.options.resume).toBe('coder-token-3');
+    const continuations = fixture.playerCalls.filter(
+      ({ options }) => options.freshPrompt !== undefined,
+    );
+    expect(continuations).toHaveLength(2);
+    for (const call of continuations) {
+      for (const prompt of [call.prompt, call.options.freshPrompt]) {
+        expect(prompt).toContain('> Original topic: Choose the durable design.');
+        expect(prompt).toContain(
+          "> Reviewer's independent proposal: Reviewer proposal",
+        );
+      }
+    }
     const finalLedger = fixture.harness.readEffectLedger();
     expect(finalLedger.logicalOperations[0]).toMatchObject({
       operationId,
