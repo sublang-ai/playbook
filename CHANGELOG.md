@@ -10,9 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [13.1.0] - 2026-09-08
+
 ### Added
 
 - `composePlayerContinuation` and optional `PlayerCallOptions.freshPrompt` let prompt composers preserve complete clarification context when a selected provider conversation requires a fresh attempt.
+
+### Changed
+
+- Require Cligent 0.26 so Playbook and the desktop app share the same adapter release.
 
 ### Fixed
 
@@ -609,7 +615,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v13.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v13.1.0...HEAD
+[13.1.0]: https://github.com/sublang-ai/playbook/compare/v13.0.0...v13.1.0
 [13.0.0]: https://github.com/sublang-ai/playbook/compare/v12.3.0...v13.0.0
 [12.3.0]: https://github.com/sublang-ai/playbook/compare/v12.2.2...v12.3.0
 [12.2.2]: https://github.com/sublang-ai/playbook/compare/v12.2.1...v12.2.2

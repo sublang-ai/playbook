@@ -423,7 +423,7 @@ describe('DEV FSM transition coverage', () => {
         stateId: 'callCode',
         sourceItem: 'DEV-2',
         playbookId: 'code',
-        text: '> Add the new command.\n> Proceed under DR-044.',
+        text: '> Original request: Add the new command.\n> Planning result: Proceed under DR-044.',
       },
     ]);
   });
@@ -455,10 +455,10 @@ describe('DEV FSM transition coverage', () => {
     expect(workflow.childInputs[1]?.playbookId).toBe('code');
     expect(workflow.childInputs[1]?.text).toBe(
       [
-        '> Introduce a new workflow.',
-        '> A DR is required.',
-        '> decide123',
-        '> rev456',
+        '> Original request: Introduce a new workflow.',
+        '> Planning result: A DR is required.',
+        '> DECIDE commit: decide123',
+        '> Evaluated revision: rev456',
       ].join('\n'),
     );
   });
@@ -513,10 +513,10 @@ describe('DEV FSM transition coverage', () => {
     await waitFor(workflow.actor, (value) => value.status === 'done');
     expect(workflow.childInputs[0]?.text).toBe(
       [
-        '> Fix the flaky retry.',
-        '> Analyst question: Narrow or broad?',
+        '> Original request: Fix the flaky retry.',
+        '> Prior discussion: Analyst question: Narrow or broad?',
         '> Boss reply: Narrow.',
-        '> Implement the narrow fix.',
+        '> Planning result: Implement the narrow fix.',
       ].join('\n'),
     );
   });

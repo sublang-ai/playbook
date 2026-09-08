@@ -41,10 +41,10 @@ describe('DEV FSM introspection', () => {
       { stateId: 'callCodeAfterDecide', sourceItem: 'DEV-4' },
     ]);
     const planningRelay =
-      '> Plan the request.\n' +
-      '> Analyst question: Narrow or broad?\n' +
+      '> Original request: Plan the request.\n' +
+      '> Prior discussion: Analyst question: Narrow or broad?\n' +
       '> Boss reply: Narrow.\n' +
-      '> Proceed with code.';
+      '> Planning result: Proceed with code.';
     expect(states.map((state) => state.getInput(CONTEXT))).toEqual([
       {
         stateId: 'callCode',
@@ -62,7 +62,7 @@ describe('DEV FSM introspection', () => {
         stateId: 'callCodeAfterDecide',
         sourceItem: 'DEV-4',
         playbookId: 'code',
-        text: `${planningRelay}\n> decide123\n> rev456`,
+        text: `${planningRelay}\n> DECIDE commit: decide123\n> Evaluated revision: rev456`,
       },
     ]);
   });
