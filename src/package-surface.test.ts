@@ -27,13 +27,7 @@ const repoRoot = fileURLToPath(packageRootUrl);
 // consumer type-check program exceed Vitest's five-second default on a
 // loaded CI runner, so every such case gets one generous explicit budget.
 const SUBPROCESS_TIMEOUT_MS = 120_000;
-const SLC_SPECS = [
-  'link.md',
-  'link-runtime.md',
-  'gears2fsm.md',
-  'text2gears.md',
-  'optimize.md',
-];
+const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md', 'optimize.md'];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
 const CAPTAIN_BASE = 'reference/sdlc/captain.playbook/';

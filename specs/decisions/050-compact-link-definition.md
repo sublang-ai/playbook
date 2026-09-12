@@ -5,24 +5,28 @@
 
 ## Status
 
-Proposed; retain only after a controlled compilation benchmark demonstrates improvement.
+Rejected (2026-09-12): no demonstrated compilation improvement.
 
 ## Context
 
-The link definition is 154,025 bytes, while ordinary artifacts delegate runtime machinery to the shared factory under [DR-019](019-shared-linked-runtime-factory.md).
-Most input describes runtime behavior already implemented by that factory, so the phase agent repeatedly reads lifecycle, trace, effect, and abort details while authoring a small set of workflow-specific declarations.
-Those declarations still require semantic review: TypeScript erasure loses option and event contracts, repository dispositions depend on authored behavior, and some prompt shapes require narrow overrides.
+An experimental split reduced the always-relayed linker definition by about 80%, moving normative runtime behavior into a companion while retaining shared-factory authoring obligations under [DR-019](019-shared-linked-runtime-factory.md).
+Two cold minimal-workflow runs used the same source, Playbook 12.3.0, Cligent 0.24.0, Claude Opus 5 at low effort, optimization, and one compilation agent:
+
+| Run | Total compilation | Link phase | Result |
+| --- | --- | --- | --- |
+| Baseline `compile-iS1Lmh` | 330.026 s | 158.223 s | Failed prompt-body fidelity because the FSM interpolated runtime text into its domain prompt. |
+| Split `compile-umeUCL` | 356.240 s | 194.863 s | Failed linked-module construction because `roleStates.work.label` differed from the FSM description. |
+
+Local evidence is retained in `/private/tmp/slc-performance-evidence/<run>/summary.json`, `diagnostics.log`, and emitted artifacts; both summaries record source SHA-256 `7e627b1d32e3b08fafdad971cbf97ce03ee6d64f5c8ddecf23b518c1e362cf92`.
+The independent FSM generations and different failures prevent attributing the timing difference to the split, but neither run demonstrates a successful faster compile.
 
 ## Decision
 
-Keep `slc/link.md` as the compiler entry definition with its existing input, role, output, and compiled-execution sections, plus a compact shared-factory authoring procedure.
-Move runtime sections without changing their text to the normative `slc/link-runtime.md` companion and retain forwarding headings at the original entry-file anchors.
-Ordinary shared-factory linking reads the authoring procedure and relevant special-case references; bespoke parallel linking requires the complete runtime contract.
-The split changes retrieval, not emitted semantics, actor adjudication, metadata authority, or conformance gates.
-Both files form the definition's semantic dependency closure and must be retained together by a host that snapshots or pins it.
+Discard the definition split and all associated packaging, sidecar, and test changes rather than retain an optimization without measured benefit.
+Keep the original monolithic definition and existing conformance gates.
 
 ## Consequences
 
-The always-relayed entry definition is substantially smaller while existing runtime-contract citations remain resolvable.
-Consumers must preserve the companion's bytes and relative path when pinning the definition; hashing only `link.md` is insufficient.
-The benchmark must hold the engine version and Source fixed to isolate the split from runtime upgrades.
+The experiment records no claim that smaller input causes slower compilation.
+A future experiment may compare linking one fixed, already-conformant FSM to isolate definition retrieval; that experiment is not an adopted technique.
+Any future companion design must remain outside direct-child phase discovery and participate in machine-readable semantic-input closure; ordinary Markdown links alone do not invalidate SLC reuse.

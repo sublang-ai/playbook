@@ -5,28 +5,27 @@
 
 ## Status
 
-In progress; prototype awaits controlled live compilation evidence before adoption.
+Done (2026-09-12): experiment rejected and prototype reverted.
 
 ## Intent
 
-Evaluate [DR-050](../decisions/050-compact-link-definition.md) as an independently measurable compiler-performance technique.
+Evaluate the compact-definition performance technique and retain it only with measured successful compilation evidence, as recorded in [DR-050](../decisions/050-compact-link-definition.md).
 
 ## Deliverables
 
-- [x] Compact link entry and exact runtime companion with preserved citations.
-- [x] Published companion surface and full-closure contract checks.
-- [ ] Controlled same-engine, same-Source compilation evidence.
-- [ ] Retain the technique only when improvement and conformance are demonstrated, or discard it.
+- [x] Prototype compact authoring with preserved normative runtime content.
+- [x] Check package closure and runtime contracts, then real SLC discovery and companion-change invalidation.
+- [x] Compare cold compilation evidence under the same source, model, and engine.
+- [x] Reject the unproven technique and restore all production files to the pre-prototype revision.
 
 ## Tasks
 
-1. [x] Split the definition, record its dependency contract, and verify exact moved bytes, package closure, and runtime-contract conformance.
-2. [ ] Run the controlled compilation experiment and record the retain-or-discard decision with its evidence.
+1. [x] Implement and check the isolated prototype (`c1cc1bd`).
+2. [x] Evaluate the live evidence and revert the prototype while retaining the rejection record.
 
 ## Verification
 
-- The parent revision supplies the exact section-byte baseline for the split audit.
-- The normal package-surface and runtime-contract suites exercise the published companion and real runtime declarations.
-- Live performance comparisons must hold the engine, Source, agent/model, and correctness checks constant and include complete compilation timing.
-- Prototype checks passed: all 24 original top-level sections match their destination byte for byte; 81 package-surface and runtime-contract tests pass; 2,668 repository links resolve; Spex 3.0.0 reports no errors.
-- The original entry is 154,025 bytes and the compact entry is 29,930 bytes; input-size reduction is 80.6%, not yet a measured compilation-time improvement.
+- Prototype checks: 81 package/runtime-contract tests passed; the real SLC runner reused an unchanged build and executed affected phases again after only companion bytes changed.
+- Live runs `compile-iS1Lmh` and `compile-umeUCL` failed without demonstrating an improvement; exact measurements and limitations are recorded in the decision.
+- The final branch diff against `27e1bbb` contains only this record, the decision, and its map entry.
+- Audit-only prototype files remain under `/private/tmp/playbook-link-split-audit/`; no split definition, companion, sidecar, package surface, or test remains active in the repository.
