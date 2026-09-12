@@ -10,7 +10,12 @@ const sibling = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 const fromRepo = (rel: string) =>
   fileURLToPath(new URL(`../${rel}`, import.meta.url));
 
-const linkSpec = readFileSync(fromRepo('slc/link.md'), 'utf8');
+// Runtime declarations live in the normative companion; the entry definition
+// still owns Output. Read the full semantic closure for conformance checks.
+const linkSpec = [
+  readFileSync(fromRepo('slc/link-runtime.md'), 'utf8'),
+  readFileSync(fromRepo('slc/link.md'), 'utf8'),
+].join('\n');
 const runtimeSource = readFileSync(sibling('runtime.ts'), 'utf8');
 const runtimeDts = readFileSync(sibling('runtime.d.ts'), 'utf8');
 const runtimeJs = readFileSync(sibling('runtime.js'), 'utf8');

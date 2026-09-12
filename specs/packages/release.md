@@ -247,7 +247,7 @@ breaking 1.0 contract boundary.
 #### release-16
 
 The published package shall ship the authored compiler-phase specs
-`slc/link.md`, `slc/gears2fsm.md`, `slc/text2gears.md`, and
+`slc/link.md`, its normative `slc/link-runtime.md` companion, `slc/gears2fsm.md`, `slc/text2gears.md`, and
 `slc/optimize.md` as package
 files and expose them through a public, semver-stable `exports['./slc/*']`
 mapping (`'./slc/*': './slc/*'`).
@@ -641,7 +641,7 @@ The test suite shall fail unless the effective `pnpm test` lifecycle, in `pretes
 
 
 The test suite shall fail unless each of
-`@sublang/playbook/slc/link.md`, `@sublang/playbook/slc/gears2fsm.md`,
+`@sublang/playbook/slc/link.md`, `@sublang/playbook/slc/link-runtime.md`, `@sublang/playbook/slc/gears2fsm.md`,
 `@sublang/playbook/slc/text2gears.md`, and
 `@sublang/playbook/slc/optimize.md` resolves via
 `import.meta.resolve` to an existing file whose contents are readable (verifying [[release-16](#release-16)]).
@@ -649,7 +649,7 @@ The test suite shall fail unless each of
 #### release-18
 
 
-The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime`, `@sublang/playbook/xstate-runtime`, `@sublang/playbook/session-store`, and `@sublang/playbook/host-capabilities` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath and the internal `accepted-outcome` `.ts`, `.js`, and `.d.ts` siblings — and all four `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, DECIDE, and DEV sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, DECIDE, and DEV registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
+The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime`, `@sublang/playbook/xstate-runtime`, `@sublang/playbook/session-store`, and `@sublang/playbook/host-capabilities` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath and the internal `accepted-outcome` `.ts`, `.js`, and `.d.ts` siblings — and all five `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, DECIDE, and DEV sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, DECIDE, and DEV registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
 Generated verification support shall remain canonical repository content but need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], [[release-20](#release-20)], [[release-33](#release-33)], and [[release-34](#release-34)]).
 The suite shall further fail unless every packed Markdown file is link-closed over the packed file list: each relative target and reference-definition destination resolves to a packed file or a directory containing packed files, and a fragment on a packed Markdown target names an anchor that file renders (verifying [[release-20](#release-20)]).
 The closure's two escape hatches shall themselves be verified against the repository tree: a packed SLC definition's exempt relative citation into `specs/` shall name an existing repository file whose fragment, when present, that file renders, and every living-pointer URL in a packed Markdown file shall name this repository's `main` branch, use `blob/main` for an existing file or `tree/main` for an existing directory, and — on a Markdown file target — name an anchor that file renders (verifying [[release-20](#release-20)]).

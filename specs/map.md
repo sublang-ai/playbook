@@ -75,6 +75,7 @@ meta.md       The spec of specs
 | [DR-047](decisions/047-compiled-execution-contract-in-definitions.md) | 047-compiled-execution-contract-in-definitions.md | Each phase definition declares its compiled-execution contract with a run-time `<definition>` relay, so compiled phase bundles are stable control shells and rule edits need no rebuild |
 | [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
 | [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
+| [DR-050](decisions/050-compact-link-definition.md) | 050-compact-link-definition.md | Compact shared-factory link authoring with an exact normative runtime companion and full definition closure |
 
 ## Packages
 
@@ -82,6 +83,7 @@ meta.md       The spec of specs
 | --- | --- |
 | [captain-playbook.md](packages/captain-playbook.md) | Compiled session Captain behavior, controller contract, compilation, and verification |
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
+| [compiler-link.md](packages/compiler-link.md) | Link-definition loading, shared-factory authoring, runtime-reference routing and semantic closure |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, and DECIDE source, GEARS, FSM, prompt, transition, nesting, and terminal conformance |

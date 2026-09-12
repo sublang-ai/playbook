@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Prototype compact link-definition authoring with an exact normative runtime companion; adoption awaits controlled compilation evidence.
+
 ## [13.1.0] - 2026-09-08
 
 ### Added

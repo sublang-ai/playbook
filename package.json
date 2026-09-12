@@ -38,6 +38,7 @@
     "src/xstate-playbook-runtime.js",
     "src/xstate-playbook-runtime.d.ts",
     "slc/link.md",
+    "slc/link-runtime.md",
     "slc/gears2fsm.md",
     "slc/text2gears.md",
     "slc/optimize.md",
