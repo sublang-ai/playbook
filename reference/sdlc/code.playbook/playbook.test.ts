@@ -802,6 +802,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/review/registry');
     expect(seeded).toContain('@sublang/playbook/decide/registry');
     expect(seeded).toContain('@sublang/playbook/dev/registry');
+    expect(seeded).toContain('@sublang/playbook/branch/registry');
+    expect(seeded).toContain('@sublang/playbook/pr/registry');
     expect(seeded).toContain('gpt-5.6-sol');
     expect(seeded).toContain('claude-opus-5');
     expect(seeded).not.toContain('committer:');
@@ -849,6 +851,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seededParsed.playbooks.dev.roles).toEqual({
       analyst: 'dev.analyst',
     });
+    // DR-050: BRANCH and PR reuse dev.coder; the seed adds no player.
+    expect(seededParsed.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
+    expect(seededParsed.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
 
     expect(spawn.calls).toHaveLength(1);
     const composed = parseYaml(spawn.configs[0].content);

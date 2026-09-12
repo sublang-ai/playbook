@@ -2,7 +2,7 @@
   "name": "@sublang/playbook",
   "version": "13.1.0",
   "type": "module",
-  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, and DEV workflows driven by GEARS specs.",
+  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, and PR workflows driven by GEARS specs.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/sublang-ai/playbook#readme",
   "repository": {
@@ -46,6 +46,8 @@
     "reference/sdlc/review.md",
     "reference/sdlc/decide.md",
     "reference/sdlc/dev.md",
+    "reference/sdlc/branch.md",
+    "reference/sdlc/pr.md",
     "reference/sdlc/captain.playbook/captain.gears.md",
     "reference/sdlc/captain.playbook/captain.fsm.ts",
     "reference/sdlc/captain.playbook/captain.fsm.js",
@@ -113,6 +115,26 @@
     "reference/sdlc/dev.playbook/dev.registry.ts",
     "reference/sdlc/dev.playbook/dev.registry.js",
     "reference/sdlc/dev.playbook/dev.registry.d.ts",
+    "reference/sdlc/branch.playbook/branch.gears.md",
+    "reference/sdlc/branch.playbook/branch.fsm.ts",
+    "reference/sdlc/branch.playbook/branch.fsm.js",
+    "reference/sdlc/branch.playbook/branch.fsm.d.ts",
+    "reference/sdlc/branch.playbook/branch.playbook.ts",
+    "reference/sdlc/branch.playbook/branch.playbook.js",
+    "reference/sdlc/branch.playbook/branch.playbook.d.ts",
+    "reference/sdlc/branch.playbook/branch.registry.ts",
+    "reference/sdlc/branch.playbook/branch.registry.js",
+    "reference/sdlc/branch.playbook/branch.registry.d.ts",
+    "reference/sdlc/pr.playbook/pr.gears.md",
+    "reference/sdlc/pr.playbook/pr.fsm.ts",
+    "reference/sdlc/pr.playbook/pr.fsm.js",
+    "reference/sdlc/pr.playbook/pr.fsm.d.ts",
+    "reference/sdlc/pr.playbook/pr.playbook.ts",
+    "reference/sdlc/pr.playbook/pr.playbook.js",
+    "reference/sdlc/pr.playbook/pr.playbook.d.ts",
+    "reference/sdlc/pr.playbook/pr.registry.ts",
+    "reference/sdlc/pr.playbook/pr.registry.js",
+    "reference/sdlc/pr.playbook/pr.registry.d.ts",
     "docs",
     "reference/sdlc/code.playbook/session-host.js",
     "reference/sdlc/code.playbook/session-host.d.ts",
@@ -179,6 +201,22 @@
     "./dev/registry": {
       "types": "./reference/sdlc/dev.playbook/dev.registry.d.ts",
       "default": "./reference/sdlc/dev.playbook/dev.registry.js"
+    },
+    "./branch/playbook": {
+      "types": "./reference/sdlc/branch.playbook/branch.playbook.d.ts",
+      "default": "./reference/sdlc/branch.playbook/branch.playbook.js"
+    },
+    "./branch/registry": {
+      "types": "./reference/sdlc/branch.playbook/branch.registry.d.ts",
+      "default": "./reference/sdlc/branch.playbook/branch.registry.js"
+    },
+    "./pr/playbook": {
+      "types": "./reference/sdlc/pr.playbook/pr.playbook.d.ts",
+      "default": "./reference/sdlc/pr.playbook/pr.playbook.js"
+    },
+    "./pr/registry": {
+      "types": "./reference/sdlc/pr.playbook/pr.registry.d.ts",
+      "default": "./reference/sdlc/pr.playbook/pr.registry.js"
     },
     "./session-host": {
       "types": "./reference/sdlc/code.playbook/session-host.d.ts",

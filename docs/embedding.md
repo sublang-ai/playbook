@@ -20,7 +20,7 @@ semver-stable surface (`PlayerResult`, `PlaybookPorts`,
 `PlayerCallOptions`, `PlayerSessionStore`, `CaptainCallOptions`, `CaptainResult`,
 `PlaybookTraceEvent`, and `PlaybookRuntimeFactory`) that imports no CODE
 or FSM types, so a host satisfies it once and inherits every playbook.
-The generated CODE, REVIEW, and DECIDE modules re-export their shared
+The generated CODE, REVIEW, DECIDE, DEV, BRANCH, and PR modules re-export their shared
 runtime contract types from their public `playbook` subpaths;
 `PlaybookRuntimeFactory` is available from `@sublang/playbook/runtime`.
 

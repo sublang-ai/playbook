@@ -78,8 +78,8 @@ players:
 # `roles` are launcher-owned; every other key is that playbook's option
 # slice.
 #
-# Every manifest role is bound explicitly. CODE, REVIEW, and DECIDE
-# intentionally reuse the same two stable players, while DEV keeps its own
+# Every manifest role is bound explicitly. CODE, REVIEW, DECIDE, BRANCH, and
+# PR intentionally reuse the same two stable players, while DEV keeps its own
 # Analyst; change an id to isolate its conversation.
 playbooks:
   code:
@@ -103,3 +103,17 @@ playbooks:
     from: "@sublang/playbook/dev/registry"
     roles:
       analyst: dev.analyst
+
+  # Pull-request delivery for DEV (DR-050). BRANCH and PR bind Coder to the
+  # same dev.coder player as CODE and REVIEW on purpose: the Coder that read
+  # the issue and named the branch makes the commits and then describes
+  # them in the pull request. Change an id to isolate its conversation.
+  branch:
+    from: "@sublang/playbook/branch/registry"
+    roles:
+      coder: dev.coder
+
+  pr:
+    from: "@sublang/playbook/pr/registry"
+    roles:
+      coder: dev.coder

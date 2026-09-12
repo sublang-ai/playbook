@@ -145,6 +145,15 @@ describe('deterministic packed release lane smoke', () => {
     expect(source).toContain(
       "construction('decide', ['coder', 'reviewer'], [['coder', 'reviewer']])",
     );
+    expect(source).toContain(
+      "runtime: devFactory(construction('dev', ['analyst'], []))",
+    );
+    expect(source).toContain(
+      "runtime: branchFactory(construction('branch', ['coder'], []))",
+    );
+    expect(source).toContain(
+      "runtime: prFactory(construction('pr', ['coder'], []))",
+    );
     expect(source).toContain('artifactSchema: 3');
     expect(source).toContain('emptyPlaybookEffectLedger');
     expect(source).toContain("const adoptionMembers = ['adopt']");

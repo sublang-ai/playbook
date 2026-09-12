@@ -1796,6 +1796,19 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       effort: 'xhigh',
       permissions: { mode: 'auto' },
     });
+    // DR-050: BRANCH and PR bind Coder to the same dev.coder player as CODE
+    // and REVIEW, so one Coder names the branch, commits, and describes the
+    // pull request; no player is added.
+    expect(template.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
+    expect(template.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
+    expect(Object.keys(template.playbooks)).toEqual([
+      'code',
+      'review',
+      'decide',
+      'dev',
+      'branch',
+      'pr',
+    ]);
     for (const block of Object.values(template.playbooks)) {
       expect(block).not.toHaveProperty('players');
     }
@@ -1813,6 +1826,8 @@ describe('shared launch-config plan (PBCLI-47)', () => {
           [['coder', 'reviewer']],
         ),
         '@sublang/playbook/dev/registry': entry('dev', ['analyst']),
+        '@sublang/playbook/branch/registry': entry('branch', ['coder']),
+        '@sublang/playbook/pr/registry': entry('pr', ['coder']),
       }),
     });
     expect(plan.players.map((player: { id: string }) => player.id)).toEqual([

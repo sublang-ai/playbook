@@ -50,7 +50,14 @@ const CAPTAIN_GENERATED_BUNDLE = [
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.js`,
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.d.ts`,
 ] as const;
-const BUNDLED_WORKFLOW_IDS = ['code', 'review', 'decide', 'dev'] as const;
+const BUNDLED_WORKFLOW_IDS = [
+  'code',
+  'review',
+  'decide',
+  'dev',
+  'branch',
+  'pr',
+] as const;
 const REQUIRED_WORKFLOW_ARTIFACT_SUFFIXES = [
   'gears.md',
   'fsm.ts',
@@ -778,7 +785,7 @@ describe('artifact schema cutover (RELEASE-15)', () => {
         ).not.toMatch(legacyDeclaration);
       }
       expect(runtimeDeclaration).not.toMatch(legacyDeclaration);
-      if (id === 'code' || id === 'review' || id === 'dev') {
+      if (id !== 'decide') {
         expect(runtimeDeclaration).toMatch(
           /XStatePlaybookRuntimeFactory<[\s\S]*, 3>;/,
         );
@@ -1153,6 +1160,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   const REVIEW_BASE = 'reference/sdlc/review.playbook/';
   const DECIDE_BASE = 'reference/sdlc/decide.playbook/';
   const DEV_BASE = 'reference/sdlc/dev.playbook/';
+  const BRANCH_BASE = 'reference/sdlc/branch.playbook/';
+  const PR_BASE = 'reference/sdlc/pr.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toEqual({
@@ -1164,6 +1173,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./review/registry');
     expect(manifest.exports).toHaveProperty('./decide/registry');
     expect(manifest.exports).toHaveProperty('./dev/registry');
+    expect(manifest.exports).toHaveProperty('./branch/registry');
+    expect(manifest.exports).toHaveProperty('./pr/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
@@ -1327,6 +1338,26 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'devStateCountLabels',
       'devSummaryPolicy',
       'validateDevOptions',
+    ],
+    './branch/playbook': ['_internal', 'default'],
+    './branch/registry': [
+      'branchCopyPasteGuardNames',
+      'branchPlaybookRegistryEntry',
+      'branchSavedCountsLine',
+      'branchStateCountLabels',
+      'branchSummaryPolicy',
+      'default',
+      'validateBranchOptions',
+    ],
+    './pr/playbook': ['_internal', 'default'],
+    './pr/registry': [
+      'default',
+      'prCopyPasteGuardNames',
+      'prPlaybookRegistryEntry',
+      'prSavedCountsLine',
+      'prStateCountLabels',
+      'prSummaryPolicy',
+      'validatePrOptions',
     ],
     './session-host': [
       'composeGenericConfig',
@@ -1782,6 +1813,88 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'devStateCountLabels',
       'devSummaryPolicy',
       'validateDevOptions',
+    ],
+    './branch/playbook': [
+      'BranchPlaybookHostCapabilities',
+      'BranchPlaybookOptions',
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'PlayerSessionStore',
+      '_internal',
+      'default',
+    ],
+    './branch/registry': [
+      'BranchOptions',
+      'BranchPlaybookRegistryEntry',
+      'PlaybookSummaryPolicy',
+      'branchCopyPasteGuardNames',
+      'branchPlaybookRegistryEntry',
+      'branchSavedCountsLine',
+      'branchStateCountLabels',
+      'branchSummaryPolicy',
+      'default',
+      'validateBranchOptions',
+    ],
+    './pr/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'PlayerSessionStore',
+      'PrPlaybookHostCapabilities',
+      'PrPlaybookOptions',
+      '_internal',
+      'default',
+    ],
+    './pr/registry': [
+      'PlaybookSummaryPolicy',
+      'PrOptions',
+      'PrPlaybookRegistryEntry',
+      'default',
+      'prCopyPasteGuardNames',
+      'prPlaybookRegistryEntry',
+      'prSavedCountsLine',
+      'prStateCountLabels',
+      'prSummaryPolicy',
+      'validatePrOptions',
     ],
     './session-host': [
       'OpenSessionHostOptions',
@@ -2303,6 +2416,10 @@ import type {
 } from '@sublang/playbook/decide/playbook';
 import { devPlaybookRegistryEntry } from '@sublang/playbook/dev/registry';
 import type { DevPlaybookHostCapabilities } from '@sublang/playbook/dev/playbook';
+import { branchPlaybookRegistryEntry } from '@sublang/playbook/branch/registry';
+import type { BranchPlaybookHostCapabilities } from '@sublang/playbook/branch/playbook';
+import { prPlaybookRegistryEntry } from '@sublang/playbook/pr/registry';
+import type { PrPlaybookHostCapabilities } from '@sublang/playbook/pr/playbook';
 import type {
   HostCapabilities as FacadeHostCapabilities,
   WorktreeHostCapabilities,
@@ -2378,6 +2495,8 @@ declare const codeHostCapabilities: CodePlaybookHostCapabilities;
 declare const reviewHostCapabilities: ReviewPlaybookHostCapabilities;
 declare const decideHostCapabilities: DecidePlaybookHostCapabilities;
 declare const devHostCapabilities: DevPlaybookHostCapabilities;
+declare const branchHostCapabilities: BranchPlaybookHostCapabilities;
+declare const prHostCapabilities: PrPlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
 // @ts-expect-error live construction capabilities are not runtime ports
@@ -2421,6 +2540,20 @@ const devCapabilities: PlaybookHostConstructionCapabilities = devHostCapabilitie
 devPlaybookRegistryEntry.createRuntime({}, devHostCapabilities);
 // @ts-expect-error DEV is schema 3 and requires current-host capabilities
 devPlaybookRegistryEntry.createRuntime({});
+const branchSchema: 3 = branchPlaybookRegistryEntry.artifactSchema;
+const branchProfile: PlaybookCaptainRuntimeProfile = branchPlaybookRegistryEntry.runtimeProfile;
+const branchEntry: PlaybookCaptainRegistryEntryV3 = branchPlaybookRegistryEntry;
+const branchCapabilities: PlaybookHostConstructionCapabilities = branchHostCapabilities;
+branchPlaybookRegistryEntry.createRuntime({}, branchHostCapabilities);
+// @ts-expect-error BRANCH is schema 3 and requires current-host capabilities
+branchPlaybookRegistryEntry.createRuntime({});
+const prSchema: 3 = prPlaybookRegistryEntry.artifactSchema;
+const prProfile: PlaybookCaptainRuntimeProfile = prPlaybookRegistryEntry.runtimeProfile;
+const prEntry: PlaybookCaptainRegistryEntryV3 = prPlaybookRegistryEntry;
+const prCapabilities: PlaybookHostConstructionCapabilities = prHostCapabilities;
+prPlaybookRegistryEntry.createRuntime({}, prHostCapabilities);
+// @ts-expect-error PR is schema 3 and requires current-host capabilities
+prPlaybookRegistryEntry.createRuntime({});
 void canonicalFactorySchema;
 void v3FactorySchema;
 void v3Profile;
@@ -2441,6 +2574,14 @@ void devSchema;
 void devProfile;
 void devEntry;
 void devCapabilities;
+void branchSchema;
+void branchProfile;
+void branchEntry;
+void branchCapabilities;
+void prSchema;
+void prProfile;
+void prEntry;
+void prCapabilities;
 `,
       );
       const program = ts.createProgram([fixture], {
@@ -2679,6 +2820,14 @@ void devCapabilities;
       `${DEV_BASE}dev.playbook.d.ts`,
       `${DEV_BASE}dev.registry.js`,
       `${DEV_BASE}dev.registry.d.ts`,
+      `${BRANCH_BASE}branch.playbook.js`,
+      `${BRANCH_BASE}branch.playbook.d.ts`,
+      `${BRANCH_BASE}branch.registry.js`,
+      `${BRANCH_BASE}branch.registry.d.ts`,
+      `${PR_BASE}pr.playbook.js`,
+      `${PR_BASE}pr.playbook.d.ts`,
+      `${PR_BASE}pr.registry.js`,
+      `${PR_BASE}pr.registry.d.ts`,
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }
