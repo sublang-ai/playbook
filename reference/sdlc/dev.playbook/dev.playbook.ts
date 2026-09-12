@@ -9,7 +9,9 @@
 //                BOSS_REPLY
 // Adjudication:  LLM judge for the one Analyst state; planningResult is
 //                carried verbatim
-// Nested calls:  literal code and decide targets through the shared bridge
+// Nested calls:  literal code, decide, branch, and pr targets through the
+//                shared bridge; branch, revision, commit, and pull-request
+//                identities enter only from canonical child results
 // Compat:        artifact schema 3 / runtime ABI 1
 
 import {
@@ -202,6 +204,16 @@ const runtimeSpec = {
           repositoryDisposition: 'unchanged',
         },
         decideThenCode: {
+          fields: { planningResult: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        // DR-050: reading a GitHub issue during planning is not an effect, so
+        // the two pull-request outcomes stay `unchanged` like the plain ones.
+        codeViaPullRequest: {
+          fields: { planningResult: 'presentation' },
+          repositoryDisposition: 'unchanged',
+        },
+        decideThenCodeViaPullRequest: {
           fields: { planningResult: 'presentation' },
           repositoryDisposition: 'unchanged',
         },

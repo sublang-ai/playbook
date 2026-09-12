@@ -29,7 +29,7 @@ export interface DevPlaybookRegistryEntry {
 export declare const devStateCountLabels: {
     readonly planAnalysis: "planning round";
 };
-export declare const devCopyPasteGuardNames: readonly ["code", "decideThenCode"];
+export declare const devCopyPasteGuardNames: readonly ["code", "decideThenCode", "codeViaPullRequest", "decideThenCodeViaPullRequest"];
 export declare function devSavedCountsLine(counts: {
     interruptions: number;
     copyPastes: number;

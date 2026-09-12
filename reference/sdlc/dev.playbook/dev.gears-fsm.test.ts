@@ -37,19 +37,48 @@ interface RawTransition {
 
 interface RawChildState {
   invoke?: {
-    onDone?: readonly RawTransition[];
-    onError?: readonly RawTransition[];
+    onDone?: RawTransition | readonly RawTransition[];
+    onError?: RawTransition | readonly RawTransition[];
   };
 }
+
+type NestedItemId = 'DEV-2' | 'DEV-3' | 'DEV-4' | 'DEV-5' | 'DEV-6';
+
+const NESTED_ITEM_IDS: readonly NestedItemId[] = [
+  'DEV-2',
+  'DEV-3',
+  'DEV-4',
+  'DEV-5',
+  'DEV-6',
+];
 
 const CHILD_FAILURE_OUTCOMES = [
   '- Any other nested-call error parks `dev` as failed and retains the control-plane error.',
 ];
 
-function gearsSection(id: 'DEV-2' | 'DEV-3' | 'DEV-4'): string {
+// The DEV-2, DEV-3, and DEV-4 blockquotes as the pre-DR-050 artifact
+// compiled them: DR-050 keeps the plain paths' prompts and templates
+// byte-identical, so these literals are pinned rather than derived.
+const PLANNING_RELAY_TEMPLATE = [
+  '> Original request: <development-request>',
+  '> Prior discussion: <discussion-context>',
+  '> Planning result: <planning-result>',
+];
+const CODE_AFTER_DECIDE_TEMPLATE = [
+  ...PLANNING_RELAY_TEMPLATE,
+  '> DECIDE commit: <decide-commit>',
+  '> Evaluated revision: <evaluated-revision>',
+];
+
+function gearsSection(id: NestedItemId): string {
   const start = gearsText.indexOf(`### ${id}`);
   const nextHeading = gearsText.indexOf('### ', start + 1);
   return gearsText.slice(start, nextHeading === -1 ? undefined : nextHeading);
+}
+
+function arms(value: unknown): readonly RawTransition[] {
+  if (value === undefined) return [];
+  return (Array.isArray(value) ? value : [value]) as RawTransition[];
 }
 
 function route(transition: RawTransition | undefined) {
@@ -67,6 +96,7 @@ const CONTEXT: DevContext = {
   planningResult: 'Proceed with code.',
   decideCommit: 'abc123',
   evaluatedRevision: 'def456',
+  deliveryViaPullRequest: false,
 };
 
 describe('DEV Source, GEARS, and FSM agreement', () => {
@@ -74,12 +104,14 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     expect(checkSourceGearsContract(source, gearsText)).toEqual([]);
   });
 
-  it('maps exactly DEV-1 through DEV-4 once', () => {
+  it('maps exactly DEV-1 through DEV-6 once', () => {
     expect(gears.map(({ id }) => id)).toEqual([
       'DEV-1',
       'DEV-2',
       'DEV-3',
       'DEV-4',
+      'DEV-5',
+      'DEV-6',
     ]);
     const stateItems = [
       ...enumeratePlayerStates(devMachine),
@@ -119,9 +151,9 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     expect([...verbatimFieldsFromGears(gearsText)]).toEqual(['planningResult']);
   });
 
-  it('preserves the four semantic planning outcomes', () => {
+  it('preserves the six semantic planning outcomes', () => {
     for (const clause of [
-      'The planning result has four semantic outcomes: needs Boss reply, discussion complete, code, and decide then code.',
+      'The planning result has six semantic outcomes: needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request.',
       "Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support.",
       "No outcome depends on a fixed presentation format of Analyst's reply.",
       '`dev` shall act on the accepted outcome itself and shall not return to the session Captain for another routing decision.',
@@ -134,10 +166,22 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       'discussionComplete',
       'code',
       'decideThenCode',
+      'codeViaPullRequest',
+      'decideThenCodeViaPullRequest',
+    ]);
+    // DR-050: the one added planning bullet reaches the Analyst verbatim.
+    expect(item?.prompt).toContain(
+      '- If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.',
+    );
+    expect(devRegistry.summaryPolicy.copyPasteGuardNames).toEqual([
+      'code',
+      'decideThenCode',
+      'codeViaPullRequest',
+      'decideThenCodeViaPullRequest',
     ]);
   });
 
-  it('compiles nested items as literal code and decide calls, never player calls', () => {
+  it('compiles nested items as literal code, decide, branch, and pr calls, never player calls', () => {
     const targets = new Map(
       enumerateNestedPlaybookStates(devMachine).map((state) => [
         state.sourceItem,
@@ -149,11 +193,14 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
         ['DEV-2', 'code'],
         ['DEV-3', 'decide'],
         ['DEV-4', 'code'],
+        ['DEV-5', 'branch'],
+        ['DEV-6', 'pr'],
       ]),
     );
-    for (const id of ['DEV-2', 'DEV-3', 'DEV-4'] as const) {
+    for (const id of NESTED_ITEM_IDS) {
       expect(byId.get(id)?.delegated).toBe(false);
       expect(byId.get(id)?.player).toBeUndefined();
+      expect(byId.get(id)?.results, id).toEqual([]);
     }
     expect(
       enumeratePlayerStates(devMachine).some(({ sourceItem }) =>
@@ -162,48 +209,193 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     ).toBe(false);
   });
 
+  it('keeps the plain paths byte-identical to the pre-DR-050 artifact', () => {
+    expect(byId.get('DEV-2')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('DEV-3')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('DEV-4')?.prompt).toEqual(CODE_AFTER_DECIDE_TEMPLATE);
+    // The `branch` call reuses the plain planning relay; the `pr` call is
+    // the one template whose every placeholder is a typed child-owned field.
+    expect(byId.get('DEV-5')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('DEV-6')?.prompt).toEqual([
+      '> Original request: <development-request>',
+      '> Issue summary: <issue-summary>',
+      '> Branch: <branch>',
+      '> Base revision: <base-revision>',
+      '> CODE commit: <last-code-commit>',
+      '> Evaluated revision: <final-evaluated-revision>',
+    ]);
+
+    const nested = new Map(
+      enumerateNestedPlaybookStates(devMachine).map((state) => [
+        state.stateId,
+        state.getInput(CONTEXT),
+      ]),
+    );
+    const planningRelay =
+      '> Original request: Plan the request.\n> Planning result: Proceed with code.';
+    expect(nested.get('callCode')).toEqual({
+      stateId: 'callCode',
+      sourceItem: 'DEV-2',
+      playbookId: 'code',
+      text: planningRelay,
+    });
+    expect(nested.get('callDecide')).toEqual({
+      stateId: 'callDecide',
+      sourceItem: 'DEV-3',
+      playbookId: 'decide',
+      text: planningRelay,
+    });
+    expect(nested.get('callCodeAfterDecide')).toEqual({
+      stateId: 'callCodeAfterDecide',
+      sourceItem: 'DEV-4',
+      playbookId: 'code',
+      text: `${planningRelay}\n> DECIDE commit: abc123\n> Evaluated revision: def456`,
+    });
+
+    // The plain edges: planning → callCode → done and planning → callDecide →
+    // callCodeAfterDecide → done, each success arm still the plain one.
+    const states = (devMachine as unknown as {
+      config: { states: Record<string, RawChildState> };
+    }).config.states;
+    const planning = arms(states.planAnalysis?.invoke?.onDone);
+    expect(planning.find((arm) => arm.guard === 'isCodePath')?.target).toBe(
+      'callCode',
+    );
+    expect(
+      planning.find((arm) => arm.guard === 'isDecideThenCode')?.target,
+    ).toBe('callDecide');
+    expect(
+      arms(states.callCode?.invoke?.onDone).find(
+        (arm) => arm.guard === 'isPlainCodeSuccess',
+      ),
+    ).toEqual({
+      guard: 'isPlainCodeSuccess',
+      target: 'done',
+      actions: 'completeWithChildSuccess',
+    });
+    expect(
+      arms(states.callDecide?.invoke?.onDone).find(
+        (arm) => arm.guard === 'isDecideSuccess',
+      ),
+    ).toEqual({
+      guard: 'isDecideSuccess',
+      target: 'callCodeAfterDecide',
+      actions: 'rememberDecideResult',
+    });
+    expect(
+      arms(states.callCodeAfterDecide?.invoke?.onDone).find(
+        (arm) => arm.guard === 'isPlainCodeSuccess',
+      ),
+    ).toEqual({
+      guard: 'isPlainCodeSuccess',
+      target: 'done',
+      actions: 'completeWithChildSuccess',
+    });
+  });
+
   it('pins every authored child outcome to its compiled route', () => {
     for (const clause of [
       '`dev` completes with the successful result of its final child call.',
-      'If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result.',
+      'If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result; a `branch` or `pr` failure ends `dev` under this same rule.',
       'If a child call fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.',
-      "`dev` shall consume commit identities only from each child's canonical structured result, never from player prose.",
+      "`dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose.",
       'Only after `decide` succeeds shall `dev` call playbook `code`',
       '`dev` shall not separately call `review` for the design scope already reviewed by `decide`.',
+      'For code via pull request and decide then code via pull request, `dev` shall first call playbook `branch`',
+      'Only after `branch` succeeds shall `dev` continue with the `code` call for code via pull request, or the `decide` call and then the `code` call for decide then code via pull request, each with the same input as its plain path above.',
+      'On a plain path, `code` success completes `dev`.',
+      'On a pull-request path, only after `code` succeeds shall `dev` call playbook `pr`',
+      'A plain request calls neither `branch` nor `pr`.',
     ]) {
       expect(source).toContain(clause);
     }
-    for (const id of ['DEV-2', 'DEV-3', 'DEV-4'] as const) {
+    for (const id of NESTED_ITEM_IDS) {
       for (const outcome of CHILD_FAILURE_OUTCOMES) {
-        expect(gearsSection(id)).toContain(outcome);
+        expect(gearsSection(id), id).toContain(outcome);
       }
     }
     expect(gearsSection('DEV-3')).toContain(
       '- `dev` does not separately call `review` for the design scope already reviewed by `decide`.',
     );
+    for (const id of ['DEV-2', 'DEV-4'] as const) {
+      expect(gearsSection(id)).toContain(
+        '- On a plain path, `code` success completes `dev` with the successful `code` result.',
+      );
+      expect(gearsSection(id)).toContain(
+        "- On a pull-request path, `code` success provides the exact last `code`-owned commit and the exact final evaluated repository revision from `code`'s canonical structured result and continues with the `pr` call.",
+      );
+    }
+    expect(gearsSection('DEV-5')).toContain(
+      '- A plain request calls neither `branch` nor `pr`.',
+    );
+    expect(gearsSection('DEV-6')).toContain(
+      '- `pr` success completes `dev` with the successful `pr` result.',
+    );
 
     const states = (devMachine as unknown as {
       config: { states: Record<string, RawChildState> };
     }).config.states;
+    const createBranch = states.createBranch?.invoke;
     const callCode = states.callCode?.invoke;
     const callDecide = states.callDecide?.invoke;
     const callCodeAfterDecide = states.callCodeAfterDecide?.invoke;
+    const openPullRequest = states.openPullRequest?.invoke;
     expect({
-      codeSuccess: route(callCode?.onDone?.[0]),
-      codeInsufficient: route(callCode?.onDone?.[1]),
-      codeAuthoredFailure: route(callCode?.onError?.[0]),
-      codeControlFailure: route(callCode?.onError?.[1]),
-      decideSuccess: route(callDecide?.onDone?.[0]),
-      decideInsufficient: route(callDecide?.onDone?.[1]),
-      decideAuthoredFailure: route(callDecide?.onError?.[0]),
-      decideControlFailure: route(callDecide?.onError?.[1]),
-      finalSuccess: route(callCodeAfterDecide?.onDone?.[0]),
-      finalInsufficient: route(callCodeAfterDecide?.onDone?.[1]),
-      finalAuthoredFailure: route(callCodeAfterDecide?.onError?.[0]),
-      finalControlFailure: route(callCodeAfterDecide?.onError?.[1]),
+      branchForCode: route(arms(createBranch?.onDone)[0]),
+      branchForDecide: route(arms(createBranch?.onDone)[1]),
+      branchInsufficient: route(arms(createBranch?.onDone)[2]),
+      branchAuthoredFailure: route(arms(createBranch?.onError)[0]),
+      branchControlFailure: route(arms(createBranch?.onError)[1]),
+      codeSuccessViaPullRequest: route(arms(callCode?.onDone)[0]),
+      codeSuccess: route(arms(callCode?.onDone)[1]),
+      codeInsufficient: route(arms(callCode?.onDone)[2]),
+      codeAuthoredFailure: route(arms(callCode?.onError)[0]),
+      codeControlFailure: route(arms(callCode?.onError)[1]),
+      decideSuccess: route(arms(callDecide?.onDone)[0]),
+      decideInsufficient: route(arms(callDecide?.onDone)[1]),
+      decideAuthoredFailure: route(arms(callDecide?.onError)[0]),
+      decideControlFailure: route(arms(callDecide?.onError)[1]),
+      finalSuccessViaPullRequest: route(arms(callCodeAfterDecide?.onDone)[0]),
+      finalSuccess: route(arms(callCodeAfterDecide?.onDone)[1]),
+      finalInsufficient: route(arms(callCodeAfterDecide?.onDone)[2]),
+      finalAuthoredFailure: route(arms(callCodeAfterDecide?.onError)[0]),
+      finalControlFailure: route(arms(callCodeAfterDecide?.onError)[1]),
+      prSuccess: route(arms(openPullRequest?.onDone)[0]),
+      prAuthoredFailure: route(arms(openPullRequest?.onError)[0]),
+      prControlFailure: route(arms(openPullRequest?.onError)[1]),
     }).toEqual({
+      branchForCode: {
+        guard: 'isBranchSuccessForCode',
+        target: 'callCode',
+        actions: 'rememberBranchResult',
+      },
+      branchForDecide: {
+        guard: 'isBranchSuccessForDecide',
+        target: 'callDecide',
+        actions: 'rememberBranchResult',
+      },
+      branchInsufficient: {
+        guard: undefined,
+        target: 'reportedChildFailure',
+        actions: 'completeWithInsufficientBranchResult',
+      },
+      branchAuthoredFailure: {
+        guard: 'authoredBranchFailure',
+        target: 'reportedChildFailure',
+        actions: 'completeWithBranchFailure',
+      },
+      branchControlFailure: {
+        guard: undefined,
+        target: 'failed',
+        actions: 'rememberActorError',
+      },
+      codeSuccessViaPullRequest: {
+        guard: 'isCodeSuccessViaPullRequest',
+        target: 'openPullRequest',
+        actions: 'rememberCodeResult',
+      },
       codeSuccess: {
-        guard: 'isCodeSuccess',
+        guard: 'isPlainCodeSuccess',
         target: 'done',
         actions: 'completeWithChildSuccess',
       },
@@ -242,8 +434,13 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
         target: 'failed',
         actions: 'rememberActorError',
       },
+      finalSuccessViaPullRequest: {
+        guard: 'isCodeSuccessViaPullRequest',
+        target: 'openPullRequest',
+        actions: 'rememberCodeResult',
+      },
       finalSuccess: {
-        guard: 'isCodeSuccess',
+        guard: 'isPlainCodeSuccess',
         target: 'done',
         actions: 'completeWithChildSuccess',
       },
@@ -258,6 +455,21 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
         actions: 'completeWithCodeFailure',
       },
       finalControlFailure: {
+        guard: undefined,
+        target: 'failed',
+        actions: 'rememberActorError',
+      },
+      prSuccess: {
+        guard: undefined,
+        target: 'done',
+        actions: 'completeWithChildSuccess',
+      },
+      prAuthoredFailure: {
+        guard: 'authoredPrFailure',
+        target: 'reportedChildFailure',
+        actions: 'completeWithPrFailure',
+      },
+      prControlFailure: {
         guard: undefined,
         target: 'failed',
         actions: 'rememberActorError',
@@ -279,22 +491,19 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       .filter(([, state]) => state.type === 'final')
       .map(([id]) => id)
       .sort();
+    // DR-050 adds no terminal: `branch` and `pr` failures relay through the
+    // existing failure terminal and `pr` success completes the existing one.
     expect(finalIds).toEqual([
       'discussionComplete',
       'done',
       'reportedChildFailure',
     ]);
 
-    const armList = (value: unknown): readonly RawTransition[] =>
-      value === undefined
-        ? []
-        : ((Array.isArray(value) ? value : [value]) as RawTransition[]);
-
     const entering = new Map<string, string[]>();
     for (const state of Object.values(states)) {
       for (const arm of [
-        ...armList(state.invoke?.onDone),
-        ...armList(state.invoke?.onError),
+        ...arms(state.invoke?.onDone),
+        ...arms(state.invoke?.onError),
       ]) {
         if (arm.target === undefined || !finalIds.includes(arm.target)) {
           continue;
@@ -311,6 +520,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     expect(entering.get('done')).toEqual([
       'completeWithChildSuccess',
       'completeWithChildSuccess',
+      'completeWithChildSuccess',
     ]);
     expect(
       entering
@@ -318,12 +528,15 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
         ?.map((actions) => actions.includes('completeDiscussion')),
     ).toEqual([true]);
     expect(entering.get('reportedChildFailure')?.sort()).toEqual([
+      'completeWithBranchFailure',
       'completeWithCodeFailure',
       'completeWithCodeFailure',
       'completeWithDecideFailure',
+      'completeWithInsufficientBranchResult',
       'completeWithInsufficientCodeResult',
       'completeWithInsufficientCodeResult',
       'completeWithInsufficientDecideResult',
+      'completeWithPrFailure',
     ]);
     expect(states.discussionComplete?.description).toContain(
       'no repository work',
@@ -364,7 +577,13 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
         .sort(),
     ).toEqual(Object.keys(terminalKinds).sort());
     expect(states.planAnalysis?.tags).toContain('playbook.busy');
-    for (const id of ['callCode', 'callDecide', 'callCodeAfterDecide']) {
+    for (const id of [
+      'createBranch',
+      'callCode',
+      'callDecide',
+      'callCodeAfterDecide',
+      'openPullRequest',
+    ]) {
       expect(states[id]?.tags).toContain('playbook.suspended');
     }
     for (const id of ['ready', 'awaitBossReply', 'failed']) {

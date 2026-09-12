@@ -7,7 +7,12 @@ import createPlaybookRuntime from './dev.playbook.js';
 export const devStateCountLabels = {
     planAnalysis: 'planning round',
 };
-export const devCopyPasteGuardNames = ['code', 'decideThenCode'];
+export const devCopyPasteGuardNames = [
+    'code',
+    'decideThenCode',
+    'codeViaPullRequest',
+    'decideThenCodeViaPullRequest',
+];
 function countNoun(count, singular, plural = `${singular}s`) {
     return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -44,7 +49,7 @@ export function validateDevOptions(optionSlice) {
 export const devPlaybookRegistryEntry = {
     id: 'dev',
     command: 'dev',
-    intent: 'analyze a development request that needs planning before choosing direct implementation or a durable decision first',
+    intent: 'analyze a development request that needs planning before choosing direct implementation or a durable decision first, delivered through a pull request when the request names a GitHub issue or asks for one',
     artifactSchema: 3,
     runtimeProfile: Object.freeze({
         kind: 'shared-factory',
