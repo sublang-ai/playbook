@@ -1,0 +1,221 @@
+{
+  "scope": "One sequential matched fixed-FSM link pair; not a cold full compilation or a population estimate",
+  "runs": [
+    {
+      "run": "oNiH7r",
+      "status": "success",
+      "startedAt": "2026-09-12T19:58:48.750Z",
+      "finishedAt": "2026-09-12T20:02:22.807Z",
+      "compileMs": 213000,
+      "performingCalls": 2,
+      "tools": 17,
+      "sourceSha256": "18282b53bd7ed7b81cc6d06b37296a9a5491ed422bd0fa0572bd6737c54acda7",
+      "linkedSha256": "1aabbe98bf677b311a32e4d91b2e079a150a1a0acc6f2c90a83ba7a48ed418e9",
+      "strictAndLinkChecksPassed": true,
+      "runtime": {
+        "ok": true,
+        "profile": "minimal",
+        "performingCalls": 1,
+        "setupCaptainCalls": 0,
+        "judgeCalls": 1,
+        "ownRepository": true,
+        "exactBossTask": true,
+        "taskPresentation": "quoted",
+        "commits": 1,
+        "terminalKind": "success",
+        "elapsedMs": 718
+      }
+    },
+    {
+      "run": "YQHwJk",
+      "status": "success",
+      "startedAt": "2026-09-12T20:02:44.978Z",
+      "finishedAt": "2026-09-12T20:04:04.714Z",
+      "compileMs": 78679,
+      "performingCalls": 1,
+      "tools": 9,
+      "sourceSha256": "18282b53bd7ed7b81cc6d06b37296a9a5491ed422bd0fa0572bd6737c54acda7",
+      "linkedSha256": "9e4c3b7bf85f7ce76e33432e703cab582dd55d0c9050c172779419552b354589",
+      "strictAndLinkChecksPassed": true,
+      "runtime": {
+        "ok": true,
+        "profile": "minimal",
+        "performingCalls": 1,
+        "setupCaptainCalls": 0,
+        "judgeCalls": 1,
+        "ownRepository": true,
+        "exactBossTask": true,
+        "taskPresentation": "quoted",
+        "commits": 1,
+        "terminalKind": "success",
+        "elapsedMs": 684
+      }
+    }
+  ],
+  "selection": {
+    "agent": "codex",
+    "model": "gpt-6-astra",
+    "effort": "low"
+  },
+  "dependencies": {
+    "@sublang/slc": "0.9.0",
+    "@sublang/playbook": "12.3.0",
+    "@sublang/cligent": "0.24.0",
+    "@openai/codex-sdk": "0.153.4",
+    "@anthropic-ai/claude-agent-sdk": "0.3.223",
+    "xstate": "5.32.4",
+    "typescript": "6.0.3"
+  },
+  "coldFixedFsm": true,
+  "reviewerDisabled": true,
+  "freshPhaseSessions": false,
+  "compilerRuntimeSha256": "03e2960950937414ba617c7feaf4ca86bf1b4f8823f471505a77197348da252d",
+  "verificationHarnessSha256": "8f2f8cf5546b136f851017430177db88ad0db237b609722380cf866ce9a0a4ce",
+  "overlap": false,
+  "betweenRunsMs": 22171,
+  "sameSourceAndSettings": true,
+  "allDeclaredAndCompilerMemberHashesVerified": true,
+  "baselineInputs": {
+    "gears2fsm.md": {
+      "bytes": 50602,
+      "sha256": "3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619"
+    },
+    "link.md": {
+      "bytes": 155070,
+      "sha256": "60d287dfa19061ef682e36f596879c7c9f4223198ee55b9fa769a361ce99be5c"
+    },
+    "materialize-link.mjs": {
+      "bytes": 22784,
+      "sha256": "0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253"
+    },
+    "optimize.md": {
+      "bytes": 5676,
+      "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+    },
+    "references/link-contract.md": {
+      "bytes": 159699,
+      "sha256": "406541706fad41b89d5afa0118d7ad0a79e104afefb43959820ea84230792e74"
+    },
+    "slc.pin-inputs.json": {
+      "bytes": 217,
+      "sha256": "6bce47e6270f0771d676ca3aa97d0677ab8110ceeb07202ce0cb111d68899390"
+    },
+    "text2gears.md": {
+      "bytes": 20806,
+      "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+    }
+  },
+  "helperInputs": {
+    "gears2fsm.md": {
+      "bytes": 50602,
+      "sha256": "3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619"
+    },
+    "link.md": {
+      "bytes": 159645,
+      "sha256": "532b0ad904203200d971b1d4794a7f412db96e151e6c00e49ef2017d8ab22706"
+    },
+    "materialize-link.mjs": {
+      "bytes": 22784,
+      "sha256": "0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253"
+    },
+    "optimize.md": {
+      "bytes": 5676,
+      "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+    },
+    "references/link-contract.md": {
+      "bytes": 159699,
+      "sha256": "406541706fad41b89d5afa0118d7ad0a79e104afefb43959820ea84230792e74"
+    },
+    "slc.pin-inputs.json": {
+      "bytes": 217,
+      "sha256": "6bce47e6270f0771d676ca3aa97d0677ab8110ceeb07202ce0cb111d68899390"
+    },
+    "text2gears.md": {
+      "bytes": 20806,
+      "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+    }
+  },
+  "onlyDeclaredInputDifference": "link.md optional materialization instructions",
+  "linkClosureIncludesHelperAndFullContract": true,
+  "observedReductionPercent": 63.06150234741784,
+  "exactHelperRegeneration": {
+    "descriptor": "/private/tmp/playbook-materializer-v3-pair-audit/descriptor.json",
+    "fromActualProviderInvocation": true,
+    "target": "/private/tmp/playbook-materializer-v3-pair-audit/reproduce-j3cq3b75/minimal.playbook/minimal.playbook.ts",
+    "cliResult": {
+      "status": "ok",
+      "target": "/private/tmp/playbook-materializer-v3-pair-audit/reproduce-j3cq3b75/minimal.playbook/minimal.playbook.ts",
+      "bytes": 5886
+    },
+    "helperSha256": "0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253",
+    "linkedSha256": "9e4c3b7bf85f7ce76e33432e703cab582dd55d0c9050c172779419552b354589",
+    "byteIdenticalToLiveOutput": true
+  },
+  "actualHelperInvocation": {
+    "sessionId": "01a09737-314a-7e53-9df2-90b1c0f11ab3",
+    "cwd": "/private/tmp/slc-performance-evidence/compile-YQHwJk/work",
+    "timestamp": "2026-09-12T20:03:24.246Z",
+    "ordinal": 26,
+    "command": "node /Users/basicthinker/Projects/SubLang/slc/.scratch/performance/helper-quoted-v3-full/playbook/materialize-link.mjs --fsm /private/tmp/slc-performance-evidence/compile-YQHwJk/work/minimal.fsm.ts --out /private/tmp/slc-performance-evidence/compile-YQHwJk/work/minimal.playbook/minimal.playbook.ts <<'JSON'\n{\"schema\":\"sublang.playbook.link.v1\",\"profile\":\"flat-quoted-relays\",\"machineExport\":\"machine\",\"label\":\"MINIMAL\",\"options\":{\"bossIntent\":{\"type\":\"string\",\"required\":false}},\"inputMapping\":{\"bossIntent\":\"bossIntent\"},\"entryEvent\":{\"type\":\"START\",\"textField\":\"bossIntent\",\"contextField\":\"bossIntent\"},\"bossEvents\":[],\"outcomeAuthority\":{\"governedPlayerStates\":{\"coding\":{\"done\":{\"fields\":{},\"repositoryDisposition\":\"one-descendant-commit\"},\"needsBossReply\":{\"fields\":{\"question\":\"presentation\"},\"repositoryDisposition\":\"deferred\"}}}},\"placeholderFields\":{},\"transitionEventFields\":[\"bossIntent\",\"targetId\",\"answer\",\"questionId\"],\"verbatimPayloadFields\":[],\"resumableStateIds\":[\"coding\"],\"unfinishedFinalStateIds\":[],\"controlContextFields\":[\"repositoryReady\"]}\nJSON",
+    "exitCode": 0,
+    "stdout": "{\"status\":\"ok\",\"target\":\"/private/tmp/slc-performance-evidence/compile-YQHwJk/work/minimal.playbook/minimal.playbook.ts\",\"bytes\":5886}\n",
+    "stderr": "",
+    "descriptor": {
+      "schema": "sublang.playbook.link.v1",
+      "profile": "flat-quoted-relays",
+      "machineExport": "machine",
+      "label": "MINIMAL",
+      "options": {
+        "bossIntent": {
+          "type": "string",
+          "required": false
+        }
+      },
+      "inputMapping": {
+        "bossIntent": "bossIntent"
+      },
+      "entryEvent": {
+        "type": "START",
+        "textField": "bossIntent",
+        "contextField": "bossIntent"
+      },
+      "bossEvents": [],
+      "outcomeAuthority": {
+        "governedPlayerStates": {
+          "coding": {
+            "done": {
+              "fields": {},
+              "repositoryDisposition": "one-descendant-commit"
+            },
+            "needsBossReply": {
+              "fields": {
+                "question": "presentation"
+              },
+              "repositoryDisposition": "deferred"
+            }
+          }
+        }
+      },
+      "placeholderFields": {},
+      "transitionEventFields": [
+        "bossIntent",
+        "targetId",
+        "answer",
+        "questionId"
+      ],
+      "verbatimPayloadFields": [],
+      "resumableStateIds": [
+        "coding"
+      ],
+      "unfinishedFinalStateIds": [],
+      "controlContextFields": [
+        "repositoryReady"
+      ]
+    }
+  },
+  "auditArtifacts": {
+    "audit.py": "/private/tmp/playbook-materializer-v3-pair-audit/audit.py",
+    "evidence.json": "/private/tmp/playbook-materializer-v3-pair-audit/evidence.json",
+    "helper-invocation.json": "/private/tmp/playbook-materializer-v3-pair-audit/helper-invocation.json"
+  }
+}

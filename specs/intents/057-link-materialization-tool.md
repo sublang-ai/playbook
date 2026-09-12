@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress (2026-09-12); experiment awaiting measured retention decision.
+Done (2026-09-12); retained for the measured flat quoted-relay linking scope under [DR-051](../decisions/051-link-materialization-tool.md).
 
 ## Intent
 
@@ -22,7 +22,7 @@ Provide a bounded optional materializer for a controlled compilation-performance
 1. [x] Implement and verify the bounded helper and package surface with no engine or release change.
 2. [x] Move existing host-boundary guidance into the common full definition and reproduce a fresh baseline/helper pair with exact instruction-only differences.
 3. [x] Add and verify the bounded explicit quoted-relay profile and reproduce new comparison inputs without changing prior frozen versions.
-4. Record the measurement-based retention or rejection decision.
+4. [x] Record the measurement-based retention or rejection decision.
 
 ## Verification
 
@@ -38,4 +38,6 @@ Provide a bounded optional materializer for a controlled compilation-performance
 - The pure v3 module over the unchanged `compile-aZda4G` FSM passes all four unchanged generated suites (8 tests), locked strict TypeScript checking, the actual SLC link-fidelity gate, and a real Git run with one player call, exact quoted Boss text, one commit, and terminal success; `/private/tmp/playbook-materializer-v3-aZ-probe/emission-evidence.json` and `runtime-evidence.json` retain source identities and results.
 - Current builder `--full` and `--baseline` outputs are `/private/tmp/playbook-materializer-full-quoted-v3-12.3` and `/private/tmp/playbook-materializer-baseline-quoted-v3-12.3`; `--compact` instead retains the rejected experiment's archived v2 helper, recipe, and exact full companion.
 - The current built SLC closure probe still reuses unchanged output and reruns only linking after a helper mutation; independent review found no actionable v3 composition, API-compatibility, or comparison-boundary issue.
-- Controlled materializer retention evidence remains pending; the experiment is not retained or released.
+- The matched `oNiH7r`/`YQHwJk` comparison passed exact input/compiler/settings/lock and no-overlap checks, reducing link compilation from 213,000 to 78,679 ms; both strict, link, and separate real Git runtime checks passed.
+- The task-scoped provider completion records the actual successful materializer invocation, and replaying its descriptor reproduces the final 5,886-byte linked module exactly; `scripts/experiments/materializer-v3-pair-evidence.json` retains the measured inputs, outputs, scoped command evidence, and audit locations.
+- Retention is limited to the measured flat quoted-relay linking case; cold full-compilation performance remains the separate overall compiler-efficiency objective, and no release or dependency adoption occurred here.

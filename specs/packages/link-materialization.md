@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package defines the experimental phase-owned helper of [DR-051](../decisions/051-link-materialization-tool.md), leaving semantic compilation with the linking agent.
+This package defines the optional phase-owned helper of [DR-051](../decisions/051-link-materialization-tool.md), leaving semantic compilation with the linking agent.
 
 ## External Behavior
 

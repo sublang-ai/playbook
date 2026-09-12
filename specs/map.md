@@ -76,7 +76,7 @@ meta.md       The spec of specs
 | [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
 | [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
 | [DR-050](decisions/050-compact-link-definition.md) | 050-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
-| [DR-051](decisions/051-link-materialization-tool.md) | 051-link-materialization-tool.md | Experimental phase-owned deterministic thin-module materializer with exact semantic descriptor |
+| [DR-051](decisions/051-link-materialization-tool.md) | 051-link-materialization-tool.md | Optional thin-module materializer retained for measured flat quoted-relay linking; full-compilation performance remains separate |
 | [DR-052](decisions/052-helper-backed-compact-link.md) | 052-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
 
 ## Packages
