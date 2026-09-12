@@ -8,6 +8,7 @@ import { _internal as branchInternal } from '../reference/sdlc/branch.playbook/b
 import { _internal as codeInternal } from '../reference/sdlc/code.playbook/code.playbook.js';
 import { _internal as decideInternal } from '../reference/sdlc/decide.playbook/decide.playbook.js';
 import { _internal as devInternal } from '../reference/sdlc/dev.playbook/dev.playbook.js';
+import { _internal as prInternal } from '../reference/sdlc/pr.playbook/pr.playbook.js';
 import { _internal as reviewInternal } from '../reference/sdlc/review.playbook/review.playbook.js';
 import {
   checkLinkedVerbatimContract,
@@ -132,6 +133,24 @@ const linkedWorkflows = [
     expectedFields: ['coderOutput'],
     unfinishedFinalStateIds: branchInternal.UNFINISHED_FINAL_STATE_IDS,
     expectedUnfinishedFinalStateIds: ['refused'],
+  },
+  {
+    id: 'PR',
+    sourceUrl: new URL('../reference/sdlc/pr.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/pr.playbook/pr.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: prInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['coderOutput'],
+    unfinishedFinalStateIds: prInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: [
+      'notPublished',
+      'fixFailed',
+      'fixNotPublished',
+      'checksStillFailing',
+      'mergeRefused',
+    ],
   },
 ] as const;
 
