@@ -70,6 +70,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     run(installed, target);
     expect(readFileSync(join(target, 'link.md'), 'utf8')).toBe(read('slc/link.md'));
     expect(readFileSync(join(target, 'optimize.md'), 'utf8')).toBe(read('slc/optimize.md'));
+    expect(readFileSync(join(target, 'gears2fsm.md'), 'utf8')).toBe(read('slc/gears2fsm.md'));
     expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('slc/materialize-link.mjs'));
     const proof = readFileSync(join(target, 'experiment-proof.json'), 'utf8');
     const record = JSON.parse(proof);

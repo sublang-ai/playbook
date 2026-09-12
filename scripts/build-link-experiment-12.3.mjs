@@ -33,6 +33,7 @@ const expected = {
   entry: 'a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc',
   companion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
   optimizer: '4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9',
+  producer: '3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619',
 };
 const verify = (bytes, digest, label) => assert.equal(hash(bytes), digest, `${label} hash mismatch; this fixture requires its exact reviewed inputs`);
 try {
@@ -85,6 +86,10 @@ const helper = await readFile(join(repo, 'slc/materialize-link.mjs'), 'utf8');
 verify(helper, expected.helper, 'unchanged v2 helper');
 const optimizer = await readFile(join(repo, 'slc/optimize.md'), 'utf8');
 verify(optimizer, expected.optimizer, 'independent exact-root and valid-GEARS optimizer correction');
+const producer = await readFile(join(repo, 'slc/gears2fsm.md'), 'utf8');
+verify(producer, expected.producer, 'machine-root public-state namespace correction');
+const rootNamespaceRule = 'Public `meta.playbook` state metadata belongs only to nodes declared under `states`; the machine root shall omit `meta.playbook`, while its XState `id`, description, and metadata outside that namespace remain unrestricted.\n';
+assert.equal(producer.replace(rootNamespaceRule, ''), baseline['gears2fsm.md'], 'Only the reviewed root namespace sentence may change the FSM producer');
 const sidecar = JSON.stringify({
   schema: 'sublang.slc.pin-inputs.v1',
   closures: { link: ['text2gears.md', 'gears2fsm.md', 'optimize.md', 'materialize-link.mjs', 'references/link-contract.md'] },
@@ -92,7 +97,7 @@ const sidecar = JSON.stringify({
 const outputs = {
   'link.md': fullMode ? full12 : entry,
   'text2gears.md': baseline['text2gears.md'],
-  'gears2fsm.md': baseline['gears2fsm.md'],
+  'gears2fsm.md': producer,
   'optimize.md': optimizer,
   'materialize-link.mjs': helper,
   'references/link-contract.md': companion,
@@ -104,7 +109,7 @@ const proof = {
   installedPackage: installed,
   version: pkg.version,
   baselineHashes,
-  changes: ['unchanged helper v2', fullMode ? 'complete helper-backed definition' : 'compact semantic recipe', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'explicit helper and companion link closure'],
+  changes: ['unchanged helper v2', fullMode ? 'complete helper-backed definition' : 'compact semantic recipe', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
   fullContractSha256: hash(full12),
   outputs: Object.fromEntries(Object.entries(outputs).map(([name, bytes]) => [name, hash(bytes)])),
 };
