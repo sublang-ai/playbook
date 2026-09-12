@@ -425,6 +425,9 @@ Each state shall name exactly the outcomes in that state's `invoke.input.result`
 The outcome key owns the semantic discriminator, so `guard` shall not appear in `fields`; the `fields` keys shall equal every additional payload field named by that outcome's result description.
 Each field shall have exactly one authority from `presentation`, `semantic`, `effect`, or `runtime`; every linker-declared verbatim payload field and `question` shall be `presentation`, `latestCommit` shall be `effect`, and the payload fields `irNumber` and `irTask` shall be `semantic`, while outcome keys such as `moreTasks` and `finalTask` remain semantic discriminators.
 Each repository disposition shall be exactly `unchanged`, `one-descendant-commit`, or `deferred`; an effect-owned field is valid on `one-descendant-commit` and `unchanged` and never on `deferred`, and `deferred` is valid only on `needsBossReply` with presentation-owned `question` and another outcome in that state declaring `one-descendant-commit`.
+The linker shall derive each disposition from the source-derived operation and the outcome's required repository effect, independently of whether its result description declares an effect-owned payload field.
+A completion that requires committing the result to Git shall declare `one-descendant-commit` even when its outcome is simply `done` with `fields: {}`; its eligible `needsBossReply` arm shall declare `deferred` under the rule above.
+The absence of `latestCommit` or any other effect-owned field shall never justify defaulting that completion to `unchanged`.
 The shared factory shall reject every legacy artifact schema and reject schema-3 missing, extra, unknown, wrongly owned, or inconsistent metadata before the affected player call.
 
 `init` receives the host-owned playbook session identity and ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
