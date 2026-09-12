@@ -227,9 +227,6 @@ export declare const prMachine: import("xstate").StateMachine<PrContext, {
     type: "emptyBossReply";
     params: unknown;
 } | {
-    type: "isCodeSuccess";
-    params: unknown;
-} | {
     type: "authoredCodeFailure";
     params: unknown;
 } | {
@@ -264,6 +261,9 @@ export declare const prMachine: import("xstate").StateMachine<PrContext, {
     params: unknown;
 } | {
     type: "isNotPublished";
+    params: unknown;
+} | {
+    type: "isCodeSuccess";
     params: unknown;
 } | {
     type: "resumesOpenPullRequest";
