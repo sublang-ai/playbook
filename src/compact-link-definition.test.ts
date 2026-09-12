@@ -27,9 +27,12 @@ it('ships the compact recipe with the exact helper and reversibly relocated comp
     }
     const recipe = read('slc/link.md');
     const full = read('slc/references/link-contract.md');
-    // These hashes are the committed helper v2 and full definition at 1e74eb4.
+    // The helper stays at v2; the full contract adds only the canonical mapper correction.
     expect(sha(read('slc/materialize-link.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(rebaseContract(full, true))).toBe('75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043');
+    expect(sha(rebaseContract(full, true))).toBe('55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf');
+    const previousClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion;';
+    const currentClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, additional typed ledger commands for the same atomic completion, one `deferred` binding carrying optional UUID `operationId` plus exact `pendingQuestion` and `playerContinuation`, or literal `unresolved: true`, where `deferred` shall be mutually exclusive with `unresolved`, `logicalOperationId`, and commands;';
+    expect(sha(rebaseContract(full, true).replace(currentClause, previousClause))).toBe('75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043');
     const entryAnchors = anchorsOf(recipe);
     for (const anchor of anchorsOf(full)) expect(entryAnchors.has(anchor), anchor).toBe(true);
     for (const { target } of linksOf(recipe).filter(({ target }: { target: string }) => target.startsWith('references/link-contract.md#'))) {
@@ -58,7 +61,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
   const scratch = mkdtempSync(join(tmpdir(), 'playbook-compact-builder-'));
   const installed = baselinePackage!;
   const builder = join(root, 'scripts/build-link-experiment-12.3.mjs');
-  const run = (source: string, output: string) => execFileSync(process.execPath, [builder, source, output], {
+  const run = (source: string, output: string, mode?: '--full') => execFileSync(process.execPath, [builder, source, output, ...(mode ? [mode] : [])], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
@@ -70,6 +73,13 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('slc/materialize-link.mjs'));
     const proof = readFileSync(join(target, 'experiment-proof.json'), 'utf8');
     const record = JSON.parse(proof);
+    const fullTarget = join(scratch, 'full-candidate');
+    run(installed, fullTarget, '--full');
+    expect(readFileSync(join(fullTarget, 'link.md'), 'utf8')).toBe(rebaseContract(readFileSync(join(target, 'references/link-contract.md'), 'utf8'), true));
+    const fullProof = JSON.parse(readFileSync(join(fullTarget, 'experiment-proof.json'), 'utf8'));
+    for (const [file, digest] of Object.entries(record.outputs)) {
+      if (file !== 'link.md') expect(fullProof.outputs[file], file).toBe(digest);
+    }
     expect(sha(rebaseContract(readFileSync(join(target, 'references/link-contract.md'), 'utf8'), true))).toBe(record.fullContractSha256);
     expect(() => run(installed, target)).toThrow(/Output already exists/);
     expect(readFileSync(join(target, 'experiment-proof.json'), 'utf8')).toBe(proof);

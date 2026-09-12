@@ -12,9 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { compactDefinition, rebaseContract } from './compact-link-definition.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
-const [installedArgument, targetArgument] = process.argv.slice(2);
-if (!installedArgument || !targetArgument || process.argv.length !== 4) {
-  throw new Error('Usage: node scripts/build-link-experiment-12.3.mjs <installed-playbook-package-root> <new-definition-directory>');
+const [installedArgument, targetArgument, mode] = process.argv.slice(2);
+const fullMode = mode === '--full';
+if (!installedArgument || !targetArgument || process.argv.length > 5 || (mode !== undefined && !fullMode)) {
+  throw new Error('Usage: node scripts/build-link-experiment-12.3.mjs <installed-playbook-package-root> <new-definition-directory> [--full]');
 }
 const installed = resolve(installedArgument);
 const target = resolve(targetArgument);
@@ -26,11 +27,11 @@ const baselineHashes = {
   'optimize.md': 'dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66',
 };
 const expected = {
-  full13: '75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043',
-  full12: '20f223c1ff58f2f59f69f250d47aa385fafabfcef63bfb6e2e0080cf5d7cc9dd',
+  full13: '55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf',
+  full12: '683e4fbe489c8e70e03651ae725c1f85d9bdd93e4e4ebcf4bd51eee55173d8ec',
   helper: 'fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0',
   entry: 'a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc',
-  companion: 'f3ae15ae1da1335a16d262171a20f50973af7a7300a2592e5af6d78c65aa292a',
+  companion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
   optimizer: '4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9',
 };
 const verify = (bytes, digest, label) => assert.equal(hash(bytes), digest, `${label} hash mismatch; this fixture requires its exact reviewed inputs`);
@@ -65,9 +66,14 @@ const effectRule = effectLines.join('\n') + '\n';
 const dispositionAnchor = baseline['link.md'].split('\n').filter((line) => line.startsWith('Each repository disposition shall be exactly '));
 assert.equal(dispositionAnchor.length, 1);
 const anchor = dispositionAnchor[0] + '\n';
-const full12 = baseline['link.md'].replace(anchor, anchor + effectRule)
+const completionPrefix = 'For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly ';
+const oldCompletion = baseline['link.md'].split('\n').filter((line) => line.startsWith(completionPrefix));
+const currentCompletion = full13.split('\n').filter((line) => line.startsWith(completionPrefix));
+assert.equal(oldCompletion.length, 1);
+assert.equal(currentCompletion.length, 1);
+const full12 = baseline['link.md'].replace(oldCompletion[0], currentCompletion[0]).replace(anchor, anchor + effectRule)
   .replace('## PlaybookRuntime contract\n', legacyRecipe + '## PlaybookRuntime contract\n');
-assert.equal(full12.replace(legacyRecipe, '').replace(effectRule, ''), baseline['link.md'], 'Only the reviewed recipe and effect sentences may augment the full contract');
+assert.equal(full12.replace(legacyRecipe, '').replace(effectRule, '').replace(currentCompletion[0], oldCompletion[0]), baseline['link.md'], 'Only the reviewed recipe, effect sentences and completion-mapper correction may augment the full contract');
 verify(full12, expected.full12, 'reconstructed complete 12.3 helper contract');
 const entrySource = await readFile(join(repo, 'slc/link.md'), 'utf8');
 const entry = compactDefinition(full12, entrySource.split('## Compiled execution\n')[0]);
@@ -84,7 +90,7 @@ const sidecar = JSON.stringify({
   closures: { link: ['text2gears.md', 'gears2fsm.md', 'optimize.md', 'materialize-link.mjs', 'references/link-contract.md'] },
 }, null, 2) + '\n';
 const outputs = {
-  'link.md': entry,
+  'link.md': fullMode ? full12 : entry,
   'text2gears.md': baseline['text2gears.md'],
   'gears2fsm.md': baseline['gears2fsm.md'],
   'optimize.md': optimizer,
@@ -93,11 +99,12 @@ const outputs = {
   'slc.pin-inputs.json': sidecar,
 };
 const proof = {
-  experiment: 'Playbook 12.3 compact helper recipe; no engine or dependency adoption',
+  experiment: `Playbook 12.3 ${fullMode ? 'full' : 'compact'} helper recipe; no engine or dependency adoption`,
+  mode: fullMode ? 'full' : 'compact',
   installedPackage: installed,
   version: pkg.version,
   baselineHashes,
-  changes: ['unchanged helper v2', 'compact semantic recipe', 'exact full-contract relocation plus existing helper recipe and three source-effect sentences', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'explicit helper and companion link closure'],
+  changes: ['unchanged helper v2', fullMode ? 'complete helper-backed definition' : 'compact semantic recipe', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'explicit helper and companion link closure'],
   fullContractSha256: hash(full12),
   outputs: Object.fromEntries(Object.entries(outputs).map(([name, bytes]) => [name, hash(bytes)])),
 };

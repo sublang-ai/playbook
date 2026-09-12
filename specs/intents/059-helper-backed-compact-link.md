@@ -26,12 +26,12 @@ Build a compact definition candidate for controlled comparison with the unchange
 
 ## Verification
 
-- The 13.1 entry is 14,793 bytes; reversing companion Markdown-link rebasing restores the complete `1e74eb4` definition exactly (SHA-256 `75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043`).
+- The initial 13.1 entry is 14,793 bytes; reversing companion Markdown-link rebasing restores the complete `1e74eb4` definition exactly (SHA-256 `75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043`).
 - The helper remains byte-identical to v2 (SHA-256 `fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0`).
 - The real-CLI integration matrix passes all 16 cases against each of Playbook 13.1 and locked 12.3, including strict emitted TypeScript, minimal script execution, default composition and unsupported-target preservation.
 - All ten existing full-runtime contract checks still read and verify the relocated contract; the compact integrity test and both selected packed-surface/link checks pass.
 - The actual built SLC closure probe verifies unchanged reuse and link-only invalidation after independent helper and companion mutations, with no extra discovered phase.
-- The frozen `/private/tmp/playbook-materializer-compact-reviewed-12.3` entry is 14,793 bytes against the v2 full definition's 158,445 bytes; reversing its companion rebasing restores that exact 12.3 full definition (SHA-256 `20f223c1ff58f2f59f69f250d47aa385fafabfcef63bfb6e2e0080cf5d7cc9dd`).
+- The initial frozen `/private/tmp/playbook-materializer-compact-reviewed-12.3` entry is 14,793 bytes against the v2 full definition's 158,445 bytes; reversing its companion rebasing restores that exact 12.3 full definition (SHA-256 `20f223c1ff58f2f59f69f250d47aa385fafabfcef63bfb6e2e0080cf5d7cc9dd`).
 - That overlay's helper emits the copied real minimal FSM as a 4,584-byte module passing locked TypeScript 6 strict checking; the unchanged source-version phase files and installed 12.3 engine remain the controlled baseline.
 - Reproduce an overlay with `node scripts/compact-link-definition.mjs <full-v2-definition-directory> <new-directory>`; the default recipe is extracted from the checked-in compact entry.
 - Spex 3 lint reports zero errors; repository and packed Markdown links resolve.
@@ -44,3 +44,5 @@ The optional real-CLI reconstruction matrix runs with `PLAYBOOK_MATERIALIZATION_
 The emitted candidate can be checked through actual SLC discovery and reuse with `node scripts/check-slc-definition-closure.mjs <built-slc-root> <new-definition-directory>`.
 
 Independent review corrected the compact recipe's resumption registry to follow Boss-reply suspension rather than interrupt targets; the regression exercises a real FSM with `BOSS_REPLY` routing and no `BOSS_INTERRUPT`, and verifies refusal of an empty registry without replacing the accepted artifact.
+
+Subsequent paired measurements use the builder's full and compact forms with the independently required canonical completion-mapper correction applied identically; prior frozen candidates remain audit records and establish no retained gain.

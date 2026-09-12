@@ -24,5 +24,6 @@ No engine, installed-version adoption, or release changes belong to this experim
 ## Consequences
 
 The measured intervention is reduced mandatory definition context with the same deterministic emitter and installed engine.
+Both paired candidates incorporate independently required normative corrections identically; those corrections are not part of the performance intervention.
 The agent still decides metadata from source semantics; structural preflight cannot prove those decisions correct.
 A fixed-FSM comparison followed by a cold full compilation must demonstrate improvement before retention.
