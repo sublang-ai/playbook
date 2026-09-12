@@ -30,12 +30,14 @@ const baselineHashes = {
   'optimize.md': 'dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66',
 };
 const expected = {
-  full13: '55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf',
-  full12: '683e4fbe489c8e70e03651ae725c1f85d9bdd93e4e4ebcf4bd51eee55173d8ec',
-  baseline12: 'cc81015ddcae5d7c6cb58f9932e9ffd5d765dc6f0489c5a0915f79e4daaec117',
+  full13: 'd6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82',
+  full12: 'b7d7e01ac4c275c9b10f773746dbc8f062c47bd9a2ae3a910432de292eded2b6',
+  baseline12: '60d287dfa19061ef682e36f596879c7c9f4223198ee55b9fa769a361ce99be5c',
   helper: 'fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0',
   entry: 'a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc',
-  companion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
+  companion: '30500e5ed30d1fc2f00d2ffeb65abd724263ca44ebc44046f6d03ba6838dcedf',
+  rejectedFull12: '683e4fbe489c8e70e03651ae725c1f85d9bdd93e4e4ebcf4bd51eee55173d8ec',
+  rejectedCompanion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
   optimizer: '4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9',
   producer: '3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619',
 };
@@ -58,8 +60,14 @@ const full13 = await readFile(join(repo, 'slc/link.md'), 'utf8');
 verify(full13, expected.full13, 'committed complete 13.1 contract');
 const recipeStart = full13.indexOf('## Optional deterministic materialization\n');
 const recipeEnd = full13.indexOf('## PlaybookRuntime contract\n', recipeStart);
-assert(recipeStart >= 0 && recipeEnd > recipeStart, 'Legacy helper recipe must be present');
-const legacyRecipe = full13.slice(recipeStart, recipeEnd);
+assert(recipeStart >= 0 && recipeEnd > recipeStart, 'Optional helper recipe must be present');
+const helperRecipe = full13.slice(recipeStart, recipeEnd);
+const commonGuide = 'At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.\n'
+  + 'Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.\n\n';
+const commonAnchor = 'The adapter shall speak only `PlaybookPorts` to the runtime and shall not leak host types back into it.\n\n';
+assert.equal(full13.split(commonGuide).length, 2, 'Exactly one common host-boundary guide is required');
+assert(full13.includes(commonAnchor + commonGuide), 'The guide belongs to the common introduction');
+assert(!helperRecipe.includes('Captain-host boundary'), 'The optional tool instructions must not duplicate common ownership guidance');
 const prefixes = [
   'The linker shall derive each disposition from ',
   'A completion that requires committing the result to Git ',
@@ -77,21 +85,31 @@ const currentCompletion = full13.split('\n').filter((line) => line.startsWith(co
 assert.equal(oldCompletion.length, 1);
 assert.equal(currentCompletion.length, 1);
 const full12 = baseline['link.md'].replace(oldCompletion[0], currentCompletion[0]).replace(anchor, anchor + effectRule)
-  .replace('## PlaybookRuntime contract\n', legacyRecipe + '## PlaybookRuntime contract\n');
-assert.equal(full12.replace(legacyRecipe, '').replace(effectRule, '').replace(currentCompletion[0], oldCompletion[0]), baseline['link.md'], 'Only the reviewed recipe, effect sentences and completion-mapper correction may augment the full contract');
+  .replace(commonAnchor, commonAnchor + commonGuide)
+  .replace('## PlaybookRuntime contract\n', helperRecipe + '## PlaybookRuntime contract\n');
+assert.equal(full12.replace(helperRecipe, '').replace(commonGuide, '').replace(effectRule, '').replace(currentCompletion[0], oldCompletion[0]), baseline['link.md'], 'Only the reviewed helper recipe, common ownership guide, effect sentences and completion-mapper correction may augment the full contract');
 verify(full12, expected.full12, 'reconstructed complete 12.3 helper contract');
-const baselineDefinition = full12.replace(legacyRecipe, '');
+const baselineDefinition = full12.replace(helperRecipe, '');
 verify(baselineDefinition, expected.baseline12, 'complete 12.3 contract without helper instructions');
-assert.equal(baselineDefinition.replace(effectRule, '').replace(currentCompletion[0], oldCompletion[0]), baseline['link.md'], 'Only the reviewed correctness corrections may alter the control entry');
+assert.equal(baselineDefinition.replace(commonGuide, '').replace(effectRule, '').replace(currentCompletion[0], oldCompletion[0]), baseline['link.md'], 'Only the common ownership guide and reviewed correctness corrections may alter the control entry');
 for (const token of ['materialize-link.mjs', '## Optional deterministic materialization', 'sublang.playbook.link.v1', 'flat-defaults', 'references/link-contract.md']) {
   assert(!baselineDefinition.includes(token), `Control entry must not cite helper or compact instructions: ${token}`);
 }
 const entrySource = await readFile(join(repo, 'scripts/experiments/rejected-compact-link.md'), 'utf8');
-const entry = compactDefinition(full12, entrySource.split('## Compiled execution\n')[0]);
-const companion = rebaseContract(full12);
-assert.equal(rebaseContract(companion, true), full12, 'Companion relocation must be reversible');
+// Preserve the rejected compact experiment's exact earlier full contract.
+// Current full/baseline comparisons share the common guide instead.
+const rejectedHelperGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'
+  + 'manifest and live authority-envelope validation at its construction boundary.\n'
+  + 'Do not audit the bare shared factory as if it owned that Captain-host boundary\n'
+  + 'or synthesize host capabilities in the emitted artifact.\n';
+const rejectedFull12 = full12.replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', rejectedHelperGuide);
+verify(rejectedFull12, expected.rejectedFull12, 'unchanged rejected compact full contract');
+const entry = compactDefinition(rejectedFull12, entrySource.split('## Compiled execution\n')[0]);
+const companionContract = compactMode ? rejectedFull12 : full12;
+const companion = rebaseContract(companionContract);
+assert.equal(rebaseContract(companion, true), companionContract, 'Companion relocation must be reversible');
 verify(entry, expected.entry, 'compact entry');
-verify(companion, expected.companion, '12.3 companion');
+verify(companion, compactMode ? expected.rejectedCompanion : expected.companion, '12.3 companion');
 const helper = await readFile(join(repo, 'slc/materialize-link.mjs'), 'utf8');
 verify(helper, expected.helper, 'unchanged v2 helper');
 const optimizer = await readFile(join(repo, 'slc/optimize.md'), 'utf8');
@@ -119,10 +137,10 @@ const proof = {
   installedPackage: installed,
   version: pkg.version,
   baselineHashes,
-  changes: ['unchanged helper v2', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'compact semantic recipe', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
-  fullContractSha256: hash(full12),
+  changes: ['unchanged helper v2', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'rejected compact semantic recipe with its unchanged earlier full contract', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', compactMode ? 'original helper-local host-boundary guidance preserved for rejected experiment reproduction' : 'identical common host-boundary guidance outside the helper recipe', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
+  fullContractSha256: hash(companionContract),
   baselineContractSha256: hash(baselineDefinition),
-  baselineDelta: 'Only the optional deterministic materialization section differs from full; other declared semantic inputs match',
+  baselineDelta: compactMode ? 'Rejected experiment reproduction; not a current baseline/full comparison' : 'Only the optional deterministic materialization section differs from full; common host-boundary guidance and all other declared semantic inputs match',
   outputs: Object.fromEntries(Object.entries(outputs).map(([name, bytes]) => [name, hash(bytes)])),
 };
 // All input/version/content checks precede any output write. A new sibling

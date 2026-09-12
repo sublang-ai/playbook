@@ -20,7 +20,8 @@ Provide a bounded optional materializer for a controlled compilation-performance
 ## Tasks
 
 1. [x] Implement and verify the bounded helper and package surface with no engine or release change.
-2. Record the measurement-based retention or rejection decision.
+2. [x] Move existing host-boundary guidance into the common full definition and reproduce a fresh baseline/helper pair with exact instruction-only differences.
+3. Record the measurement-based retention or rejection decision.
 
 ## Verification
 
@@ -29,4 +30,7 @@ Provide a bounded optional materializer for a controlled compilation-performance
 - `scripts/check-slc-definition-closure.mjs` against the current built SLC runs its real source, FSM, and link gates: the unchanged second run performs no phase calls, and a helper-only content mutation reruns only `link.md`.
 - `/private/tmp/playbook-materializer-overlay-12.3-v2` preserves the installed 12.3 phase definitions and adds only the optional helper recipe, three source-effect disposition sentences, helper, and sidecar; the runtime engine remains the exact installed 12.3 package.
 - A copied real minimal FSM produces a 4,584-byte module that passes the locked SLC TypeScript 6 compiler and current prompt-conformance checks; this is correctness evidence, not a measured compilation-speed gain.
-- Live fixed-FSM and full-cold measurements remain pending; the experiment is not retained or released.
+- The common-guide comparison is reproduced with `node scripts/build-link-experiment-12.3.mjs <installed-playbook-12.3-root> <new-directory> --baseline` and the same command with `--full`; only the optional helper section differs between their declared semantic inputs, with identical common host-boundary guidance and unchanged helper bytes.
+- The exact-version builder matrix and full-contract suite pass 12 tests, including inverse reconstruction to the installed source, baseline/full instruction parity, unchanged rejected compact reproduction, and refusal of changed baselines or existing outputs.
+- Fresh outputs are `/private/tmp/playbook-materializer-baseline-common-guide-12.3` and `/private/tmp/playbook-materializer-full-common-guide-12.3`; the previous frozen matched pair still agrees with all its recorded output hashes.
+- Controlled materializer retention evidence remains pending; the experiment is not retained or released.

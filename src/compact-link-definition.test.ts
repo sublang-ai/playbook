@@ -14,6 +14,8 @@ import { rebaseContract } from '../scripts/compact-link-definition.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = (file: string) => readFileSync(join(root, file), 'utf8');
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+const commonGuide = 'At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.\n'
+  + 'Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.\n\n';
 
 it('ships the full contract and keeps the rejected compact recipe outside the package', () => {
   const cache = mkdtempSync(join(tmpdir(), 'playbook-compact-pack-'));
@@ -32,12 +34,18 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     expect(full).toContain('## Optional deterministic materialization');
     expect(full).not.toContain('## Supported recipe');
     expect(sha(recipe)).toBe('a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc');
-    // The helper stays at v2; the full contract adds only the canonical mapper correction.
+    // The helper stays at v2; ownership guidance moves without changing its meaning.
     expect(sha(read('slc/materialize-link.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf');
+    expect(sha(full)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
+    const previousGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'
+      + 'manifest and live authority-envelope validation at its construction boundary.\n'
+      + 'Do not audit the bare shared factory as if it owned that Captain-host boundary\n'
+      + 'or synthesize host capabilities in the emitted artifact.\n';
+    const previousFull = full.replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', previousGuide);
+    expect(sha(previousFull)).toBe('55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf');
     const previousClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion;';
     const currentClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, additional typed ledger commands for the same atomic completion, one `deferred` binding carrying optional UUID `operationId` plus exact `pendingQuestion` and `playerContinuation`, or literal `unresolved: true`, where `deferred` shall be mutually exclusive with `unresolved`, `logicalOperationId`, and commands;';
-    expect(sha(full.replace(currentClause, previousClause))).toBe('75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043');
+    expect(sha(previousFull.replace(currentClause, previousClause))).toBe('75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043');
     const entryAnchors = anchorsOf(recipe);
     for (const anchor of anchorsOf(full)) expect(entryAnchors.has(anchor), anchor).toBe(true);
     for (const { target } of linksOf(recipe).filter(({ target }: { target: string }) => target.startsWith('references/link-contract.md#'))) {
@@ -81,13 +89,14 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     const record = JSON.parse(proof);
     const fullTarget = join(scratch, 'full-candidate');
     run(installed, fullTarget, '--full');
-    expect(readFileSync(join(fullTarget, 'link.md'), 'utf8')).toBe(rebaseContract(readFileSync(join(target, 'references/link-contract.md'), 'utf8'), true));
+    expect(readFileSync(join(fullTarget, 'link.md'), 'utf8')).toBe(rebaseContract(readFileSync(join(fullTarget, 'references/link-contract.md'), 'utf8'), true));
+    expect(sha(readFileSync(join(target, 'references/link-contract.md'), 'utf8'))).toBe('05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021');
     const fullProof = JSON.parse(readFileSync(join(fullTarget, 'experiment-proof.json'), 'utf8'));
     const defaultTarget = join(scratch, 'default-candidate');
     run(installed, defaultTarget);
     expect(readFileSync(join(defaultTarget, 'link.md'), 'utf8')).toBe(readFileSync(join(fullTarget, 'link.md'), 'utf8'));
     for (const [file, digest] of Object.entries(record.outputs)) {
-      if (file !== 'link.md') expect(fullProof.outputs[file], file).toBe(digest);
+      if (!['link.md', 'references/link-contract.md'].includes(file)) expect(fullProof.outputs[file], file).toBe(digest);
     }
     const baselineTarget = join(scratch, 'baseline-candidate');
     run(installed, baselineTarget, '--baseline');
@@ -96,6 +105,11 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     const helperStart = fullEntry.indexOf('## Optional deterministic materialization\n');
     const helperEnd = fullEntry.indexOf('## PlaybookRuntime contract\n', helperStart);
     expect(controlEntry).toBe(fullEntry.slice(0, helperStart) + fullEntry.slice(helperEnd));
+    for (const entry of [controlEntry, fullEntry]) {
+      expect(entry.split(commonGuide)).toHaveLength(2);
+      expect(entry.indexOf(commonGuide)).toBeLessThan(entry.indexOf('## Formats\n'));
+    }
+    expect(fullEntry.slice(helperStart, helperEnd)).not.toContain('Captain-host boundary');
     for (const token of ['materialize-link.mjs', 'Optional deterministic materialization', 'sublang.playbook.link.v1', 'flat-defaults', 'references/link-contract.md']) expect(controlEntry).not.toContain(token);
     const baselineProof = JSON.parse(readFileSync(join(baselineTarget, 'experiment-proof.json'), 'utf8'));
     expect(baselineProof.mode).toBe('baseline');

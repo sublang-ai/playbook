@@ -24,6 +24,9 @@ Hosts are out of scope for this phase.
 Each host has an adapter that loads a `PlaybookRuntime` module and supplies the host's primitives as `PlaybookPorts`.
 The adapter shall speak only `PlaybookPorts` to the runtime and shall not leak host types back into it.
 
+At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.
+Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.
+
 The link compiler shall not modify the FSM artifact and shall not re-derive Captain prompts, result keys, or guard semantics — those are fixed by the FSM.
 
 ## Formats
@@ -99,10 +102,7 @@ result semantics by executing an invocation against invented context.
 
 The helper resolves the installed shared engine from the source and target
 locations and refuses differing engine resolutions.
-Its factory preflight checks linked metadata; the Captain host owns registry
-manifest and live authority-envelope validation at its construction boundary.
-Do not audit the bare shared factory as if it owned that Captain-host boundary
-or synthesize host capabilities in the emitted artifact.
+Its factory preflight checks linked metadata.
 It accepts `.fsm.js` on supported Node versions; `.fsm.ts` requires native
 type stripping (Node 23.6+, or Node 22.18+).
 On success it atomically writes only the declared target after factory

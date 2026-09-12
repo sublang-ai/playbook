@@ -30,3 +30,5 @@ A fixed-FSM comparison followed by a cold full compilation must establish improv
 
 An isolated materializer comparison holds compiler behavior, FSM input, full runtime contract and independent correctness fixes constant while removing only optional helper instructions from the control entry.
 The comparison may retain identical unused helper and companion files in the control's conservative semantic-input closure, provided the control definition neither cites nor instructs use of that tool.
+Both entries place the existing construction-boundary guidance in their common introduction: the shared factory checks linked metadata and construction shape [[playbook-runtime-50](../packages/playbook-runtime.md#playbook-runtime-50)], while the Captain host validates the registry manifest and its live authority envelope before runtime construction [[playbook-captain-5](../packages/playbook-captain.md#playbook-captain-5)].
+This common placement prevents the comparison from conflating mechanical emission with guidance against auditing host-owned validation at the bare factory; it changes no validation responsibility or runtime behavior.
