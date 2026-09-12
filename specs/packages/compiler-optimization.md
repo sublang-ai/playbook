@@ -22,8 +22,10 @@ The shipped optimization definition shall distinguish its repository-setup examp
 | The current directory must be inside a Git working tree, allowing an ancestor repository. | Preserve an already-containing working tree; initialize the current directory when none contains it. |
 | The current directory must be the root of its own Git repository, initializing there when `.git` is absent. | Initialize the current directory even when an ancestor contains it, accept an existing root or linked-worktree root, and fail when a present invalid `.git` cannot prove the required root. |
 
+The examples shall use the target GEARS acting syntax: `Captain shall run:`, a blockquote on every script line, and exactly the zero-exit and nonzero-exit `Results:` bullets.
+
 ## Verification
 
 ### compiler-optimization-3
 
-When the integration suite extracts the two example scripts from the shipped definition and executes them with real Git in plain directories, existing roots, subdirectories of ancestor repositories, linked-worktree roots, and an invalid `.git` fixture, it shall verify the respective predicates and resource locations [[compiler-optimization-2](#compiler-optimization-2)] while preserving the existing containing repository and valid root identities [[compiler-optimization-1](#compiler-optimization-1)].
+When the integration suite extracts the two example scripts from their GEARS acting syntax in the shipped definition and executes them with real Git in plain directories, existing roots, subdirectories of ancestor repositories, linked-worktree roots, and an invalid `.git` fixture, it shall verify the respective predicates, required blockquotes and result forms, and resource locations [[compiler-optimization-2](#compiler-optimization-2)] while preserving the existing containing repository and valid root identities [[compiler-optimization-1](#compiler-optimization-1)].

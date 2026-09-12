@@ -26,3 +26,4 @@ Correct the optimizer's repository example so an explicit current-directory root
 - The shell matrix executes scripts extracted from `slc/optimize.md`; it performs no model call and records no compilation-speed claim.
 - Six integration tests pass, including nested-directory own-root initialization and linked-worktree preservation; Spex 3.0.0 reports no errors and all 2,664 repository links resolve.
 - The pre-change definition matches installed Playbook 12.3.0 byte for byte, allowing the corrected definition alone to be overlaid for a same-engine compiler measurement.
+- The subsequent `compile-AoStYE` run preserved the predicate but copied a fenced example into the GEARS acting body; examples now use actual blockquotes and result bullets, and extraction requires that syntax before executing the same six Git cases.

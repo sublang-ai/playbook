@@ -17,7 +17,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const definition = readFileSync(new URL('../slc/optimize.md', import.meta.url), 'utf8');
-const scripts = [...definition.matchAll(/^```sh\n([\s\S]*?)^```/gm)].map((match) => match[1]);
+const scripts = [...definition.matchAll(/^Captain shall run:\n\n((?:>[^\n]*\n)+)\nResults:\n\n- `ok`: The command exits zero\.\n- `failed`: The command exits nonzero\./gm)]
+  .map((match) => match[1].replace(/^> ?/gm, ''));
 // These are the actual published examples, not separately authored substitutes.
 expect(scripts).toHaveLength(2);
 const [insideWorkingTree, ownRepositoryRoot] = scripts;
