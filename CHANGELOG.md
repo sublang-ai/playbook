@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- DEV plans `code via pull request` or `decide then code via pull request` when a request names a GitHub issue or asks for pull-request delivery, calling `branch` before and `pr` after its existing path and consuming branch, revision, commit and pull-request identities only from canonical child results. Plain requests compile to the same prompts, edges and child inputs as before.
+
 ## [13.1.0] - 2026-09-08
 
 ### Added

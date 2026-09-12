@@ -23,6 +23,7 @@ function transitions(value) {
 const EMPTY_CONTEXT = {
     runResults: '',
     discussionExchanges: [],
+    deliveryViaPullRequest: false,
 };
 export function enumeratePlayerStates(machine) {
     const states = rawConfig(machine).states ?? {};

@@ -15,13 +15,28 @@ export type JsonValue =
 
 export type DevStateId =
   | 'planAnalysis'
+  | 'createBranch'
   | 'callCode'
   | 'callDecide'
-  | 'callCodeAfterDecide';
+  | 'callCodeAfterDecide'
+  | 'openPullRequest';
 
-export type DevSourceItem = 'DEV-1' | 'DEV-2' | 'DEV-3' | 'DEV-4';
+export type DevSourceItem =
+  | 'DEV-1'
+  | 'DEV-2'
+  | 'DEV-3'
+  | 'DEV-4'
+  | 'DEV-5'
+  | 'DEV-6';
 
-export type DevChildPlaybookId = 'code' | 'decide';
+export type DevChildPlaybookId = 'code' | 'decide' | 'branch' | 'pr';
+
+/**
+ * DR-050: the development path a pull-request planning outcome selected. It
+ * routes the `branch` success into `callCode` or `callDecide`, so the plain
+ * `code` and `decide then code` paths keep their items, prompts, and edges.
+ */
+export type DevPullRequestPath = 'code' | 'decide-then-code';
 
 export type PendingBossQuestion = {
   readonly questionId: 'planAnalysis';
@@ -53,11 +68,21 @@ export type PlayerOutput =
   | { readonly guard: 'discussionComplete' }
   | { readonly guard: 'code'; readonly planningResult: string }
   | { readonly guard: 'decideThenCode'; readonly planningResult: string }
+  | { readonly guard: 'codeViaPullRequest'; readonly planningResult: string }
+  | {
+      readonly guard: 'decideThenCodeViaPullRequest';
+      readonly planningResult: string;
+    }
   | { readonly guard: 'needsBossReply'; readonly question: string };
 
 export type PlaybookInput = {
-  readonly stateId: 'callCode' | 'callDecide' | 'callCodeAfterDecide';
-  readonly sourceItem: 'DEV-2' | 'DEV-3' | 'DEV-4';
+  readonly stateId:
+    | 'createBranch'
+    | 'callCode'
+    | 'callDecide'
+    | 'callCodeAfterDecide'
+    | 'openPullRequest';
+  readonly sourceItem: 'DEV-2' | 'DEV-3' | 'DEV-4' | 'DEV-5' | 'DEV-6';
   readonly playbookId: DevChildPlaybookId;
   readonly text: string;
 };
@@ -73,6 +98,29 @@ export type DecideSuccessOutput = {
   readonly decideCommit: string;
   readonly evaluatedRevision: string;
   readonly noUnsettledFindings: true;
+};
+
+/**
+ * The fields DEV consumes from `branch`'s canonical structured terminal
+ * output before continuing a pull-request path: the exact branch name, the
+ * exact base revision, and the issue summary. Additional members belong to
+ * BRANCH's own contract and do not disprove success; a missing member is an
+ * insufficient result, never an empty default.
+ */
+export type BranchSuccessOutput = {
+  readonly branch: string;
+  readonly baseRevision: string;
+  readonly issueSummary: string;
+};
+
+/**
+ * The fields DEV consumes from `code`'s canonical structured terminal output
+ * before starting the dependent `pr` call: the exact last `code`-owned commit
+ * and the exact final evaluated repository revision.
+ */
+export type CodeSuccessOutput = {
+  readonly lastCodeCommit: string;
+  readonly finalEvaluatedRevision: string;
 };
 
 export type CompactError = {
@@ -99,7 +147,8 @@ export type DevPlaybookOutput =
     }
   | {
       readonly status: 'complete';
-      readonly childPlaybookId: 'code';
+      /** The final child of the selected path: `pr` on a pull-request path. */
+      readonly childPlaybookId: 'code' | 'pr';
       /** The successful result of DEV's final child call, when it has one. */
       readonly childOutput?: JsonValue;
     }
@@ -120,6 +169,14 @@ export type DevContext = {
   readonly planningResult?: string;
   readonly decideCommit?: string;
   readonly evaluatedRevision?: string;
+  /** DR-050: whether the accepted planning outcome selected a pull-request path. */
+  readonly deliveryViaPullRequest: boolean;
+  readonly pullRequestPath?: DevPullRequestPath;
+  readonly branch?: string;
+  readonly baseRevision?: string;
+  readonly issueSummary?: string;
+  readonly lastCodeCommit?: string;
+  readonly finalEvaluatedRevision?: string;
   readonly completion?: 'discussion-complete' | 'complete' | 'child-failed';
   readonly childOutput?: JsonValue;
   readonly childFailure?: CompletedChildResult;
@@ -148,6 +205,7 @@ const PLAN_ANALYSIS_PROMPT = [
   '- If the discussion has concluded after a Boss reply and no repository work should follow, choose `discussion complete`.',
   '- If implementation can proceed under the existing decisions, choose `code`.',
   '- If implementation first requires a new or amended durable decision that the existing specs do not settle, choose `decide then code`.',
+  '- If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.',
   '',
   'A question or exploratory discussion is not by itself authorization to create a durable decision or implement changes.',
   'Do not choose `decide then code` merely because the work is large.',
@@ -161,6 +219,10 @@ const PLAN_ANALYSIS_RESULTS = {
     'Analyst determined implementation can proceed under the existing decisions. Output shall include `planningResult: <verbatim final text>`.',
   decideThenCode:
     'Analyst determined implementation first requires a new or amended durable decision that the existing specs do not settle. Output shall include `planningResult: <verbatim final text>`.',
+  codeViaPullRequest:
+    'Analyst determined implementation can proceed under the existing decisions and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.',
+  decideThenCodeViaPullRequest:
+    'Analyst determined implementation first requires a new or amended durable decision that the existing specs do not settle and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.',
   needsBossReply:
     "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
 } as const;
@@ -169,11 +231,15 @@ const STATE_DESCRIPTIONS = {
   ready: 'Waiting for a development request.',
   planAnalysis:
     'Analyst is analyzing the development request to choose the smallest sound next step.',
+  createBranch:
+    'The BRANCH playbook is preparing the pull-request branch for the planned development path.',
   callCode: 'The CODE playbook is implementing the planned development path.',
   callDecide:
     'The DECIDE playbook is settling the durable decision the planned path requires.',
   callCodeAfterDecide:
     'The CODE playbook is implementing the decided development path.',
+  openPullRequest:
+    'The PR playbook is delivering the implemented branch through a pull request.',
   awaitBossReply: 'Waiting for Boss to answer Analyst.',
   failed:
     'The development planning workflow failed and is waiting for a new development request.',
@@ -253,6 +319,26 @@ function isDecideThenCode({ event }: { event: unknown }): boolean {
   );
 }
 
+// DR-050: the two pull-request outcomes select the same development paths
+// as `code` and `decide then code`, entered through `branch` first.
+function isCodeViaPullRequest({ event }: { event: unknown }): boolean {
+  return (
+    outputGuard(event, 'codeViaPullRequest') &&
+    outputString(event, 'planningResult') !== undefined
+  );
+}
+
+function isDecideThenCodeViaPullRequest({
+  event,
+}: {
+  event: unknown;
+}): boolean {
+  return (
+    outputGuard(event, 'decideThenCodeViaPullRequest') &&
+    outputString(event, 'planningResult') !== undefined
+  );
+}
+
 // Discussion complete is available only after a Boss reply: the round that
 // produced it must itself have been resumed with Boss's answer.
 function isDiscussionComplete({
@@ -292,6 +378,45 @@ function isDecideSuccess({ event }: { event: unknown }): boolean {
   return isDecideSuccessValue(childOutputOf(event));
 }
 
+// BRANCH's canonical successful terminal output carries the exact name of
+// the new checked-out branch, the exact receipt-owned base revision, and the
+// issue summary; DEV consumes exactly those three by name and never defaults
+// a missing one.
+function isBranchSuccessValue(value: unknown): value is BranchSuccessOutput {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.branch) &&
+    isNonEmptyString(value.baseRevision) &&
+    isNonEmptyString(value.issueSummary)
+  );
+}
+
+function isBranchSuccessForCode({
+  context,
+  event,
+}: {
+  context: DevContext;
+  event: unknown;
+}): boolean {
+  return (
+    context.pullRequestPath === 'code' &&
+    isBranchSuccessValue(childOutputOf(event))
+  );
+}
+
+function isBranchSuccessForDecide({
+  context,
+  event,
+}: {
+  context: DevContext;
+  event: unknown;
+}): boolean {
+  return (
+    context.pullRequestPath === 'decide-then-code' &&
+    isBranchSuccessValue(childOutputOf(event))
+  );
+}
+
 // CODE's canonical successful terminal output discriminates completion with
 // `status: 'complete'`, carries the exact last CODE-owned commit, and
 // affirms that every phase's review passed.
@@ -304,8 +429,44 @@ function isCodeSuccessValue(value: unknown): boolean {
   );
 }
 
-function isCodeSuccess({ event }: { event: unknown }): boolean {
-  return isCodeSuccessValue(childOutputOf(event));
+// A plain path completes DEV on that proof alone, exactly as before DR-050.
+function isPlainCodeSuccess({
+  context,
+  event,
+}: {
+  context: DevContext;
+  event: unknown;
+}): boolean {
+  return (
+    context.deliveryViaPullRequest !== true &&
+    isCodeSuccessValue(childOutputOf(event))
+  );
+}
+
+// A pull-request path additionally consumes the exact final evaluated
+// repository revision for the `pr` call, so a CODE result lacking it does not
+// prove the success that path requires.
+function isCodeSuccessValueForPullRequest(
+  value: unknown,
+): value is CodeSuccessOutput & Record<string, unknown> {
+  return (
+    isCodeSuccessValue(value) &&
+    isRecord(value) &&
+    isNonEmptyString(value.finalEvaluatedRevision)
+  );
+}
+
+function isCodeSuccessViaPullRequest({
+  context,
+  event,
+}: {
+  context: DevContext;
+  event: unknown;
+}): boolean {
+  return (
+    context.deliveryViaPullRequest === true &&
+    isCodeSuccessValueForPullRequest(childOutputOf(event))
+  );
 }
 
 function isStateValue(value: unknown, ancestors = new Set<object>()): boolean {
@@ -626,6 +787,38 @@ function codeAfterDecideCallText(context: DevContext): string {
   ]);
 }
 
+function branchCallText(context: DevContext): string {
+  return quotedRelay(planningRelayValues(context));
+}
+
+// DEV-6: every placeholder is substituted from typed context that only a
+// child's canonical structured result populated — never from player prose.
+function pullRequestCallText(context: DevContext): string {
+  return quotedRelay([
+    ['Original request', context.developmentRequest ?? ''],
+    ['Issue summary', context.issueSummary ?? ''],
+    ['Branch', context.branch ?? ''],
+    ['Base revision', context.baseRevision ?? ''],
+    ['CODE commit', context.lastCodeCommit ?? ''],
+    ['Evaluated revision', context.finalEvaluatedRevision ?? ''],
+  ]);
+}
+
+function acceptedPlanningPath(
+  context: DevContext,
+  event: unknown,
+  pullRequestPath?: DevPullRequestPath,
+) {
+  return {
+    planningResult: outputString(event, 'planningResult'),
+    discussionExchanges: archivedExchanges(context),
+    deliveryViaPullRequest: pullRequestPath !== undefined,
+    pullRequestPath,
+    pendingBossQuestion: undefined,
+    bossReply: undefined,
+  };
+}
+
 const machineSetup = setup({
   types: {} as {
     context: DevContext;
@@ -645,11 +838,18 @@ const machineSetup = setup({
     isDiscussionComplete,
     isCodePath,
     isDecideThenCode,
+    isCodeViaPullRequest,
+    isDecideThenCodeViaPullRequest,
     needsBossReply,
-    isCodeSuccess,
+    isBranchSuccessForCode,
+    isBranchSuccessForDecide,
+    isCodeSuccessViaPullRequest,
+    isPlainCodeSuccess,
     isDecideSuccess,
+    authoredBranchFailure: authoredChildFailureGuard('branch'),
     authoredCodeFailure: authoredChildFailureGuard('code'),
     authoredDecideFailure: authoredChildFailureGuard('decide'),
+    authoredPrFailure: authoredChildFailureGuard('pr'),
     emptyBossReply: ({ event }) =>
       event.type === 'BOSS_REPLY' && event.answer.trim().length === 0,
     resumesPlanAnalysis: ({ context, event }) =>
@@ -676,6 +876,13 @@ const machineSetup = setup({
         planningResult: undefined,
         decideCommit: undefined,
         evaluatedRevision: undefined,
+        deliveryViaPullRequest: false,
+        pullRequestPath: undefined,
+        branch: undefined,
+        baseRevision: undefined,
+        issueSummary: undefined,
+        lastCodeCommit: undefined,
+        finalEvaluatedRevision: undefined,
         completion: undefined,
         childOutput: undefined,
         childFailure: undefined,
@@ -690,18 +897,18 @@ const machineSetup = setup({
       pendingBossQuestion: undefined,
       bossReply: undefined,
     })),
-    rememberCodePath: assign(({ context, event }) => ({
-      planningResult: outputString(event, 'planningResult'),
-      discussionExchanges: archivedExchanges(context),
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
-    })),
-    rememberDecidePath: assign(({ context, event }) => ({
-      planningResult: outputString(event, 'planningResult'),
-      discussionExchanges: archivedExchanges(context),
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
-    })),
+    rememberCodePath: assign(({ context, event }) =>
+      acceptedPlanningPath(context, event),
+    ),
+    rememberDecidePath: assign(({ context, event }) =>
+      acceptedPlanningPath(context, event),
+    ),
+    rememberCodeViaPullRequestPath: assign(({ context, event }) =>
+      acceptedPlanningPath(context, event, 'code'),
+    ),
+    rememberDecideThenCodeViaPullRequestPath: assign(({ context, event }) =>
+      acceptedPlanningPath(context, event, 'decide-then-code'),
+    ),
     rememberPendingQuestion: assign(({ context, event }) => {
       const question = outputString(event, 'question');
       if (question === undefined || !outputGuard(event, 'needsBossReply')) {
@@ -727,12 +934,29 @@ const machineSetup = setup({
       pendingBossQuestion: undefined,
       bossReply: undefined,
     }),
+    rememberBranchResult: assign(({ event }) => {
+      const output = childOutputOf(event);
+      if (!isBranchSuccessValue(output)) return {};
+      return {
+        branch: output.branch,
+        baseRevision: output.baseRevision,
+        issueSummary: output.issueSummary,
+      };
+    }),
     rememberDecideResult: assign(({ event }) => {
       const output = childOutputOf(event);
       if (!isDecideSuccessValue(output)) return {};
       return {
         decideCommit: output.decideCommit,
         evaluatedRevision: output.evaluatedRevision,
+      };
+    }),
+    rememberCodeResult: assign(({ event }) => {
+      const output = childOutputOf(event);
+      if (!isCodeSuccessValueForPullRequest(output)) return {};
+      return {
+        lastCodeCommit: output.lastCodeCommit,
+        finalEvaluatedRevision: output.finalEvaluatedRevision,
       };
     }),
     completeWithChildSuccess: assign(({ event }) => {
@@ -742,6 +966,10 @@ const machineSetup = setup({
         ...(output === undefined ? {} : { childOutput: output as JsonValue }),
       };
     }),
+    completeWithInsufficientBranchResult: assign(({ event }) => ({
+      completion: 'child-failed' as const,
+      childFailure: insufficientChildResult(event, 'branch'),
+    })),
     completeWithInsufficientCodeResult: assign(({ event }) => ({
       completion: 'child-failed' as const,
       childFailure: insufficientChildResult(event, 'code'),
@@ -750,6 +978,10 @@ const machineSetup = setup({
       completion: 'child-failed' as const,
       childFailure: insufficientChildResult(event, 'decide'),
     })),
+    completeWithBranchFailure: assign(({ event }) => ({
+      completion: 'child-failed' as const,
+      childFailure: relayedChildFailure(event, 'branch'),
+    })),
     completeWithCodeFailure: assign(({ event }) => ({
       completion: 'child-failed' as const,
       childFailure: relayedChildFailure(event, 'code'),
@@ -757,6 +989,10 @@ const machineSetup = setup({
     completeWithDecideFailure: assign(({ event }) => ({
       completion: 'child-failed' as const,
       childFailure: relayedChildFailure(event, 'decide'),
+    })),
+    completeWithPrFailure: assign(({ event }) => ({
+      completion: 'child-failed' as const,
+      childFailure: relayedChildFailure(event, 'pr'),
     })),
     rememberActorError: assign(({ event }) => ({
       lastError: (event as unknown as { readonly error?: unknown }).error,
@@ -774,6 +1010,7 @@ export const devMachine = machineSetup.createMachine({
   context: ({ input }) => ({
     runResults: typeof input.runResults === 'string' ? input.runResults : '',
     discussionExchanges: [],
+    deliveryViaPullRequest: false,
   }),
   output: ({ context }): DevPlaybookOutput => {
     if (context.completion === 'discussion-complete') {
@@ -782,7 +1019,9 @@ export const devMachine = machineSetup.createMachine({
     if (context.completion === 'complete') {
       return {
         status: 'complete',
-        childPlaybookId: 'code',
+        // `done` is entered by `pr` on a pull-request path and by `code` on a
+        // plain path; no other arm completes the workflow.
+        childPlaybookId: context.deliveryViaPullRequest ? 'pr' : 'code',
         ...(context.childOutput === undefined
           ? {}
           : { childOutput: context.childOutput }),
@@ -878,6 +1117,36 @@ export const devMachine = machineSetup.createMachine({
             ],
           },
           {
+            guard: 'isCodeViaPullRequest',
+            target: 'createBranch',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'planAnalysis',
+                  target: 'createBranch',
+                  acceptedOutcome: 'codeViaPullRequest',
+                },
+              },
+              'rememberCodeViaPullRequestPath',
+            ],
+          },
+          {
+            guard: 'isDecideThenCodeViaPullRequest',
+            target: 'createBranch',
+            actions: [
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'planAnalysis',
+                  target: 'createBranch',
+                  acceptedOutcome: 'decideThenCodeViaPullRequest',
+                },
+              },
+              'rememberDecideThenCodeViaPullRequestPath',
+            ],
+          },
+          {
             guard: 'needsBossReply',
             target: 'awaitBossReply',
             actions: [
@@ -900,6 +1169,45 @@ export const devMachine = machineSetup.createMachine({
         onError: { target: 'failed', actions: 'rememberActorError' },
       },
     },
+    createBranch: {
+      id: 'createBranch',
+      description: STATE_DESCRIPTIONS.createBranch,
+      meta: playbookMeta('createBranch'),
+      tags: ['playbook.suspended'],
+      invoke: {
+        src: 'playbook',
+        input: ({ context }): PlaybookInput => ({
+          stateId: 'createBranch',
+          sourceItem: 'DEV-5',
+          playbookId: 'branch',
+          text: branchCallText(context),
+        }),
+        onDone: [
+          {
+            guard: 'isBranchSuccessForCode',
+            target: 'callCode',
+            actions: 'rememberBranchResult',
+          },
+          {
+            guard: 'isBranchSuccessForDecide',
+            target: 'callDecide',
+            actions: 'rememberBranchResult',
+          },
+          {
+            target: 'reportedChildFailure',
+            actions: 'completeWithInsufficientBranchResult',
+          },
+        ],
+        onError: [
+          {
+            guard: 'authoredBranchFailure',
+            target: 'reportedChildFailure',
+            actions: 'completeWithBranchFailure',
+          },
+          { target: 'failed', actions: 'rememberActorError' },
+        ],
+      },
+    },
     callCode: {
       id: 'callCode',
       description: STATE_DESCRIPTIONS.callCode,
@@ -915,7 +1223,12 @@ export const devMachine = machineSetup.createMachine({
         }),
         onDone: [
           {
-            guard: 'isCodeSuccess',
+            guard: 'isCodeSuccessViaPullRequest',
+            target: 'openPullRequest',
+            actions: 'rememberCodeResult',
+          },
+          {
+            guard: 'isPlainCodeSuccess',
             target: 'done',
             actions: 'completeWithChildSuccess',
           },
@@ -983,7 +1296,12 @@ export const devMachine = machineSetup.createMachine({
         }),
         onDone: [
           {
-            guard: 'isCodeSuccess',
+            guard: 'isCodeSuccessViaPullRequest',
+            target: 'openPullRequest',
+            actions: 'rememberCodeResult',
+          },
+          {
+            guard: 'isPlainCodeSuccess',
             target: 'done',
             actions: 'completeWithChildSuccess',
           },
@@ -997,6 +1315,32 @@ export const devMachine = machineSetup.createMachine({
             guard: 'authoredCodeFailure',
             target: 'reportedChildFailure',
             actions: 'completeWithCodeFailure',
+          },
+          { target: 'failed', actions: 'rememberActorError' },
+        ],
+      },
+    },
+    openPullRequest: {
+      id: 'openPullRequest',
+      description: STATE_DESCRIPTIONS.openPullRequest,
+      meta: playbookMeta('openPullRequest'),
+      tags: ['playbook.suspended'],
+      invoke: {
+        src: 'playbook',
+        input: ({ context }): PlaybookInput => ({
+          stateId: 'openPullRequest',
+          sourceItem: 'DEV-6',
+          playbookId: 'pr',
+          text: pullRequestCallText(context),
+        }),
+        // DR-048: `pr` declares its terminal kinds, so `onDone` alone proves
+        // its success; DEV consumes none of its fields by name.
+        onDone: { target: 'done', actions: 'completeWithChildSuccess' },
+        onError: [
+          {
+            guard: 'authoredPrFailure',
+            target: 'reportedChildFailure',
+            actions: 'completeWithPrFailure',
           },
           { target: 'failed', actions: 'rememberActorError' },
         ],

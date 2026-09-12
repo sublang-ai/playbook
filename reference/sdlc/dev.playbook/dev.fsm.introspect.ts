@@ -86,6 +86,7 @@ function transitions(value: unknown): readonly InvokingTransition[] {
 const EMPTY_CONTEXT: DevContext = {
   runResults: '',
   discussionExchanges: [],
+  deliveryViaPullRequest: false,
 };
 
 export function enumeratePlayerStates(

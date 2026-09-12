@@ -39,6 +39,23 @@ const DECIDE_COMPLETE = {
   noUnsettledFindings: true,
 } as const;
 
+// DR-050: BRANCH's canonical success output. `baseRevision` is the unchanged
+// receipt's observed HEAD, injected by BRANCH's own reconciler; DEV consumes
+// the three fields by name and never takes them from prose.
+const BRANCH_COMPLETE = {
+  status: 'branched',
+  branch: 'issue-12-flaky-retry',
+  baseRevision: 'base789',
+  issueSummary: 'Issue #12: the retry loops forever on a closed socket.',
+} as const;
+
+const PR_COMPLETE = {
+  status: 'merged',
+  pullRequest: '34',
+  pullRequestUrl: 'https://github.com/example/repo/pull/34',
+  localDefaultUpdated: true,
+} as const;
+
 type RepositoryEffect = 'unchanged' | 'commit' | 'worktree';
 
 type PlayerFixture = PlayerResult & {
@@ -281,8 +298,10 @@ function rootSession(ports: PlaybookPorts): PlaybookSession {
   };
 }
 
+type ChildPlaybookId = 'code' | 'decide' | 'branch' | 'pr';
+
 function settledChild(
-  playbookId: 'code' | 'decide',
+  playbookId: ChildPlaybookId,
   index: number,
   output: unknown,
 ): PlaybookCallStart {
@@ -297,10 +316,42 @@ function settledChild(
   };
 }
 
+// DR-048: a child that completed at its own authored failure terminal. The
+// bridge rejects the caller's actor with this result, so DEV learns the
+// failure from the child's machine and relays the child's own output.
+function failedTerminalChild(
+  playbookId: ChildPlaybookId,
+  stateId: string,
+  output: unknown,
+): PlaybookCallStart {
+  return {
+    state: 'settled',
+    result: {
+      status: 'ok',
+      playbookId,
+      childSessionId: `${playbookId}-${stateId}`,
+      output: output as never,
+      terminal: {
+        stateId,
+        kind: 'failure',
+        description: `${playbookId.toUpperCase()} reports ${stateId}.`,
+      },
+    },
+  };
+}
+
+const CHILD_FAILURE_DESCRIPTION =
+  "The development workflow relayed a child playbook's authored abort, failure, or insufficient terminal result.";
+
 describe('linked DEV runtime', () => {
   it('labels only the planning rounds DEV itself owns', () => {
     expect(devStateCountLabels).toEqual({ planAnalysis: 'planning round' });
-    expect(devCopyPasteGuardNames).toEqual(['code', 'decideThenCode']);
+    expect(devCopyPasteGuardNames).toEqual([
+      'code',
+      'decideThenCode',
+      'codeViaPullRequest',
+      'decideThenCodeViaPullRequest',
+    ]);
   });
 
   it('advertises the schema-3 local-role manifest', async () => {
@@ -714,6 +765,364 @@ describe('linked DEV runtime', () => {
       },
     );
     expect(host.childRequests[1]?.text).toContain('> DECIDE commit: decide123\n> Evaluated revision: rev456');
+    await runtime.dispose();
+  });
+
+  // DR-050: the pull-request happy path. Every identity the `pr` call quotes
+  // came from a child's canonical structured result — `branch`, `baseRevision`,
+  // and `issueSummary` from BRANCH, `lastCodeCommit` and
+  // `finalEvaluatedRevision` from CODE — never from the Analyst's prose.
+  it('delivers code via pull request through branch, code, and pr from canonical child results', async () => {
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Issue #12 is a one-line fix; deliver it through a pull request.',
+          resumeToken: 'analyst-1',
+        },
+      ],
+      judges: [{ guard: 'codeViaPullRequest' }],
+      children: [
+        settledChild('branch', 1, BRANCH_COMPLETE),
+        settledChild('code', 1, CODE_COMPLETE),
+        settledChild('pr', 1, PR_COMPLETE),
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(
+      "The selected development path completed with the final child playbook's successful result.",
+    );
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'complete',
+      childPlaybookId: 'pr',
+      childOutput: PR_COMPLETE,
+    });
+    const planningRelay =
+      '> Original request: Fix #12.\n' +
+      '> Planning result: Issue #12 is a one-line fix; deliver it through a pull request.';
+    expect(host.childRequests).toEqual([
+      { callId: expect.any(String), playbookId: 'branch', text: planningRelay },
+      { callId: expect.any(String), playbookId: 'code', text: planningRelay },
+      {
+        callId: expect.any(String),
+        playbookId: 'pr',
+        text: [
+          '> Original request: Fix #12.',
+          '> Issue summary: Issue #12: the retry loops forever on a closed socket.',
+          '> Branch: issue-12-flaky-retry',
+          '> Base revision: base789',
+          '> CODE commit: code123',
+          '> Evaluated revision: code-rev',
+        ].join('\n'),
+      },
+    ]);
+    expect(host.statuses).toContain('→ codeViaPullRequest');
+    expect(acceptedOutcomes(host)).toContainEqual({
+      source: 'planAnalysis',
+      target: 'createBranch',
+      acceptedOutcome: 'codeViaPullRequest',
+    });
+    // Planning that reads an issue is still `unchanged`-governed.
+    expect(
+      host.effectLedger.snapshot().boundaries[0]?.physicalReceipt,
+    ).toMatchObject({ classification: 'unchanged' });
+    expect(host.effectLedger.snapshot().logicalOperations).toEqual([]);
+    expect(runtime.describe!().state.stateId).toBe('done');
+    await runtime.dispose();
+  });
+
+  it('sequences branch, decide, code, and pr on the decide-then-code pull-request path', async () => {
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Issue #12 needs a durable decision before the fix.',
+          resumeToken: 'analyst-1',
+        },
+      ],
+      judges: [{ guard: 'decideThenCodeViaPullRequest' }],
+      children: [
+        settledChild('branch', 1, BRANCH_COMPLETE),
+        settledChild('decide', 1, DECIDE_COMPLETE),
+        settledChild('code', 1, CODE_COMPLETE),
+        settledChild('pr', 1, PR_COMPLETE),
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Resolve #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'complete',
+      childPlaybookId: 'pr',
+      childOutput: PR_COMPLETE,
+    });
+    expect(host.childRequests.map(({ playbookId }) => playbookId)).toEqual([
+      'branch',
+      'decide',
+      'code',
+      'pr',
+    ]);
+    expect(host.childRequests[2]?.text).toBe(
+      [
+        '> Original request: Resolve #12.',
+        '> Planning result: Issue #12 needs a durable decision before the fix.',
+        '> DECIDE commit: decide123',
+        '> Evaluated revision: rev456',
+      ].join('\n'),
+    );
+    expect(host.childRequests[3]?.text).toBe(
+      [
+        '> Original request: Resolve #12.',
+        '> Issue summary: Issue #12: the retry loops forever on a closed socket.',
+        '> Branch: issue-12-flaky-retry',
+        '> Base revision: base789',
+        '> CODE commit: code123',
+        '> Evaluated revision: code-rev',
+      ].join('\n'),
+    );
+    expect(host.statuses).toContain('→ decideThenCodeViaPullRequest');
+    expect(acceptedOutcomes(host)).toContainEqual({
+      source: 'planAnalysis',
+      target: 'createBranch',
+      acceptedOutcome: 'decideThenCodeViaPullRequest',
+    });
+    await runtime.dispose();
+  });
+
+  it('relays an authored BRANCH failure without starting CODE', async () => {
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Deliver issue #12 through a pull request.',
+        },
+      ],
+      judges: [{ guard: 'codeViaPullRequest' }],
+      children: [
+        {
+          state: 'settled',
+          result: {
+            status: 'error',
+            playbookId: 'branch',
+            childSessionId: 'branch-error',
+            error: {
+              name: 'BranchError',
+              message: 'branch issue-12-flaky-retry already exists',
+            },
+          },
+        },
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(CHILD_FAILURE_DESCRIPTION);
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'child-failed',
+      childResult: {
+        playbookId: 'branch',
+        status: 'error',
+        error: {
+          name: 'BranchError',
+          message: 'branch issue-12-flaky-retry already exists',
+        },
+      },
+    });
+    expect(host.childRequests.map(({ playbookId }) => playbookId)).toEqual([
+      'branch',
+    ]);
+    expect(runtime.describe!().state.stateId).toBe('reportedChildFailure');
+    await runtime.dispose();
+  });
+
+  // BRANCH's `refused` is a declared failure terminal (DR-048), so the real
+  // bridge rejects DEV's actor with BRANCH's own result and DEV relays the
+  // Coder's report as its failure evidence without starting CODE.
+  it('relays a BRANCH refusal terminal through the error path', async () => {
+    const refused = {
+      status: 'refused',
+      coderOutput: 'The working tree is not clean; nothing was created.',
+    };
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Deliver issue #12 through a pull request.',
+        },
+      ],
+      judges: [{ guard: 'codeViaPullRequest' }],
+      children: [failedTerminalChild('branch', 'refused', refused)],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(CHILD_FAILURE_DESCRIPTION);
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'child-failed',
+      childResult: { playbookId: 'branch', status: 'ok', output: refused },
+    });
+    expect(host.childRequests).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it('relays a BRANCH success that omits a consumed field without starting CODE', async () => {
+    const incomplete = {
+      status: 'branched',
+      branch: 'issue-12-flaky-retry',
+      baseRevision: 'base789',
+    };
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Issue #12 needs a durable decision before the fix.',
+        },
+      ],
+      judges: [{ guard: 'decideThenCodeViaPullRequest' }],
+      children: [settledChild('branch', 1, incomplete)],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Resolve #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'child-failed',
+      childResult: { playbookId: 'branch', status: 'ok', output: incomplete },
+    });
+    expect(host.childRequests.map(({ playbookId }) => playbookId)).toEqual([
+      'branch',
+    ]);
+    await runtime.dispose();
+  });
+
+  it('relays a PR failure terminal after branch and code succeeded', async () => {
+    const stillFailing = {
+      status: 'not-merged',
+      reason: 'checks-failed',
+      pullRequest: '34',
+      pullRequestUrl: 'https://github.com/example/repo/pull/34',
+    };
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Deliver issue #12 through a pull request.',
+        },
+      ],
+      judges: [{ guard: 'codeViaPullRequest' }],
+      children: [
+        settledChild('branch', 1, BRANCH_COMPLETE),
+        settledChild('code', 1, CODE_COMPLETE),
+        failedTerminalChild('pr', 'checksStillFailing', stillFailing),
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix #12.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(CHILD_FAILURE_DESCRIPTION);
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'child-failed',
+      childResult: { playbookId: 'pr', status: 'ok', output: stillFailing },
+    });
+    expect(host.childRequests.map(({ playbookId }) => playbookId)).toEqual([
+      'branch',
+      'code',
+      'pr',
+    ]);
+    expect(runtime.describe!().state.stateId).toBe('reportedChildFailure');
+    await runtime.dispose();
+  });
+
+  it('suspends on the pr child and completes from its resumed canonical result', async () => {
+    const host = await harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Deliver issue #12 through a pull request.',
+        },
+      ],
+      judges: [{ guard: 'codeViaPullRequest' }],
+      children: [
+        settledChild('branch', 1, BRANCH_COMPLETE),
+        settledChild('code', 1, CODE_COMPLETE),
+        { state: 'suspended', childSessionId: 'pr-suspended' },
+      ],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    const suspended = await runtime.handleBossInput({
+      text: 'Fix #12.',
+      signal: new AbortController().signal,
+    });
+    expect(suspended.outcome).toBe('suspended');
+    if (suspended.outcome !== 'suspended') {
+      throw new Error('expected suspension');
+    }
+    expect(suspended.pendingCall.playbookId).toBe('pr');
+
+    const resumed = await runtime.resumePlaybookCall({
+      callId: suspended.pendingCall.callId,
+      signal: new AbortController().signal,
+      result: {
+        status: 'ok',
+        playbookId: 'pr',
+        childSessionId: 'pr-suspended',
+        output: PR_COMPLETE,
+      },
+    });
+    expect(resumed.outcome).toBe('terminal');
+    expect(resumed.outcome === 'terminal' ? resumed.output : undefined).toEqual(
+      {
+        status: 'complete',
+        childPlaybookId: 'pr',
+        childOutput: PR_COMPLETE,
+      },
+    );
     await runtime.dispose();
   });
 

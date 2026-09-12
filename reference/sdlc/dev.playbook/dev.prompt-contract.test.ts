@@ -20,6 +20,7 @@ const ACTUAL_CONTEXT: DevContext = {
   discussionExchanges: [
     { question: 'Narrow or broad?', answer: 'Narrow.' },
   ],
+  deliveryViaPullRequest: false,
 };
 
 function planInput(overrides: Partial<PlayerInput> = {}): PlayerInput {

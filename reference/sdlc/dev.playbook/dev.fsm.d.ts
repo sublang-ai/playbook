@@ -1,9 +1,15 @@
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | {
     readonly [key: string]: JsonValue;
 };
-export type DevStateId = 'planAnalysis' | 'callCode' | 'callDecide' | 'callCodeAfterDecide';
-export type DevSourceItem = 'DEV-1' | 'DEV-2' | 'DEV-3' | 'DEV-4';
-export type DevChildPlaybookId = 'code' | 'decide';
+export type DevStateId = 'planAnalysis' | 'createBranch' | 'callCode' | 'callDecide' | 'callCodeAfterDecide' | 'openPullRequest';
+export type DevSourceItem = 'DEV-1' | 'DEV-2' | 'DEV-3' | 'DEV-4' | 'DEV-5' | 'DEV-6';
+export type DevChildPlaybookId = 'code' | 'decide' | 'branch' | 'pr';
+/**
+ * DR-050: the development path a pull-request planning outcome selected. It
+ * routes the `branch` success into `callCode` or `callDecide`, so the plain
+ * `code` and `decide then code` paths keep their items, prompts, and edges.
+ */
+export type DevPullRequestPath = 'code' | 'decide-then-code';
 export type PendingBossQuestion = {
     readonly questionId: 'planAnalysis';
     readonly resumeStateId: 'planAnalysis';
@@ -39,12 +45,18 @@ export type PlayerOutput = {
     readonly guard: 'decideThenCode';
     readonly planningResult: string;
 } | {
+    readonly guard: 'codeViaPullRequest';
+    readonly planningResult: string;
+} | {
+    readonly guard: 'decideThenCodeViaPullRequest';
+    readonly planningResult: string;
+} | {
     readonly guard: 'needsBossReply';
     readonly question: string;
 };
 export type PlaybookInput = {
-    readonly stateId: 'callCode' | 'callDecide' | 'callCodeAfterDecide';
-    readonly sourceItem: 'DEV-2' | 'DEV-3' | 'DEV-4';
+    readonly stateId: 'createBranch' | 'callCode' | 'callDecide' | 'callCodeAfterDecide' | 'openPullRequest';
+    readonly sourceItem: 'DEV-2' | 'DEV-3' | 'DEV-4' | 'DEV-5' | 'DEV-6';
     readonly playbookId: DevChildPlaybookId;
     readonly text: string;
 };
@@ -59,6 +71,27 @@ export type DecideSuccessOutput = {
     readonly decideCommit: string;
     readonly evaluatedRevision: string;
     readonly noUnsettledFindings: true;
+};
+/**
+ * The fields DEV consumes from `branch`'s canonical structured terminal
+ * output before continuing a pull-request path: the exact branch name, the
+ * exact base revision, and the issue summary. Additional members belong to
+ * BRANCH's own contract and do not disprove success; a missing member is an
+ * insufficient result, never an empty default.
+ */
+export type BranchSuccessOutput = {
+    readonly branch: string;
+    readonly baseRevision: string;
+    readonly issueSummary: string;
+};
+/**
+ * The fields DEV consumes from `code`'s canonical structured terminal output
+ * before starting the dependent `pr` call: the exact last `code`-owned commit
+ * and the exact final evaluated repository revision.
+ */
+export type CodeSuccessOutput = {
+    readonly lastCodeCommit: string;
+    readonly finalEvaluatedRevision: string;
 };
 export type CompactError = {
     readonly name: string;
@@ -78,7 +111,8 @@ export type DevPlaybookOutput = {
     readonly status: 'discussion-complete';
 } | {
     readonly status: 'complete';
-    readonly childPlaybookId: 'code';
+    /** The final child of the selected path: `pr` on a pull-request path. */
+    readonly childPlaybookId: 'code' | 'pr';
     /** The successful result of DEV's final child call, when it has one. */
     readonly childOutput?: JsonValue;
 } | {
@@ -96,6 +130,14 @@ export type DevContext = {
     readonly planningResult?: string;
     readonly decideCommit?: string;
     readonly evaluatedRevision?: string;
+    /** DR-050: whether the accepted planning outcome selected a pull-request path. */
+    readonly deliveryViaPullRequest: boolean;
+    readonly pullRequestPath?: DevPullRequestPath;
+    readonly branch?: string;
+    readonly baseRevision?: string;
+    readonly issueSummary?: string;
+    readonly lastCodeCommit?: string;
+    readonly finalEvaluatedRevision?: string;
     readonly completion?: 'discussion-complete' | 'complete' | 'child-failed';
     readonly childOutput?: JsonValue;
     readonly childFailure?: CompletedChildResult;
@@ -165,10 +207,25 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
     type: "rememberDecidePath";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "rememberCodeViaPullRequestPath";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberDecideThenCodeViaPullRequestPath";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberBranchResult";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "rememberDecideResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "rememberCodeResult";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "completeWithChildSuccess";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "completeWithInsufficientBranchResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "completeWithInsufficientCodeResult";
@@ -177,10 +234,16 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
     type: "completeWithInsufficientDecideResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "completeWithBranchFailure";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "completeWithCodeFailure";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "completeWithDecideFailure";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "completeWithPrFailure";
     params: import("xstate").NonReducibleUnknown;
 }, {
     type: "needsBossReply";
@@ -198,10 +261,28 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
     type: "isDecideThenCode";
     params: unknown;
 } | {
-    type: "isCodeSuccess";
+    type: "isCodeViaPullRequest";
+    params: unknown;
+} | {
+    type: "isDecideThenCodeViaPullRequest";
+    params: unknown;
+} | {
+    type: "isBranchSuccessForCode";
+    params: unknown;
+} | {
+    type: "isBranchSuccessForDecide";
+    params: unknown;
+} | {
+    type: "isCodeSuccessViaPullRequest";
+    params: unknown;
+} | {
+    type: "isPlainCodeSuccess";
     params: unknown;
 } | {
     type: "isDecideSuccess";
+    params: unknown;
+} | {
+    type: "authoredBranchFailure";
     params: unknown;
 } | {
     type: "authoredCodeFailure";
@@ -210,13 +291,17 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
     type: "authoredDecideFailure";
     params: unknown;
 } | {
+    type: "authoredPrFailure";
+    params: unknown;
+} | {
     type: "resumesPlanAnalysis";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "planAnalysis" | "callCode" | "callDecide" | "callCodeAfterDecide" | "discussionComplete" | "reportedChildFailure", string, DevInput, {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "planAnalysis" | "createBranch" | "callCode" | "callDecide" | "callCodeAfterDecide" | "openPullRequest" | "discussionComplete" | "reportedChildFailure", string, DevInput, {
     readonly status: "discussion-complete";
 } | {
     readonly status: "complete";
-    readonly childPlaybookId: "code";
+    /** The final child of the selected path: `pr` on a pull-request path. */
+    readonly childPlaybookId: "code" | "pr";
     /** The successful result of DEV's final child call, when it has one. */
     readonly childOutput?: JsonValue;
 } | {
@@ -232,6 +317,9 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
         readonly planAnalysis: {
             id: "planAnalysis";
         };
+        readonly createBranch: {
+            id: "createBranch";
+        };
         readonly callCode: {
             id: "callCode";
         };
@@ -240,6 +328,9 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
         };
         readonly callCodeAfterDecide: {
             id: "callCodeAfterDecide";
+        };
+        readonly openPullRequest: {
+            id: "openPullRequest";
         };
         readonly awaitBossReply: {
             id: "awaitBossReply";
