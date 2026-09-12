@@ -17,6 +17,8 @@ Some required metadata disappears under TypeScript erasure or belongs to authore
 
 An optional Playbook-owned tool materializes the existing thin module from the loaded FSM and a strict declarative descriptor.
 Its initial domain is flat ordinary player/script workflows using shared default strategies and primitive options.
+An explicit `flat-quoted-relays` profile extends that domain only with deterministic string substitution for standalone `> <token>` lines, keeping shared continuation behavior and the same descriptor keys.
+The linker selects it only when the source needs that exact relay convention; labelled relays, identity-specific composition, structured renderers, and other custom strategies still require ordinary linking.
 The agent remains responsible for exact erased and authored metadata and every requirement of the complete link definition.
 Unsupported workflows retain ordinary normative linking; invalid descriptors and preflight failures produce diagnostics without replacing the target.
 The tool uses the artifact's installed engine, emits no dependency on itself, and belongs to the definition's machine-readable semantic-input closure.
@@ -27,6 +29,7 @@ The experiment changes no interpreter, engine compatibility declaration, public 
 Deterministic output can remove repetitive generation and exact-label mistakes without inventing source semantics.
 Factory preflight checks structure but does not prove erased field declarations or prompt fidelity; existing conformance remains mandatory.
 A fixed-FSM comparison followed by a cold full compilation must establish improvement before retaining the technique.
+The quoted-relay profile has a separate performance acceptance decision; correctness checks alone do not establish a latency improvement.
 
 An isolated materializer comparison holds compiler behavior, FSM input, full runtime contract and independent correctness fixes constant while removing only optional helper instructions from the control entry.
 The comparison may retain identical unused helper and companion files in the control's conservative semantic-input closure, provided the control definition neither cites nor instructs use of that tool.

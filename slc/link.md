@@ -39,12 +39,12 @@ The link compiler shall not modify the FSM artifact and shall not re-derive Capt
 ## Optional deterministic materialization
 
 For an ordinary flat workflow using only `player` and `script` actors,
-shared default strategies, and primitive configured options, the linker may
+the supported prompt profile below, shared remaining strategies, and primitive configured options, the linker may
 use the adjacent `materialize-link.mjs` tool to emit the thin module.
 The complete definition below remains binding; the tool replaces repetitive
 module generation, not semantic analysis or emitted conformance verification.
 Read the actual FSM and supply every erased or authored contract exactly.
-Do not use this profile when a custom composer, classifier, required-field
+Do not use these profiles when another custom composer, classifier, required-field
 extractor, session-derived input mapping, controller strategy, nested call,
 parallel state, or compound state is needed.
 
@@ -81,6 +81,17 @@ JSON
 ```
 
 This descriptor is an example shape, not default workflow semantics.
+Select `flat-defaults` for the unchanged shared player composer, or
+`flat-quoted-relays` when the source requires standalone `> <token>` relay lines.
+The latter uses the same descriptor keys and `placeholderFields` mappings;
+ordinary string tokens substitute literally, while standalone relay values
+quote each nonempty line with `> ` and preserve LF/CRLF and blank lines.
+An empty relay value omits its complete template line; missing or non-string
+values retain the token. Inserted values are never substituted again.
+The emitted composer preserves the installed shared fresh/resumed Q&A prefix
+and does not modify the original input. Labelled relays, identity-specific
+composition, structured renderers, and other custom strategies require
+ordinary linking; do not select either profile for those requirements.
 Every top-level member is required; unknown members are errors.
 `options` maps each configured option to `{ "type": "string" | "number" |
 "boolean", "required": true | false }`; `inputMapping` maps each FSM input

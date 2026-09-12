@@ -29,19 +29,26 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     }
     expect(packed).not.toContain('slc/references/link-contract.md');
     expect(packed).not.toContain('scripts/experiments/rejected-compact-link.md');
+    expect(packed).not.toContain('scripts/experiments/materialize-link-v2.mjs');
+    expect(packed).not.toContain('scripts/experiments/materializer-v2-recipe.md');
     const recipe = read('scripts/experiments/rejected-compact-link.md');
     const full = read('slc/link.md');
     expect(full).toContain('## Optional deterministic materialization');
     expect(full).not.toContain('## Supported recipe');
     expect(sha(recipe)).toBe('a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc');
-    // The helper stays at v2; ownership guidance moves without changing its meaning.
-    expect(sha(read('slc/materialize-link.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
+    // V3 adds only the explicit quoted-relay profile; the prior version remains
+    // an unshipped reproduction input for the rejected compact experiment.
+    expect(sha(read('slc/materialize-link.mjs'))).toBe('0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253');
+    expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
+    expect(sha(full)).toBe('60061f7e0a54281f883a429ec84a0685a7990e886c0d289c23b70e7c160ab2c2');
+    const currentRecipe = full.slice(full.indexOf('## Optional deterministic materialization\n'), full.indexOf('## PlaybookRuntime contract\n'));
+    const fullV2 = full.replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
+    expect(sha(fullV2)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
     const previousGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'
       + 'manifest and live authority-envelope validation at its construction boundary.\n'
       + 'Do not audit the bare shared factory as if it owned that Captain-host boundary\n'
       + 'or synthesize host capabilities in the emitted artifact.\n';
-    const previousFull = full.replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', previousGuide);
+    const previousFull = fullV2.replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', previousGuide);
     expect(sha(previousFull)).toBe('55456b21dab8484f03a868f3816d3d05a0fbc4e626ea86be10e93861529239cf');
     const previousClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion;';
     const currentClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, additional typed ledger commands for the same atomic completion, one `deferred` binding carrying optional UUID `operationId` plus exact `pendingQuestion` and `playerContinuation`, or literal `unresolved: true`, where `deferred` shall be mutually exclusive with `unresolved`, `logicalOperationId`, and commands;';
@@ -84,7 +91,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     expect(readFileSync(join(target, 'link.md'), 'utf8')).toBe(read('scripts/experiments/rejected-compact-link.md'));
     expect(readFileSync(join(target, 'optimize.md'), 'utf8')).toBe(read('slc/optimize.md'));
     expect(readFileSync(join(target, 'gears2fsm.md'), 'utf8')).toBe(read('slc/gears2fsm.md'));
-    expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('slc/materialize-link.mjs'));
+    expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('scripts/experiments/materialize-link-v2.mjs'));
     const proof = readFileSync(join(target, 'experiment-proof.json'), 'utf8');
     const record = JSON.parse(proof);
     const fullTarget = join(scratch, 'full-candidate');
@@ -96,7 +103,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     run(installed, defaultTarget);
     expect(readFileSync(join(defaultTarget, 'link.md'), 'utf8')).toBe(readFileSync(join(fullTarget, 'link.md'), 'utf8'));
     for (const [file, digest] of Object.entries(record.outputs)) {
-      if (!['link.md', 'references/link-contract.md'].includes(file)) expect(fullProof.outputs[file], file).toBe(digest);
+      if (!['link.md', 'references/link-contract.md', 'materialize-link.mjs'].includes(file)) expect(fullProof.outputs[file], file).toBe(digest);
     }
     const baselineTarget = join(scratch, 'baseline-candidate');
     run(installed, baselineTarget, '--baseline');

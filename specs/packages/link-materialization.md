@@ -19,7 +19,7 @@ When loading the source FSM, the helper shall accept JavaScript on supported Nod
 
 ### link-materialization-3
 
-The helper shall accept only schema `sublang.playbook.link.v1`, profile `flat-defaults`, flat ordinary player/script machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
+The helper shall accept only schema `sublang.playbook.link.v1`, profiles `flat-defaults` and `flat-quoted-relays`, flat ordinary player/script machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
 
 ### link-materialization-4
 
@@ -27,7 +27,7 @@ The descriptor shall carry the exact erased and authored metadata through these 
 
 | Member | Shape |
 | --- | --- |
-| `schema`, `profile` | Exactly `sublang.playbook.link.v1` and `flat-defaults`. |
+| `schema`, `profile` | Exactly `sublang.playbook.link.v1` and either `flat-defaults` or `flat-quoted-relays`. |
 | `machineExport`, `label` | Exported JavaScript identifier and nonblank diagnostic label. |
 | `options` | Option-name map of `{ type: 'string' \| 'boolean' \| 'number', required: boolean }`; constrained primitive types require ordinary linking. |
 | `inputMapping` | FSM input-field to declared option-name map; every non-`cwd` option is mapped. |
@@ -80,6 +80,23 @@ The optional tool shall leave the full normative [link contract](../../slc/link.
 
 The shipped phase-set sidecar shall include the helper in the link definition's semantic-input closure so a helper-content change invalidates incremental link reuse.
 
+### link-materialization-14
+
+Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall render the unchanged source template in one literal callback pass according to this case matrix:
+
+| Template/value case | Rendered body |
+| --- | --- |
+| Recognized syntax | A token is `#` or `[A-Za-z_$][A-Za-z0-9_$-]*`; a standalone relay starts at column zero and contains exactly `> <token>` followed by LF, CRLF, or end of input. |
+| Ordinary `<token>` with a string value | The exact string, without interpreting replacement metacharacters or placeholder-looking content. |
+| Standalone `> <token>` line with an empty string | Omit the entire line, including its line ending. |
+| Standalone `> <token>` line with a nonempty string | Prefix every nonempty value line with `> `, preserving blank lines, LF or CRLF separators, and the template line ending without inventing empty quoted lines. |
+| Missing or non-string value | Preserve the source token or relay line unchanged. |
+| Token-to-field lookup | Use `placeholderFields` first, then `<#>` to `irNumber`, otherwise the shared kebab-token-to-camel-field convention. |
+
+### link-materialization-15
+
+Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall prefix its rendered body once with the installed shared composer's continuation for an empty body, forwarding the continuation mode only when the engine exposes that API and leaving question, reply, and source input values unchanged under the [full prompt contract](../../slc/link.md#player-prompt-composition).
+
 ## Verification
 
 ### link-materialization-17
@@ -96,4 +113,8 @@ Where a built SLC installation is supplied, the integration probe shall execute 
 
 ### link-materialization-20
 
-When checking the packed definition surface, the integration suite shall verify the unchanged helper, complete normative entry and resolving contract references [[link-materialization-1](#link-materialization-1)] [[link-materialization-12](#link-materialization-12)].
+When checking the packed definition surface, the integration suite shall verify the reviewed helper, complete normative entry and resolving contract references [[link-materialization-1](#link-materialization-1)] [[link-materialization-12](#link-materialization-12)].
+
+### link-materialization-21
+
+When the real CLI emits and loads a quoted-relay module against each supported installed continuation API, the integration suite shall verify mapped and ordinary literal tokens, empty relay positions, LF/CRLF and blank lines, missing values, unchanged source inputs, and fresh/resumed Q&A rendering [[link-materialization-14](#link-materialization-14)] [[link-materialization-15](#link-materialization-15)].

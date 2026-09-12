@@ -30,12 +30,14 @@ const baselineHashes = {
   'optimize.md': 'dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66',
 };
 const expected = {
-  full13: 'd6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82',
-  full12: 'b7d7e01ac4c275c9b10f773746dbc8f062c47bd9a2ae3a910432de292eded2b6',
+  full13: '60061f7e0a54281f883a429ec84a0685a7990e886c0d289c23b70e7c160ab2c2',
+  full12: '532b0ad904203200d971b1d4794a7f412db96e151e6c00e49ef2017d8ab22706',
   baseline12: '60d287dfa19061ef682e36f596879c7c9f4223198ee55b9fa769a361ce99be5c',
-  helper: 'fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0',
+  helper: '0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253',
+  helperV2: 'fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0',
+  helperV2Recipe: '1d96e73164adf8f195807007fea260d9fda3e3dc581e98091855b9e2fc365f90',
   entry: 'a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc',
-  companion: '30500e5ed30d1fc2f00d2ffeb65abd724263ca44ebc44046f6d03ba6838dcedf',
+  companion: '406541706fad41b89d5afa0118d7ad0a79e104afefb43959820ea84230792e74',
   rejectedFull12: '683e4fbe489c8e70e03651ae725c1f85d9bdd93e4e4ebcf4bd51eee55173d8ec',
   rejectedCompanion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
   optimizer: '4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9',
@@ -102,7 +104,9 @@ const rejectedHelperGuide = 'Its factory preflight checks linked metadata; the C
   + 'manifest and live authority-envelope validation at its construction boundary.\n'
   + 'Do not audit the bare shared factory as if it owned that Captain-host boundary\n'
   + 'or synthesize host capabilities in the emitted artifact.\n';
-const rejectedFull12 = full12.replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', rejectedHelperGuide);
+const helperV2Recipe = await readFile(join(repo, 'scripts/experiments/materializer-v2-recipe.md'), 'utf8');
+verify(helperV2Recipe, expected.helperV2Recipe, 'unchanged v2 helper recipe');
+const rejectedFull12 = full12.replace(helperRecipe, helperV2Recipe).replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', rejectedHelperGuide);
 verify(rejectedFull12, expected.rejectedFull12, 'unchanged rejected compact full contract');
 const entry = compactDefinition(rejectedFull12, entrySource.split('## Compiled execution\n')[0]);
 const companionContract = compactMode ? rejectedFull12 : full12;
@@ -110,8 +114,8 @@ const companion = rebaseContract(companionContract);
 assert.equal(rebaseContract(companion, true), companionContract, 'Companion relocation must be reversible');
 verify(entry, expected.entry, 'compact entry');
 verify(companion, compactMode ? expected.rejectedCompanion : expected.companion, '12.3 companion');
-const helper = await readFile(join(repo, 'slc/materialize-link.mjs'), 'utf8');
-verify(helper, expected.helper, 'unchanged v2 helper');
+const helper = await readFile(join(repo, compactMode ? 'scripts/experiments/materialize-link-v2.mjs' : 'slc/materialize-link.mjs'), 'utf8');
+verify(helper, compactMode ? expected.helperV2 : expected.helper, compactMode ? 'unchanged v2 helper' : 'quoted-relay v3 helper');
 const optimizer = await readFile(join(repo, 'slc/optimize.md'), 'utf8');
 verify(optimizer, expected.optimizer, 'independent exact-root and valid-GEARS optimizer correction');
 const producer = await readFile(join(repo, 'slc/gears2fsm.md'), 'utf8');
@@ -137,7 +141,7 @@ const proof = {
   installedPackage: installed,
   version: pkg.version,
   baselineHashes,
-  changes: ['unchanged helper v2', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'rejected compact semantic recipe with its unchanged earlier full contract', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', compactMode ? 'original helper-local host-boundary guidance preserved for rejected experiment reproduction' : 'identical common host-boundary guidance outside the helper recipe', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
+  changes: [compactMode ? 'unchanged helper v2' : 'helper v3 with explicit quoted-relay profile and unchanged default-profile output', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'rejected compact semantic recipe with its unchanged earlier full contract', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', compactMode ? 'original helper-local host-boundary guidance preserved for rejected experiment reproduction' : 'identical common host-boundary guidance outside the helper recipe', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
   fullContractSha256: hash(companionContract),
   baselineContractSha256: hash(baselineDefinition),
   baselineDelta: compactMode ? 'Rejected experiment reproduction; not a current baseline/full comparison' : 'Only the optional deterministic materialization section differs from full; common host-boundary guidance and all other declared semantic inputs match',

@@ -103,9 +103,9 @@ describe('optional link materialization integration', () => {
     expect(readFileSync(out, 'utf8')).toBe(accepted);
   });
 
-  it('emits, loads, and type-checks a real factory with exact metadata and strict options', () => {
+  it.each(['flat-defaults', 'flat-quoted-relays'])('emits, loads, and type-checks %s with exact metadata and strict options', (profile) => {
     const source = readFileSync(fsm, 'utf8');
-    const result = emit();
+    const result = emit({ ...descriptor(), profile });
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).status).toBe('ok');
     const generated = readFileSync(out, 'utf8');
@@ -155,6 +155,62 @@ void missing;
 `);
     const checked = spawnSync(process.execPath, [join(packageRoot, 'node_modules/typescript/lib/tsc.js'), '--noEmit', '--allowImportingTsExtensions', '--allowJs', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck', '--typeRoots', join(packageRoot, 'node_modules/@types'), join(root, 'consumer.ts')], { cwd: root, encoding: 'utf8' });
     expect(checked.status, checked.stderr + checked.stdout).toBe(0);
+  });
+
+  it('renders quoted relays literally and preserves the installed continuation contract', () => {
+    const mappings = { 'task-text': 'payload', 'empty-block': 'emptyValue', 'second-field': 'nextValue' };
+    const result = emit({ ...descriptor(), profile: 'flat-quoted-relays', placeholderFields: mappings });
+    expect(result.status, result.stderr).toBe(0);
+    const dollar = '$& $$ $' + String.fromCharCode(96) + " $'";
+    const cases = [
+      { prompt: 'Lead <run-id>.\n> <task-text>\nBetween\n> <empty-block>\n> <second-field>\nIR <#>; <missing>.', fields: { runId: 'R', payload: `first\n\nsecond <run-id> ${dollar}`, emptyValue: '', nextValue: '$&\nlast', irNumber: '042', missing: 7 }, expected: `Lead R.\n> first\n\n> second <run-id> ${dollar}\nBetween\n> $&\n> last\nIR 042; <missing>.` },
+      ...[['> <empty-block>\nNext', 'Next'], ['Before\n> <empty-block>\nNext', 'Before\nNext'], ['Before\n> <empty-block>', 'Before\n'], ['> <empty-block>', '']].map(([prompt, expected]) => ({ prompt, fields: { emptyValue: '' }, expected })),
+      { prompt: 'Header\r\n> <task-text>\r\nEnd', fields: { payload: 'one\r\n\r\ntwo\r\n' }, expected: 'Header\r\n> one\r\n\r\n> two\r\n\r\nEnd' },
+      { prompt: '> <unknown>\n> <task-text>\nEnd', fields: { payload: 7 }, expected: '> <unknown>\n> <task-text>\nEnd' },
+    ];
+    execute(`
+      import assert from 'node:assert/strict';
+      import { _internal } from ${JSON.stringify(pathToFileURL(out).href)};
+      import * as engine from '@sublang/playbook/xstate-runtime';
+      const input = (prompt, fields = {}) => ({ stateId: 'work', sourceItem: 'FIXTURE-2', role: 'coder', prompt, result: { done: 'Done.' }, ...fields });
+      for (const { prompt, fields, expected } of ${JSON.stringify(cases)}) {
+        const value = input(prompt, fields);
+        const before = structuredClone(value);
+        assert.equal(_internal.composePlayerPrompt(value, () => { throw new Error('invented identity lookup'); }), expected);
+        assert.deepEqual(value, before);
+      }
+      const value = input('> <task-text>', {
+        payload: 'one\\ntwo <task-text> $&',
+        pendingBossQuestion: { questionId: 'work', resumeStateId: 'work', sourceItem: 'FIXTURE-2', asker: { kind: 'role', roleId: 'coder' }, question: 'Use <task-text>?' },
+        bossReply: 'Keep <task-text> and $&.',
+      });
+      const mapping = ${JSON.stringify(mappings)};
+      const before = structuredClone(value);
+      for (const resuming of [false, true]) {
+        const prefix = engine.defaultComposePlayerPrompt({ ...value, prompt: '' }, mapping, resuming);
+        assert(prefix.endsWith('\\n\\n'));
+        assert.equal(_internal.composePlayerPrompt(value, undefined, resuming), prefix + '> one\\n> two <task-text> $&');
+        assert.deepEqual(value, before);
+      }
+      if (typeof engine.composePlayerContinuation === 'function') {
+        assert(_internal.composePlayerPrompt(value, undefined, false).includes('Your previous question:'));
+        assert(!_internal.composePlayerPrompt(value, undefined, true).includes('Your previous question:'));
+      }
+    `);
+  });
+
+  it('keeps the default profile byte-identical to the frozen v2 emitter', () => {
+    const result = emit();
+    expect(result.status, result.stderr).toBe(0);
+    execute(`
+      import assert from 'node:assert/strict';
+      import { readFileSync } from 'node:fs';
+      import * as engine from '@sublang/playbook/xstate-runtime';
+      import { fixtureMachine as machine } from ${JSON.stringify(pathToFileURL(fsm).href)};
+      import { materializeLink } from ${JSON.stringify(pathToFileURL(join(packageRoot, 'scripts/experiments/materialize-link-v2.mjs')).href)};
+      const expected = materializeLink({ machine, descriptor: ${JSON.stringify(descriptor())}, fsmSpecifier: './fixture.fsm.js', engine });
+      assert.equal(readFileSync(${JSON.stringify(out)}, 'utf8'), expected);
+    `);
   });
 
   it('runs an emitted script-only workflow through the real shared engine', () => {

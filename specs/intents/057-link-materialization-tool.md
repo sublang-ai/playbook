@@ -21,7 +21,8 @@ Provide a bounded optional materializer for a controlled compilation-performance
 
 1. [x] Implement and verify the bounded helper and package surface with no engine or release change.
 2. [x] Move existing host-boundary guidance into the common full definition and reproduce a fresh baseline/helper pair with exact instruction-only differences.
-3. Record the measurement-based retention or rejection decision.
+3. [x] Add and verify the bounded explicit quoted-relay profile and reproduce new comparison inputs without changing prior frozen versions.
+4. Record the measurement-based retention or rejection decision.
 
 ## Verification
 
@@ -33,4 +34,8 @@ Provide a bounded optional materializer for a controlled compilation-performance
 - The common-guide comparison is reproduced with `node scripts/build-link-experiment-12.3.mjs <installed-playbook-12.3-root> <new-directory> --baseline` and the same command with `--full`; only the optional helper section differs between their declared semantic inputs, with identical common host-boundary guidance and unchanged helper bytes.
 - The exact-version builder matrix and full-contract suite pass 12 tests, including inverse reconstruction to the installed source, baseline/full instruction parity, unchanged rejected compact reproduction, and refusal of changed baselines or existing outputs.
 - Fresh outputs are `/private/tmp/playbook-materializer-baseline-common-guide-12.3` and `/private/tmp/playbook-materializer-full-common-guide-12.3`; the previous frozen matched pair still agrees with all its recorded output hashes.
+- The v3 real-CLI matrix passes 19 tests against each actual Playbook 12.3 and 13.1 engine, including both strict-typed profiles, literal mapped relays, empty lines, CRLF, missing values, both installed continuation forms, unchanged `flat-defaults` emission relative to archived v2, and unsupported-profile target preservation.
+- The pure v3 module over the unchanged `compile-aZda4G` FSM passes all four unchanged generated suites (8 tests), locked strict TypeScript checking, the actual SLC link-fidelity gate, and a real Git run with one player call, exact quoted Boss text, one commit, and terminal success; `/private/tmp/playbook-materializer-v3-aZ-probe/emission-evidence.json` and `runtime-evidence.json` retain source identities and results.
+- Current builder `--full` and `--baseline` outputs are `/private/tmp/playbook-materializer-full-quoted-v3-12.3` and `/private/tmp/playbook-materializer-baseline-quoted-v3-12.3`; `--compact` instead retains the rejected experiment's archived v2 helper, recipe, and exact full companion.
+- The current built SLC closure probe still reuses unchanged output and reruns only linking after a helper mutation; independent review found no actionable v3 composition, API-compatibility, or comparison-boundary issue.
 - Controlled materializer retention evidence remains pending; the experiment is not retained or released.
