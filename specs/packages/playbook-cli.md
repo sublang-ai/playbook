@@ -39,7 +39,7 @@ when the file at the resolved path is absent, the command shall create
 it from the bundled starter generic config, creating parent
 directories as needed, print one stderr line naming the resolved path,
 and then continue with that seeded config.
-The seeded starter config shall enable CODE, REVIEW, and DECIDE through their explicit public registry modules and
+The seeded starter config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their explicit public registry modules and
 carry the default agent lineup defined by
 [[playbook-cli-11](playbook-cli.md#playbook-cli-11)].
 When the file at the resolved path is already present, the command
@@ -346,8 +346,8 @@ access to `layout.initialVisible`
 
 Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
-config shall enable CODE, REVIEW, DECIDE, and DEV with their `playbooks.<id>.from` values set to the matching public registry modules.
-The starter shall define players `dev.coder`, `dev.reviewer`, and `dev.analyst`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, and DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)).
+config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, and PR with their `playbooks.<id>.from` values set to the matching public registry modules.
+The starter shall define players `dev.coder`, `dev.reviewer`, and `dev.analyst`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)), and BRANCH and PR shall each bind `coder` to that same `dev.coder` with no player added, so the Coder that reads the issue and names the branch makes the commits and then describes them in the pull request ([DR-050](../decisions/050-pull-request-delivery.md)).
 The seeded lineup shall configure Captain with adapter `claude`, model
 `claude-opus-5`, and reasoning effort `high`; Coder with adapter
 `codex`, model `gpt-5.6-sol`, reasoning effort `ultra`, and fast mode
@@ -1122,7 +1122,7 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, and DEV through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; players `dev.reviewer` and `dev.analyst` each on `claude` / `claude-opus-5`; explicit CODE, REVIEW, DECIDE, and DEV role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; players `dev.reviewer` and `dev.analyst` each on `claude` / `claude-opus-5`; explicit CODE, REVIEW, DECIDE, DEV, BRANCH, and PR role bindings with BRANCH's and PR's `coder` on `dev.coder`; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed.
 

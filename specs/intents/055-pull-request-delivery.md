@@ -17,7 +17,7 @@ Adopt [DR-050](../decisions/050-pull-request-delivery.md): compile the new BRANC
 - [ ] `reference/sdlc/branch.playbook` and `reference/sdlc/pr.playbook`: GEARS, FSM, linked runtime, registry, siblings, and conformance suites under artifact schema 3; PR's five mechanical items compiled as script states.
 - [ ] `reference/sdlc/dev.playbook` recompiled to the amended source: two planning outcomes, the `branch` and `pr` calls, and their coverage.
 - [ ] Host adoption: public `./branch/*` and `./pr/*` subpaths, packaged files, starter-config enablement, launch validation, release-surface pins, and documentation.
-- [ ] Package specs reconciled: maintained-workflow enumerations and conformance items cover BRANCH, PR, and the six-outcome DEV.
+- [x] Package specs reconciled: maintained-workflow enumerations and conformance items cover BRANCH, PR, and the six-outcome DEV.
 - [ ] Release 13.2.0 published through the CI-gated workflow.
 
 ## Tasks

@@ -29,13 +29,14 @@ Run `playbook` for an interactive tmux UI powered by [cligent](https://github.co
 
 ## Quick start
 
-Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, and **DECIDE** for independently proposed and reviewed specification decisions.
-CODE and DECIDE call REVIEW as a nested playbook.
+Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, **DECIDE** for independently proposed and reviewed specification decisions, **DEV** for repository-aware planning of a development request, **BRANCH** for checking out a new branch for a GitHub issue, and **PR** for publishing, checking, and merging that branch through a pull request.
+CODE and DECIDE call REVIEW as a nested playbook; DEV calls CODE, or DECIDE and then CODE, and wraps them in BRANCH and PR when the request names a GitHub issue or asks for a pull request.
 
 The shared starter config uses Claude as both Captain and the `dev.coder`
-player, and Codex as `dev.reviewer`. CODE, REVIEW, and DECIDE bind their local
-roles explicitly to those two stable players, so nested and later engagements
-share a conversation only where their bindings name the same player ID.
+player, and Codex as `dev.reviewer`. CODE, REVIEW, DECIDE, BRANCH, and PR bind
+their local roles explicitly to those two stable players, so nested and later
+engagements share a conversation only where their bindings name the same
+player ID; DEV's Analyst binds a distinct `dev.analyst` player.
 
 ```sh
 npm install -g @sublang/playbook
@@ -50,6 +51,7 @@ Prerequisites:
 - Node.js >= 20.6.0
 - Authenticated [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) or `ANTHROPIC_API_KEY`
 - Authenticated [Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY`
+- [GitHub CLI](https://cli.github.com/) (`gh`) authenticated for the repository's GitHub remote, for `/branch`, `/pr`, and `/dev` requests that name an issue or ask for a pull request
 
 Interactive `playbook` additionally needs tmux 3.3 or newer and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`; headless `playbook run` does not.
 

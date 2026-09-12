@@ -113,6 +113,20 @@ playbooks:
     from: '@sublang/playbook/dev/registry'
     roles:
       analyst: dev.analyst
+
+  # Pull-request delivery for DEV. BRANCH and PR bind Coder to the same
+  # dev.coder player as CODE and REVIEW on purpose: the Coder that read the
+  # issue and named the branch makes the commits and then describes them in
+  # the pull request. Change an id to isolate its conversation.
+  branch:
+    from: '@sublang/playbook/branch/registry'
+    roles:
+      coder: dev.coder
+
+  pr:
+    from: '@sublang/playbook/pr/registry'
+    roles:
+      coder: dev.coder
 ```
 
 The current bundled workflows accept no workflow-specific options.
@@ -156,11 +170,13 @@ those define the stable player envelope.
 
 Two bindings that name the same player ID deliberately share one sequential
 provider conversation throughout the logical Captain session — across nested
-calls, returns, and later root engagements. CODE's and REVIEW's `coder` roles
-therefore share `dev.coder` in the starter, and DECIDE and its nested REVIEW
-share both starter players. DEV's `analyst` instead binds the distinct
-`dev.analyst` player, so planning context does not bleed into the shared
-review conversation. Disposal of one playbook frame does not clear that
+calls, returns, and later root engagements. CODE's, REVIEW's, BRANCH's, and
+PR's `coder` roles therefore share `dev.coder` in the starter — so on a `/dev`
+pull-request path the Coder that read the issue and named the branch makes the
+commits and then describes them in the pull request — and DECIDE and its
+nested REVIEW share both starter players. DEV's `analyst` instead binds the
+distinct `dev.analyst` player, so planning context does not bleed into the
+shared review conversation. Disposal of one playbook frame does not clear that
 session ledger.
 
 Two distinct player IDs stay isolated even when their agent blocks are

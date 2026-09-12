@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies agreement among the maintained CODE, REVIEW, DECIDE, and DEV sources, their local roles, GEARS and FSM artifacts, and compiled workflow behavior.
+This package specifies agreement among the maintained CODE, REVIEW, DECIDE, DEV, BRANCH, and PR sources, their local roles, GEARS and FSM artifacts, and compiled workflow behavior.
 
 ## External Behavior
 
@@ -13,10 +13,10 @@ This package specifies agreement among the maintained CODE, REVIEW, DECIDE, and 
 
 #### playbook-1
 
-Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, or `DEV-1` through `DEV-4`, while the compiled FSM and runtime shall implement every preserved outcome.
+Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, `DEV-1` through `DEV-6`, `BRANCH-1`, or `PR-1` through `PR-7`, while the compiled FSM and runtime shall implement every preserved outcome.
 Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
 The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
-The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE, REVIEW, and DEV shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
+The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE, REVIEW, DEV, BRANCH, and PR shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
 Each maintained artifact, registry, and authored or generated runtime sibling shall declare artifact schema `3` and keep its compatibility declaration, delegated-player state/result topology, and authority metadata mutually exact by declaring every delegated-player state, outcome payload field, and repository disposition under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
 
 #### playbook-2
@@ -25,7 +25,7 @@ Where a delegated-role FSM state references a GEARS item through `sourceItem`, i
 
 #### playbook-3
 
-Where a delegated-role FSM state references a GEARS item, its `input.role` and `meta.playbook.role` shall equal the canonical local id of the `Coder`, `Reviewer`, or `Analyst` role under which that item is declared, and the compiled state metadata shall define no host-binding or player-id field.
+Where a delegated-role FSM state references a GEARS item, its `input.role` and `meta.playbook.role` shall equal the canonical local id of the `Coder`, `Reviewer`, or `Analyst` role under which that item is declared — `coder` for BRANCH's and PR's one delegated item each — and the compiled state metadata shall define no host-binding or player-id field.
 
 #### playbook-4
 
@@ -79,11 +79,79 @@ When the nested REVIEW call fails outside that authored result contract, DECIDE 
 
 #### playbook-38
 
-When DEV receives a development request, DEV shall relay it with relevant discussion context and any relevant run results to Analyst, accept only an affirmatively supported planning outcome among needs Boss reply, discussion complete, code, and decide then code — with discussion complete available only after a Boss reply — and act on the accepted outcome itself without returning to the session Captain for another routing decision:
+When DEV receives a development request, DEV shall relay it with relevant discussion context and any relevant run results to Analyst, accept only an affirmatively supported planning outcome among needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request — with discussion complete available only after a Boss reply, and a pull-request outcome available only for a request naming a GitHub issue or asking for pull-request delivery, whose issue and comments Analyst reads while planning — and act on the accepted outcome itself without returning to the session Captain for another routing decision:
 
 - for code, DEV calls playbook `code` with the request, discussion context, and planning result;
 - for decide then code, DEV calls playbook `decide`, and only after its canonical success calls playbook `code` additionally relaying the `decide`-owned commit and exact evaluated revision consumed only from `decide`'s canonical structured result, never separately calling `review` for the scope `decide` already reviewed;
-- DEV completes with the final child's successful result, relays an authored child abort, failure, or insufficient terminal result as its own failure terminal starting no later child, and parks as failed retaining any other nested-call error.
+- for code via pull request and decide then code via pull request, DEV first calls playbook `branch` with the request, discussion context, and planning result, only after its canonical success continues with the code or the decide-then-code path above with that path's same child inputs, and only after `code`'s canonical success calls playbook `pr` with the request, issue summary, branch, base revision, last `code`-owned commit, and exact final evaluated revision, consuming the branch, base revision, and issue summary only from `branch`'s and the commit and revision only from `code`'s canonical structured result;
+- a plain request calls neither `branch` nor `pr` and composes the same prompts, transitions, and child inputs as before the pull-request paths existed;
+- DEV completes with the final child's successful result — `code`'s on a plain path, `pr`'s on a pull-request path — relays an authored child abort, failure, or insufficient terminal result, including one from `branch` or `pr`, as its own failure terminal starting no later child, and parks as failed retaining any other nested-call error.
+
+#### playbook-43
+
+When BRANCH receives a development request, BRANCH shall relay the complete request to Coder in one governed call that reads the named GitHub issue with its comments, requires a clean working tree and a `gh` authenticated for the repository's GitHub remote, and creates and checks out `issue-N-short-kebab-slug` — or a short kebab-case slug of an issue-less request — at the current commit without pulling, resetting, stashing, or moving HEAD, accept only an affirmatively supported outcome among branched, refused, and needs Boss reply — the last for a request ambiguous about the issue or work it means — and settle each outcome with the repository exact:
+
+- for branched, BRANCH terminates successfully reporting the exact branch name and issue summary from Coder's result and the exact base revision taken from the `unchanged` receipt's observed HEAD, never from Coder's prose;
+- for refused — a dirty tree, an unauthenticated `gh`, an issue that does not exist or cannot be read, or a branch of that name already existing locally or on the remote — BRANCH terminates with the failure carrying Coder's complete report and its reason, having created nothing;
+- the absence of a reported obstacle supports no outcome, and no outcome depends on a fixed presentation format of Coder's reply.
+
+#### playbook-44
+
+When PR receives its caller's original request, issue summary, branch, base revision, last `code`-owned commit, and evaluated revision, PR shall relay the complete input to Coder in one governed call that confirms a clean working tree and that the checked-out branch is the branch to deliver rather than the default branch, pushes it to the repository's GitHub remote with its upstream set and never by force, reuses the branch's open pull request or opens one against the default branch with a title naming the change and a body carrying the summary from the base revision to the last commit, the verification the commits report, and a `Closes #N` line when the request names issue N, accept only an affirmatively supported outcome among opened and not published, and settle each with the repository exact:
+
+- for opened, PR retains the exact pull request number and URL from Coder's result and proceeds to the check wait of [[playbook-45](#playbook-45)];
+- for not published — a dirty tree, a wrong checked-out branch, a rejected push, or a pull request that cannot be opened — PR terminates with the failure carrying Coder's complete report and its reason, opening nothing further;
+- no outcome depends on a fixed presentation format of Coder's reply.
+
+#### playbook-45
+
+Where PR waits for checks, publishes the fix, waits again, merges, or updates the local default branch, that step shall run exactly one static, placeholder-free POSIX command in the repository, with no other action, no reading of its output, and no prose, whose exit status alone decides its two outcomes — `gh` inferring the pull request from the checked-out branch — and the maintained PR artifact shall be compiled with the optimize pass so that each of these items is a `script` state invoking no player, judge, adjudication, or governance boundary, its GEARS `## Optimizations` section listing exactly `PR-2`, `PR-4`, `PR-5`, `PR-6`, and `PR-7` as `captain → script`:
+
+| Item | Step | Command | Exit zero | Exit nonzero |
+| --- | --- | --- | --- | --- |
+| `PR-2` | first check wait | poll `gh pr checks` while it reports no checks, at most six times ten seconds apart, exiting zero when checks are still absent; otherwise `gh pr checks --watch --fail-fast` | checks passed | checks failed |
+| `PR-4` | fix publication | `git push`, then poll until `gh pr view --json headRefOid` equals `git rev-parse HEAD`, at most twelve times five seconds apart | fix published | fix not published |
+| `PR-5` | second check wait | the same command as `PR-2` | checks passed | checks still failing |
+| `PR-6` | merge | `gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"` | merged | merge refused |
+| `PR-7` | local update | `git pull --ff-only` | local default updated | local default not updated |
+
+- A pull request whose repository still reports no checks after the first wait's polling counts as passed.
+- An unoptimized compile is a valid GEARS package whose mechanical steps run through the host Captain's own tools, but it is not the maintained artifact.
+
+#### playbook-46
+
+When the first check wait fails, PR shall call playbook `code` exactly once with the original request, the pull request URL, and a coding request to inspect the failing checks with `gh pr checks` and `gh run view --log-failed`, fix their cause on the checked-out branch with a minimal change, and make the checks pass, so the fix commit and its review are owned by `code` and `review`:
+
+- only after `code`'s canonical success does PR publish the fix and wait for the checks again under [[playbook-45](#playbook-45)];
+- an authored `code` abort or failure, or a terminal result that does not prove its success, terminates PR as fix failed relaying that canonical result and leaving the pull request open;
+- a nested `code` failure outside that authored result contract parks PR as failed retaining the control-plane error;
+- a failed fix publication terminates PR as fix not published, and a failed second check wait terminates PR as checks still failing, each leaving the pull request open with no second fix attempt — the bound is the absence of any `code` target after the second wait, not a counter.
+
+#### playbook-47
+
+When the checks pass, before or after the one fix attempt, PR shall merge the pull request with a merge commit on the default branch, deleting the remote and local branch and checking out the local default branch — GitHub closing the linked issue — and then bring the local default branch to the merged head, terminating successfully whether or not that fast-forward succeeds:
+
+- a merge refused for a conflict, a branch protection, a forbidden merge method, or a head that moved, or a merge that landed while the local switch or branch deletion failed, terminates PR as merge refused leaving the pull request in the state GitHub reports;
+- the merged result reports the pull request number and URL, the fact that the pull request is merged, and whether the local default branch was fast-forwarded, and carries no merge-commit identity, because only a script observes the merge and script output never enters context.
+
+#### playbook-48
+
+Where BRANCH or PR runs under artifact schema `3`, its compiled FSM shall declare exactly these final states, each with the terminal kind of [[playbook-41](#playbook-41)] and the output that its entering step proves:
+
+| Workflow | Final state | Kind | Output | Entered by |
+| --- | --- | --- | --- | --- |
+| BRANCH | `branched` | success | `status: 'branched'`; semantic `branch` and `issueSummary`; effect `baseRevision` | branched [[playbook-43](#playbook-43)] |
+| BRANCH | `refused` | failure | `status: 'refused'`; verbatim `coderOutput` | refused [[playbook-43](#playbook-43)] |
+| PR | `merged` | success | `status: 'merged'`; semantic `pullRequest` and `pullRequestUrl`; `localDefaultUpdated: true` | local update exit zero [[playbook-47](#playbook-47)] |
+| PR | `mergedLocalBehind` | success | as `merged` with `localDefaultUpdated: false` | local update exit nonzero [[playbook-47](#playbook-47)] |
+| PR | `notPublished` | failure | `status: 'not-merged'`; `reason: 'not-published'`; verbatim `coderOutput` | not published [[playbook-44](#playbook-44)] |
+| PR | `fixFailed` | failure | `status: 'not-merged'`; `reason: 'fix-failed'`; `pullRequest`; `pullRequestUrl`; `childResult` relaying `code`'s canonical result | the authored `code` failure [[playbook-46](#playbook-46)] |
+| PR | `fixNotPublished` | failure | `status: 'not-merged'`; `reason: 'fix-not-published'`; `pullRequest`; `pullRequestUrl` | fix publication exit nonzero [[playbook-46](#playbook-46)] |
+| PR | `checksStillFailing` | failure | `status: 'not-merged'`; `reason: 'checks-failed'`; `pullRequest`; `pullRequestUrl` | second check wait exit nonzero [[playbook-46](#playbook-46)] |
+| PR | `mergeRefused` | failure | `status: 'not-merged'`; `reason: 'merge-refused'`; `pullRequest`; `pullRequestUrl` | merge exit nonzero [[playbook-47](#playbook-47)] |
+
+- `pullRequest` is a string, as `irNumber` is, and no final state carries a merge-commit field.
+- The recoverable parked `failed` state of either workflow is not final and carries no output.
 
 #### playbook-27
 
@@ -94,8 +162,11 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 | CODE | entered only after REVIEW establishes the direct phase's or final IR task's scope evaluated with no unsettled findings [[playbook-20](#playbook-20)] | entered on an authored REVIEW abort or failure, or on a terminal REVIEW result that does not establish the evaluated scope [[playbook-24](#playbook-24)] |
 | DECIDE | entered only when REVIEW establishes the DECIDE-owned commit's scope evaluated with no unsettled findings [[playbook-22](#playbook-22)] | entered on those same authored REVIEW outcomes [[playbook-25](#playbook-25)] |
 | DEV | entered only by the final child's proven canonical success [[playbook-38](#playbook-38)] | entered on an authored child abort, failure, or insufficient terminal result [[playbook-38](#playbook-38)] |
+| BRANCH | `branched`, entered only by an affirmatively supported branched outcome whose receipt proves the repository exact [[playbook-43](#playbook-43)] | `refused`, entered only by an affirmatively supported refusal [[playbook-43](#playbook-43)] |
+| PR | `merged` and `mergedLocalBehind`, entered only after the merge command exits zero and distinguished only by the local update's exit status [[playbook-47](#playbook-47)] | `notPublished`, `fixFailed`, `fixNotPublished`, `checksStillFailing`, and `mergeRefused`, each entered only from its own step's failure [[playbook-48](#playbook-48)] |
 
 - DEV declares a third terminal state for discussion complete, entered only after a Boss reply with no child call [[playbook-38](#playbook-38)].
+- DEV's pull-request paths add no terminal state: on them the success state is entered by `pr`'s proven canonical success, and the failure-relay state relays a `branch` or `pr` failure like any child's [[playbook-38](#playbook-38)].
 - The recoverable parked `failed` state is not a terminal outcome: a nested control-plane failure parks there instead [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], [[playbook-38](#playbook-38)].
 - The declared machine output is unchanged, still deriving its status and fields from typed context.
 - Each maintained runtime's terminal result carries the reached final state's exact description under [[playbook-runtime-41](playbook-runtime.md#playbook-runtime-41)], independently of whether that runtime implements optional control actions.
@@ -104,8 +175,8 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 
 Every maintained workflow's compiled FSM shall declare each of its final states' terminal kind in `meta.playbook.terminal`, so a caller routes a completed child from the machine that child reached rather than from that child's output fields [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)]:
 
-- each success terminal state of [[playbook-27](#playbook-27)], REVIEW's one completion, and DEV's discussion-complete state declare `success`;
-- each failure-relay terminal state of [[playbook-27](#playbook-27)] declares `failure`;
+- each success terminal state of [[playbook-27](#playbook-27)] — BRANCH's `branched` and both of PR's `merged` and `mergedLocalBehind` among them — REVIEW's one completion, and DEV's discussion-complete state declare `success`;
+- each failure-relay terminal state of [[playbook-27](#playbook-27)] — BRANCH's `refused` and each of PR's `notPublished`, `fixFailed`, `fixNotPublished`, `checksStillFailing`, and `mergeRefused` among them — declares `failure`;
 - the recoverable parked `failed` state is not final and declares no kind.
 
 A caller's compiled FSM shall therefore route a maintained child's failure terminal through its `invoke.onError` authored-outcome arm [[playbook-runtime-84](playbook-runtime.md#playbook-runtime-84)], relaying the child's own output as its relayed failure evidence.
@@ -189,12 +260,33 @@ Where DEV runs under artifact schema `3`, each delegated Analyst outcome shall d
 | --- | --- | --- | --- | --- |
 | `planAnalysis` | `code` | presentation `planningResult` | `unchanged` | `callCode` |
 | `planAnalysis` | `decideThenCode` | presentation `planningResult` | `unchanged` | `callDecide` |
+| `planAnalysis` | `codeViaPullRequest` | presentation `planningResult` | `unchanged` | `createBranch`, then `callCode` |
+| `planAnalysis` | `decideThenCodeViaPullRequest` | presentation `planningResult` | `unchanged` | `createBranch`, then `callDecide` |
 | `planAnalysis` | `discussionComplete` | none | `unchanged` | `discussionComplete` |
 | `planAnalysis` | `needsBossReply` | presentation `question` | `unchanged` | `awaitBossReply` |
 
-The reconciler shall treat `planningResult` and `question` as opaque presentation and shall require a matching `unchanged` receipt for every Analyst outcome, including each question and its separately governed authored continuation under [[playbook-12](#playbook-12)], so planning that mutates the repository remains unresolved.
+The reconciler shall treat `planningResult` and `question` as opaque presentation and shall require a matching `unchanged` receipt for every Analyst outcome, including each question and its separately governed authored continuation under [[playbook-12](#playbook-12)], so planning that mutates the repository remains unresolved; reading an issue during planning is not a repository effect.
+The nested `branch`, `code`, `decide`, and `pr` calls declare no arm of their own: each child's terminal is its outcome, and `callCode` and `callDecide` keep their prompts and child inputs whether entered from `planAnalysis` or from `createBranch`.
 Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)].
 The DEV source, GEARS, FSM, linked runtime, declarations, and registry shall agree on artifact schema `3` under runtime ABI `1` [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] while preserving their agreement under [[playbook-1](#playbook-1)].
+
+#### playbook-49
+
+Where BRANCH or PR runs under artifact schema `3`, each delegated Coder outcome shall declare and reconcile the exact authority, repository disposition, and accepted transition in this matrix under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)]:
+
+| Workflow | Source state | Accepted outcome | Payload authority | Repository disposition | Target state |
+| --- | --- | --- | --- | --- | --- |
+| BRANCH | `createBranch` | `branched` | semantic `branch`, `issueSummary`; effect `baseRevision` | `unchanged` | `branched` |
+| BRANCH | `createBranch` | `refused` | presentation `coderOutput` | `unchanged` | `refused` |
+| BRANCH | `createBranch` | `needsBossReply` | presentation `question` | `unchanged` | `awaitBossReply` |
+| PR | `openPullRequest` | `opened` | semantic `pullRequest`, `pullRequestUrl` | `unchanged` | `waitForChecks` |
+| PR | `openPullRequest` | `notPublished` | presentation `coderOutput` | `unchanged` | `notPublished` |
+| PR | `openPullRequest` | `needsBossReply` | presentation `question` | `unchanged` | `awaitBossReply` |
+
+The reconciler shall treat `coderOutput` and `question` as opaque presentation, retain `branch`, `issueSummary`, `pullRequest`, and `pullRequestUrl` as exact semantic evidence under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)], obtain `baseRevision` only from the matching `unchanged` receipt's observed HEAD per [DR-045](../decisions/045-unchanged-receipt-revision-authority.md), and require a matching `unchanged` receipt for every arm, including each question and its separately governed authored continuation under [[playbook-12](#playbook-12)] — a new branch at the current commit, a push, and an opened pull request change neither HEAD's commit nor the working tree, and byte-identical pre-existing dirt is no delta.
+PR's script states and the nested `code` call hold no ledger boundary and declare no arm here: the merge is the one step that moves HEAD, to the default branch, outside governance by design.
+Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)].
+The BRANCH and PR sources, GEARS, FSMs, linked runtimes, declarations, and registries shall agree on artifact schema `3` under runtime ABI `1` [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] while preserving their agreement under [[playbook-1](#playbook-1)].
 
 ### Boss-reply suspension
 
@@ -272,11 +364,19 @@ The suites shall further fail unless the proposal and merge adjudicator prompts 
 
 #### playbook-40
 
-When the DEV conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every Analyst outcome accepts only a matching `unchanged` receipt, including each question and separately governed answer continuation, with any repository mutation during planning remaining unresolved without a child call; discussion complete is accepted only after a Boss reply; the decide-then-code path starts `code` only after `decide`'s canonical success, relaying the exact `decide`-owned commit and evaluated revision from that structured result alone; an authored child abort, failure, or insufficient terminal result settles in the failure-relay terminal without a later child while a control-plane child failure parks; each terminal state publishes its distinct truthful description; every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-39](#playbook-39)] (verifying [[playbook-1](#playbook-1)], [[playbook-12](#playbook-12)], [[playbook-38](#playbook-38)], and [[playbook-39](#playbook-39)]).
+When the DEV conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every Analyst outcome accepts only a matching `unchanged` receipt, including each question and separately governed answer continuation, with any repository mutation during planning remaining unresolved without a child call; discussion complete is accepted only after a Boss reply; the decide-then-code path starts `code` only after `decide`'s canonical success, relaying the exact `decide`-owned commit and evaluated revision from that structured result alone; each pull-request path starts `branch` first, enters `callCode` or `callDecide` with the same composed prompt and child input as its plain path, calls `pr` only after `code`'s canonical success relaying the branch, base revision, and issue summary from `branch`'s and the last commit and final evaluated revision from `code`'s structured result alone, and completes with `pr`'s result, while a plain request calls neither `branch` nor `pr` and compiles to the same prompts, transitions, and composed child inputs as before the pull-request paths; an authored child abort, failure, or insufficient terminal result — from `branch` or `pr` as from `code` or `decide` — settles in the failure-relay terminal without a later child while a control-plane child failure parks; each terminal state publishes its distinct truthful description; every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-39](#playbook-39)] (verifying [[playbook-1](#playbook-1)], [[playbook-12](#playbook-12)], [[playbook-38](#playbook-38)], and [[playbook-39](#playbook-39)]).
 
 #### playbook-42
 
-When the maintained conformance suites read each artifact's compiled final states, they shall fail unless every one of them declares exactly the terminal kind of [[playbook-41](#playbook-41)] and no other state declares one; and when the DEV coverage suite delivers a CODE result that does not prove success, it shall fail unless that result reaches DEV through its `invoke.onError` authored-outcome arm and DEV's failure-relay terminal with the child's own output relayed, while a resolved result that does not prove success still reaches that same terminal through the retained `onDone` field check (verifying [[playbook-41](#playbook-41)]).
+When the maintained conformance suites read each artifact's compiled final states, they shall fail unless every one of them declares exactly the terminal kind of [[playbook-41](#playbook-41)] and no other state declares one; and when the DEV coverage suite delivers a CODE, BRANCH, or PR result that does not prove success, it shall fail unless that result reaches DEV through its `invoke.onError` authored-outcome arm and DEV's failure-relay terminal with the child's own output relayed, while a resolved result that does not prove success still reaches that same terminal through the retained `onDone` field check (verifying [[playbook-41](#playbook-41)]).
+
+#### playbook-50
+
+When the BRANCH conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every Coder outcome accepts only a matching `unchanged` receipt, including the question and its separately governed answer continuation, with a branch created at HEAD on a clean tree and on a tree whose pre-existing dirt is byte-identical before and after both classifying `unchanged`; `baseRevision` comes only from that receipt's observed HEAD, with a judge-authored value rejected as a structural error; `branch` and `issueSummary` come only from exact semantic candidates; refused settles in the failure terminal carrying Coder's complete report with no branch created and no later call; each terminal state publishes its distinct truthful description; every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-49](#playbook-49)] (verifying [[playbook-1](#playbook-1)], [[playbook-12](#playbook-12)], [[playbook-43](#playbook-43)], and [[playbook-49](#playbook-49)]).
+
+#### playbook-51
+
+When the PR conformance suites drive its real artifact-schema-3 runtime, they shall fail unless the Coder outcome accepts only a matching `unchanged` receipt, including the question and its separately governed answer continuation, with `pullRequest` and `pullRequestUrl` coming only from exact semantic candidates and not published settling in its failure terminal with Coder's complete report and no later step; the compiled GEARS `## Optimizations` section lists exactly `PR-2`, `PR-4`, `PR-5`, `PR-6`, and `PR-7` as `captain → script`, the FSM invokes only a `script` actor for each of them with no player, judge, adjudication, or governance boundary, each script's command equals its source command byte for byte, and each script state routes on exit status alone with a fixture for both exits; a failed first wait calls `code` exactly once with the composed coding request, a failed second wait reaches `checksStillFailing` with no `code` target, and a failed fix publication reaches `fixNotPublished`; a `code` result that does not prove success reaches `fixFailed` through PR's `invoke.onError` authored-outcome arm with the child's own output relayed, a resolved result that does not prove success reaches that same terminal through the retained `onDone` field check, and a control-plane `code` failure parks; a nonzero merge reaches `mergeRefused` while a zero merge reaches `merged` or `mergedLocalBehind` by the local update's exit status alone, both carrying `localDefaultUpdated` and no merge-commit field; each terminal state publishes its distinct truthful description; every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-49](#playbook-49)] (verifying [[playbook-1](#playbook-1)], [[playbook-12](#playbook-12)], [[playbook-44](#playbook-44)], [[playbook-45](#playbook-45)], [[playbook-46](#playbook-46)], [[playbook-47](#playbook-47)], [[playbook-48](#playbook-48)], and [[playbook-49](#playbook-49)]).
 
 ### Boss-reply suspension coverage
 

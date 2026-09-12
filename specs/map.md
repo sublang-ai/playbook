@@ -85,7 +85,7 @@ meta.md       The spec of specs
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
-| [playbook.md](packages/playbook.md) | CODE, REVIEW, and DECIDE source, GEARS, FSM, prompt, transition, nesting, and terminal conformance |
+| [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |

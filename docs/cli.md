@@ -105,8 +105,8 @@ its exit status or signal and exit `127` when it cannot be spawned
 
 The Boss pane starts at the Playbook Captain shell, where the session
 Captain runs for the whole session and sees every turn. Use `/code`,
-`/review`, `/decide`, or `/dev` followed by a task to select one of the
-bundled playbooks explicitly. A registered command resolves deterministically,
+`/review`, `/decide`, `/dev`, `/branch`, or `/pr` followed by a task to
+select one of the bundled playbooks explicitly. A registered command resolves deterministically,
 with no model call parsing it: at idle it starts that playbook, at its
 own leaf it delivers the rest of the line, an enabled command absent
 from the active path switches to it, and a bare command answers with
@@ -121,11 +121,25 @@ untouched
 ([[playbook-captain-1](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-captain.md#playbook-captain-1)],
 [[playbook-captain-2](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-captain.md#playbook-captain-2)]).
 
-The current CODE, REVIEW, DECIDE, and DEV workflows take their deterministic
-initial event from the selecting Boss turn. CODE and DECIDE then call REVIEW
-as a nested playbook, while DEV — the repository-aware planner behind
-`/dev` — analyzes a development request and itself calls CODE, or DECIDE and
-then CODE, as nested playbooks. Local role names do not imply continuity: each frame
+The current CODE, REVIEW, DECIDE, DEV, BRANCH, and PR workflows take their
+deterministic initial event from the selecting Boss turn. CODE and DECIDE then
+call REVIEW as a nested playbook, while DEV — the repository-aware planner
+behind `/dev` — analyzes a development request and itself calls CODE, or
+DECIDE and then CODE, as nested playbooks. When the request names a GitHub
+issue or asks for pull-request delivery, DEV reads the issue and its comments
+while planning, calls BRANCH before that path and PR after CODE succeeds, and
+ends with a merged pull request and a closed issue — or with a named failure
+that leaves the pull request open for a later `/pr`. Both are usable on their
+own: `/branch <issue or request>` creates and checks out `issue-N-slug` (or a
+request slug) at the current commit, changing nothing else; `/pr` pushes the
+checked-out branch, opens or reuses its pull request against the default
+branch, waits for the checks, fixes red checks through one nested CODE call,
+merges with a merge commit, and fast-forwards the local default branch. A
+repository without checks merges on CODE's nested review alone. BRANCH, PR,
+and issue-aware DEV planning require the GitHub CLI `gh`, authenticated for
+the repository's GitHub remote
+([DR-050](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/050-pull-request-delivery.md)).
+Local role names do not imply continuity: each frame
 uses the exact stable player IDs configured under its `roles` map. Equal IDs
 share one pane and provider conversation across nested and later root
 engagements; distinct IDs remain isolated even when their agent settings are
@@ -333,8 +347,13 @@ For each governed player call, Playbook records a Git baseline before the call
 and a durable receipt afterward. CODE and DECIDE commit arms, and REVIEW's
 Coder commit arm, accept a commit only when the receipt proves exactly one
 descendant commit with no residual repository change; REVIEW's Reviewer calls,
-DECIDE's proposal calls, and every DEV Analyst planning call require the
-repository to remain exact. The
+DECIDE's proposal calls, every DEV Analyst planning call, BRANCH's Coder call,
+and PR's Coder call require the repository to remain exact — a new branch at
+the current commit, a push, and an opened pull request change neither HEAD's
+commit nor the working tree, and BRANCH takes its base revision from that
+receipt rather than from the Coder. PR's check waits, fix publication, merge,
+and fast-forward are agent-free script steps outside governance; the merge is
+the one step that moves HEAD, onto the default branch. The
 player's prose, including any `Commit:` line, is presentation rather than
 proof.
 

@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BRANCH and PR join the maintained set, and DEV delivers through a pull request.** DEV, CODE, and DECIDE commit on whatever branch is checked out, so a request naming a GitHub issue ended with Boss branching, pushing, opening the pull request, watching the checks, and merging by hand around the run. `branch` is one `unchanged`-governed Coder call that reads the issue and its comments, requires a clean tree and an authenticated `gh`, creates and checks out `issue-N-slug` at the current commit, and returns the branch, the issue summary, and a base revision taken from the receipt's observed HEAD rather than from prose; a dirty tree, an unauthenticated `gh`, an unreadable issue, or a name collision is its single `refused` terminal. `pr` publishes the checked-out branch and opens or reuses its pull request through one governed Coder call, then runs its mechanical steps — the check wait, the fix publication, the second wait, the merge with `gh pr merge --merge --delete-branch --match-head-commit`, and the fast-forward — as agent-free script states, since `gh` infers the pull request from the branch; red checks call `code` exactly once, and every ending is a typed terminal (`merged`, `mergedLocalBehind`, `notPublished`, `fixFailed`, `fixNotPublished`, `checksStillFailing`, `mergeRefused`) with no fabricated merge-commit field. DEV's planning gains `code via pull request` and `decide then code via pull request`: on those outcomes it calls `branch` first and `pr` after `code` succeeds, consuming the branch, base revision, issue summary, commit, and revision only from canonical child results, while a plain request compiles to the same prompts, edges, and child inputs as before. Both ship under `reference/sdlc/branch.playbook` and `reference/sdlc/pr.playbook` with public `./branch/*` and `./pr/*` subpaths and the `/branch` and `/pr` commands; an authenticated `gh` is a documented prerequisite ([DR-050](specs/decisions/050-pull-request-delivery.md), [[playbook-38](specs/packages/playbook.md#playbook-38)], [[playbook-43](specs/packages/playbook.md#playbook-43)] through [[playbook-49](specs/packages/playbook.md#playbook-49)], [[playbook-captain-5](specs/packages/playbook-captain.md#playbook-captain-5)], [[release-20](specs/packages/release.md#release-20)]).
+
+### Changed
+
+- **The starter config enables `branch` and `pr` and binds both Coders to `dev.coder`.** No player is added: the Coder that read the issue and named the branch is the one that makes the commits in CODE and REVIEW and then describes them in the pull request, while `dev.analyst` stays distinct. Change either binding's id to isolate its conversation ([[playbook-cli-11](specs/packages/playbook-cli.md#playbook-cli-11)]).
+
 ## [13.1.0] - 2026-09-08
 
 ### Added
