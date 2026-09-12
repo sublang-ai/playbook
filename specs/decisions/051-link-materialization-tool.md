@@ -6,7 +6,7 @@
 ## Status
 
 Accepted for the measured flat single-player/script workflow with standalone quoted relays (2026-09-12).
-Performance outside that case and the five-minute cold full-compilation goal remain unproven.
+A separate accepted cold minimal demo demonstrates the five-minute overall target once; isolated linking gains outside the quoted-relay case remain unproven.
 
 ## Context
 
@@ -29,7 +29,7 @@ The retained optional mechanism changes no interpreter, engine compatibility dec
 
 Deterministic output can remove repetitive generation and exact-label mistakes without inventing source semantics.
 Factory preflight checks structure but does not prove erased field declarations or prompt fidelity; existing conformance remains mandatory.
-A successful matched fixed-FSM comparison establishes the bounded linking improvement below; a cold full compilation remains necessary before claiming the overall five-minute goal.
+The matched fixed-FSM comparison establishes the bounded linking improvement below; the separately recorded cold full compilation establishes the overall demo target once.
 The default profile remains byte-compatible with v2, but this pair measures only `flat-quoted-relays` and establishes no independent latency result for other workflows or profiles.
 
 An isolated materializer comparison holds compiler behavior, FSM input, full runtime contract and independent correctness fixes constant while removing only optional helper instructions from the control entry.
@@ -48,3 +48,9 @@ Every declared input matched except `link.md`, whose exact difference was the op
 The observed reduction is 63.1% for this one sequential pair, not a population estimate; model variation and ordering effects remain possible.
 Both real runtime checks preserved the original and copied source, delivered the exact quoted Boss task, performed one player call and one commit in the workflow's own repository, and reached terminal success.
 The matching provider command invoked the frozen helper with the exact descriptor and exited successfully; replaying that command's descriptor regenerated all 5,886 bytes of the final linked module exactly, with SHA-256 `9e4c3b7bf85f7ce76e33432e703cab582dd55d0c9050c172779419552b354589`.
+
+The [separate cold measurement](../../scripts/experiments/materializer-v3-cold-evidence.json) compiles the unchanged 292-byte minimal source with Opus 5 at low effort, one compilation agent, the reviewed Boss-task producer, and SLC's frozen v8 compiler.
+Generation takes 193,607 ms and the original strict TypeScript, entry import, four generated suites, and real-Git runtime acceptance complete within 196,601 ms total.
+The runtime delivers the exact literal Boss task to one delegated call, makes one commit in its own repository, and reaches terminal success.
+This one accepted observation uses the default helper profile and demonstrates the five-minute demo target; it supplies neither a general latency guarantee nor an isolated full-compilation or default-profile speed ratio.
+The quoted-relay pair's 63.1% improvement remains the separately controlled retention evidence.
