@@ -80,6 +80,29 @@ describe('optional link materialization integration', () => {
     return result.stdout;
   }
 
+  it('preserves Boss-reply resumption independently of interrupt targets', () => {
+    const source = fixture().replace("    failed: {", "    awaitBossReply: { id: 'awaitBossReply', tags: ['playbook.parked'], meta: meta('awaitBossReply'), on: { BOSS_REPLY: { target: '#work' } } },\n    failed: {");
+    expect(source).not.toContain('BOSS_INTERRUPT');
+    writeFileSync(fsm, source);
+    const result = emit();
+    expect(result.status, result.stderr).toBe(0);
+    execute(`
+      import assert from 'node:assert/strict';
+      import { _internal } from ${JSON.stringify(pathToFileURL(out).href)};
+      import { fixtureMachine } from ${JSON.stringify(pathToFileURL(fsm).href)};
+      import { resumableStateIdsFromMachine } from '@sublang/playbook/xstate-runtime';
+      assert.deepEqual([...resumableStateIdsFromMachine(fixtureMachine)], ['work']);
+      assert.deepEqual([..._internal.RESUMABLE_STATE_IDS], ['work']);
+    `);
+    const accepted = readFileSync(out, 'utf8');
+    const incomplete = descriptor();
+    incomplete.resumableStateIds = [];
+    const refused = emit(incomplete);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('must be registered in resumableStateIds');
+    expect(readFileSync(out, 'utf8')).toBe(accepted);
+  });
+
   it('emits, loads, and type-checks a real factory with exact metadata and strict options', () => {
     const source = readFileSync(fsm, 'utf8');
     const result = emit();

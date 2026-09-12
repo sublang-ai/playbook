@@ -3,7 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, cpSync, mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,5 +48,41 @@ it('ships the compact recipe with the exact helper and reversibly relocated comp
     expect(closure).toContain('references/link-contract.md');
   } finally {
     rmSync(cache, { recursive: true, force: true });
+  }
+}, 120_000);
+
+// Optional exact-version experiment acceptance: supply the actual installed
+// package, not a fabricated baseline or a runtime/dependency adoption.
+const baselinePackage = process.env.PLAYBOOK_MATERIALIZATION_BASELINE;
+it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidate and refuses modified baselines or existing output', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'playbook-compact-builder-'));
+  const installed = baselinePackage!;
+  const builder = join(root, 'scripts/build-link-experiment-12.3.mjs');
+  const run = (source: string, output: string) => execFileSync(process.execPath, [builder, source, output], {
+    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const original = readFileSync(join(installed, 'slc/link.md'), 'utf8');
+    const target = join(scratch, 'candidate');
+    run(installed, target);
+    expect(readFileSync(join(target, 'link.md'), 'utf8')).toBe(read('slc/link.md'));
+    expect(readFileSync(join(target, 'optimize.md'), 'utf8')).toBe(read('slc/optimize.md'));
+    expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('slc/materialize-link.mjs'));
+    const proof = readFileSync(join(target, 'experiment-proof.json'), 'utf8');
+    const record = JSON.parse(proof);
+    expect(sha(rebaseContract(readFileSync(join(target, 'references/link-contract.md'), 'utf8'), true))).toBe(record.fullContractSha256);
+    expect(() => run(installed, target)).toThrow(/Output already exists/);
+    expect(readFileSync(join(target, 'experiment-proof.json'), 'utf8')).toBe(proof);
+    const modified = join(scratch, 'modified-baseline');
+    mkdirSync(modified);
+    cpSync(join(installed, 'package.json'), join(modified, 'package.json'));
+    cpSync(join(installed, 'slc'), join(modified, 'slc'), { recursive: true });
+    writeFileSync(join(modified, 'slc/link.md'), original + '\n<!-- baseline mutation -->\n');
+    const refused = join(scratch, 'refused');
+    expect(() => run(modified, refused)).toThrow(/installed link.md hash mismatch/);
+    expect(existsSync(refused)).toBe(false);
+    expect(readFileSync(join(installed, 'slc/link.md'), 'utf8')).toBe(original);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }, 120_000);
