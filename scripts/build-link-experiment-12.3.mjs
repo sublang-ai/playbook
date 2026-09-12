@@ -13,11 +13,12 @@ import { compactDefinition, rebaseContract } from './compact-link-definition.mjs
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const [installedArgument, targetArgument, mode] = process.argv.slice(2);
-const fullMode = mode === '--full';
+const fullMode = mode === undefined || mode === '--full';
+const compactMode = mode === '--compact';
 const baselineMode = mode === '--baseline';
 const modeName = baselineMode ? 'baseline' : fullMode ? 'full' : 'compact';
-if (!installedArgument || !targetArgument || process.argv.length > 5 || (mode !== undefined && !fullMode && !baselineMode)) {
-  throw new Error('Usage: node scripts/build-link-experiment-12.3.mjs <installed-playbook-package-root> <new-definition-directory> [--full | --baseline] (mutually exclusive)');
+if (!installedArgument || !targetArgument || process.argv.length > 5 || (!fullMode && !baselineMode && !compactMode)) {
+  throw new Error('Usage: node scripts/build-link-experiment-12.3.mjs <installed-playbook-package-root> <new-definition-directory> [--full | --baseline | --compact] (mutually exclusive)');
 }
 const installed = resolve(installedArgument);
 const target = resolve(targetArgument);
@@ -53,7 +54,7 @@ for (const [file, digest] of Object.entries(baselineHashes)) {
   baseline[file] = await readFile(join(installed, 'slc', file), 'utf8');
   verify(baseline[file], digest, `installed ${file}`);
 }
-const full13 = rebaseContract(await readFile(join(repo, 'slc/references/link-contract.md'), 'utf8'), true);
+const full13 = await readFile(join(repo, 'slc/link.md'), 'utf8');
 verify(full13, expected.full13, 'committed complete 13.1 contract');
 const recipeStart = full13.indexOf('## Optional deterministic materialization\n');
 const recipeEnd = full13.indexOf('## PlaybookRuntime contract\n', recipeStart);
@@ -85,7 +86,7 @@ assert.equal(baselineDefinition.replace(effectRule, '').replace(currentCompletio
 for (const token of ['materialize-link.mjs', '## Optional deterministic materialization', 'sublang.playbook.link.v1', 'flat-defaults', 'references/link-contract.md']) {
   assert(!baselineDefinition.includes(token), `Control entry must not cite helper or compact instructions: ${token}`);
 }
-const entrySource = await readFile(join(repo, 'slc/link.md'), 'utf8');
+const entrySource = await readFile(join(repo, 'scripts/experiments/rejected-compact-link.md'), 'utf8');
 const entry = compactDefinition(full12, entrySource.split('## Compiled execution\n')[0]);
 const companion = rebaseContract(full12);
 assert.equal(rebaseContract(companion, true), full12, 'Companion relocation must be reversible');

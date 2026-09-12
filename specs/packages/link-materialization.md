@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package defines the experimental phase-owned helper of [DR-051](../decisions/051-link-materialization-tool.md) and compact recipe of [DR-052](../decisions/052-helper-backed-compact-link.md), leaving semantic compilation with the linking agent.
+This package defines the experimental phase-owned helper of [DR-051](../decisions/051-link-materialization-tool.md), leaving semantic compilation with the linking agent.
 
 ## External Behavior
 
@@ -74,23 +74,11 @@ When an invocation is refused, the helper shall preserve an existing target and 
 
 ### link-materialization-12
 
-The optional tool shall leave the full normative [link contract](../../slc/references/link-contract.md) and emitted conformance checks binding, including source prompt fidelity and exact semantic metadata.
+The optional tool shall leave the full normative [link contract](../../slc/link.md) and emitted conformance checks binding, including source prompt fidelity and exact semantic metadata.
 
 ### link-materialization-13
 
-The shipped phase-set sidecar shall include the helper and full contract companion in the link definition's semantic-input closure so a content change to either invalidates incremental link reuse.
-
-### link-materialization-14
-
-Where a flat ordinary player/script workflow requires only shared default strategies and unconstrained primitive options, the compact definition shall supply a self-contained metadata-authoring recipe that invokes the unchanged helper without requiring a fresh audit of shared engine implementation.
-
-### link-materialization-15
-
-Where a workflow requires semantics outside that recipe's explicit scope, the compact definition shall direct the linker to the full normative contract for ordinary linking without widening, dropping, or guessing source requirements.
-
-### link-materialization-16
-
-The compact definition shall preserve the full contract's existing entry anchors as resolving references to its relocated sections, with full contract text unchanged apart from reversible relative Markdown-link rebasing.
+The shipped phase-set sidecar shall include the helper in the link definition's semantic-input closure so a helper-content change invalidates incremental link reuse.
 
 ## Verification
 
@@ -104,8 +92,8 @@ When the integration suite invokes the real CLI over supported and unsupported s
 
 ### link-materialization-19
 
-Where a built SLC installation is supplied, the integration probe shall execute real discovery, semantic closure and incremental runs to verify unchanged reuse followed by link-only invalidation after independently mutating the helper and full contract companion [[link-materialization-13](#link-materialization-13)].
+Where a built SLC installation is supplied, the integration probe shall execute real discovery, semantic closure and incremental runs to verify unchanged reuse followed by link-only invalidation after mutating the helper [[link-materialization-13](#link-materialization-13)].
 
 ### link-materialization-20
 
-When checking the packed definition surface, the integration suite shall verify the unchanged helper, reversible full-contract relocation and original anchor resolution alongside the compact recipe's complete descriptor obligations and explicit fallback boundary [[link-materialization-12](#link-materialization-12)] [[link-materialization-14](#link-materialization-14)] [[link-materialization-15](#link-materialization-15)] [[link-materialization-16](#link-materialization-16)].
+When checking the packed definition surface, the integration suite shall verify the unchanged helper, complete normative entry and resolving contract references [[link-materialization-1](#link-materialization-1)] [[link-materialization-12](#link-materialization-12)].

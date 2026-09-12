@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// Experiment tooling, not a compiler phase. Rebase Markdown destinations only;
+// Rejected experiment reproduction, not a compiler phase. Rebase Markdown destinations only;
 // fenced code and the full normative contract otherwise remain byte-identical.
 import { readFile, writeFile, mkdir, cp } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -36,7 +36,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!source || !target) throw new Error('Usage: compact-link-definition.mjs <full-definition-dir> <new-definition-dir> [recipe.md]');
   if (resolve(source) === resolve(target)) throw new Error('Source and target must differ');
   const full = await readFile(join(source, 'link.md'), 'utf8');
-  const recipeSource = await readFile(recipePath ?? new URL('../slc/link.md', import.meta.url), 'utf8');
+  const recipeSource = await readFile(recipePath ?? new URL('./experiments/rejected-compact-link.md', import.meta.url), 'utf8');
   const recipe = recipeSource.split('## Compiled execution\n')[0];
   const companion = rebaseContract(full);
   if (rebaseContract(companion, true) !== full) throw new Error('Contract relocation is not reversible');

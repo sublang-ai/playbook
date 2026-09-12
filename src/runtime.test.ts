@@ -10,7 +10,7 @@ const sibling = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 const fromRepo = (rel: string) =>
   fileURLToPath(new URL(`../${rel}`, import.meta.url));
 
-const linkSpec = readFileSync(fromRepo('slc/references/link-contract.md'), 'utf8');
+const linkSpec = readFileSync(fromRepo('slc/link.md'), 'utf8');
 const runtimeSource = readFileSync(sibling('runtime.ts'), 'utf8');
 const runtimeDts = readFileSync(sibling('runtime.d.ts'), 'utf8');
 const runtimeJs = readFileSync(sibling('runtime.js'), 'utf8');
@@ -204,7 +204,7 @@ function applyMemberSignature(src: string): {
 }
 
 describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
-  // PBRT-35: consistency with the complete relocated link contract.
+  // PBRT-35: consistency with the complete link contract.
   it('matches the full link contract on result, resume, session, trace, and runtime shapes', () => {
     expect(statusMembers(runtimeDts)).toEqual(['aborted', 'error', 'ok']);
     expect(statusMembers(runtimeDts, 'CaptainResult')).toEqual([

@@ -9,6 +9,7 @@
 // imports, and explicitly declares its empty cohort list. Current SLC's real
 // source, FSM, and linked-module gates all remain enabled.
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -43,10 +44,11 @@ try {
   assert.equal(pipeline.linkFile, join(pipelineDir, 'link.md'));
   const helper = join(pipelineDir, 'materialize-link.mjs');
   const companion = join(pipelineDir, 'references/link-contract.md');
+  const hasCompanion = existsSync(companion);
   for (const phase of ['link']) {
     const closure = await deriveClosure(pipelineDir, '.', `${phase}.md`, phase);
     assert(closure.has(helper), `${phase} must include the helper`);
-    assert(closure.has(companion), `${phase} must include the full contract`);
+    if (hasCompanion) assert(closure.has(companion), `${phase} must include the full contract`);
   }
   await writeFile(source, sourceText);
   await writeFile(contract, 'export {};\n');
@@ -81,19 +83,23 @@ try {
   const third = await run();
   assert.notEqual(third.result.outcome, 'up-to-date');
   assert.deepEqual(third.calls, ['link.md'], 'helper changes must invalidate only link reuse');
-  const fourth = await run();
-  assert.equal(fourth.result.outcome, 'up-to-date');
-  assert.deepEqual(fourth.calls, []);
-  await writeFile(companion, `${await readFile(companion, 'utf8')}\n<!-- semantic-input mutation probe -->\n`);
-  const fifth = await run();
-  assert.deepEqual(fifth.calls, ['link.md'], 'contract changes must invalidate only link reuse');
+  let changedContractCalls = null;
+  if (hasCompanion) {
+    const fourth = await run();
+    assert.equal(fourth.result.outcome, 'up-to-date');
+    assert.deepEqual(fourth.calls, []);
+    await writeFile(companion, `${await readFile(companion, 'utf8')}\n<!-- semantic-input mutation probe -->\n`);
+    const fifth = await run();
+    assert.deepEqual(fifth.calls, ['link.md'], 'contract changes must invalidate only link reuse');
+    changedContractCalls = fifth.calls;
+  }
   process.stdout.write(JSON.stringify({
     discovery: 'two phases, one pass, one link; helper and companion excluded',
-    closure: 'link declaration includes helper and full contract',
+    closure: hasCompanion ? 'link declaration includes helper and full contract' : 'link declaration includes helper',
     firstCalls: first.calls,
     unchangedCalls: second.calls,
     changedHelperCalls: third.calls,
-    changedContractCalls: fifth.calls,
+    changedContractCalls,
   }, null, 2) + '\n');
 } finally {
   await rm(scratch, { recursive: true, force: true });
