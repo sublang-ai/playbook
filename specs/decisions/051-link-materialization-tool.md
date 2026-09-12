@@ -27,3 +27,6 @@ The experiment changes no interpreter, engine compatibility declaration, public 
 Deterministic output can remove repetitive generation and exact-label mistakes without inventing source semantics.
 Factory preflight checks structure but does not prove erased field declarations or prompt fidelity; existing conformance remains mandatory.
 A fixed-FSM comparison followed by a cold full compilation must establish improvement before retaining the technique.
+
+An isolated materializer comparison holds compiler behavior, FSM input, full runtime contract and independent correctness fixes constant while removing only optional helper instructions from the control entry.
+The comparison may retain identical unused helper and companion files in the control's conservative semantic-input closure, provided the control definition neither cites nor instructs use of that tool.

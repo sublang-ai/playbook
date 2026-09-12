@@ -61,7 +61,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
   const scratch = mkdtempSync(join(tmpdir(), 'playbook-compact-builder-'));
   const installed = baselinePackage!;
   const builder = join(root, 'scripts/build-link-experiment-12.3.mjs');
-  const run = (source: string, output: string, mode?: '--full') => execFileSync(process.execPath, [builder, source, output, ...(mode ? [mode] : [])], {
+  const run = (source: string, output: string, mode?: '--full' | '--baseline') => execFileSync(process.execPath, [builder, source, output, ...(mode ? [mode] : [])], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
@@ -81,6 +81,23 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     for (const [file, digest] of Object.entries(record.outputs)) {
       if (file !== 'link.md') expect(fullProof.outputs[file], file).toBe(digest);
     }
+    const baselineTarget = join(scratch, 'baseline-candidate');
+    run(installed, baselineTarget, '--baseline');
+    const controlEntry = readFileSync(join(baselineTarget, 'link.md'), 'utf8');
+    const fullEntry = readFileSync(join(fullTarget, 'link.md'), 'utf8');
+    const helperStart = fullEntry.indexOf('## Optional deterministic materialization\n');
+    const helperEnd = fullEntry.indexOf('## PlaybookRuntime contract\n', helperStart);
+    expect(controlEntry).toBe(fullEntry.slice(0, helperStart) + fullEntry.slice(helperEnd));
+    for (const token of ['materialize-link.mjs', 'Optional deterministic materialization', 'sublang.playbook.link.v1', 'flat-defaults', 'references/link-contract.md']) expect(controlEntry).not.toContain(token);
+    const baselineProof = JSON.parse(readFileSync(join(baselineTarget, 'experiment-proof.json'), 'utf8'));
+    expect(baselineProof.mode).toBe('baseline');
+    expect(sha(controlEntry)).toBe(baselineProof.baselineContractSha256);
+    for (const [file, digest] of Object.entries(fullProof.outputs)) {
+      if (file !== 'link.md') expect(baselineProof.outputs[file], file).toBe(digest);
+    }
+    const conflicting = join(scratch, 'conflicting');
+    expect(() => execFileSync(process.execPath, [builder, installed, conflicting, '--full', '--baseline'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).toThrow(/mutually exclusive/);
+    expect(existsSync(conflicting)).toBe(false);
     expect(sha(rebaseContract(readFileSync(join(target, 'references/link-contract.md'), 'utf8'), true))).toBe(record.fullContractSha256);
     expect(() => run(installed, target)).toThrow(/Output already exists/);
     expect(readFileSync(join(target, 'experiment-proof.json'), 'utf8')).toBe(proof);
