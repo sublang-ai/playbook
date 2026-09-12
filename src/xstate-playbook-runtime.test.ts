@@ -47,6 +47,8 @@ import {
   type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
+import { branchMachine } from '../reference/sdlc/branch.playbook/branch.fsm.js';
+import { _internal as branchArtifact } from '../reference/sdlc/branch.playbook/branch.playbook.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
 import { _internal as captainArtifact } from '../reference/sdlc/captain.playbook/captain.playbook.js';
 import { codingMachine } from '../reference/sdlc/code.playbook/code.fsm.js';
@@ -99,6 +101,12 @@ function declaredRootFinalStateIds(machine: unknown): ReadonlySet<string> {
 // FSM export names are not path-derived, so this registry is explicit; the
 // discovery assertion below proves that it remains exhaustive.
 const maintainedArtifactFinalMetadata = [
+  {
+    label: 'BRANCH',
+    artifactPath: 'reference/sdlc/branch.playbook/branch.playbook.ts',
+    machine: branchMachine,
+    unfinishedFinalStateIds: branchArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
   {
     label: 'CAPTAIN',
     artifactPath: 'reference/sdlc/captain.playbook/captain.playbook.ts',
