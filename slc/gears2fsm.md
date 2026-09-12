@@ -699,6 +699,9 @@ A delegated `PlayerInput` shall produce the role asker with its canonical local 
 Only
 `question` shall come from adjudicated actor output.
 
+The canonical storage paths are `context.pendingBossQuestion` and `context.bossReply` for the scalar form, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for the keyed form.
+A private wrapper such as `context.continuation` shall not replace these fields directly on machine context.
+
 A machine with at most one active Captain or player task may use the scalar
 form:
 

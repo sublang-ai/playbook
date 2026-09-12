@@ -41,7 +41,8 @@ const expected = {
   rejectedFull12: '683e4fbe489c8e70e03651ae725c1f85d9bdd93e4e4ebcf4bd51eee55173d8ec',
   rejectedCompanion: '05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021',
   optimizer: '4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9',
-  producer: '3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619',
+  rejectedProducer: '3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619',
+  producer: '98d6a28c7309a8933ea7057aec03e0f651a2f9e66c8095ced844fd17bd4e5f8f',
 };
 const verify = (bytes, digest, label) => assert.equal(hash(bytes), digest, `${label} hash mismatch; this fixture requires its exact reviewed inputs`);
 try {
@@ -119,9 +120,12 @@ verify(helper, compactMode ? expected.helperV2 : expected.helper, compactMode ? 
 const optimizer = await readFile(join(repo, 'slc/optimize.md'), 'utf8');
 verify(optimizer, expected.optimizer, 'independent exact-root and valid-GEARS optimizer correction');
 const producer = await readFile(join(repo, 'slc/gears2fsm.md'), 'utf8');
-verify(producer, expected.producer, 'machine-root public-state namespace correction');
+verify(producer, expected.producer, 'machine-root namespace and canonical question-storage corrections');
 const rootNamespaceRule = 'Public `meta.playbook` state metadata belongs only to nodes declared under `states`; the machine root shall omit `meta.playbook`, while its XState `id`, description, and metadata outside that namespace remain unrestricted.\n';
-assert.equal(producer.replace(rootNamespaceRule, ''), baseline['gears2fsm.md'], 'Only the reviewed root namespace sentence may change the FSM producer');
+const questionStorageRule = "The canonical storage paths are `context.pendingBossQuestion` and `context.bossReply` for the scalar form, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for the keyed form.\nA private wrapper such as `context.continuation` shall not replace these fields directly on machine context.\n\n";
+assert.equal(producer.replace(rootNamespaceRule, '').replace(questionStorageRule, ''), baseline['gears2fsm.md'], 'Only the reviewed root namespace and question-storage clarifications may change the FSM producer');
+const rejectedProducer = producer.replace(questionStorageRule, '');
+verify(rejectedProducer, expected.rejectedProducer, 'unchanged rejected-experiment FSM producer');
 const sidecar = JSON.stringify({
   schema: 'sublang.slc.pin-inputs.v1',
   closures: { link: ['text2gears.md', 'gears2fsm.md', 'optimize.md', 'materialize-link.mjs', 'references/link-contract.md'] },
@@ -129,7 +133,7 @@ const sidecar = JSON.stringify({
 const outputs = {
   'link.md': baselineMode ? baselineDefinition : fullMode ? full12 : entry,
   'text2gears.md': baseline['text2gears.md'],
-  'gears2fsm.md': producer,
+  'gears2fsm.md': compactMode ? rejectedProducer : producer,
   'optimize.md': optimizer,
   'materialize-link.mjs': helper,
   'references/link-contract.md': companion,
@@ -141,7 +145,7 @@ const proof = {
   installedPackage: installed,
   version: pkg.version,
   baselineHashes,
-  changes: [compactMode ? 'unchanged helper v2' : 'helper v3 with explicit quoted-relay profile and unchanged default-profile output', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'rejected compact semantic recipe with its unchanged earlier full contract', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', compactMode ? 'original helper-local host-boundary guidance preserved for rejected experiment reproduction' : 'identical common host-boundary guidance outside the helper recipe', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', 'machine-root public-state namespace correction', 'explicit helper and companion link closure'],
+  changes: [compactMode ? 'unchanged helper v2' : 'helper v3 with explicit quoted-relay profile and unchanged default-profile output', baselineMode ? 'complete contract without helper instructions' : fullMode ? 'complete helper-backed definition' : 'rejected compact semantic recipe with its unchanged earlier full contract', 'exact full-contract relocation plus existing helper recipe, three source-effect sentences and canonical completion-mapper correction', compactMode ? 'original helper-local host-boundary guidance preserved for rejected experiment reproduction' : 'identical common host-boundary guidance outside the helper recipe', 'independent optimizer exact-root and valid-GEARS corrections f0f032b/40d8538', compactMode ? 'unchanged earlier producer with machine-root public-state namespace correction' : 'machine-root public-state namespace and canonical question-storage clarifications', 'explicit helper and companion link closure'],
   fullContractSha256: hash(companionContract),
   baselineContractSha256: hash(baselineDefinition),
   baselineDelta: compactMode ? 'Rejected experiment reproduction; not a current baseline/full comparison' : 'Only the optional deterministic materialization section differs from full; common host-boundary guidance and all other declared semantic inputs match',

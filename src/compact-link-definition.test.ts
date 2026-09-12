@@ -90,7 +90,7 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     run(installed, target, '--compact');
     expect(readFileSync(join(target, 'link.md'), 'utf8')).toBe(read('scripts/experiments/rejected-compact-link.md'));
     expect(readFileSync(join(target, 'optimize.md'), 'utf8')).toBe(read('slc/optimize.md'));
-    expect(readFileSync(join(target, 'gears2fsm.md'), 'utf8')).toBe(read('slc/gears2fsm.md'));
+    expect(sha(readFileSync(join(target, 'gears2fsm.md'), 'utf8'))).toBe('3e42baf526a46bbda89f20c3a3db250648e99e381e303925724ca6d62839a619');
     expect(readFileSync(join(target, 'materialize-link.mjs'), 'utf8')).toBe(read('scripts/experiments/materialize-link-v2.mjs'));
     const proof = readFileSync(join(target, 'experiment-proof.json'), 'utf8');
     const record = JSON.parse(proof);
@@ -98,12 +98,13 @@ it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidat
     run(installed, fullTarget, '--full');
     expect(readFileSync(join(fullTarget, 'link.md'), 'utf8')).toBe(rebaseContract(readFileSync(join(fullTarget, 'references/link-contract.md'), 'utf8'), true));
     expect(sha(readFileSync(join(target, 'references/link-contract.md'), 'utf8'))).toBe('05bcbc67c28a3a4a65b17872c5fdafcaa0aa3e98ced0e34b188a060282c76021');
+    expect(readFileSync(join(fullTarget, 'gears2fsm.md'), 'utf8')).toBe(read('slc/gears2fsm.md'));
     const fullProof = JSON.parse(readFileSync(join(fullTarget, 'experiment-proof.json'), 'utf8'));
     const defaultTarget = join(scratch, 'default-candidate');
     run(installed, defaultTarget);
     expect(readFileSync(join(defaultTarget, 'link.md'), 'utf8')).toBe(readFileSync(join(fullTarget, 'link.md'), 'utf8'));
     for (const [file, digest] of Object.entries(record.outputs)) {
-      if (!['link.md', 'references/link-contract.md', 'materialize-link.mjs'].includes(file)) expect(fullProof.outputs[file], file).toBe(digest);
+      if (!['link.md', 'references/link-contract.md', 'materialize-link.mjs', 'gears2fsm.md'].includes(file)) expect(fullProof.outputs[file], file).toBe(digest);
     }
     const baselineTarget = join(scratch, 'baseline-candidate');
     run(installed, baselineTarget, '--baseline');
