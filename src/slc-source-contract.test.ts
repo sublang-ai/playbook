@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { _internal as branchInternal } from '../reference/sdlc/branch.playbook/branch.playbook.js';
 import { _internal as codeInternal } from '../reference/sdlc/code.playbook/code.playbook.js';
 import { _internal as decideInternal } from '../reference/sdlc/decide.playbook/decide.playbook.js';
 import { _internal as devInternal } from '../reference/sdlc/dev.playbook/dev.playbook.js';
@@ -119,6 +120,18 @@ const linkedWorkflows = [
     expectedFields: ['planningResult'],
     unfinishedFinalStateIds: devInternal.UNFINISHED_FINAL_STATE_IDS,
     expectedUnfinishedFinalStateIds: ['reportedChildFailure'],
+  },
+  {
+    id: 'BRANCH',
+    sourceUrl: new URL('../reference/sdlc/branch.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/branch.playbook/branch.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: branchInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['coderOutput'],
+    unfinishedFinalStateIds: branchInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: ['refused'],
   },
 ] as const;
 
