@@ -27,7 +27,7 @@ The descriptor shall carry the exact erased and authored metadata through these 
 
 | Member | Shape |
 | --- | --- |
-| `schema`, `profile` | The exact identifiers above. |
+| `schema`, `profile` | Exactly `sublang.playbook.link.v1` and `flat-defaults`. |
 | `machineExport`, `label` | Exported JavaScript identifier and nonblank diagnostic label. |
 | `options` | Option-name map of `{ type: 'string' \| 'boolean' \| 'number', required: boolean }`; constrained primitive types require ordinary linking. |
 | `inputMapping` | FSM input-field to declared option-name map; every non-`cwd` option is mapped. |
