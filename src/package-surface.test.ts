@@ -899,6 +899,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
       expect(packed, `tarball missing slc/${name}`).toContain(`slc/${name}`);
     }
     expect(packed).toContain('slc/materialize-link.mjs');
+    expect(packed).toContain('slc/references/link-contract.md');
     expect(packed).toContain('slc/slc.pin-inputs.json');
   }, SUBPROCESS_TIMEOUT_MS);
 

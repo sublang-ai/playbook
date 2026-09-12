@@ -15,12 +15,13 @@ import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const slcRoot = process.argv[2];
-if (!slcRoot) throw new Error('Usage: node scripts/check-slc-definition-closure.mjs <built-slc-root>');
+if (!slcRoot) throw new Error('Usage: node scripts/check-slc-definition-closure.mjs <built-slc-root> [definition-dir]');
 const loadSlc = (file) => import(pathToFileURL(join(resolve(slcRoot), 'dist', file)).href);
 const { loadPipeline } = await loadSlc('pipeline.js');
 const { deriveClosure } = await loadSlc('pin-closure.js');
 const { runSlc } = await loadSlc('runner.js');
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+const definitionRoot = process.argv[3] ? resolve(process.argv[3]) : join(packageRoot, 'slc');
 const scratch = await mkdtemp(join(tmpdir(), 'playbook-slc-closure-'));
 const pipelineDir = join(scratch, 'pipeline');
 const source = join(scratch, 'case.text.md');
@@ -32,7 +33,7 @@ const linkedText = (await readFile(join(fixtureDir, 'captain.playbook.ts'), 'utf
   .replaceAll('./captain.fsm.js', './case.fsm.ts')
   .replaceAll('../../../src/xstate-runtime.js', '@sublang/playbook/xstate-runtime');
 try {
-  await cp(join(packageRoot, 'slc'), pipelineDir, { recursive: true });
+  await cp(definitionRoot, pipelineDir, { recursive: true });
   await mkdir(join(scratch, 'node_modules/@sublang'), { recursive: true });
   await symlink(packageRoot, join(scratch, 'node_modules/@sublang/playbook'), 'dir');
   await symlink(join(packageRoot, 'node_modules/xstate'), join(scratch, 'node_modules/xstate'), 'dir');
@@ -40,10 +41,12 @@ try {
   assert.deepEqual(pipeline.phases.map((phase) => phase.name), ['text2gears', 'gears2fsm']);
   assert.deepEqual(pipeline.passes.map((phase) => phase.name), ['optimize']);
   assert.equal(pipeline.linkFile, join(pipelineDir, 'link.md'));
-  const companion = join(pipelineDir, 'materialize-link.mjs');
+  const helper = join(pipelineDir, 'materialize-link.mjs');
+  const companion = join(pipelineDir, 'references/link-contract.md');
   for (const phase of ['link']) {
     const closure = await deriveClosure(pipelineDir, '.', `${phase}.md`, phase);
-    assert(closure.has(companion), `${phase} must include the helper`);
+    assert(closure.has(helper), `${phase} must include the helper`);
+    assert(closure.has(companion), `${phase} must include the full contract`);
   }
   await writeFile(source, sourceText);
   await writeFile(contract, 'export {};\n');
@@ -74,16 +77,23 @@ try {
   const second = await run();
   assert.equal(second.result.outcome, 'up-to-date');
   assert.deepEqual(second.calls, []);
-  await writeFile(companion, `${await readFile(companion, 'utf8')}\n// semantic-input mutation probe\n`);
+  await writeFile(helper, `${await readFile(helper, 'utf8')}\n// semantic-input mutation probe\n`);
   const third = await run();
   assert.notEqual(third.result.outcome, 'up-to-date');
-  assert(third.calls.includes('link.md'), 'helper changes must invalidate link reuse');
+  assert.deepEqual(third.calls, ['link.md'], 'helper changes must invalidate only link reuse');
+  const fourth = await run();
+  assert.equal(fourth.result.outcome, 'up-to-date');
+  assert.deepEqual(fourth.calls, []);
+  await writeFile(companion, `${await readFile(companion, 'utf8')}\n<!-- semantic-input mutation probe -->\n`);
+  const fifth = await run();
+  assert.deepEqual(fifth.calls, ['link.md'], 'contract changes must invalidate only link reuse');
   process.stdout.write(JSON.stringify({
-    discovery: 'two phases, one pass, one link; helper excluded',
-    closure: 'link declaration includes the executable helper',
+    discovery: 'two phases, one pass, one link; helper and companion excluded',
+    closure: 'link declaration includes helper and full contract',
     firstCalls: first.calls,
     unchangedCalls: second.calls,
     changedHelperCalls: third.calls,
+    changedContractCalls: fifth.calls,
   }, null, 2) + '\n');
 } finally {
   await rm(scratch, { recursive: true, force: true });

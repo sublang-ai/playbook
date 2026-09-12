@@ -38,6 +38,7 @@
     "src/xstate-playbook-runtime.js",
     "src/xstate-playbook-runtime.d.ts",
     "slc/link.md",
+    "slc/references/link-contract.md",
     "slc/materialize-link.mjs",
     "slc/slc.pin-inputs.json",
     "slc/gears2fsm.md",

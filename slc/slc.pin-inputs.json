@@ -5,7 +5,8 @@
       "text2gears.md",
       "gears2fsm.md",
       "optimize.md",
-      "materialize-link.mjs"
+      "materialize-link.mjs",
+      "references/link-contract.md"
     ]
   }
 }
