@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amended by [DR-050](050-pull-request-delivery.md): DEV's planning result gains two pull-request outcomes, and DEV composes `branch` before and `pr` after its paths.
 
 ## Context
 

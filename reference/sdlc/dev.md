@@ -27,13 +27,14 @@ Do not change files or commit while planning or discussing the request.
 - If the discussion has concluded after a Boss reply and no repository work should follow, choose `discussion complete`.
 - If implementation can proceed under the existing decisions, choose `code`.
 - If implementation first requires a new or amended durable decision that the existing specs do not settle, choose `decide then code`.
+- If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.
 
 A question or exploratory discussion is not by itself authorization to create a durable decision or implement changes.
 Do not choose `decide then code` merely because the work is large.
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
-The planning result has four semantic outcomes: needs Boss reply, discussion complete, code, and decide then code.
+The planning result has six semantic outcomes: needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request.
 Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support.
 No outcome depends on a fixed presentation format of Analyst's reply.
 `dev` shall act on the accepted outcome itself and shall not return to the session Captain for another routing decision.
@@ -66,7 +67,27 @@ Only after `decide` succeeds shall `dev` call playbook `code` with the developme
 
 `dev` shall not separately call `review` for the design scope already reviewed by `decide`.
 
+For code via pull request and decide then code via pull request, `dev` shall first call playbook `branch` with the development request, relevant discussion context, and planning result in quotes (`>`).
+
+> Original request: <development-request>
+> Prior discussion: <discussion-context>
+> Planning result: <planning-result>
+
+Only after `branch` succeeds shall `dev` continue with the `code` call for code via pull request, or the `decide` call and then the `code` call for decide then code via pull request, each with the same input as its plain path above.
+
+On a plain path, `code` success completes `dev`.
+On a pull-request path, only after `code` succeeds shall `dev` call playbook `pr` with the development request, issue summary, branch, base revision, last `code`-owned commit, and exact final evaluated repository revision in quotes (`>`).
+
+> Original request: <development-request>
+> Issue summary: <issue-summary>
+> Branch: <branch>
+> Base revision: <base-revision>
+> CODE commit: <last-code-commit>
+> Evaluated revision: <final-evaluated-revision>
+
+A plain request calls neither `branch` nor `pr`.
+
 `dev` completes with the successful result of its final child call.
-If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result.
+If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result; a `branch` or `pr` failure ends `dev` under this same rule.
 If a child call fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.
-`dev` shall consume commit identities only from each child's canonical structured result, never from player prose.
+`dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose.

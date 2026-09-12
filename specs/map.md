@@ -75,6 +75,7 @@ meta.md       The spec of specs
 | [DR-047](decisions/047-compiled-execution-contract-in-definitions.md) | 047-compiled-execution-contract-in-definitions.md | Each phase definition declares its compiled-execution contract with a run-time `<definition>` relay, so compiled phase bundles are stable control shells and rule edits need no rebuild |
 | [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
 | [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
+| [DR-050](decisions/050-pull-request-delivery.md) | 050-pull-request-delivery.md | BRANCH and PR join the maintained set: unchanged-governed branch creation with a receipt-owned base revision, script-state check wait, fix publication, merge, and fast-forward, one nested `code` fix, typed terminals with no merge-commit claim; DEV gains pull-request paths; the starter binds both Coders to `dev.coder` |
 
 ## Packages
 

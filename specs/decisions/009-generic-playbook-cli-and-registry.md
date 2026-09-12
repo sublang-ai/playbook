@@ -11,6 +11,7 @@ Accepted.
 [DR-030](030-shared-mapped-player-continuity.md) adds exact same-role inheritance and root-owned continuation to nested frames.
 [DR-032](032-explicit-roles-session-players.md) supersedes the per-playbook fallback roster and same-role inheritance with top-level session players and explicit role bindings.
 [DR-040](040-outcome-authority-effect-reconciliation.md) refines §1 by separating persisted plain-JSON workflow options from current-host runtime-construction capabilities and refines §5 so CODE, REVIEW, and DECIDE metrics consume accepted outcomes while replies consume canonical structured settlements.
+[DR-050](050-pull-request-delivery.md) extends §6's starter enablement to BRANCH and PR.
 
 ## Context
 
