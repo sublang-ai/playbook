@@ -35,6 +35,11 @@ Accepted.
 - The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry or interrupt directives while parked.
 - Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
 
+Boss task text supplied by an entry event is per-turn data rather than required construction input unless Source independently requires it before the first Boss turn.
+An optional source-appropriate seed may remain; genuine source-assigned host configuration remains required.
+Each runtime-value placeholder in a direct-Captain or delegated-player prompt is backed by its typed field in the actual actor invocation input alongside the unchanged prompt; machine-context storage alone does not provide that value to the composer.
+The linker and materializer preserve the resulting input contract rather than invent bootstrap values or erase genuine required options.
+
 ### 3. The linker emits thin modules for factory-backed FSMs
 
 - For an FSM in the shared factory's single-region domain, `slc/link.md` §Output specifies the thin artifact: the relative FSM import, the derived `PlaybookRuntimeOptions` interface (plus `cwd` when a script state exists), the shared-contract type re-exports, the `_internal` composer surface, and the default-exported factory call.

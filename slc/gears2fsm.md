@@ -132,6 +132,7 @@ forms, wire `<boss-intent>` from `bossIntent`,
 field established by Source (for example `<#>` from `irNumber`). Leaving a
 placeholder literal, replacing it with an empty default because its field was
 omitted, or making the linker recover it from untyped context is malformed.
+The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.
 The sole blockquote placeholder of a dynamic nested-playbook item is instead
 the child `textContext` field specified in §Nested playbook calls.
 
@@ -648,6 +649,7 @@ contract shall require exactly `targetId: 'routing'` plus the fresh
 `BOSS_INTERRUPT` jumps into an **active** machine, pre-empting whichever state is running.
 **Boss entry events** start or resume from idle or recoverable states when Boss-supplied parameters can't be inferred from machine state alone.
 Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
+Boss text supplied by an entry event shall not become a required machine-construction input unless Source independently requires that value before the first Boss turn; an optional source-appropriate seed may remain.
 An entry event's copy action shall not clear per-run parameters the event omits: an absent optional field falls back to the existing (input-seeded) context value.
 The two surfaces shall not be collapsed. `BOSS_INTERRUPT` always carries its
 target id and may additionally carry typed Boss-supplied fields such as an
