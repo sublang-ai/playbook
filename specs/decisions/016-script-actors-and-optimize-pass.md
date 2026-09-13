@@ -39,6 +39,7 @@ That needs an execution primitive the definitions do not have: a state kind that
 
 - A new definition `slc/optimize.md` (gears → gears, format-preserving) rewrites eligible items into script items: mechanical, static-command, environment-only effects, two-way exit-status outcome.
   Uncertain items stay unchanged — the pass is conservative by construction, and an unoptimized playbook has identical observable behavior.
+  A rewrite preserves the source's exact environmental predicate and effect, including resource location: being inside an ancestor's Git working tree does not satisfy an explicit requirement for the current directory to be its own repository root.
 - Provenance is explicit: rewritten items are listed in one appended `## Optimizations` section.
 - The definition ships in the package beside the other three (`./slc/*` export) and is compilable by `slc slc` like any phase definition; whether and when a compile runs it is the driver's concern (slc `-O`), not the definitions'.
 

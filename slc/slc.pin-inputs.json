@@ -1,0 +1,11 @@
+{
+  "schema": "sublang.slc.pin-inputs.v1",
+  "closures": {
+    "link": [
+      "text2gears.md",
+      "gears2fsm.md",
+      "optimize.md",
+      "materialize-link.mjs"
+    ]
+  }
+}

@@ -42,6 +42,7 @@ Every delegated-player outcome field in CODE, REVIEW, and DECIDE governed by thi
 `latestCommit` and the qualifying commit delta are effect-owned.
 `irNumber`, `irTask`, and `moreTasks` versus `finalTask` remain semantic and shall not be inferred from an informal task-completion marker.
 Every outcome arm of each governed delegated-player call shall also declare exactly one repository disposition in schema-3 artifact metadata: `unchanged`, `one-descendant-commit`, or `deferred`.
+At link time, the disposition follows the source-derived operation and outcome's required repository effect independently of payload-field presence: a commit-required completion declares `one-descendant-commit` even for a generic `done` arm with no effect-owned field.
 `unchanged` and `one-descendant-commit` are exact effect predicates, while `deferred` makes no final repository claim and shall be valid only for a `needsBossReply` arm of a call whose other declared arm permits `one-descendant-commit`.
 A call shall be effect-authorized when any declared arm permits `one-descendant-commit`; `deferred`, a role name, prompt instruction, player prose, or semantic reply shall never weaken or establish that classification.
 The CODE Coder calls, REVIEW Coder reconciliation call, and DECIDE merge call shall be effect-authorized; their commit arms shall declare `one-descendant-commit`, REVIEW's `rejectedAll` shall declare `unchanged`, and their `needsBossReply` arms shall declare `deferred`.

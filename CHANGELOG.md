@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The optimizer's Git setup examples distinguish membership in an ancestor's working tree from requiring the current directory to be its own repository root.
+
 ## [13.2.0] - 2026-09-12
 
 ### Added

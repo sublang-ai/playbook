@@ -204,8 +204,8 @@ function applyMemberSignature(src: string): {
 }
 
 describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
-  // PBRT-35: consistency with the authored slc/link.md contract.
-  it('matches slc/link.md on result, resume, session, trace, and runtime shapes', () => {
+  // PBRT-35: consistency with the complete link contract.
+  it('matches the full link contract on result, resume, session, trace, and runtime shapes', () => {
     expect(statusMembers(runtimeDts)).toEqual(['aborted', 'error', 'ok']);
     expect(statusMembers(runtimeDts, 'CaptainResult')).toEqual([
       'aborted',

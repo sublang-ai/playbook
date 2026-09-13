@@ -132,6 +132,7 @@ forms, wire `<boss-intent>` from `bossIntent`,
 field established by Source (for example `<#>` from `irNumber`). Leaving a
 placeholder literal, replacing it with an empty default because its field was
 omitted, or making the linker recover it from untyped context is malformed.
+The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.
 The sole blockquote placeholder of a dynamic nested-playbook item is instead
 the child `textContext` field specified in §Nested playbook calls.
 
@@ -261,6 +262,7 @@ Each state shall declare:
 
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
 
+Public `meta.playbook` state metadata belongs only to nodes declared under `states`; the machine root shall omit `meta.playbook`, while its XState `id`, description, and metadata outside that namespace remain unrestricted.
 Outside a parallel group's regions, a state's `meta.playbook.stateId` shall equal its state key — the one identity a factory-backed linked runtime indexes by.
 A delegated state's `invoke.input.role` shall match the canonical lowercase id of its source item's named role.
 A direct Captain state shall not invent a `Captain` role binding.
@@ -647,6 +649,7 @@ contract shall require exactly `targetId: 'routing'` plus the fresh
 `BOSS_INTERRUPT` jumps into an **active** machine, pre-empting whichever state is running.
 **Boss entry events** start or resume from idle or recoverable states when Boss-supplied parameters can't be inferred from machine state alone.
 Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
+Boss text supplied by an entry event shall not become a required machine-construction input unless Source independently requires that value before the first Boss turn; an optional source-appropriate seed may remain.
 An entry event's copy action shall not clear per-run parameters the event omits: an absent optional field falls back to the existing (input-seeded) context value.
 The two surfaces shall not be collapsed. `BOSS_INTERRUPT` always carries its
 target id and may additionally carry typed Boss-supplied fields such as an
@@ -697,6 +700,9 @@ The question record shall be
 A delegated `PlayerInput` shall produce the role asker with its canonical local role id, while a direct-Captain state shall produce the Captain asker without inventing a role.
 Only
 `question` shall come from adjudicated actor output.
+
+The canonical storage paths are `context.pendingBossQuestion` and `context.bossReply` for the scalar form, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for the keyed form.
+A private wrapper such as `context.continuation` shall not replace these fields directly on machine context.
 
 A machine with at most one active Captain or player task may use the scalar
 form:
