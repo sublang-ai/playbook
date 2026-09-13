@@ -6,7 +6,7 @@
 ## Intent
 
 This package specifies the text-to-GEARS producer's existing result-block boundary without changing authored prompts, outcomes, or nested-call continuation.
-Clearer producer guidance is an unmeasured compilation experiment.
+Clearer producer guidance is retained after a matched phase comparison; it does not alter the result contract or guarantee a compilation-time reduction.
 
 ## External Behavior
 

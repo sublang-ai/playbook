@@ -20,7 +20,7 @@ const acting =
 const result = "Results:\n- `done`: The inspection is complete.";
 const heading = "# Example\n\n### EXAMPLE-1\n\n";
 
-it("keeps the experiment guidance separate from the common producer and preserves the nested-call exception", () => {
+it("activates the measured guidance exactly once and preserves the nested-call exception", () => {
   expect(guidance).toContain(
     "after the label, emit only result bullets and blank lines",
   );
@@ -29,9 +29,12 @@ it("keeps the experiment guidance separate from the common producer and preserve
     new URL("../slc/text2gears.md", import.meta.url),
     "utf8",
   );
-  expect(common).not.toContain(
-    "A `Results:` block continues until the next item or section heading",
-  );
+  const measuredSnippet = guidance
+    .split("\n\n")
+    .slice(1)
+    .join("\n\n")
+    .trimEnd();
+  expect(common.split(measuredSnippet)).toHaveLength(2);
   expect(common).toContain(
     "A nested-call item shall carry no `Results:` label",
   );

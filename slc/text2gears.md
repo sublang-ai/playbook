@@ -140,6 +140,10 @@ Results:
 - `delegation`: Captain selected a call. Output shall include `remainingPlan: <JSON-safe array>`, `nextPlaybookId: <stable id>`, and `nextPlaybookInput: <complete request>`.
 ```
 
+A `Results:` block continues until the next item or section heading; after the label, emit only result bullets and blank lines.
+Put other acting-item conditions and invariants before the acting blockquote, never between the blockquote and `Results:` or after its bullets.
+Nested-call items remain without `Results:` and keep their child-continuation prose after the blockquote.
+
 `Results:` shall be a plain label rather than a heading.
 Every result shall occupy one bullet with exactly a backtick-delimited guard
 name, a colon, and a non-empty description.
