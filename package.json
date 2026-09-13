@@ -40,7 +40,7 @@
     "slc/link.md",
     "slc/materialize-link.mjs",
     "slc/scaffold-fsm.mjs",
-    "slc/fsm-scaffold-guidance.md",
+    "slc/experiments/fsm-scaffold-guidance.md",
     "slc/slc.pin-inputs.json",
     "slc/workflow-contracts.json",
     "slc/gears2fsm.md",

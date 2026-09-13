@@ -207,7 +207,7 @@ it('refuses an existing target, including a source hardlink, and exposes only th
   const packed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--ignore-scripts', '--json', '--cache', join(directory, 'npm-cache')], { cwd: root, encoding: 'utf8' }));
   const paths = packed[0].files.map((file: { path: string }) => file.path);
   expect(paths).toContain('slc/scaffold-fsm.mjs');
-  expect(paths).toContain('slc/fsm-scaffold-guidance.md');
+  expect(paths).toContain('slc/experiments/fsm-scaffold-guidance.md');
   expect(readFileSync(resolve(root, 'slc/gears2fsm.md'), 'utf8')).not.toContain('scaffold-fsm.mjs');
 }, 15_000);
 
@@ -221,4 +221,10 @@ it('refuses a target graph without the required typed XState API', () => {
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain('target dependencies must supply XState setup.extend and createStateConfig');
   expect(readFileSync(input, 'utf8')).toBe(source);
+});
+
+it.runIf(compiler !== undefined)('keeps optional guidance out of ordinary SLC phase discovery', async () => {
+  const { discoverPhaseFiles } = await import(pathToFileURL(join(compiler!, 'dist/pipeline.js')).href);
+  const discovered = await discoverPhaseFiles(join(root, 'slc'));
+  expect([...discovered.phaseFiles, discovered.linkFile].map((file: string) => file.split('/').at(-1)).sort()).toEqual(['gears2fsm.md', 'link.md', 'optimize.md', 'text2gears.md']);
 });

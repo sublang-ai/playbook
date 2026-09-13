@@ -3,7 +3,7 @@
 
 ## Optional FSM authoring initializer (unmeasured experiment)
 
-For an LF English GEARS artifact with ordinary Captain/player items and static nested calls, you may initialize a **new** target with the adjacent [scaffold-fsm.mjs](scaffold-fsm.mjs):
+For an LF English GEARS artifact with ordinary Captain/player items and static nested calls, you may initialize a **new** target with the adjacent [scaffold-fsm.mjs](../scaffold-fsm.mjs):
 
 ```sh
 node <definition-directory>/scaffold-fsm.mjs --source <source> --out <target.fsm.ts>

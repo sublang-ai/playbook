@@ -108,7 +108,7 @@
   },
   "validation": {
     "command": "PLAYBOOK_EXPERIMENT_COMPILER=<frozen-C2-compiler> node node_modules/vitest/vitest.mjs run src/fsm-scaffolding.test.ts",
-    "passed": 20,
+    "passed": 21,
     "failed": 0,
     "xstate": "5.33.0",
     "typescript": "6.0.3",
@@ -120,23 +120,30 @@
     "existingTargetAndSourcePreserved": true,
     "packedHelperAndGuidancePresent": true,
     "defaultPhaseDoesNotSelectExperiment": true,
-    "testLog": "/private/tmp/slc-fsm-scaffold-source-probe/final-tests.log",
+    "testLog": "/private/tmp/slc-fsm-scaffold-source-probe/packaging-tests.log",
     "strictTestFilePassed": true,
-    "spexErrors": 0
+    "spexErrors": 0,
+    "ordinaryDiscoveredPhases": [
+      "gears2fsm.md",
+      "link.md",
+      "optimize.md",
+      "text2gears.md"
+    ]
   },
   "candidate": {
     "slc/scaffold-fsm.mjs": {
       "bytes": 10192,
       "sha256": "92d245fc02830977d005f9c360ffb163c818796f657426faba89c789de7832a4"
     },
-    "slc/fsm-scaffold-guidance.md": {
-      "bytes": 2584,
-      "sha256": "46707e46657244f26d81f869a21109652755a947f03a27c8ec398998cac6851d"
-    },
     "src/fsm-scaffolding.test.ts": {
-      "bytes": 12753,
-      "sha256": "ede9c86f295e47f25a20e197c7c3744b24f2225c3ef8a1153a8c1f438e8b7f28"
+      "bytes": 13231,
+      "sha256": "2f3cb154a2ba59618af6c78700693038c5e597553b4b439c4dc98e142a34d18d"
+    },
+    "slc/experiments/fsm-scaffold-guidance.md": {
+      "bytes": 2587,
+      "sha256": "6cb54f4be27a70749424423962c8161bc5069c9ab73c9a96a98745981154a5e9"
     }
   },
-  "nextAcceptance": "Sequential matched fixed-GEARS phase runs with identical correctness guidance, dependency graph and unchanged source; only optional scaffold guidance differs. Both runs must fully pass applicable strict/fidelity/source and semantic acceptance. Full cold compilation remains a separate outcome."
+  "nextAcceptance": "Sequential matched fixed-GEARS phase runs with identical correctness guidance, dependency graph and unchanged source; only optional scaffold guidance differs. Both runs must fully pass applicable strict/fidelity/source and semantic acceptance. Full cold compilation remains a separate outcome.",
+  "packagingCorrection": "Optional Markdown guidance moved under slc/experiments so ordinary discovery never treats it as an additional phase."
 }
