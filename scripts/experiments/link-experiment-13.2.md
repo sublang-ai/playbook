@@ -40,12 +40,15 @@ This is a comparison of optional helper instructions, not a claim that the basel
 
 The builder checks fixed published hashes for all four definitions, fixed hashes for the common corrected definitions, and exact inverse reconstruction of the original link contract.
 The common corrections concern the already reviewed host/factory ownership boundary, commit disposition and deferred completion fields, current-directory Git initialization, machine-root and Boss-input production rules, explicit caller-owned child-acceptance predicates after successful bridge delivery, and delivery of every source-authored runtime relay to each governed acting prompt.
-Removing exactly that final two-sentence relay clarification must recover the published text-to-GEARS definition; the separate Results-boundary performance snippet is excluded from both arms.
+The retained Results-placement snippet is now common to both arms; removing its exact 379 bytes restores the prior relay-corrected text-to-GEARS definition, and removing the two-sentence relay clarification then restores the published definition.
+Earlier v1–v3 overlays and the separately measured Results pair remain unchanged.
 The current helper and optional section are captured byte-for-byte and identified by their hashes in each proof; pin the source checkout to reproduce them.
 
 Every ordinary per-phase semantic member is copied under `playbook/_inputs/<compiler-relative-path>` with its original locator, rewritten locator, byte length and SHA-256 recorded separately.
 Published package-definition members remain distinct from their corrected adjacent counterparts.
 The new sidecar includes all original members plus the local definition references and helper needed by each phase.
+Both arms include the exact public `workflow-contracts.json` catalog, including its explicit `literalTargetBindings`, in every active phase closure because those phases reach the corrected FSM contract directly or through adjacent references.
+Removing only the catalog-consumption section restores the prior FSM producer; the catalog contains public interfaces, not maintained implementation artifacts.
 The current text-to-GEARS closure explicitly includes its adjacent `gears2fsm.md`, `link.md` and `optimize.md` references; earlier v1/v2 input snapshots retained the ordinary grammar-and-lock closure for that phase and are preserved unchanged.
 Active Markdown references resolve to adjacent corrected definitions, never to the copied `_inputs` counterparts; those copies remain separately identified protected evidence rather than a directed normative fallback.
 It intentionally uses snapshot locators and does not present them as the original ordinary locators.
@@ -55,7 +58,8 @@ The proof records hashes for every emitted pipeline member and source provenance
 Before measurement, compare the two `outputs` maps: all entries except `playbook/link.md` must be identical.
 Also compare `ordinarySemanticInputs`, `helperSha256` and `optionalHelperSectionSha256`.
 Preserve each proof and the frozen compiler's independent dependency/runtime inventory alongside the measurement.
-The builder does not attest to compiler code, executable dependency versions beyond the explicit input checks, or operational package pruning; those belong to the supplied frozen cohort's own proof.
+The builder records and rechecks every regular `dist/` file plus the compiler package and lock, rejecting changed contents or inventory membership before publication.
+This inventory identifies the supplied code; it does not certify executable dependency resolution, provider settings, operational package pruning or runtime acceptance, which remain part of the frozen cohort and benchmark proofs.
 
 ## Local validation
 
@@ -67,9 +71,12 @@ PLAYBOOK_EXPERIMENT_COMPILER=/absolute/frozen-compiler \
 The integration suite uses the supplied compiler's actual discovery and closure code, verifies the exact one-section difference and every preserved input, and exercises refusal of altered published definitions, wrong versions, foreign or symbolic inputs, existing outputs, and output placement inside the frozen compiler.
 The checked-in [initial local assembly evidence](link-experiment-13.2-evidence.json) records the first successful 11-case run and is reproduced from source commit `128956f`; the later [child-acceptance correction evidence](link-experiment-13.2-child-acceptance-evidence.json) records a new pair sharing that normative correction.
 The [relay-aware closure evidence](link-experiment-13.2-relay-closure-evidence.json) records the subsequent common relay correction and explicit text-to-GEARS closure additions.
-These records retain exact candidate hashes and full original-member accounting, with no model measurement.
+These historical records retain exact candidate hashes and full original-member accounting, with no model measurement.
+The current catalog-aware closure is a new generation and must receive new output paths and its own proof; it does not rewrite those earlier records.
 Without `PLAYBOOK_EXPERIMENT_COMPILER`, only the help/argument test runs; that is insufficient evidence of successful assembly.
 Outputs use a staged sibling tree and an absent-target check under a single-writer assumption; there is no concurrent atomic no-replace guarantee.
 
 Successful assembly and local correctness checks establish reproducibility only.
 Retaining a performance technique requires a separately recorded same-input comparison and strict, source-fidelity and real-runtime acceptance of both generated artifacts.
+
+The separate [FSM scaffold pair builder](fsm-scaffold-experiment-13.2.md) reuses this corrected baseline and isolates only optional initialization guidance.

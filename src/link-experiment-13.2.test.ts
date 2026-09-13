@@ -97,11 +97,15 @@ describe.runIf(compiler !== undefined)(
           source.slice(0, start) + source.slice(end),
         );
         expect(a.ordinarySemanticInputs).toEqual(b.ordinarySemanticInputs);
+        expect(a.compilerInventory).toEqual(b.compilerInventory);
+        expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(hash(readFileSync(join(compiler!, "dist/pipeline.js"))));
+        expect(a.publicCatalog).toEqual(b.publicCatalog);
+        expect(a.publicCatalog.literalTargetBindings).toEqual({ review: "review", decide: "decide", code: "code", branch: "branch", pr: "pr" });
         for (const output of [baseline, full]) {
           expect(read(join(output, "playbook/text2gears.md"))).toBe(
             read(join(root, "slc/text2gears.md")),
           );
-          expect(read(join(output, "playbook/text2gears.md"))).not.toContain(
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",
           );
         }
@@ -113,6 +117,7 @@ describe.runIf(compiler !== undefined)(
               "optimize.md",
               "link.md",
               "materialize-link.mjs",
+              "workflow-contracts.json",
               "slc.pin-inputs.json",
             ].map((name) => `playbook/${name}`),
             ...["text2gears.md", "gears2fsm.md", "link.md"].map(
@@ -179,13 +184,14 @@ describe.runIf(compiler !== undefined)(
               read(join(directory, `${phase}.md`)),
             )) {
               const local =
-                /^(text2gears|gears2fsm|optimize|link)\.md(?:#|$)/.exec(target);
+                /^(text2gears\.md|gears2fsm\.md|optimize\.md|link\.md|workflow-contracts\.json)(?:#|$)/.exec(target);
               if (local)
                 expect(
-                  actual.has(join(directory, `${local[1]}.md`)),
+                  actual.has(join(directory, local[1])),
                   `${phase} -> ${target}`,
                 ).toBe(true);
             }
+            expect(actual.has(join(directory, "workflow-contracts.json"))).toBe(true);
             for (const input of proof.ordinarySemanticInputs[phase]) {
               expect(actual.has(join(directory, input.rewrittenLocator))).toBe(
                 true,

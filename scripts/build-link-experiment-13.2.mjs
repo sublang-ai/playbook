@@ -14,6 +14,7 @@ import {
   rm,
   lstat,
   realpath,
+  readdir,
 } from "node:fs/promises";
 import {
   basename,
@@ -71,9 +72,10 @@ const published = {
 };
 const commonHashes = {
   text2gears:
-    "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56",
+    "6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305",
   link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
-  producer: "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e",
+  producer: "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+  catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
 };
 const grammarInputs = [
@@ -161,15 +163,20 @@ const text2gears = (
 const relayCorrection =
   "Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.\nMentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.\n\n";
 verify(text2gears, commonHashes.text2gears, "reviewed common text2gears");
+const resultsSnippet = (await readRegular(join(sourceRoot, "scripts/experiments/results-boundary-guidance.md"), sourceRoot)).toString();
+const resultsGuidance = resultsSnippet.slice(resultsSnippet.indexOf("\n\n") + 2).trimEnd() + "\n\n";
+assert.equal(text2gears.split(resultsGuidance).length, 2, "Retained common Results guidance must occur exactly once");
+const beforeResults = text2gears.replace(resultsGuidance, "");
+verify(beforeResults, "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56", "prior producer before retained Results guidance");
 assert.equal(
-  text2gears.split(relayCorrection).length,
+  beforeResults.split(relayCorrection).length,
   2,
   "Common relay correction must occur exactly once",
 );
 assert.equal(
-  text2gears.replace(relayCorrection, ""),
+  beforeResults.replace(relayCorrection, ""),
   original["text2gears.md"],
-  "Only the reviewed relay correction may change published text2gears",
+  "Only the reviewed relay and retained Results guidance may change published text2gears",
 );
 const full = (
   await readRegular(join(sourceRoot, "slc/link.md"), sourceRoot)
@@ -251,6 +258,17 @@ const helper = await readRegular(
   sourceRoot,
 );
 verify(producer, commonHashes.producer, "reviewed producer");
+const catalogBytes = await readRegular(join(sourceRoot, "slc/workflow-contracts.json"), sourceRoot);
+verify(catalogBytes, commonHashes.catalog, "reviewed public workflow catalog");
+const catalog = JSON.parse(catalogBytes);
+assert.equal(catalog.schema, "sublang.playbook.workflow-contracts.v1");
+assert.deepEqual(catalog.literalTargetBindings, { review: "review", decide: "decide", code: "code", branch: "branch", pr: "pr" });
+const catalogStart = producer.indexOf("The independently packaged [workflow contracts](workflow-contracts.json) describe\n");
+const catalogEnd = producer.indexOf("An item whose behavior is a literal or dynamic\n", catalogStart);
+assert(catalogStart >= 0 && catalogEnd > catalogStart, "Unique catalog-consumption section is required");
+const catalogGuidance = producer.slice(catalogStart, catalogEnd);
+assert.equal(producer.split(catalogGuidance).length, 2);
+verify(producer.replace(catalogGuidance, ""), "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e", "prior producer after removing only catalog guidance");
 verify(optimizer, commonHashes.optimizer, "reviewed optimizer");
 for (const [name, text] of Object.entries({
   "baseline link.md": baseline,
@@ -289,6 +307,7 @@ const files = new Map([
   ["playbook/optimize.md", optimizer],
   ["playbook/link.md", mode === "full" ? full : baseline],
   ["playbook/materialize-link.mjs", helper],
+  ["playbook/workflow-contracts.json", catalogBytes],
 ]);
 const inputs = {};
 const closures = {};
@@ -356,10 +375,40 @@ closures.link.push(
   "optimize.md",
   "materialize-link.mjs",
 );
+for (const phase of Object.keys(closures)) closures[phase].push("workflow-contracts.json");
 files.set(
   "playbook/slc.pin-inputs.json",
   JSON.stringify({ schema: sidecar.schema, closures }, null, 2) + "\n",
 );
+// Code identities supplement the ordinary semantic-input inventory. They are
+// observations of the supplied frozen cohort, never an adopted dependency graph.
+const compilerInventory = {};
+async function inventoryTree(directory, inventory = compilerInventory) {
+  for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) await inventoryTree(path, inventory);
+    else {
+      const bytes = await readRegular(path, compiler);
+      inventory[relative(compiler, path).split(sep).join("/")] = { bytes: bytes.length, sha256: sha(bytes) };
+    }
+  }
+}
+await inventoryTree(join(compiler, "dist"));
+assert(Object.keys(compilerInventory).some(name => name.endsWith("/pipeline.js")), "Frozen compiler dist inventory is incomplete");
+for (const name of ["package.json", "package-lock.json"]) {
+  const bytes = await readRegular(join(compiler, name), compiler);
+  compilerInventory[name] = { bytes: bytes.length, sha256: sha(bytes) };
+}
+assert.equal(compilerInventory["package-lock.json"].sha256, sha(files.get("playbook/_inputs/package-lock.json")), "Frozen lock changed during assembly");
+async function verifyCompilerInventory() {
+  const current = {};
+  await inventoryTree(join(compiler, "dist"), current);
+  for (const name of ["package.json", "package-lock.json"]) {
+    const bytes = await readRegular(join(compiler, name), compiler);
+    current[name] = { bytes: bytes.length, sha256: sha(bytes) };
+  }
+  assert.deepEqual(current, compilerInventory, "Frozen compiler inventory changed during assembly");
+}
 const proof = {
   schema: "sublang.playbook.link-experiment.v1",
   version: "13.2.0",
@@ -375,7 +424,11 @@ const proof = {
   publishedHashes: published,
   commonHashes,
   ordinarySemanticInputs: inputs,
+  compilerInventory,
+  publicCatalog: { sha256: sha(catalogBytes), bytes: catalogBytes.length, literalTargetBindings: catalog.literalTargetBindings },
+  catalogGuidanceSha256: sha(catalogGuidance),
   commonRelayCorrectionSha256: sha(relayCorrection),
+  commonResultsGuidanceSha256: sha(resultsGuidance),
   optionalHelperSectionSha256: sha(recipe),
   helperSha256: sha(helper),
   treatment:
@@ -404,6 +457,7 @@ try {
     JSON.stringify(proof, null, 2) + "\n",
     { flag: "wx" },
   );
+  await verifyCompilerInventory();
   await absent(target);
   await rename(staging, target);
 } finally {
