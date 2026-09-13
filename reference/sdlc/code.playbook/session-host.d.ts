@@ -81,6 +81,19 @@ export interface SessionHostController {
    * decision is the submitted selection, so no decision model call is made.
    */
   submitRuntimeAction(actionId: string): Promise<SessionRecovery>;
+  /**
+   * The controls the shell offers on its own behalf, read live between turns;
+   * today one give-up while a root is engaged, and empty while idle or while a
+   * turn is active. Disjoint from `listRuntimeActions`, which reads the leaf.
+   */
+  listShellActions(): readonly PlaybookControlAction[];
+  /**
+   * Submit one currently advertised shell control as the session's next turn.
+   * The turn is the same durable transaction `handleBossTurn` runs; both its
+   * decision and its closing reply are the shell's, so the turn makes no model
+   * call and a give-up survives a provider that is refusing everything.
+   */
+  submitShellAction(actionId: string): Promise<SessionRecovery>;
   retry(): Promise<SessionRecovery>;
   dispose(): Promise<void>;
 }

@@ -43,7 +43,7 @@ export async function openSessionHost(options) {
     await installRetainedGenerationsForLaunch({ lease, shell: created.shell, ...(record === undefined ? { freshBoundary: { cwd, structuralProjection: structure, executionProjection: config, snapshot: created.snapshot } } : {}), retainedGenerations: record?.retainedGenerations ?? {}, reconcileRepositoryEffects: created.reconcileRepositoryEffects });
     record = await lease.read();
     await replay.flushStoredRecords();
-    const execute = async (input, retry, actionId) => {
+    const execute = async (input, retry, actionId, shellActionId) => {
       if (closed || closing) throw new Error('session host is closing');
       if (active) throw new Error('session turn is already active');
       const operation = (async () => {
@@ -53,7 +53,7 @@ export async function openSessionHost(options) {
           input = prior.uncertain.input;
           if (!retryPending) throw new Error('retry requires reopening the uncertain checkpoint');
         } else if (prior?.state !== 'settled') throw new Error('session has an uncertain turn; select Retry or Discard');
-        if (actionId === undefined && (typeof input !== 'string' || input.trim().length === 0)) throw new Error('session input must be nonempty');
+        if (actionId === undefined && shellActionId === undefined && (typeof input !== 'string' || input.trim().length === 0)) throw new Error('session input must be nonempty');
         await created.reconcileRepositoryEffects();
         // The selection is made after reconciliation, so the advertised
         // reading it is validated against is the one this turn settles
@@ -61,6 +61,9 @@ export async function openSessionHost(options) {
         if (actionId !== undefined) {
           if (typeof created.shell.submitRuntimeAction !== 'function') throw new Error('this Captain shell advertises no runtime actions');
           input = created.shell.submitRuntimeAction(actionId);
+        } else if (shellActionId !== undefined) {
+          if (typeof created.shell.submitShellAction !== 'function') throw new Error('this Captain shell advertises no controls of its own');
+          input = created.shell.submitShellAction(shellActionId);
         }
         terminal = undefined; replies = [];
         const attemptId = options.createAttemptId?.() ?? randomUUID();
@@ -91,7 +94,7 @@ export async function openSessionHost(options) {
       })();
       return closing;
     };
-    return Object.freeze({ sessionId, host: created.host, shell: created.shell, lease, read: () => lease.read(), handleBossTurn: (input) => execute(input, false), listRuntimeActions: () => created.shell.describeRuntimeActions?.() ?? Object.freeze([]), submitRuntimeAction: (actionId) => execute(undefined, false, actionId), retry: () => execute(undefined, true), dispose });
+    return Object.freeze({ sessionId, host: created.host, shell: created.shell, lease, read: () => lease.read(), handleBossTurn: (input) => execute(input, false), listRuntimeActions: () => created.shell.describeRuntimeActions?.() ?? Object.freeze([]), submitRuntimeAction: (actionId) => execute(undefined, false, actionId), listShellActions: () => created.shell.describeShellActions?.() ?? Object.freeze([]), submitShellAction: (actionId) => execute(undefined, false, undefined, actionId), retry: () => execute(undefined, true), dispose });
   } catch (cause) {
     const failures = [cause];
     let disposed = true;

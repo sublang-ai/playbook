@@ -334,6 +334,7 @@ parsing the command:
 | `/<command> <text>`, command names an active non-leaf ancestor | engaged | `respond` only |
 | bare `/<command>`, enabled command | any | `respond` only — status or clarification, never a restart |
 | the text a host selection of an advertised runtime action returned, on the turn carrying it [[playbook-captain-60](#playbook-captain-60)] | engaged | `runtime` that selected action id |
+| the text a host selection of the shell's give-up control returned, on the turn carrying it [[playbook-captain-62](#playbook-captain-62)] | engaged | `dismiss` |
 | unregistered `/<x>` or ordinary text | any | the session Captain's decision call |
 
 A host selection ([DR-051](../decisions/051-host-selected-runtime-recovery.md))
@@ -343,6 +344,10 @@ start nothing when it names any other, shall return that action's
 Boss-facing label as the text of the turn the host then submits, and
 shall decide only the turn carrying exactly that text: any other turn
 drops the selection and resolves as this table states.
+A host selection of the shell's own give-up control
+([DR-052](../decisions/052-host-selected-give-up.md)) shall obey those same
+rules against the control the shell currently advertises
+[[playbook-captain-62](#playbook-captain-62)].
 A parse-resolved turn shall bypass only the decision model call: the
 shell shall inject the parsed resolution into the session Captain's
 controller FSM as that turn's decision object
@@ -356,6 +361,10 @@ decision state as that turn's decision, spending no decision call and
 no durable conversation call on it, and that selection shall reach the
 shell for validation and execution through the controller port like
 every other ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]).
+A host-decided give-up turn shall bypass that call the same way, supplying
+`dismiss` as that turn's decision, and shall settle its result phase in the
+shell as well, so the turn makes no model call at all
+[[playbook-captain-63](#playbook-captain-63)].
 For a parse-resolved `respond`, the session Captain's one durable
 prose call settles the turn as captain speech
 ([[playbook-captain-9](#playbook-captain-9)]), and the shell shall execute no action for
@@ -453,6 +462,26 @@ While no Boss turn is active, when its embedding host asks which runtime actions
 
 - while a Boss turn is active the shell shall advertise nothing and read no leaf's control view for this answer, because that view is then the turn's decision grounding [[playbook-captain-9](#playbook-captain-9)];
 - the answer shall be read from the leaf when asked and shall enter no shell snapshot or settlement, so nothing durable claims an action a leaf no longer offers [[playbook-captain-41](#playbook-captain-41)].
+
+#### playbook-captain-62
+
+While no Boss turn is active, when its embedding host asks which controls the shell itself offers, the Playbook Captain shell shall answer with the `{ id, label }` pairs it effects on its own behalf, disjoint from the leaf's advertised runtime actions [[playbook-captain-60](#playbook-captain-60)], detached and frozen ([DR-052](../decisions/052-host-selected-give-up.md)):
+
+| Shell state | Answer |
+| --- | --- |
+| idle | nothing |
+| an engaged root, whether or not its leaf stands behind the retained-effect fence of [[playbook-captain-54](#playbook-captain-54)] | exactly one give-up control, its Boss-facing label naming the root's registered command |
+
+- while a Boss turn is active the shell shall advertise nothing here, as it advertises no runtime action then [[playbook-captain-60](#playbook-captain-60)];
+- the answer shall enter no shell snapshot or settlement, so nothing durable claims a control the shell no longer offers [[playbook-captain-41](#playbook-captain-41)].
+
+#### playbook-captain-63
+
+Where a Boss turn's decision came from a give-up selection [[playbook-captain-62](#playbook-captain-62)], the Playbook Captain shell shall settle that turn without any session-Captain call, leaving the ordered unresolved-effect report of [[playbook-captain-58](#playbook-captain-58)] unchanged ([DR-052](../decisions/052-host-selected-give-up.md)):
+
+- no decision call shall be allocated, the host having supplied that turn's decision [[playbook-captain-7](#playbook-captain-7)];
+- the shell shall compose the closing reply of [[playbook-captain-19](#playbook-captain-19)] itself from that settlement's outcome-report facts and present it through the one presentation seam under the same single-attempt rule, making no result-phase call [[playbook-captain-20](#playbook-captain-20)];
+- the durable conversation shall learn of the turn through the catch-up suffix of [[playbook-captain-35](#playbook-captain-35)] rather than through a call of its own.
 
 ### Captain calls and ports
 
@@ -764,6 +793,10 @@ it shall instruct Captain to append no saved-counts line.
 When the Boss turn settles as `respond`, the shell shall supply no
 result-phase outcome report and no result-phase call shall occur
 ([[captain-playbook-6](captain-playbook.md#captain-playbook-6)]).
+When the Boss turn was decided by a give-up selection
+[[playbook-captain-62](#playbook-captain-62)], no result-phase call shall occur
+either, and the shell shall compose that turn's closing reply itself from the
+same settlement facts [[playbook-captain-63](#playbook-captain-63)].
 The result-phase prompt shall instruct Captain not to include counts
 for state ids the `summaryPolicy` does not label and not to repeat
 the exact summary-visible progress round count outside the
@@ -1008,7 +1041,11 @@ history.
 
 Every non-`respond` action result shall reach the healthy durable
 conversation through the result-phase call of the same turn
-([[playbook-captain-20](#playbook-captain-20)]).
+([[playbook-captain-20](#playbook-captain-20)]), except a turn the shell settled
+itself under [[playbook-captain-63](#playbook-captain-63)], whose result shall
+reach that same conversation as the catch-up suffix this item already defines:
+the shell shall record the latest journal sequence represented to it and carry
+the later records on the next durable call.
 There shall be no separate refusal notice, status-only refusal path, or
 second memory channel.
 The recovery history shall never be Boss-visible and shall be used to
@@ -1052,7 +1089,7 @@ the underlying diagnostic outside Boss-visible prose.
 
 #### playbook-captain-41
 
-Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainUnresolvedEffect`, `assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[]`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>`, `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`, optional `describeRuntimeActions?(): readonly PlaybookControlAction[]` [[playbook-captain-60](#playbook-captain-60)], and optional `submitRuntimeAction?(actionId: string): string` [[playbook-captain-7](#playbook-captain-7)], the two host members declared optional so a shell that publishes neither advertises nothing.
+Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainUnresolvedEffect`, `assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[]`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>`, `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`, optional `describeRuntimeActions?(): readonly PlaybookControlAction[]` [[playbook-captain-60](#playbook-captain-60)], optional `submitRuntimeAction?(actionId: string): string` [[playbook-captain-7](#playbook-captain-7)], optional `describeShellActions?(): readonly PlaybookControlAction[]` [[playbook-captain-62](#playbook-captain-62)], and optional `submitShellAction?(actionId: string): string` [[playbook-captain-7](#playbook-captain-7)], the four host members declared optional so a shell that publishes none advertises nothing.
 The module's default shell factory shall return `PlaybookCaptainShell`.
 `PlaybookCaptainShellSnapshot` shall be a detached JSON-safe schema-version-4 value with these exact common and mode-discriminated members:
 
@@ -1119,7 +1156,7 @@ For an ordinary capture, every frame shall carry that same complete checkpoint; 
 Failure or absence of that matching published description shall omit the member without making the generation incompatible or substituting an internal state id.
 A frame shall participate only when its runtime exposes the parked-session `exportSnapshot`/`restore` pair, the adoption capability, and valid `retainedGenerationMetadata` classification from [[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)], [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], and [[playbook-runtime-61](playbook-runtime.md#playbook-runtime-61)]; a root lacking any member shall emit `clear`; and, for an outcome that would otherwise `retain`, when the root stack selected by that outcome contains such a capability-less descendant, the shell shall retain the last complete turn-start candidate or, when the turn began with such a descendant already live or the root began during the turn, emit no update for that root, and shall never retain a partial stack.
 Before controller work can dismiss or complete an existing root, the shell shall capture the latest eligible generation from a live root that has previously settled active and quiescent, without moving a runtime or emitting a host record.
-When the root remains parked, the generation selected for `retain` shall be its current complete generation; when dismissal removes the root, the selected generation shall be the captured turn-start candidate; and when a terminal result removes the root with a stable id that belongs to the root runtime's immutable `unfinishedFinalStateIds` ([[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)]), the selected generation shall be the captured turn-start candidate; a terminal result with a stable id outside that set shall emit `clear` regardless of capability gaps.
+When the root remains parked, the generation selected for `retain` shall be its current complete generation; when dismissal removes the root, the selected generation shall be the captured turn-start candidate, except that a dismissal decided by a give-up selection [[playbook-captain-62](#playbook-captain-62)] shall emit `clear` for that root instead, so a run the Boss gave up on is not offered back; and when a terminal result removes the root with a stable id that belongs to the root runtime's immutable `unfinishedFinalStateIds` ([[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)]), the selected generation shall be the captured turn-start candidate; a terminal result with a stable id outside that set shall emit `clear` regardless of capability gaps.
 An initialized root that has not yet reached a post-input quiescent settlement shall not count as carrying unfinished work; if it reaches a declared unfinished terminal first, the shell shall settle without a retention update for that root rather than retain its initial state or emit `clear`.
 Whenever the preceding rules require a capability-bearing frame to supply a complete candidate, failure to capture it shall fail the settlement boundary; a runtime claiming the marker but unable to supply a stable terminal state id shall likewise fail rather than classify the terminal as clean.
 Child return or dismissal shall produce no independent retained root: the resulting live root stack, or the eventual root terminal decision, shall remain authoritative.
@@ -1255,6 +1292,17 @@ Where the test suite drives the Playbook Captain shell with an engaged leaf whos
 - the selected action's turn allocates no decision call, applies exactly that action id once through the leaf's `apply` under that turn's idempotency key [[playbook-captain-8](#playbook-captain-8)], and closes with the ordinary outcome-report reply naming the action by its Boss-facing label [[playbook-captain-20](#playbook-captain-20)];
 - a turn whose text is not the selection's is decided by the ordinary decision call, with the selection dropped and nothing applied [[playbook-captain-7](#playbook-captain-7)];
 - over the session host, the selection settles one durable turn whose Boss text is that advertised label and leaves the real artifact out of its failure state, with no decision call made for it or for the command turn that parked it [[playbook-captain-7](#playbook-captain-7)] [[playbook-captain-60](#playbook-captain-60)].
+
+#### playbook-captain-64
+
+Where the test suite drives the Playbook Captain shell with an engaged leaf whose control view it scripts, and drives one real session host over a real store whose real CODE artifact parks in its recoverable failure state, the test suite shall fail unless the shell's own control and its selection both hold:
+
+- an idle shell publishes no shell control, while an engaged root publishes exactly one whose label names its registered command [[playbook-captain-62](#playbook-captain-62)];
+- a selection naming a control the shell does not advertise, and one naming none, are refused with a reason and start no turn [[playbook-captain-7](#playbook-captain-7)];
+- the give-up turn allocates no session-Captain call of either kind and still presents exactly one closing reply composed from its own settlement [[playbook-captain-63](#playbook-captain-63)];
+- a turn whose text is not the selection's is decided by the ordinary decision call, with the selection dropped and the root still engaged [[playbook-captain-7](#playbook-captain-7)];
+- over the session host, the selection settles one durable turn leaving the shell idle with that root's retained generation cleared, so the settled session offers no resumption of it [[playbook-captain-44](#playbook-captain-44)];
+- a leaf publishing no control surface, one whose control view throws, and one standing behind the retained-effect fence each publish the shell's control all the same, the surfaces staying disjoint in both directions [[playbook-captain-62](#playbook-captain-62)].
 
 ### Lifecycle and telemetry
 

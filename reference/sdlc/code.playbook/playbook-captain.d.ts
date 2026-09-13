@@ -228,6 +228,18 @@ export interface PlaybookCaptainShell extends Captain {
      * `handleBossTurn` (CAPTAIN-7).
      */
     submitRuntimeAction?(actionId: string): string;
+    /**
+     * The controls the shell effects on its own behalf, disjoint from the leaf's
+     * advertised runtime actions (CAPTAIN-62). Declared optional for the same
+     * reason: a shell that publishes no reader advertises nothing.
+     */
+    describeShellActions?(): readonly PlaybookControlAction[];
+    /**
+     * Select one currently advertised shell control as the next Boss turn's
+     * decision and return that turn's Boss text, which the host submits through
+     * `handleBossTurn` (CAPTAIN-7).
+     */
+    submitShellAction?(actionId: string): string;
 }
 export declare function assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[];
 /** Validate, detach, and freeze one untrusted shell snapshot. */

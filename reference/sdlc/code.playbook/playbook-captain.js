@@ -77,6 +77,9 @@ function isCanonicalLocalRoleId(value) {
 }
 const UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID = 'reconcile:unresolved-effect';
 const UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID = 'abandon:unresolved-effect';
+// CAPTAIN-62: the shell's own control, not a runtime action. The id is machine
+// data the host echoes back; the Boss never sees it (CAPPLAY-5).
+const GIVE_UP_ACTION_ID = 'give-up';
 // The fixed machine-syntax guard of a player's Boss-question suspension
 // (slc/link.md §Boss-reply suspension): the accepted outcome that parks on
 // Boss rather than sparing Boss a relay.
@@ -1732,10 +1735,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // CAPTAIN-40's corrective re-ask on the very call whose prose it surfaces —
     // the selection reaches the controller port after that call's frame is gone.
     let decisionCall;
-    // CAPTAIN-7: the runtime action the host selected for the turn it is about
-    // to submit, held with the exact Boss text that turn carries so an unrelated
-    // turn never consumes the selection. One turn consumes it, whichever it is.
-    let pendingRuntimeSelection;
+    // CAPTAIN-7: the control the host selected for the turn it is about to
+    // submit, held with the exact Boss text that turn carries so an unrelated
+    // turn never consumes the selection. One turn consumes it, whichever it is,
+    // and one slot holds it whichever surface it came from — the leaf's
+    // advertised actions or the shell's own controls (CAPTAIN-62).
+    let pendingHostSelection;
     let lastAction;
     let lastSettlementStatus;
     const retainedGenerationCandidates = new Map();
@@ -3931,6 +3936,54 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             action.id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID)
             .map((action) => Object.freeze({ id: action.id, label: action.label })));
     };
+    // CAPTAIN-62: the controls the shell effects itself, published beside the
+    // leaf's advertised actions and never mixed with them — these are the
+    // shell's own, so an engaged root offers one whatever its leaf advertises,
+    // fenced or not. A fenced root keeps its control because giving up reports
+    // unresolved effects (CAPTAIN-58) rather than reconciling them, and a run
+    // whose effects are unknown is exactly the run a Boss gives up on.
+    const advertisedShellActions = () => {
+        const empty = Object.freeze([]);
+        if (lifecycle !== 'ready' || terminallyDisposed)
+            return empty;
+        // Between turns, on the same rule the leaf's actions take: mid-turn the
+        // host can act on no selection.
+        if (activeTurn !== undefined || activeTurnHostCalls !== undefined) {
+            return empty;
+        }
+        const root = rootFrame();
+        if (!root)
+            return empty;
+        return Object.freeze([
+            Object.freeze({
+                id: GIVE_UP_ACTION_ID,
+                // The label is the turn's durable Boss text, so it names the run the
+                // way the Boss started it rather than the frame that happens to be
+                // parked inside it.
+                label: `Stop ${frameLabel(root)}`,
+            }),
+        ]);
+    };
+    // CAPTAIN-7: the host's selection of the shell's own control, validated here
+    // against the same live reading. The returned text is the turn the host
+    // submits, exactly as for an advertised runtime action.
+    const selectShellAction = (actionId) => {
+        if (lifecycle !== 'ready' || terminallyDisposed) {
+            throw new Error('a shell control requires an initialized or restored Captain shell');
+        }
+        if (activeTurn !== undefined || activeTurnHostCalls !== undefined) {
+            throw new Error('a shell control cannot be selected during a Boss turn');
+        }
+        if (typeof actionId !== 'string' || actionId.length === 0) {
+            throw new TypeError('a shell control id must be a nonempty string');
+        }
+        const advertised = advertisedShellActions().find((action) => action.id === actionId);
+        if (advertised === undefined) {
+            throw new Error('the shell does not advertise that control');
+        }
+        pendingHostSelection = { kind: 'give-up', text: advertised.label };
+        return advertised.label;
+    };
     // CAPTAIN-7: the host's own selection of one advertised action, validated
     // here against the same live reading and validated again at the controller
     // port before any effect. The returned text is the turn the host submits.
@@ -3954,7 +4007,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (text.length === 0) {
             throw new Error('the advertised action carries no Boss-facing label to submit as its turn');
         }
-        pendingRuntimeSelection = { actionId, text };
+        pendingHostSelection = { kind: 'runtime', actionId, text };
         return text;
     };
     // The catalog is registry-authored, not shell-authored: an id, a command,
@@ -4423,6 +4476,28 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     }),
                 };
             }
+            // CAPTAIN-63: a give-up allocates neither call. Its decision is the
+            // host's, and its result phase is answered below from the settlement the
+            // shell already holds, so an exit from a failing provider does not ask
+            // that provider for permission.
+            if (kind === 'decision' && turn?.hostGiveUp === true) {
+                return {
+                    status: 'ok',
+                    finalText: JSON.stringify({ action: 'dismiss' }),
+                };
+            }
+            if (kind === 'closingReply' && turn?.hostGiveUp === true) {
+                // The durable conversation did not receive this turn, so it is marked
+                // for the CAPTAIN-35 catch-up rather than left believing it is
+                // current: the next call carries the journal records it missed.
+                markConversationCatchUp();
+                // Through the one presentation seam, exactly where a model-composed
+                // reply is presented, so this reply is journaled and single-attempt
+                // like every other. It needs no reply validation or corrective re-ask:
+                // `giveUpReplyText` already validated what it composed.
+                await surfaceSettlement({ context, text: giveUpReplyText() });
+                return { status: 'ok', finalText: 'ok' };
+            }
             const outcome = await durableCall(context, compose);
             if (kind === 'decision') {
                 // A model-decided `respond` surfaces this call's own prose, so the
@@ -4619,8 +4694,18 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return false;
         const label = frameLabel(root);
         // Dismissal leaves the procedure unfinished. Persist the latest safe
-        // generation captured for this turn before disposal erases the frames.
-        retainOrClearDisposedRoot(root);
+        // generation captured for this turn before disposal erases the frames —
+        // unless the Boss gave up on it (CAPTAIN-44), in which case retaining it
+        // would offer the abandoned run back on the idle digest's next reading.
+        if (activeTurn?.hostGiveUp === true) {
+            pendingRetentionUpdates.set(root.entry.id, {
+                kind: 'clear',
+                rootPlaybookId: root.entry.id,
+            });
+        }
+        else {
+            retainOrClearDisposedRoot(root);
+        }
         try {
             await runEffect(() => disposeStack('dismiss'));
             facts.push(`Dismissed the ${label} engagement.`);
@@ -5076,10 +5161,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (!leaf) {
                 return rejectSelection(selection, 'no engagement is active to dismiss');
             }
+            // CAPTAIN-63: a give-up ends the run. An ordinary dismissal of a nested
+            // call returns to its caller, which is the right reading of "stop this
+            // call" and the wrong one of "stop this workflow" — the Boss gave up on
+            // the root, not on whichever child was parked when they did.
+            const giveUp = turn.hostGiveUp === true;
+            const dismissed = giveUp ? (rootFrame() ?? leaf) : leaf;
             turn.settled = true;
-            journalAction({ action: 'dismiss', playbookId: leaf.entry.id });
-            const label = frameLabel(leaf);
-            if (leaf.parent) {
+            journalAction({ action: 'dismiss', playbookId: dismissed.entry.id });
+            const label = frameLabel(dismissed);
+            if (leaf.parent && !giveUp) {
                 // No boundary around the return itself: `resumeParent` disposes the
                 // child and drives the parent, and each of those is marked where it
                 // happens. A visibility rejection raised on the way back is shell
@@ -5373,6 +5464,28 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // The reply composes from the authoritative report, never the early
     // `settled` guard. That guard closes duplicate submissions before an effect
     // starts; it is not evidence that anything ran.
+    // CAPTAIN-63: the give-up's closing reply, composed from the same settlement
+    // facts the result-phase prompt would have carried. Shell-authored Boss
+    // prose passes the validation every model reply passes (CAPTAIN-34); what it
+    // interpolates is not host-authored all the way down, so a fact set that
+    // fails validation is dropped rather than spoken and the reply still states
+    // the settlement truthfully.
+    const giveUpReplyText = () => {
+        const report = activeTurn?.report;
+        const facts = report?.bossFacts ?? report?.facts ?? [];
+        const opening = 'Stopped that workflow. I will not resume it.';
+        const closing = 'Send the command again to start fresh work.';
+        const composed = [
+            opening,
+            ...(facts.length === 0
+                ? []
+                : ['Here is what happened:', ...facts.map((fact) => `- ${fact}`)]),
+            closing,
+        ].join('\n');
+        return replyRejection(composed) === undefined
+            ? composed
+            : [opening, closing].join('\n');
+    };
     const failureReplyText = () => {
         const commands = [...enablementById.values()]
             .map((enablement) => `/${enablement.command} <task>`)
@@ -6235,6 +6348,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         installRetainedGenerations,
         describeRuntimeActions: advertisedRuntimeActions,
         submitRuntimeAction: selectRuntimeAction,
+        describeShellActions: advertisedShellActions,
+        submitShellAction: selectShellAction,
         async handleBossTurn(turn, context) {
             if (lifecycle !== 'ready' || terminallyDisposed) {
                 throw new Error('init must be called first, or restore must complete before handling a Boss turn');
@@ -6271,14 +6386,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             // CAPTAIN-7: one host selection is consumed by one turn. It decides only
             // the turn carrying the exact text the selection was made for; any other
             // turn drops it and resolves normally.
-            const selected = pendingRuntimeSelection;
-            pendingRuntimeSelection = undefined;
-            const hostRuntimeActionId = selected !== undefined && selected.text === turn.prompt
-                ? selected.actionId
+            const selected = pendingHostSelection;
+            pendingHostSelection = undefined;
+            const decided = selected !== undefined && selected.text === turn.prompt
+                ? selected
                 : undefined;
-            const parsed = hostRuntimeActionId === undefined
-                ? resolveCommandTurn(turn.prompt)
-                : undefined;
+            const hostRuntimeActionId = decided?.kind === 'runtime' ? decided.actionId : undefined;
+            const hostGiveUp = decided?.kind === 'give-up' ? true : undefined;
+            const parsed = decided === undefined ? resolveCommandTurn(turn.prompt) : undefined;
             activeTurn = {
                 id: ++turnSequence,
                 captainSyncedJournalSeq: journalSeq,
@@ -6286,6 +6401,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 authoritativeText: parsed?.authoritativeText ?? turn.prompt,
                 ...(parsed ? { resolution: parsed.resolution } : {}),
                 ...(hostRuntimeActionId === undefined ? {} : { hostRuntimeActionId }),
+                ...(hostGiveUp === undefined ? {} : { hostGiveUp }),
                 settled: false,
                 presentationAttempted: false,
                 settlementFacts: [],
@@ -6419,7 +6535,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 failure ??= error;
             }
         }
-        pendingRuntimeSelection = undefined;
+        pendingHostSelection = undefined;
         // Quarantine is session-wide by design. Only terminal teardown may drop
         // its ownership after every frame host call and the Captain are drained.
         playerTransactions.clear();

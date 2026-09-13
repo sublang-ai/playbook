@@ -7,6 +7,7 @@
 
 Accepted.
 Amends [DR-029](029-session-scoped-conversational-captain.md) in one scope: a `runtime` turn may be decided by the embedding host instead of the hidden decision call, preserving every validation and effect rule that decision carries.
+Amended by [DR-052](052-host-selected-give-up.md): a host may also decide a give-up turn, whose result phase the shell settles itself instead of through the closing-reply call.
 
 ## Context
 

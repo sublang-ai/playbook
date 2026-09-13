@@ -2908,6 +2908,13 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     expect(shell.exportSettlement()?.unresolvedEffects).toEqual(
       unresolvedEffectTestProjection(),
     );
+    // CAPTAIN-62: the shell's control is its own, not the leaf's, so a root
+    // fenced for effect reconciliation still offers the Boss a way out — and
+    // that give-up settles through this same path, carrying the fence's
+    // ordered report like every other controller settlement (CAPTAIN-58).
+    expect(shell.describeShellActions!()).toEqual([
+      { id: 'give-up', label: 'Stop /code' },
+    ]);
     const abandonment = stubContext([
       captainJson({
         action: 'runtime',
@@ -12374,6 +12381,76 @@ describe('host-published runtime actions (CAPTAIN-60, CAPTAIN-7)', () => {
     expect(
       context.captainCalls.filter((call) => isDecisionPrompt(call.prompt)),
     ).toHaveLength(1);
+    await shell.dispose?.();
+  });
+
+  // CAPTAIN-62: the shell's own control, which is not the leaf's and does not
+  // depend on anything the leaf publishes — a leaf offering nothing, or one
+  // whose control view throws, still leaves the Boss a way out of the run.
+  const GIVE_UP = Object.freeze({ id: 'give-up', label: 'Stop /code' });
+
+  it('publishes one give-up while a root is engaged, whatever its leaf offers', async () => {
+    const idle = makeShell(fakeCodeEntry());
+    await idle.init!(stubSession().session);
+    expect(idle.describeShellActions!()).toEqual([]);
+    expect(() => idle.submitShellAction!(GIVE_UP.id)).toThrow(
+      /does not advertise/,
+    );
+    await idle.dispose?.();
+
+    // A leaf with no control surface at all.
+    const surfaceless = makeShell(fakeCodeEntry());
+    await surfaceless.init!(stubSession().session);
+    await surfaceless.handleBossTurn(
+      turn('/code first task'),
+      stubContext().context,
+    );
+    expect(surfaceless.describeRuntimeActions!()).toEqual([]);
+    expect(surfaceless.describeShellActions!()).toEqual([GIVE_UP]);
+    await surfaceless.dispose?.();
+
+    // A control view that throws withholds the leaf's actions, never the
+    // shell's: an unreadable run is exactly the run a Boss gives up on.
+    const unreadable = makeShell(
+      engaging((runtime) => {
+        runtime.describe = () => {
+          throw new Error('the control view is unreadable');
+        };
+        runtime.apply = async () => ({
+          disposition: 'rejected',
+          reason: 'unreachable',
+        });
+        runtime.unresolvedEffectEnvelopes = () => [];
+      }),
+    );
+    await unreadable.init!(stubSession().session);
+    await unreadable.handleBossTurn(
+      turn('/code first task'),
+      stubContext().context,
+    );
+    expect(unreadable.describeRuntimeActions!()).toEqual([]);
+    const offered = unreadable.describeShellActions!();
+    expect(offered).toEqual([GIVE_UP]);
+    expect(Object.isFrozen(offered)).toBe(true);
+    await unreadable.dispose?.();
+  });
+
+  it('refuses a control it does not advertise and one named by nothing', async () => {
+    const shell = makeShell(advertising([RETRY]));
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), stubContext().context);
+
+    expect(() => shell.submitShellAction!('retry:step')).toThrow(
+      /does not advertise/,
+    );
+    expect(() => shell.submitShellAction!('')).toThrow(/nonempty string/);
+    expect(() =>
+      shell.submitShellAction!(undefined as unknown as string),
+    ).toThrow(/nonempty string/);
+    // The leaf's surface and the shell's stay disjoint in both directions.
+    expect(() => shell.submitRuntimeAction!(GIVE_UP.id)).toThrow(
+      /does not advertise/,
+    );
     await shell.dispose?.();
   });
 });
