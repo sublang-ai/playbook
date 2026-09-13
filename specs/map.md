@@ -90,7 +90,7 @@ meta.md       The spec of specs
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
-| [compiler-results.md](packages/compiler-results.md) | GEARS result-block boundaries and condition placement, preserving nested-call continuation |
+| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries and explicit caller-visible terminal return obligations |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
 | [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |
 | [fsm-scaffolding.md](packages/fsm-scaffolding.md) | Optional exact GEARS constants and incomplete typed FSM authoring scaffold |

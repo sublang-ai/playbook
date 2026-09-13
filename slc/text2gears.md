@@ -194,6 +194,10 @@ contract, so text2gears shall not invent a one-bullet `Results:` block for it.
 When a later item does consume its output, the produced-value rule above
 applies instead.
 
+When Source requires a terminal return to the caller, preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS.
+Merely naming a value in a completion predicate or an acting result does not state that the workflow returns it.
+Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.
+
 ### Boss-reply continuation
 
 Where a direct-Captain or delegated-player behavior may ask Boss a question

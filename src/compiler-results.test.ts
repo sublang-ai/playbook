@@ -78,5 +78,32 @@ describe.runIf(compiler !== undefined)(
       expect(item.prompt).toBe("Inspect the supplied evidence.");
       expect(item.result).toBeUndefined();
     });
+
+    it("preserves terminal-return prose without adding an actor or altering its prompt and result", async () => {
+      const { checkGearsResultContract, parseGearsItems } = await import(
+        pathToFileURL(join(compiler!, "dist/verify.js")).href
+      );
+      const returnDuty =
+        "When inspection completes, the workflow returns the inspected document identity and the fact that it satisfies the requested criteria to its caller.";
+      const delegated =
+        "When inspection is needed, Captain shall prompt Inspector:\n\n> Inspect the supplied evidence.";
+      const nested =
+        "When inspection is needed, Captain shall call playbook `inspect`:\n\n> Inspect the supplied evidence.";
+      for (const [withoutReturn, withReturn] of [
+        [
+          `${heading}${delegated}\n\n${result}\n`,
+          `${heading}${returnDuty}\n\n${delegated}\n\n${result}\n`,
+        ],
+        [`${heading}${nested}\n`, `${heading}${nested}\n\n${returnDuty}\n`],
+      ]) {
+        const original = parseGearsItems(withoutReturn);
+        const preserved = parseGearsItems(withReturn);
+        expect(checkGearsResultContract(withReturn)).toEqual([]);
+        expect(preserved).toHaveLength(1);
+        expect(preserved[0].prompt).toBe(original[0].prompt);
+        expect(preserved[0].result).toEqual(original[0].result);
+        expect(preserved[0].playbookId).toBe(original[0].playbookId);
+      }
+    });
   },
 );
