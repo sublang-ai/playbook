@@ -34,6 +34,34 @@ const APPROVED = {
   noUnsettledFindings: true,
 } as const;
 
+const childAcceptanceCases: Array<{
+  label: string;
+  output: JsonValue;
+  accepted: boolean;
+}> = [
+  { label: 'complete clean evidence', output: APPROVED, accepted: true },
+  {
+    label: 'missing revision',
+    output: { noUnsettledFindings: true },
+    accepted: false,
+  },
+  {
+    label: 'invalid revision',
+    output: { noUnsettledFindings: true, evaluatedRevision: 7 },
+    accepted: false,
+  },
+  {
+    label: 'unsettled findings',
+    output: { noUnsettledFindings: false, evaluatedRevision: 'review-rev' },
+    accepted: false,
+  },
+  {
+    label: 'foreign approval shape',
+    output: { approvedCommit: 'old', noUnsettledFindings: true },
+    accepted: false,
+  },
+];
+
 type RepositoryEffect =
   | 'commit'
   | 'commit-all'
@@ -905,37 +933,69 @@ describe('linked CODE runtime', () => {
     await runtime.dispose();
   });
 
-  it('treats an invalid REVIEW success result as terminal failure', async () => {
-    const host = await harness({
-      players: [{ status: 'ok', finalText: 'Committed.' }],
-      judges: [{ guard: 'directCommit' }],
-      children: [
-        {
-          state: 'settled',
-          result: {
-            status: 'ok',
-            playbookId: 'review',
-            childSessionId: 'review-invalid',
-            output: { approvedCommit: 'old', noUnsettledFindings: true },
-          },
+  it.each(
+    [false, true].flatMap((declaredTerminal) =>
+      childAcceptanceCases.map((row) => ({ ...row, declaredTerminal })),
+    ),
+  )(
+    'checks caller-owned $label after bridge delivery (terminal declared: $declaredTerminal)',
+    async ({ declaredTerminal, output, accepted }) => {
+      const child: PlaybookCallStart = {
+        state: 'settled',
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'review-evidence',
+          ...(declaredTerminal
+            ? {
+                terminal: {
+                  stateId: 'reviewComplete',
+                  kind: 'success' as const,
+                },
+              }
+            : {}),
+          output,
         },
-      ],
-    });
-    const runtime = linkedRuntime(host);
-    await runtime.init(rootSession(host.ports));
-    const result = await runtime.handleBossInput({
-      text: 'Fix it.',
-      signal: new AbortController().signal,
-    });
-    expect(result.outcome).toBe('terminal');
-    const output = result.outcome === 'terminal' ? result.output : undefined;
-    expect(output).toMatchObject({
-      status: 'review-failed',
-      lastCodeCommit: host.commitOids[0],
-      error: { name: 'ReviewContractError' },
-    });
-    await runtime.dispose();
-  });
+      };
+      const originalChild = JSON.stringify(child);
+      const host = await harness({
+        players: [{ status: 'ok', finalText: 'Committed.' }],
+        judges: [{ guard: 'directCommit' }],
+        children: [child],
+      });
+      const runtime = linkedRuntime(host);
+      await runtime.init(rootSession(host.ports));
+      const result = await runtime.handleBossInput({
+        text: 'Fix it.',
+        signal: new AbortController().signal,
+      });
+      expect(result.outcome).toBe('terminal');
+      if (result.outcome !== 'terminal')
+        throw new Error('Expected CODE terminal result');
+      expect(result.terminal?.kind).toBe(accepted ? 'success' : 'failure');
+      if (accepted) {
+        expect(result.output).toEqual({
+          status: 'complete',
+          lastCodeCommit: host.commitOids[0],
+          finalEvaluatedRevision: 'review-rev',
+          allReviewsPassed: true,
+        });
+      } else {
+        expect(result.output).toMatchObject({
+          status: 'review-failed',
+          lastCodeCommit: host.commitOids[0],
+          error: { name: 'ReviewContractError' },
+        });
+      }
+      expect(host.playerCalls).toHaveLength(1);
+      expect(host.childRequests).toHaveLength(1);
+      expect(host.childRequests[0]?.text).toContain(
+        `> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.`,
+      );
+      expect(JSON.stringify(child)).toBe(originalChild);
+      await runtime.dispose();
+    },
+  );
 
   it('resumes the same Coder state with a quoted Boss answer', async () => {
     const host = await harness({

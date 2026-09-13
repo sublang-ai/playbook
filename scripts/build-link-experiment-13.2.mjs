@@ -70,8 +70,8 @@ const published = {
     "dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66",
 };
 const commonHashes = {
-  link: "c0e0f091ccca7205bcb310d1b58eb96947086e715a5e315594793f52dce47c37",
-  producer: "576218f65416b0589197c3543aca4cd087e6d7061a466648df6337864eee9bda",
+  link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
+  producer: "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
 };
 const grammarInputs = [
@@ -197,13 +197,23 @@ const oldCompletion = original["link.md"]
 const newCompletion = baseline
   .split("\n")
   .filter((line) => line.startsWith(completionPrefix));
+const childAcceptance =
+  "`onDone` proves successful bridge delivery without a declared child failure;\nit does not establish every caller-owned domain condition. The caller shall\nenforce its own explicit Source-authored acceptance or relay predicates on\nthe delivered output before continuing, without inventing predicates from\ncallee implementation details or overriding the child's compiled terminal\nkind with output fields.\n";
+const previousChildAcceptance =
+  "Because the bridge routes a failure terminal to the error path, `onDone` alone\nproves the child succeeded and a caller never inspects a callee's output fields\nto decide that; a caller reads those fields only when its own Source relays\nthem.\n";
+assert.equal(
+  baseline.split(childAcceptance).length,
+  2,
+  "Reviewed child-acceptance correction must occur exactly once",
+);
 assert.equal(oldCompletion.length, 1);
 assert.equal(newCompletion.length, 1);
 assert.equal(
   baseline
     .replace(guide, "")
     .replace(effects.join("\n") + "\n", "")
-    .replace(newCompletion[0], oldCompletion[0]),
+    .replace(newCompletion[0], oldCompletion[0])
+    .replace(childAcceptance, previousChildAcceptance),
   original["link.md"],
   "Only reviewed common corrections may change the published link contract",
 );

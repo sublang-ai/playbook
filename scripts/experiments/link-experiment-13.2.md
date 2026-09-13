@@ -39,7 +39,7 @@ The baseline has no helper-use instructions in any phase definition; the identic
 This is a comparison of optional helper instructions, not a claim that the baseline agent cannot discover files.
 
 The builder checks fixed published hashes for all four definitions, fixed hashes for the common corrected definitions, and exact inverse reconstruction of the original link contract.
-The common corrections concern the already reviewed host/factory ownership boundary, commit disposition and deferred completion fields, current-directory Git initialization, and machine-root and Boss-input production rules.
+The common corrections concern the already reviewed host/factory ownership boundary, commit disposition and deferred completion fields, current-directory Git initialization, machine-root and Boss-input production rules, and explicit caller-owned child-acceptance predicates after successful bridge delivery.
 The current helper and optional section are captured byte-for-byte and identified by their hashes in each proof; pin the source checkout to reproduce them.
 
 Every ordinary per-phase semantic member is copied under `playbook/_inputs/<compiler-relative-path>` with its original locator, rewritten locator, byte length and SHA-256 recorded separately.
@@ -62,7 +62,8 @@ PLAYBOOK_EXPERIMENT_COMPILER=/absolute/frozen-compiler \
 ```
 
 The integration suite uses the supplied compiler's actual discovery and closure code, verifies the exact one-section difference and every preserved input, and exercises refusal of altered published definitions, wrong versions, foreign or symbolic inputs, existing outputs, and output placement inside the frozen compiler.
-The checked-in [local assembly evidence](link-experiment-13.2-evidence.json) records one successful 11-case run, the exact candidate hashes, and the full original-member accounting; it records no model measurement.
+The checked-in [initial local assembly evidence](link-experiment-13.2-evidence.json) records the first successful 11-case run and is reproduced from source commit `128956f`; the later [child-acceptance correction evidence](link-experiment-13.2-child-acceptance-evidence.json) records a new pair sharing that normative correction.
+Both retain exact candidate hashes and full original-member accounting, with no model measurement.
 Without `PLAYBOOK_EXPERIMENT_COMPILER`, only the help/argument test runs; that is insufficient evidence of successful assembly.
 Outputs use a staged sibling tree and an absent-target check under a single-writer assumption; there is no concurrent atomic no-replace guarantee.
 

@@ -27,11 +27,11 @@ The builder shall construct both arms from the same reviewed corrected local pro
 
 | Common member | SHA-256 |
 | --- | --- |
-| Link after removing the optional section | `c0e0f091ccca7205bcb310d1b58eb96947086e715a5e315594793f52dce47c37` |
-| `gears2fsm.md` | `576218f65416b0589197c3543aca4cd087e6d7061a466648df6337864eee9bda` |
+| Link after removing the optional section | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
+| `gears2fsm.md` | `9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e` |
 | `optimize.md` | `4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9` |
 
-The builder shall prove exact reconstruction of the published link bytes by undoing only the common authority-boundary guidance, three repository-disposition lines and corrected completion-mapper clause, and prove exact full-entry restoration by reinserting the extracted optional section.
+The builder shall prove exact reconstruction of the published link bytes by undoing only the common authority-boundary guidance, three repository-disposition lines, corrected completion-mapper clause and caller-owned child-acceptance paragraph, and prove exact full-entry restoration by reinserting the extracted optional section.
 
 ### link-experiments-3
 

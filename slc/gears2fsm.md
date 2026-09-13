@@ -449,9 +449,12 @@ result, the error action shall inspect whether its status was `aborted` or
 `error`; it shall not collapse both into an invented success/failure enum. The
 FSM may inspect that public structural data without importing the runner or
 constructing runtime call identities.
-Because a failure terminal reaches `onError`, `onDone` alone proves the child
-succeeded: a caller shall not decide success by inspecting the callee's output
-fields, and shall read those fields only where its own Source relays them.
+`onDone` proves successful bridge delivery without a declared child failure;
+it does not establish every caller-owned domain condition. The caller shall
+enforce its own explicit Source-authored acceptance or relay predicates on
+the delivered output before continuing, without inventing predicates from
+callee implementation details or overriding the child's compiled terminal
+kind with output fields.
 For a workflow that reassesses child results, use a typed JSON-safe record such
 as `{ playbookId, status: 'ok', output }` on `onDone` and
 `{ playbookId, status: 'aborted' | 'error', error }` on `onError`, with a

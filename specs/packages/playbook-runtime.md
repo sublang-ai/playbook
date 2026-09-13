@@ -720,7 +720,8 @@ Where a linked runtime settles a public boundary at a final state whose `meta.pl
 #### playbook-runtime-84
 
 Where a compiled FSM recovers from a nested call rather than parking, its `invoke.onError` first arm shall accept exactly an `Error` carrying a validated public child result that is `status: 'aborted' | 'error'` or `status: 'ok'` whose terminal kind is `failure` [[playbook-runtime-42](#playbook-runtime-42)], and shall record the child's own evidence — the compact error for the first two shapes and the child's output for the third — while a later fallback arm retains the control-plane error and routes to the recoverable failure state.
-Because the bridge rejects a failure terminal, `invoke.onDone` alone shall prove the child succeeded: a caller shall neither decide success by inspecting the callee's output fields nor read them for any purpose its own source does not relay.
+`invoke.onDone` shall prove only successful bridge delivery without a declared child failure and shall deliver the child's output for the caller's explicit source-authored acceptance or relay predicates, which the caller shall enforce before continuing.
+A caller shall neither invent predicates from a callee's implementation nor use output fields to override the child's compiled terminal kind.
 
 ### Parked-session snapshot
 
@@ -1522,6 +1523,8 @@ Where the integration suite drives one shared-factory fixture that declares both
 | `ok` with a `success` terminal record | resolves through `onDone` with the child's output |
 | `ok` with a `failure` terminal record, settled or resumed from suspension | rejects through `onError` carrying that exact public result, with the paired finish trace still recording `status: 'ok'` and the same record |
 | `ok` with no terminal record | resolves through `onDone`, and a fixture declaring no kind publishes no record of its own |
+
+Where the maintained CODE runtime receives a REVIEW completion through that bridge, the integration matrix shall prove that both a declared `success` terminal and an absent terminal record reach CODE's own output guards, which accept complete clean-review evidence, reject missing or invalid evaluated-revision evidence and unsettled findings without another phase, and leave the delivered child's terminal meaning unchanged (verifying [[playbook-runtime-84](#playbook-runtime-84)]).
 
 #### playbook-runtime-86
 

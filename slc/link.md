@@ -1586,10 +1586,12 @@ artifact declares its reached final state's kind: the runtime reads
 `meta.playbook.terminal` and that state's authored description from the
 artifact, never from an agent reply, and a declared value other than `success`
 or `failure` is a control-plane error rather than a child outcome.
-Because the bridge routes a failure terminal to the error path, `onDone` alone
-proves the child succeeded and a caller never inspects a callee's output fields
-to decide that; a caller reads those fields only when its own Source relays
-them.
+`onDone` proves successful bridge delivery without a declared child failure;
+it does not establish every caller-owned domain condition. The caller shall
+enforce its own explicit Source-authored acceptance or relay predicates on
+the delivered output before continuing, without inventing predicates from
+callee implementation details or overriding the child's compiled terminal
+kind with output fields.
 Unknown, duplicate, or stale call ids reject without changing actor state.
 The finish trace shall therefore precede any parent FSM transition caused by
 the child return.
