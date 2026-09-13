@@ -28,7 +28,7 @@ describe.runIf(compiler !== undefined)(
   "actual parsed prompts and runtime composition preserve the delivery boundary",
   () => {
     it("accepts a bare prose-required relay and only Source-authored labels", async () => {
-      const { checkSourceGearsContract } = await import(
+      const { checkSourceGearsContract, parseGearsContract } = await import(
         pathToFileURL(join(compiler!, "dist/verify-source.js")).href
       );
       const source =
@@ -37,6 +37,21 @@ describe.runIf(compiler !== undefined)(
         `# Inspect\n\n### INSPECT-1\n\nWhen inspection starts, Captain shall prompt Inspector:\n\n> Inspect the supplied evidence.\n>\n> ${relay}\n`;
       expect(checkSourceGearsContract(source, gears("> <evidence>"))).toEqual(
         [],
+      );
+      expect(
+        checkSourceGearsContract(source, gears("<evidence>")),
+      ).toHaveLength(1);
+      const [parsed] = parseGearsContract(gears("> <evidence>"));
+      const input = {
+        stateId: "inspect",
+        role: "inspector",
+        sourceItem: parsed.id,
+        prompt: parsed.prompt.join("\n"),
+        result: { done: "Inspection is complete." },
+        evidence: exactEvidence,
+      };
+      expect(defaultComposePlayerPrompt(input)).toBe(
+        `Inspect the supplied evidence.\n\n> ${exactEvidence}`,
       );
       expect(
         checkSourceGearsContract(source, gears("> Evidence: <evidence>")),

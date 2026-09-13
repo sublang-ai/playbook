@@ -16,7 +16,7 @@ When Source requires a runtime value relayed to an acting role, text2gears shall
 
 ### compiler-prompt-relays-3
 
-Where Source names a relayed value without authoring its prompt template, text2gears shall render the value as a bare quoted placeholder line `> <token>` without an added label or surrounding prose; Source-authored template labels shall remain part of their original prompt fragments.
+Where Source names a relayed value without authoring its prompt template, text2gears shall render the value as a bare quoted prompt-content line `> <token>`, written as `> > <token>` in the GEARS file because its first marker encloses the prompt, without an added label or surrounding prose; Source-authored template labels shall remain part of their original prompt fragments.
 
 ## Verification
 
@@ -26,4 +26,4 @@ When the integration suite parses GEARS and composes the resulting acting prompt
 
 ### compiler-prompt-relays-4
 
-When the integration suite checks authored instructions with a prose-required untemplated relay through the supplied SLC Source-fidelity checker, it shall verify acceptance of the bare quoted placeholder and rejection of an added label, while accepting an exact Source-authored labelled template [[compiler-prompt-relays-3](#compiler-prompt-relays-3)].
+When the integration suite parses authored instructions with a prose-required untemplated relay and composes the acting prompt, it shall verify that the two GEARS quote markers retain one literal marker and the exact runtime value, while the supplied SLC Source-fidelity checker rejects a single-marker additional token and an added label but accepts an exact Source-authored labelled template [[compiler-prompt-relays-3](#compiler-prompt-relays-3)].
