@@ -1565,7 +1565,7 @@ projection, each artifact declaring a deterministic entry event whose
 machine has a recoverable failure state also names that event's
 persisted retry source [[playbook-runtime-52](#playbook-runtime-52)], and each
 artifact's `_internal` exposes the prompt composers
-its own machine uses — the player composer where and only where that
+its own machine uses, preserving the invocation arguments of the runtime seam, including the player identity lookup and optional third resume flag of [[playbook-runtime-92](#playbook-runtime-92)] — the player composer where and only where that
 playbook calls players — so a re-link or a newly linked artifact cannot
 ship without the declarations the privacy and cross-process recovery
 contracts rest on

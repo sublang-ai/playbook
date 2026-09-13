@@ -160,12 +160,6 @@ function composePlayerPrompt(input: PlayerInput, resuming = false): string {
   return composePlayerContinuation(input, body, resuming);
 }
 
-export const _internal = {
-  composePlayerPrompt,
-  VERBATIM_PAYLOAD_FIELDS,
-  UNFINISHED_FINAL_STATE_IDS,
-};
-
 const runtimeSpec = {
   label: 'DEV',
   // DR-022 / slc/link.md: the declaration carries the value current at link
@@ -224,13 +218,19 @@ const runtimeSpec = {
       },
     },
   },
-  composePlayerPrompt: (input: PlaybookPlayerInput, _identity, resuming) =>
+  composePlayerPrompt: (input: PlaybookPlayerInput, _identity, resuming?: boolean) =>
     composePlayerPrompt(input as PlayerInput, resuming),
   verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
   controlContextFields: [],
   unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
   transitionEventFields: ['developmentRequest', 'answer', 'questionId'],
 } satisfies XStatePlaybookRuntimeSpecV3<DevPlaybookOptions>;
+
+export const _internal = {
+  composePlayerPrompt: runtimeSpec.composePlayerPrompt,
+  VERBATIM_PAYLOAD_FIELDS,
+  UNFINISHED_FINAL_STATE_IDS,
+};
 
 const createPlaybookRuntime: XStatePlaybookRuntimeFactory<
   XStatePlaybookRuntimeConstruction<

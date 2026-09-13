@@ -12,7 +12,9 @@ import {
 import { enumeratePlayerStates } from './dev.fsm.introspect.js';
 import { _internal } from './dev.playbook.js';
 
-const { composePlayerPrompt } = _internal;
+const promptIdentity = (roleId: string): string => roleId;
+const composePlayerPrompt = (input: PlayerInput, resuming?: boolean): string =>
+  _internal.composePlayerPrompt(input, promptIdentity, resuming);
 
 const ACTUAL_CONTEXT: DevContext = {
   runResults: 'tests passed',
@@ -44,6 +46,30 @@ function planInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
 }
 
 describe('DEV player prompt composition', () => {
+  it.each([undefined, false, true])('exposes the runtime composer arguments (resuming=%s)', (resuming) => {
+    const input = planInput({
+      pendingBossQuestion: {
+        questionId: 'planAnalysis',
+        resumeStateId: 'planAnalysis',
+        sourceItem: 'DEV-1',
+        asker: { kind: 'role', roleId: 'analyst' },
+        question: 'Which exact scope?',
+      },
+      bossReply: 'Use the narrow scope.',
+    });
+    const body = composePlayerPrompt(planInput());
+    const identity = (): string => { throw new Error('DEV does not request role identity'); };
+    const prompt = resuming === undefined
+      ? _internal.composePlayerPrompt(input, identity)
+      : _internal.composePlayerPrompt(input, identity, resuming);
+    expect(prompt).toBe([
+      'Continue the same task using Boss’s reply below.',
+      ...(resuming === true ? [] : ['Your previous question:\nWhich exact scope?']),
+      'Boss reply:\nUse the narrow scope.',
+      body,
+    ].join('\n\n'));
+  });
+
   it('forbids repository changes in the authored planning prompt', () => {
     for (const state of enumeratePlayerStates(devMachine)) {
       const input = state.getInput(ACTUAL_CONTEXT);
