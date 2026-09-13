@@ -14,35 +14,37 @@ It does not publish a runtime, alter dependencies, or retain a performance techn
 
 When invoked with a frozen compiler root, an absent output root outside that compiler and the builder checkout, and exactly one of `--baseline` or `--full`, the builder shall require `node_modules/@sublang/playbook/package.json` to declare `@sublang/playbook` version `13.2.0` and each definition in both that package's `slc/` directory and the compiler's `pipelines/playbook/` directory to match its published SHA-256 before constructing an experimental pipeline:
 
-| Definition | Published SHA-256 |
-| --- | --- |
+| Definition      | Published SHA-256                                                  |
+| --------------- | ------------------------------------------------------------------ |
 | `text2gears.md` | `48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb` |
-| `gears2fsm.md` | `c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e` |
-| `link.md` | `294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d` |
-| `optimize.md` | `dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66` |
+| `gears2fsm.md`  | `c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e` |
+| `link.md`       | `294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d` |
+| `optimize.md`   | `dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66` |
 
 ### link-experiments-2
 
 The builder shall construct both arms from the same reviewed corrected local text-to-GEARS and FSM producers, optimizer and complete link contract, extracting only the unique `## Optional deterministic materialization` section before `## PlaybookRuntime contract` from the current checkout's link definition as the full-mode treatment and checking these common SHA-256 identities:
 
-| Common member | SHA-256 |
-| --- | --- |
-| `text2gears.md` | `56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4` |
+| Common member                            | SHA-256                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| `text2gears.md`                          | `1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639` |
 | Link after removing the optional section | `a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7` |
-| `gears2fsm.md` | `668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722` |
-| `materialize-link.mjs` | `5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb` |
-| `workflow-contracts.json` | `de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3` |
-| `optimize.md` | `4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9` |
+| `gears2fsm.md`                           | `4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9` |
+| `materialize-link.mjs`                   | `5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb` |
+| `workflow-contracts.json`                | `de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3` |
+| `optimize.md`                            | `4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9` |
 
-The builder shall first undo only the authored Boss-question field declaration [[compiler-results-5](compiler-results.md#compiler-results-5)] to recover the exact v6 text-to-GEARS SHA-256 `c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae` before the existing inverse chain.
+The builder shall first undo only the nested-call fixed verb-phrase guidance [[compiler-nested-calls-1](compiler-nested-calls.md#compiler-nested-calls-1)] to recover the exact v7 text-to-GEARS SHA-256 `56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4`.
+The builder shall undo only the nested-call busy-tag and unreachable `onDone` guidance [[compiler-nested-tags-1](compiler-nested-tags.md#compiler-nested-tags-1)] [[compiler-nested-calls-2](compiler-nested-calls.md#compiler-nested-calls-2)] to recover the exact v7 FSM-producer SHA-256 `668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722`.
+The builder shall then undo only the authored Boss-question field declaration [[compiler-results-5](compiler-results.md#compiler-results-5)] to recover the exact v6 text-to-GEARS SHA-256 `c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae` before the existing inverse chain.
 The builder shall then undo only the public child-validator import and authored-error recipe [[compiler-child-validation-1](compiler-child-validation.md#compiler-child-validation-1)], public linked-validator and bootstrap guidance [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] [[compiler-entry-options-3](compiler-entry-options.md#compiler-entry-options-3)], and explicit outer-versus-inner quote wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] to recover the exact v5 identities before the remaining inverse chain:
 
-| Prior common member | SHA-256 |
-| --- | --- |
-| `text2gears` | `bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970` |
-| `link` | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
-| `producer` | `7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a` |
-| `helper` | `eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf` |
+| Prior common member | SHA-256                                                            |
+| ------------------- | ------------------------------------------------------------------ |
+| `text2gears`        | `bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970` |
+| `link`              | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
+| `producer`          | `7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a` |
+| `helper`            | `eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf` |
 
 Each inverse shall match its reviewed current text exactly once, and the proof shall record every correction's intent and before/after text hashes.
 The builder shall prove exact reconstruction of the published link bytes by undoing only the common authority-boundary guidance, three repository-disposition lines, corrected completion-mapper clause and caller-owned child-acceptance paragraph, and prove exact full-entry restoration by reinserting the extracted optional section.
@@ -55,12 +57,12 @@ Both arms shall contain the same retained Results guidance; its earlier measured
 
 The builder shall require the supplied pipeline's `slc.pin-inputs.json` to declare schema `sublang.slc.pin-inputs.v1` and exactly the following original member sets, copying their exact regular-file bytes to `_inputs/<compiler-relative-path>`, recording each original and rewritten locator with byte length and SHA-256, and declaring those copies plus the indicated adjacent members in its emitted sidecar:
 
-| Phase | Original members | Additional adjacent members |
-| --- | --- | --- |
-| `text2gears` | Both Spex grammars and lock | `gears2fsm.md`, `link.md`, `optimize.md`, `workflow-contracts.json` |
-| `gears2fsm` | Published `text2gears.md`, `link.md`, both grammars and lock | `text2gears.md`, `link.md`, `workflow-contracts.json` |
-| `optimize` | Published `text2gears.md`, `gears2fsm.md`, `link.md`, both grammars and lock | `text2gears.md`, `gears2fsm.md`, `link.md`, `workflow-contracts.json` |
-| `link` | Published `text2gears.md`, `gears2fsm.md`, both grammars and lock | `text2gears.md`, `gears2fsm.md`, `optimize.md`, `materialize-link.mjs`, `workflow-contracts.json` |
+| Phase        | Original members                                                             | Additional adjacent members                                                                       |
+| ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `text2gears` | Both Spex grammars and lock                                                  | `gears2fsm.md`, `link.md`, `optimize.md`, `workflow-contracts.json`                               |
+| `gears2fsm`  | Published `text2gears.md`, `link.md`, both grammars and lock                 | `text2gears.md`, `link.md`, `workflow-contracts.json`                                             |
+| `optimize`   | Published `text2gears.md`, `gears2fsm.md`, `link.md`, both grammars and lock | `text2gears.md`, `gears2fsm.md`, `link.md`, `workflow-contracts.json`                             |
+| `link`       | Published `text2gears.md`, `gears2fsm.md`, both grammars and lock            | `text2gears.md`, `gears2fsm.md`, `optimize.md`, `materialize-link.mjs`, `workflow-contracts.json` |
 
 The builder shall resolve published members under `node_modules/@sublang/playbook/slc/`, the two grammars at `node_modules/@sublang/spex/scaffold/specs/meta.md` and `node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md`, and the lock at `package-lock.json`, rejecting duplicate locators, members outside this matrix, nonregular or internally symbolic paths, any repeated member whose bytes change during assembly, and a lock selecting another Playbook version.
 

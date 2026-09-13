@@ -98,28 +98,85 @@ describe.runIf(compiler !== undefined)(
         );
         expect(a.ordinarySemanticInputs).toEqual(b.ordinarySemanticInputs);
         expect(a.compilerInventory).toEqual(b.compilerInventory);
-        expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(hash(readFileSync(join(compiler!, "dist/pipeline.js"))));
-        expect(a.authoredQuestionCorrection).toEqual(b.authoredQuestionCorrection);
-        expect(a.authoredQuestionCorrection.priorCommonSha256).toBe("c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae");
+        expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(
+          hash(readFileSync(join(compiler!, "dist/pipeline.js"))),
+        );
+        expect(a.nestedCallSyntaxCorrection).toEqual(
+          b.nestedCallSyntaxCorrection,
+        );
+        expect(a.nestedCallSyntaxCorrection.priorCommonSha256).toBe(
+          "56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4",
+        );
+        expect(a.nestedCallSyntaxCorrection.intent).toBe("IR-088");
+        expect(a.nestedCallProducerCorrections).toEqual(
+          b.nestedCallProducerCorrections,
+        );
+        expect(a.nestedCallProducerCorrections.priorCommonSha256).toBe(
+          "668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722",
+        );
+        expect(
+          a.nestedCallProducerCorrections.edits.map(
+            (edit: { intent: string }) => edit.intent,
+          ),
+        ).toEqual(["IR-087", "IR-087", "IR-088"]);
+        expect(a.authoredQuestionCorrection).toEqual(
+          b.authoredQuestionCorrection,
+        );
+        expect(a.authoredQuestionCorrection.priorCommonSha256).toBe(
+          "c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae",
+        );
         expect(a.authoredQuestionCorrection.intent).toBe("IR-085");
-        expect(a.representationCorrections).toEqual(b.representationCorrections);
-        expect(a.representationCorrections.priorCommonSha256).toBe("1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db");
+        expect(a.representationCorrections).toEqual(
+          b.representationCorrections,
+        );
+        expect(a.representationCorrections.priorCommonSha256).toBe(
+          "1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db",
+        );
         expect(a.boundaryCorrections).toEqual(b.boundaryCorrections);
-        expect(a.boundaryCorrections.priorCommonHashes).toEqual({"text2gears": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970", "link": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86", "producer": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a", "helper": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf"});
+        expect(a.boundaryCorrections.priorCommonHashes).toEqual({
+          text2gears:
+            "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
+          link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
+          producer:
+            "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+          helper:
+            "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf",
+        });
         expect(a.publicCatalog).toEqual(b.publicCatalog);
-        expect(a.publicCatalog.literalTargetBindings).toEqual({ review: "review", decide: "decide", code: "code", branch: "branch", pr: "pr" });
+        expect(a.publicCatalog.literalTargetBindings).toEqual({
+          review: "review",
+          decide: "decide",
+          code: "code",
+          branch: "branch",
+          pr: "pr",
+        });
         for (const output of [baseline, full]) {
           expect(read(join(output, "playbook/text2gears.md"))).toBe(
             read(join(root, "slc/text2gears.md")),
           );
-          expect(read(join(output, "playbook/text2gears.md"))).toContain("When Source requires a terminal return to the caller");
-          expect(read(join(output, "playbook/text2gears.md"))).toContain("a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file");
-          expect(read(join(output, "playbook/text2gears.md"))).toContain("an explicit terminal-return clause in the relevant Results description");
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
+            "When Source requires a terminal return to the caller",
+          );
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
+            "a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file",
+          );
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
+            "an explicit terminal-return clause in the relevant Results description",
+          );
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",
           );
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "shall declare `question: <verbatim final text>` as an output property",
+          );
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
+            "Text2gears shall not insert sequencing words such as `first`, `then`, `next`",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "The call state and every ancestor state, including the machine root, shall omit",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "omit an `onDone` transition whose guard",
           );
         }
         expect(Object.keys(a.outputs).sort()).toEqual(
@@ -197,14 +254,18 @@ describe.runIf(compiler !== undefined)(
               read(join(directory, `${phase}.md`)),
             )) {
               const local =
-                /^(text2gears\.md|gears2fsm\.md|optimize\.md|link\.md|workflow-contracts\.json)(?:#|$)/.exec(target);
+                /^(text2gears\.md|gears2fsm\.md|optimize\.md|link\.md|workflow-contracts\.json)(?:#|$)/.exec(
+                  target,
+                );
               if (local)
                 expect(
                   actual.has(join(directory, local[1])),
                   `${phase} -> ${target}`,
                 ).toBe(true);
             }
-            expect(actual.has(join(directory, "workflow-contracts.json"))).toBe(true);
+            expect(actual.has(join(directory, "workflow-contracts.json"))).toBe(
+              true,
+            );
             for (const input of proof.ordinarySemanticInputs[phase]) {
               expect(actual.has(join(directory, input.rewrittenLocator))).toBe(
                 true,
