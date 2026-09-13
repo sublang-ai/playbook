@@ -96,6 +96,7 @@ meta.md       The spec of specs
 | [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
 | [compiler-nested-calls.md](packages/compiler-nested-calls.md) | Nested-playbook call syntax and child-output routing duties |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
+| [compiler-source-state.md](packages/compiler-source-state.md) | Source-owned generated-FSM availability facts and continuation history preservation |
 | [compiler-entry-options.md](packages/compiler-entry-options.md) | Public linked option validation and source-owned bootstrap requiredness |
 | [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |
 | [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |

@@ -634,6 +634,8 @@ while an actual back-edge is rejected.
 A transition fires on an event — typically `onDone` (actor completed) [[4]].
 When multiple are possible, a synchronous guard [[5]] picks the path.
 Transitions shall persist relevant typed fields from `event.output` to context via `assign` [[6]] so downstream prompts can read them.
+Where a Source outcome's availability condition is deterministically knowable from execution state, such as a prior Boss reply already received by the machine, the transition shall enforce that condition with authored guards or typed state before the result can be accepted; stating the condition only in a Results description, Judge prose, or prompt text is not enough.
+The compiler shall update or reset those source-owned facts only at their actual Source lifecycle boundaries, and shall not attempt to mechanically decide semantic judgments that Source leaves to the acting agent.
 Transitions shall be self-driving when source items define the next obligation.
 Routing to an idle hub is for recovery, unrecoverable Boss input, or one-shot entry events — not the happy path.
 
@@ -791,6 +793,9 @@ A captain- or player-invoking state's `invoke.input` function shall carry the
 pending question and reply selected for that working leaf as singular
 `pendingBossQuestion` and `bossReply` fields, regardless of the scalar or keyed
 context representation, so prompt composition has one stable contract.
+When Source requires earlier discussion or constraints on a later invocation, the compiler shall persist that source-owned history in serializable machine context before replacing or clearing the pending Q/A fields.
+The later `invoke.input` shall relay that persisted context on both resumed and fresh calls that Source says need it, preserving Source-owned relevance and format without imposing all-history semantics on sources that do not require it.
+Shared Boss-reply continuation carries only the latest Q/A pair, and a backend continuation token is not durable Source history.
 When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).
 The FSM artifact shall not bake the continuation preamble into the GEARS-derived `prompt` body.
 
