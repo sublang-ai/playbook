@@ -51,6 +51,7 @@ describe.runIf(compiler !== undefined)('fixed-GEARS scaffold pair with the suppl
         expect(loaded.passes.map((phase: { name: string }) => phase.name)).toEqual(['optimize']);
         expect(loaded.linkFile).toBe(join(pipeline, 'link.md'));
         expect(read(join(pipeline, 'experiments/fsm-scaffold-guidance.md'))).toBe(guidance);
+        expect(read(join(pipeline, 'text2gears.md'))).toBe(read(join(root, 'slc/text2gears.md')));
         expect(hash(readFileSync(join(pipeline, 'scaffold-fsm.mjs')))).toBe(proof.initializer.sha256);
         const sidecar = JSON.parse(read(join(pipeline, 'slc.pin-inputs.json')));
         for (const [name, record] of Object.entries(proof.outputs[arm]) as [string, { sha256: string; bytes: number }][]) {

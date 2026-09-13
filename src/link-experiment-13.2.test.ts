@@ -99,6 +99,8 @@ describe.runIf(compiler !== undefined)(
         expect(a.ordinarySemanticInputs).toEqual(b.ordinarySemanticInputs);
         expect(a.compilerInventory).toEqual(b.compilerInventory);
         expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(hash(readFileSync(join(compiler!, "dist/pipeline.js"))));
+        expect(a.representationCorrections).toEqual(b.representationCorrections);
+        expect(a.representationCorrections.priorCommonSha256).toBe("1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db");
         expect(a.publicCatalog).toEqual(b.publicCatalog);
         expect(a.publicCatalog.literalTargetBindings).toEqual({ review: "review", decide: "decide", code: "code", branch: "branch", pr: "pr" });
         for (const output of [baseline, full]) {
@@ -106,6 +108,8 @@ describe.runIf(compiler !== undefined)(
             read(join(root, "slc/text2gears.md")),
           );
           expect(read(join(output, "playbook/text2gears.md"))).toContain("When Source requires a terminal return to the caller");
+          expect(read(join(output, "playbook/text2gears.md"))).toContain("a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose");
+          expect(read(join(output, "playbook/text2gears.md"))).toContain("an explicit terminal-return clause in the relevant Results description");
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",
           );

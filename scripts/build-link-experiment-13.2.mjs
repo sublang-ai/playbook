@@ -72,7 +72,7 @@ const published = {
 };
 const commonHashes = {
   text2gears:
-    "1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db",
+    "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
   link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
   producer: "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
@@ -163,12 +163,28 @@ const text2gears = (
 const relayCorrection =
   "Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.\nMentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.\n\n";
 verify(text2gears, commonHashes.text2gears, "reviewed common text2gears");
+const representationCorrections = [
+  {
+    current: "If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.",
+    prior: "If Source names the relayed value but supplies no template, text2gears shall emit its canonical typed placeholder on a line beginning with literal `> ` and shall not summarize, paraphrase, or invent a value in its place.",
+  },
+  {
+    current: "Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose, an explicit terminal-return clause in the relevant Results description, or existing nested-call continuation; do not create a Captain action solely to restate the return.",
+    prior: "Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.",
+  },
+];
+let beforeRepresentations = text2gears;
+for (const correction of representationCorrections) {
+  assert.equal(beforeRepresentations.split(correction.current).length, 2, "Common representation correction must occur exactly once");
+  beforeRepresentations = beforeRepresentations.replace(correction.current, correction.prior);
+}
+verify(beforeRepresentations, "1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db", "prior common producer before representation corrections");
 const resultsSnippet = (await readRegular(join(sourceRoot, "scripts/experiments/results-boundary-guidance.md"), sourceRoot)).toString();
 const resultsGuidance = resultsSnippet.slice(resultsSnippet.indexOf("\n\n") + 2).trimEnd() + "\n\n";
 assert.equal(text2gears.split(resultsGuidance).length, 2, "Retained common Results guidance must occur exactly once");
 const terminalReturnGuidance = "When Source requires a terminal return to the caller, preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS.\nMerely naming a value in a completion predicate or an acting result does not state that the workflow returns it.\nKeep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.\n\n";
-assert.equal(text2gears.split(terminalReturnGuidance).length, 2, "Common terminal-return guidance must occur exactly once");
-const beforeTerminalReturn = text2gears.replace(terminalReturnGuidance, "");
+assert.equal(beforeRepresentations.split(terminalReturnGuidance).length, 2, "Prior common terminal-return guidance must occur exactly once");
+const beforeTerminalReturn = beforeRepresentations.replace(terminalReturnGuidance, "");
 verify(beforeTerminalReturn, "6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305", "prior producer before terminal-return correction");
 const beforeResults = beforeTerminalReturn.replace(resultsGuidance, "");
 verify(beforeResults, "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56", "prior producer before retained Results guidance");
@@ -180,7 +196,7 @@ assert.equal(
 assert.equal(
   beforeResults.replace(relayCorrection, ""),
   original["text2gears.md"],
-  "Only the reviewed relay, retained Results and terminal-return guidance may change published text2gears",
+  "Only the reviewed relay, retained Results, terminal-return and representation guidance may change published text2gears",
 );
 const full = (
   await readRegular(join(sourceRoot, "slc/link.md"), sourceRoot)
@@ -433,7 +449,8 @@ const proof = {
   catalogGuidanceSha256: sha(catalogGuidance),
   commonRelayCorrectionSha256: sha(relayCorrection),
   commonResultsGuidanceSha256: sha(resultsGuidance),
-  commonTerminalReturnGuidanceSha256: sha(terminalReturnGuidance),
+  commonTerminalReturnGuidanceSha256: sha(terminalReturnGuidance.replace(representationCorrections[1].prior, representationCorrections[1].current)),
+  representationCorrections: { priorCommonSha256: sha(beforeRepresentations), sentences: representationCorrections.map(({ current, prior }) => ({ currentSha256: sha(current), priorSha256: sha(prior) })) },
   optionalHelperSectionSha256: sha(recipe),
   helperSha256: sha(helper),
   treatment:

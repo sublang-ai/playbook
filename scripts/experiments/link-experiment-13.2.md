@@ -40,8 +40,9 @@ This is a comparison of optional helper instructions, not a claim that the basel
 
 The builder checks fixed published hashes for all four definitions, fixed hashes for the common corrected definitions, and exact inverse reconstruction of the original link contract.
 The common corrections concern the already reviewed host/factory ownership boundary, commit disposition and deferred completion fields, current-directory Git initialization, machine-root and Boss-input production rules, explicit caller-owned child-acceptance predicates after successful bridge delivery, and delivery of every source-authored runtime relay to each governed acting prompt.
-The terminal-return correctness paragraph and retained Results-placement snippet are now common to both arms; removing exactly the terminal-return paragraph restores the prior Results-guided definition; removing its exact 379 bytes restores the prior relay-corrected text-to-GEARS definition, and removing the two-sentence relay clarification then restores the published definition.
-Earlier v1–v3 overlays and the separately measured Results pair remain unchanged.
+The untemplated-relay and terminal-return representation corrections are common to both arms: untemplated values use bare quoted placeholders, and explicit caller-return obligations may occupy complete Results descriptions.
+Reversing exactly those two sentences restores the prior v4 definition; removing its terminal-return paragraph restores the prior Results-guided definition, removing the exact 379-byte Results snippet restores the prior relay-corrected definition, and removing the two-sentence relay clarification then restores the published definition.
+Earlier v1–v4 overlays and the separately measured Results pair remain unchanged.
 The current helper and optional section are captured byte-for-byte and identified by their hashes in each proof; pin the source checkout to reproduce them.
 
 Every ordinary per-phase semantic member is copied under `playbook/_inputs/<compiler-relative-path>` with its original locator, rewritten locator, byte length and SHA-256 recorded separately.
@@ -72,7 +73,8 @@ The integration suite uses the supplied compiler's actual discovery and closure 
 The checked-in [initial local assembly evidence](link-experiment-13.2-evidence.json) records the first successful 11-case run and is reproduced from source commit `128956f`; the later [child-acceptance correction evidence](link-experiment-13.2-child-acceptance-evidence.json) records a new pair sharing that normative correction.
 The [relay-aware closure evidence](link-experiment-13.2-relay-closure-evidence.json) records the subsequent common relay correction and explicit text-to-GEARS closure additions.
 These historical records retain exact candidate hashes and full original-member accounting, with no model measurement.
-The [catalog-aware C3 closure evidence](link-experiment-13.2-catalog-scaffold-evidence.json) records new v4 link roots and the separate scaffold pair, sharing the public catalog, retained Results guidance and terminal-return correction; it does not rewrite those earlier records.
+The [catalog-aware C3 closure evidence](link-experiment-13.2-catalog-scaffold-evidence.json) records the v4 link roots and first scaffold pair, sharing the public catalog, retained Results guidance and terminal-return correction.
+The [representation-corrected C3 closure evidence](link-experiment-13.2-representation-evidence.json) records new v5 link roots and a new scaffold pair; both share the same two-sentence correction without changing any earlier evidence.
 Without `PLAYBOOK_EXPERIMENT_COMPILER`, only the help/argument test runs; that is insufficient evidence of successful assembly.
 Outputs use a staged sibling tree and an absent-target check under a single-writer assumption; there is no concurrent atomic no-replace guarantee.
 

@@ -27,7 +27,7 @@ The builder shall construct both arms from the same reviewed corrected local tex
 
 | Common member | SHA-256 |
 | --- | --- |
-| `text2gears.md` | `1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db` |
+| `text2gears.md` | `bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970` |
 | Link after removing the optional section | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
 | `gears2fsm.md` | `7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a` |
 | `workflow-contracts.json` | `de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3` |
@@ -35,7 +35,8 @@ The builder shall construct both arms from the same reviewed corrected local tex
 
 The builder shall prove exact reconstruction of the published link bytes by undoing only the common authority-boundary guidance, three repository-disposition lines, corrected completion-mapper clause and caller-owned child-acceptance paragraph, and prove exact full-entry restoration by reinserting the extracted optional section.
 The builder shall prove that removing only the public-catalog consumption section recovers the prior producer SHA-256 `9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e`.
-The builder shall recover the exact published text-to-GEARS bytes by removing only the common terminal-return preservation paragraph [[compiler-results-3](compiler-results.md#compiler-results-3)] to recover SHA-256 `6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305`, then the retained common Results-placement guidance [[compiler-results-1](compiler-results.md#compiler-results-1)], first recovering SHA-256 `c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56`, and then its two-sentence common authored-relay clarification.
+The builder shall first recover the prior common text-to-GEARS SHA-256 `1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db` by undoing only the bare-untemplated-relay wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] and the explicit terminal-return placement in a Results description [[compiler-results-3](compiler-results.md#compiler-results-3)].
+The builder shall then recover the exact published text-to-GEARS bytes by removing only the common terminal-return preservation paragraph [[compiler-results-3](compiler-results.md#compiler-results-3)] to recover SHA-256 `6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305`, then the retained common Results-placement guidance [[compiler-results-1](compiler-results.md#compiler-results-1)], first recovering SHA-256 `c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56`, and then its two-sentence common authored-relay clarification.
 Both arms shall contain the same retained Results guidance; its earlier measured comparison remains a separate unchanged experiment.
 
 ### link-experiments-3
