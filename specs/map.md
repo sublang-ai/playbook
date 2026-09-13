@@ -92,7 +92,7 @@ meta.md       The spec of specs
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
-| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, explicit caller-visible terminal return obligations, and authored Boss-question field declarations |
+| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, terminal return obligations, authored Boss-question fields, and unambiguous output guidance |
 | [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
 | [compiler-nested-calls.md](packages/compiler-nested-calls.md) | Nested-playbook call syntax and child-output routing duties |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |

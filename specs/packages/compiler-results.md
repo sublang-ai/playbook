@@ -6,7 +6,8 @@
 ## Intent
 
 This package specifies the text-to-GEARS producer's existing acting-result boundary, preservation of source-authored terminal returns, and authored Boss-question field declarations without changing prompts, outcomes, or nested-call continuation.
-The Results-boundary guidance is retained after a matched phase comparison; it does not alter the result contract or guarantee a compilation-time reduction.
+The package also reserves output-clause backticks for unambiguous field declarations.
+The Results-boundary guidance is retained after a matched phase comparison; it does not guarantee a compilation-time reduction.
 
 ## External Behavior
 
@@ -25,7 +26,15 @@ The terminal-return requirement shall remain non-acting semantics outside prompt
 When Source gives a direct-Captain or delegated-player acting result that asks Boss a question and waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, guard name, wait, and answer-dependent continuation while declaring the result's `question` output property in the annotated `question: <verbatim final text>` form.
 The result name or prose alone shall not satisfy the field declaration, and text2gears shall not emit the framework-owned `needsBossReply` result.
 
+### compiler-results-7
+
+When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
+
 ## Verification
+
+### compiler-results-8
+
+When the integration suite gives annotated and bare output declarations with plain parenthetical guidance to the supplied SLC parser and the real runtime field extractor, it shall verify identical intended field sets and unchanged result descriptions while rejecting separate backticked explanatory symbols nested in output-clause parentheses without changing field extraction [[compiler-results-7](#compiler-results-7)].
 
 ### compiler-results-2
 

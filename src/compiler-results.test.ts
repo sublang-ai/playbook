@@ -43,6 +43,39 @@ it("activates the measured guidance exactly once and preserves the nested-call e
 describe.runIf(compiler !== undefined)(
   "the supplied SLC parser checks the existing Results boundary",
   () => {
+    it("reserves output-clause backticks for declarations without reinterpreting ambiguous guidance", async () => {
+      const { checkGearsResultContract, parseGearsItems } = await import(
+        pathToFileURL(join(compiler!, "dist/verify.js")).href
+      );
+      const { defaultExtractRequiredFields } = await import(
+        new URL("./xstate-playbook-runtime.js", import.meta.url).href
+      );
+      for (const description of [
+        "Implemented (`code` owns the receipt). Output shall include `codeCommit` (new code-owned commit) and `coderOutput: <verbatim final text>`.",
+        "Implemented. Output shall include `codeCommit: <new (code-owned) commit>` and `coderOutput: <verbatim final text>`.",
+      ]) {
+        const gears = `${heading}${acting}\n\nResults:\n- \`done\`: ${description}\n`;
+        expect(checkGearsResultContract(gears)).toEqual([]);
+        expect(parseGearsItems(gears)[0].result.done).toBe(description);
+        expect(defaultExtractRequiredFields(description)).toEqual([
+          "codeCommit",
+          "coderOutput",
+        ]);
+      }
+      const malformed =
+        "Implemented. Output shall include `codeCommit` (new `code`-owned commit) and `coderOutput: <verbatim final text>`.";
+      const gears = `${heading}${acting}\n\nResults:\n- \`done\`: ${malformed}\n`;
+      expect(checkGearsResultContract(gears).join("\n")).toContain(
+        "inside parenthetical output guidance",
+      );
+      expect(parseGearsItems(gears)[0].result.done).toBe(malformed);
+      expect(defaultExtractRequiredFields(malformed)).toEqual([
+        "codeCommit",
+        "code",
+        "coderOutput",
+      ]);
+    });
+
     it("accepts before-prompt invariants and rejects both observed illegal placements without changing prompt or result semantics", async () => {
       const { checkGearsResultContract, parseGearsItems } = await import(
         pathToFileURL(join(compiler!, "dist/verify.js")).href

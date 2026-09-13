@@ -72,7 +72,7 @@ const published = {
 };
 const commonHashes = {
   text2gears:
-    "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
+    "2500c1ad4601f7a32bb8d44e7ec1e32d15df7875d4972acfcd6d273358d84b0f",
   link: "27f94324b90454f7f960e84d192600fcf59813ba90012bade3b3fdad1c51e42f",
   producer: "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
@@ -256,6 +256,19 @@ const text2gears = (
 const relayCorrection =
   "Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.\nMentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.\n\n";
 verify(text2gears, commonHashes.text2gears, "reviewed common text2gears");
+const outputFieldGuidance =
+  "After `Output shall include`, reserve backticks for output-field declarations.\nKeep each declaration outside plain-text parentheses; explanatory symbols in\nparenthetical guidance use plain text, never separate backticks, because those\nbackticks would declare extra required fields. Guidance may instead occur\ninside a field's complete annotation, including any parentheses there.\nFor example, use `` `codeCommit` (new code-owned commit) `` or\n`` `codeCommit: <new code-owned commit>` ``, without backticks around code.\n";
+assert.equal(
+  text2gears.split(outputFieldGuidance).length,
+  2,
+  "Output-field guidance must occur exactly once",
+);
+const beforeOutputFieldGuidance = text2gears.replace(outputFieldGuidance, "");
+verify(
+  beforeOutputFieldGuidance,
+  "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
+  "v11 common text2gears before output-field guidance",
+);
 const nestedCallSyntaxCorrection = {
   intent: "IR-088",
   current:
@@ -271,7 +284,7 @@ assert.equal(
   2,
   "Nested-call syntax correction must occur exactly once",
 );
-const beforeNestedCallSyntax = text2gears.replace(
+const beforeNestedCallSyntax = beforeOutputFieldGuidance.replace(
   nestedCallSyntaxCorrection.current,
   nestedCallSyntaxCorrection.prior,
 );
@@ -899,6 +912,11 @@ const proof = {
     literalTargetBindings: catalog.literalTargetBindings,
   },
   catalogGuidanceSha256: sha(catalogGuidance),
+  outputFieldGuidanceCorrection: {
+    intent: "IR-097",
+    priorCommonSha256: sha(beforeOutputFieldGuidance),
+    guidanceSha256: sha(outputFieldGuidance),
+  },
   nestedCallSyntaxCorrection: {
     priorCommonSha256: sha(beforeNestedCallSyntax),
     currentSha256: sha(nestedCallSyntaxCorrection.current),

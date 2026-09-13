@@ -148,6 +148,13 @@ describe.runIf(compiler !== undefined)(
           "c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae",
         );
         expect(a.authoredQuestionCorrection.intent).toBe("IR-085");
+        expect(a.outputFieldGuidanceCorrection).toEqual(
+          b.outputFieldGuidanceCorrection,
+        );
+        expect(a.outputFieldGuidanceCorrection.intent).toBe("IR-097");
+        expect(a.outputFieldGuidanceCorrection.priorCommonSha256).toBe(
+          "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
+        );
         expect(a.representationCorrections).toEqual(
           b.representationCorrections,
         );
