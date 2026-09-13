@@ -87,6 +87,7 @@ meta.md       The spec of specs
 | [captain-playbook.md](packages/captain-playbook.md) | Compiled session Captain behavior, controller contract, compilation, and verification |
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
+| [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
