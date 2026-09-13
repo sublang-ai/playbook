@@ -152,6 +152,16 @@ describe.runIf(compiler !== undefined)(
           b.outputFieldGuidanceCorrection,
         );
         expect(a.outputFieldGuidanceCorrection.intent).toBe("IR-097");
+        expect(a.entryGuardGuidanceCorrection).toEqual(
+          b.entryGuardGuidanceCorrection,
+        );
+        expect(a.entryGuardGuidanceCorrection).toMatchObject({
+          intent: "IR-098",
+          priorCommonLinkSha256:
+            "27f94324b90454f7f960e84d192600fcf59813ba90012bade3b3fdad1c51e42f",
+          priorCommonProducerSha256:
+            "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
+        });
         expect(a.outputFieldGuidanceCorrection.priorCommonSha256).toBe(
           "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
         );

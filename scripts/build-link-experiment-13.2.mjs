@@ -73,8 +73,8 @@ const published = {
 const commonHashes = {
   text2gears:
     "2500c1ad4601f7a32bb8d44e7ec1e32d15df7875d4972acfcd6d273358d84b0f",
-  link: "27f94324b90454f7f960e84d192600fcf59813ba90012bade3b3fdad1c51e42f",
-  producer: "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
+  link: "9982d987e9747177876ac7cbac3628fce2afa6e6fec6012c1371b30a712fdad4",
+  producer: "cdc673f6a8e7596e31995a9ead125384ce68aaebb0e0934d8cb1c532c2be9a86",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
@@ -410,6 +410,22 @@ assert(
 const recipe = full.slice(recipeStart, recipeEnd);
 const baseline = full.slice(0, recipeStart) + full.slice(recipeEnd);
 verify(baseline, commonHashes.link, "common corrected 13.2 link contract");
+const entryGuardLinkGuidance =
+  "A generated entry guard that requires the text already in context is likewise\nnot independent Source evidence; it is a producer defect when the entry action\nhas yet to copy the event's text. Do not compensate with a required option or\ninvented startup task. `entryEvent.contextField` supplies failure-retry text;\nit does not populate fresh entry context before FSM guards execute.\n";
+assert.equal(
+  baseline.split(entryGuardLinkGuidance).length,
+  2,
+  "Entry-guard link guidance must occur exactly once",
+);
+const beforeEntryGuardLinkGuidance = baseline.replace(
+  entryGuardLinkGuidance,
+  "",
+);
+verify(
+  beforeEntryGuardLinkGuidance,
+  "27f94324b90454f7f960e84d192600fcf59813ba90012bade3b3fdad1c51e42f",
+  "v12 common link before entry-guard guidance",
+);
 const optionSnapshotLinkCorrection = {
   intent: "IR-095",
   current:
@@ -425,7 +441,7 @@ assert.equal(
   2,
   "IR-095 option snapshot correction must occur exactly once",
 );
-const beforeOptionSnapshotLinkCorrection = baseline.replace(
+const beforeOptionSnapshotLinkCorrection = beforeEntryGuardLinkGuidance.replace(
   optionSnapshotLinkCorrection.current,
   optionSnapshotLinkCorrection.prior,
 );
@@ -554,7 +570,24 @@ const identityPlaceholderProducerCorrections = [
       "the acting actor's input, never a Boss-event or actor-output payload.\n",
   },
 ];
-let beforeIdentityPlaceholderProducerCorrection = producer;
+const entryGuardProducerGuidance =
+  "Entry guards run before entry copy actions: validate supplied text from the\ncurrent event, not solely from the context that action will populate.\nFor an omitted event value, use an existing context seed only where Source\npermits it; do not manufacture a required constructor value to satisfy a\ncontext-only entry guard. The linked runtime sends the entry event normally;\nits `entryEvent.contextField` declaration supports failure retry and does not\ncopy fresh text into context before the guard.\n";
+assert.equal(
+  producer.split(entryGuardProducerGuidance).length,
+  2,
+  "Entry-guard producer guidance must occur exactly once",
+);
+const beforeEntryGuardProducerGuidance = producer.replace(
+  entryGuardProducerGuidance,
+  "",
+);
+verify(
+  beforeEntryGuardProducerGuidance,
+  "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
+  "v12 producer before entry-guard guidance",
+);
+let beforeIdentityPlaceholderProducerCorrection =
+  beforeEntryGuardProducerGuidance;
 for (const correction of identityPlaceholderProducerCorrections) {
   assert.equal(
     beforeIdentityPlaceholderProducerCorrection.split(correction.current)
@@ -912,6 +945,13 @@ const proof = {
     literalTargetBindings: catalog.literalTargetBindings,
   },
   catalogGuidanceSha256: sha(catalogGuidance),
+  entryGuardGuidanceCorrection: {
+    intent: "IR-098",
+    priorCommonLinkSha256: sha(beforeEntryGuardLinkGuidance),
+    priorCommonProducerSha256: sha(beforeEntryGuardProducerGuidance),
+    linkGuidanceSha256: sha(entryGuardLinkGuidance),
+    producerGuidanceSha256: sha(entryGuardProducerGuidance),
+  },
   outputFieldGuidanceCorrection: {
     intent: "IR-097",
     priorCommonSha256: sha(beforeOutputFieldGuidance),

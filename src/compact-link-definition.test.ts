@@ -40,7 +40,11 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     // Frozen historical inputs remain unshipped reproduction artifacts.
     expect(sha(read('slc/materialize-link.mjs'))).toBe('5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb');
     expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('981b18e0ab29ff134148fa52ee4bfe380d200683a2f220ae4ac32243b586a07a');
+    expect(sha(full)).toBe('3fbeb50e2cfeefba844c74491336ac1558bd921b0e8cb672d1ad6b1d9dab9d57');
+    const entryGuardGuide = "A generated entry guard that requires the text already in context is likewise\nnot independent Source evidence; it is a producer defect when the entry action\nhas yet to copy the event's text. Do not compensate with a required option or\ninvented startup task. `entryEvent.contextField` supplies failure-retry text;\nit does not populate fresh entry context before FSM guards execute.\n";
+    expect(full.split(entryGuardGuide)).toHaveLength(2);
+    const beforeEntryGuard = full.replace(entryGuardGuide, '');
+    expect(sha(beforeEntryGuard)).toBe('981b18e0ab29ff134148fa52ee4bfe380d200683a2f220ae4ac32243b586a07a');
     const currentValidatorGuide = [
       "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.",
       "The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.",
@@ -52,7 +56,7 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     ].join('\n') + '\n';
     expect(full.split(currentValidatorGuide)).toHaveLength(2);
     expect(full.indexOf(currentValidatorGuide)).toBeGreaterThan(full.indexOf('## PlaybookRuntime contract'));
-    const historicalFull = full.replace(currentValidatorGuide, previousValidatorGuide);
+    const historicalFull = beforeEntryGuard.replace(currentValidatorGuide, previousValidatorGuide);
     expect(sha(historicalFull)).toBe('03a264af3ff47143b2f7e6fef9b53076fce75eecec79dcc2bf8567b965b4d0b1');
     const validatorGuide = previousValidatorGuide + [
       'Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.',

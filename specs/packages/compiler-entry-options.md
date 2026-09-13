@@ -23,7 +23,11 @@ Where the linked artifact uses the shared factory, the linker shall bind the sam
 
 ### compiler-entry-options-3
 
-When deriving runtime options, the compiler shall treat Boss text supplied by an entry event as per-turn input unless Source independently requires it before the first Boss turn, preserve genuine startup options and source-appropriate optional seeds, and reject a generated required input annotation alone as evidence of a bootstrap requirement ([DR-019](../decisions/019-shared-linked-runtime-factory.md)).
+When deriving runtime options, the compiler shall treat Boss text supplied by an entry event as per-turn input unless Source independently requires it before the first Boss turn, preserve genuine startup options and source-appropriate optional seeds, and reject a generated required input annotation or a generated guard requiring prepopulated entry-text context as evidence of a bootstrap requirement ([DR-019](../decisions/019-shared-linked-runtime-factory.md)).
+
+### compiler-entry-options-6
+
+When generating a guarded Boss entry transition, the FSM producer shall validate supplied entry text from the current event before its copy action executes, with context fallback only for an omitted value whose Source permits an optional seed, without requiring that per-turn text in construction input unless Source independently requires it before the first Boss turn [[compiler-entry-options-3](#compiler-entry-options-3)].
 
 ## Verification
 
@@ -34,3 +38,7 @@ When the real materializer emits and loads modules for required and optional pri
 ### compiler-entry-options-5
 
 When the definition surface is checked, the suite shall verify the public validator and independent Source-bootstrap rules remain in the common full contract outside optional helper instructions [[compiler-entry-options-1](#compiler-entry-options-1)] [[compiler-entry-options-3](#compiler-entry-options-3)].
+
+### compiler-entry-options-7
+
+When an emitted workflow starts through the actual shared runtime with a genuine required option and no caller-text seed, the integration suite shall verify that the corrected guard accepts fresh entry text and its copy action preserves it, the context-only control remains idle despite receiving the same text, and omission of the genuine required option still rejects [[compiler-entry-options-6](#compiler-entry-options-6)] [[compiler-entry-options-3](#compiler-entry-options-3)].

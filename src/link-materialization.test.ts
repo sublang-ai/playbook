@@ -271,6 +271,41 @@ void missing;
     expect(readFileSync(join(root, 'materialized.txt'), 'utf8')).toBe('materialized');
   });
 
+  it.each([false, true])('respects entry guard ordering with a genuine required option (fixed=%s)', (fixed) => {
+    const guard = fixed
+      ? "({ event }) => typeof event.bossIntent === 'string' && event.bossIntent.trim() !== ''"
+      : "({ context }) => typeof context.bossIntent === 'string' && context.bossIntent.trim() !== ''";
+    writeFileSync(fsm, fixture(false).replace(
+      "BOSS_TASK: { target: 'setup',",
+      `BOSS_TASK: { guard: ${guard}, target: 'setup',`,
+    ).replace("id: 'fixture', initial: 'ready',", "id: 'fixture', initial: 'ready', output: ({ context }) => ({ bossIntent: context.bossIntent }),"));
+    const emitted = emit(descriptor(false));
+    expect(emitted.status, emitted.stderr).toBe(0);
+    execute(`
+      import assert from 'node:assert/strict';
+      import createRuntime, { validateOptions } from ${JSON.stringify(pathToFileURL(out).href)};
+      import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
+      assert.throws(() => validateOptions({}), /enabled.*required/);
+      assert.deepEqual(validateOptions({ enabled: true }), { enabled: true });
+      const forbid = () => { throw new Error('unexpected host boundary'); };
+      const runtime = createRuntime({ configuredOptions: { enabled: true, cwd: ${JSON.stringify(root)} }, hostCapabilities: { authority: {}, repository: {}, effectLedger: { snapshot: emptyPlaybookEffectLedger, writeAhead: forbid } } });
+      await runtime.init({ sessionId: 'fixture-session', playbookId: 'fixture', rootSessionId: 'fixture-session', depth: 0,
+        ports: { callPlayer: forbid, callCaptain: forbid, callJudge: forbid, callPlaybook: forbid, emitStatus: () => {}, emitTelemetry: () => {} } });
+      assert.equal(runtime.exportSnapshot().machine.context.bossIntent, '');
+      const text = 'Caller task with <tokens>, $& and 中文';
+      const result = await runtime.handleBossInput({ text, signal: new AbortController().signal });
+      if (${fixed}) {
+        assert.equal(result.outcome, 'terminal');
+        assert.equal(result.terminal.kind, 'success');
+        assert.equal(result.output.bossIntent, text);
+      } else {
+        assert.notEqual(result.outcome, 'terminal');
+        assert.equal(runtime.exportSnapshot().machine.context.bossIntent, '');
+      }
+      await runtime.dispose();
+    `);
+  });
+
   it('loads native TypeScript FSMs without evaluating invocation input', () => {
     fsm = join(root, 'native.fsm.ts');
     writeFileSync(fsm, fixture().replace("input: ({ context }) => ({ stateId: 'work'", "input: ({ context }) => { throw new Error('invocation input was evaluated'); return ({ stateId: 'work'")

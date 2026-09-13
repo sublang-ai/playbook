@@ -708,6 +708,13 @@ contract shall require exactly `targetId: 'routing'` plus the fresh
 Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
 Boss text supplied by an entry event shall not become a required machine-construction input unless Source independently requires that value before the first Boss turn; an optional source-appropriate seed may remain.
 A generated required input annotation alone is not evidence of that independent Source bootstrap requirement.
+Entry guards run before entry copy actions: validate supplied text from the
+current event, not solely from the context that action will populate.
+For an omitted event value, use an existing context seed only where Source
+permits it; do not manufacture a required constructor value to satisfy a
+context-only entry guard. The linked runtime sends the entry event normally;
+its `entryEvent.contextField` declaration supports failure retry and does not
+copy fresh text into context before the guard.
 An entry event's copy action shall not clear per-run parameters the event omits: an absent optional field falls back to the existing (input-seeded) context value.
 The two surfaces shall not be collapsed. `BOSS_INTERRUPT` always carries its
 target id and may additionally carry typed Boss-supplied fields such as an

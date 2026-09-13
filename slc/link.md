@@ -592,6 +592,11 @@ The linked module shall export public synchronous pure `validateOptions(value: u
 The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.
 It shall then validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against the detached snapshot, reject null and invalid options, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
 Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.
+A generated entry guard that requires the text already in context is likewise
+not independent Source evidence; it is a producer defect when the entry action
+has yet to copy the event's text. Do not compensate with a required option or
+invented startup task. `entryEvent.contextField` supplies failure-retry text;
+it does not populate fresh entry context before FSM guards execute.
 A source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.
 
 Concrete player binding and prompt identity are host policy and shall not enter `PlaybookRuntimeOptions`, machine input, or the emitted artifact.
