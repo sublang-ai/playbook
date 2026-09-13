@@ -269,10 +269,11 @@ Outside a parallel group's regions, a state's `meta.playbook.stateId` shall equa
 A delegated state's `invoke.input.role` shall match the canonical lowercase id of its source item's named role.
 A direct Captain state shall not invent a `Captain` role binding.
 
-Every invoking working leaf — sequential or parallel, whatever its actor
-kind — shall carry the tag `playbook.busy`: the shared quiescence helper
-derives busyness strictly from active-state tags, so an untagged working leaf
-reads as quiescent while its call is still in flight.
+Every direct-Captain, delegated-player, or script working leaf — sequential
+or parallel — shall carry the tag `playbook.busy`: the shared quiescence
+helper derives busyness strictly from active-state tags, so an untagged
+Captain, player, or script leaf reads as quiescent while its call is still in
+flight.
 
 The machine's initial state shall be a quiescent idle hub (no `invoke`) — typically `ready` — that accepts the Boss entry events and carries the `playbook.parked` tag because it can return control to Boss.
 Captain- and player-invoking work begins only on a Boss-originated event, so
@@ -442,8 +443,13 @@ parsing the `invoke.input` function's source. The evaluated `playbookId` and
 corresponding metadata property. Literal calls need not carry these dynamic
 metadata properties and retain their existing behavior.
 
-The call state shall carry tag `playbook.suspended` and shall route
-`invoke.onDone` from child output and `invoke.onError` from child failure.
+The call state shall carry tag `playbook.suspended`.
+The call state and every ancestor state, including the machine root, shall omit
+tag `playbook.busy`.
+An independently active sibling Captain, player, or script leaf may carry
+`playbook.busy`.
+The call state shall route `invoke.onDone` from child output and
+`invoke.onError` from child failure.
 The child call shall remain state-scoped: leaving the call state stops the
 invoked actor and aborts the host call through XState's invocation signal
 [[2]].

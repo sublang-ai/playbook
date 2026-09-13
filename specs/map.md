@@ -93,6 +93,7 @@ meta.md       The spec of specs
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
 | [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, explicit caller-visible terminal return obligations, and authored Boss-question field declarations |
+| [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
 | [compiler-entry-options.md](packages/compiler-entry-options.md) | Public linked option validation and source-owned bootstrap requiredness |
 | [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |
