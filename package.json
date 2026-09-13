@@ -39,6 +39,8 @@
     "src/xstate-playbook-runtime.d.ts",
     "slc/link.md",
     "slc/materialize-link.mjs",
+    "slc/scaffold-fsm.mjs",
+    "slc/fsm-scaffold-guidance.md",
     "slc/slc.pin-inputs.json",
     "slc/gears2fsm.md",
     "slc/text2gears.md",
