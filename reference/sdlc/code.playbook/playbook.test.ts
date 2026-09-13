@@ -775,6 +775,74 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
 });
 
 describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
+  // PBCLI-11 / DR-053: the seeded lineup follows the credentials the seed can
+  // see. Every row states its own environment, so none of these depends on the
+  // machine running the suite — the whole point of keeping the SDK probe out
+  // of seeding.
+  async function seedUnder(env: Record<string, string>) {
+    const home = await makeTempHome();
+    const spawn = fakeSpawn();
+    const stderr = writer();
+    const configPath = resolveUserConfigPath({}, home);
+    const result = await runPlaybookCli({
+      argv: [],
+      env,
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+    });
+    return {
+      result,
+      stderrText: stderr.text(),
+      seeded: parseYaml(await readFile(configPath, 'utf8')),
+    };
+  }
+
+  it('seeds the adapter whose credentials it can see', async () => {
+    const onlyClaude = await seedUnder({ ANTHROPIC_API_KEY: 'a' });
+    expect(onlyClaude.seeded.captain.adapter).toBe('claude');
+    expect(onlyClaude.seeded.players['dev.coder']).toEqual({
+      adapter: 'claude',
+      model: 'claude-opus-5',
+      effort: 'high',
+      permissions: { mode: 'auto' },
+    });
+    expect(onlyClaude.stderrText).not.toContain('no adapter probed ready');
+
+    // A codex lineup carries the .git grant its sandbox needs; claude's does
+    // not. This row targets codex deliberately and spends no provider call.
+    const onlyCodex = await seedUnder({ OPENAI_API_KEY: 'o' });
+    expect(onlyCodex.seeded.captain.adapter).toBe('codex');
+    expect(onlyCodex.seeded.players['dev.coder']).toEqual({
+      adapter: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+      permissions: { mode: 'auto', writablePaths: ['.git'] },
+    });
+    expect(onlyCodex.seeded.players['dev.reviewer'].adapter).toBe('codex');
+    expect(onlyCodex.seeded.players['dev.reviewer'].effort).toBe('xhigh');
+    expect(onlyCodex.stderrText).not.toContain('no adapter probed ready');
+  });
+
+  it('prefers the first ready adapter by fixed order, not by probe order', async () => {
+    const both = await seedUnder({ ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' });
+    expect(both.seeded.captain.adapter).toBe('claude');
+    expect(both.stderrText).not.toContain('no adapter probed ready');
+  });
+
+  it('seeds the documented default and says so when nothing is ready', async () => {
+    const none = await seedUnder({});
+    // A first run still ends with a config to edit; the readiness gate states
+    // the same diagnosis with its remedies a moment later.
+    expect(none.seeded.captain.adapter).toBe('claude');
+    expect(none.seeded.players['dev.coder'].adapter).toBe('claude');
+    expect(none.stderrText).toContain('no adapter probed ready; seeded claude');
+  });
+
   it('seeds the starter config, composes, and launches the composed config', async () => {
     const home = await makeTempHome();
     const spawn = fakeSpawn();

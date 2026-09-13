@@ -78,6 +78,7 @@ meta.md       The spec of specs
 | [DR-050](decisions/050-pull-request-delivery.md) | 050-pull-request-delivery.md | BRANCH and PR join the maintained set: unchanged-governed branch creation with a receipt-owned base revision, script-state check wait, fix publication, merge, and fast-forward, one nested `code` fix, typed terminals with no merge-commit claim; DEV gains pull-request paths; the starter binds both Coders to `dev.coder` |
 | [DR-051](decisions/051-host-selected-runtime-recovery.md) | 051-host-selected-runtime-recovery.md | Host-selected runtime recovery: the shell publishes the parked leaf's advertised runtime actions to its embedding host and accepts one as a turn's decision, with no decision call and every existing validation, receipt, and reporting rule unchanged |
 | [DR-052](decisions/052-host-selected-give-up.md) | 052-host-selected-give-up.md | Host-selected give-up: the shell publishes its own give-up control, a host may decide that turn, and the shell settles its result phase with no model call, clearing the root's retained generation |
+| [DR-053](decisions/053-seeding-picks-a-ready-adapter.md) | 053-seeding-picks-a-ready-adapter.md | Seeding picks a ready adapter: the seeded lineup is selected from adapters whose credentials are present, by fixed precedence, with a documented default and a notice when none is ready |
 
 ## Packages
 

@@ -7,6 +7,7 @@
 
 Accepted.
 Amended by [DR-050](050-pull-request-delivery.md): DEV's planning result gains two pull-request outcomes, and DEV composes `branch` before and `pr` after its paths.
+Seeded-lineup scope amended by [DR-053](053-seeding-picks-a-ready-adapter.md): the seeded agents' adapter and model are selected from the adapters whose credentials are present rather than fixed; the players, their role bindings, and everything else here stand.
 
 ## Context
 

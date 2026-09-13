@@ -346,10 +346,14 @@ export async function runPlaybookCli(options = {}) {
           overlayPaths: withPaths,
           structuralProjection: selectedRecord.structuralProjection,
           onNotice: (line) => stderr.write(line),
+          env,
+          homeDir: home,
         })
       : await loadLaunchPlan({
           userConfigPath,
           overlayPaths: withPaths,
+          env,
+          homeDir: home,
           loadModule,
           prepareRegistryModule:
             options.prepareRegistryModule ??

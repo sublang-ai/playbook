@@ -359,10 +359,14 @@ export async function runPlaybookRun(options = {}) {
             overlayPaths: args.withPaths,
             structuralProjection: priorRecord.structuralProjection,
             onNotice: (line) => configNotices.push(line),
+            env,
+            homeDir: home,
           })
         : await loadLaunchPlan({
             userConfigPath,
             overlayPaths: args.withPaths,
+            env,
+            homeDir: home,
             loadModule,
             prepareRegistryModule,
             onNotice: (line) => configNotices.push(line),

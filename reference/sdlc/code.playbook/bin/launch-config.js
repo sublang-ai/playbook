@@ -180,7 +180,7 @@ export function resolveLaunchSessionsDir({
   if (sessionsDir !== undefined) return sessionsDir;
 
   if (preparePrimary) {
-    seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
+    seedUserConfigIfMissing(userConfigPath, templatePath, onNotice, env, homeDir);
     migrateUserConfigIfRetired(userConfigPath, onNotice);
   }
 
@@ -248,8 +248,10 @@ export async function loadLaunchPlan({
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
   selectedMembers,
+  env = process.env,
+  homeDir = env.HOME ?? homedir(),
 }) {
-  seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
+  seedUserConfigIfMissing(userConfigPath, templatePath, onNotice, env, homeDir);
   // PBCLI-22/46: a reopen must not rewrite, validate, or otherwise inspect
   // config members outside the stored projection.
   if (selectedMembers === undefined) {
@@ -288,10 +290,12 @@ export async function loadSelectedLaunchPlanDataOnly({
   structuralProjection,
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
+  env = process.env,
+  homeDir = env.HOME ?? homedir(),
 }) {
   const stored = validateStoredStructuralProjection(structuralProjection);
   const selectedMembers = selectedMembersFromStoredStructure(stored);
-  seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
+  seedUserConfigIfMissing(userConfigPath, templatePath, onNotice, env, homeDir);
 
   let top = parseYaml(readFileSync(userConfigPath, "utf8")) ?? {};
   if (overlayPaths.length > 0 && !isObject(top)) {
@@ -1335,11 +1339,90 @@ function assertLegacyRelocationLocatorsSafe(
   );
 }
 
-function seedUserConfigIfMissing(userConfigPath, templatePath, onNotice) {
+// PBCLI-11 / DR-053: the adapters a seeded lineup may take, highest
+// precedence first. A fixed order — not whichever the probe answers
+// first — is what makes one machine seed one file twice.
+const SEED_LINEUP = Object.freeze([
+  Object.freeze({ adapter: "claude", model: "claude-opus-5" }),
+  Object.freeze({ adapter: "codex", model: "gpt-5.6-sol" }),
+]);
+
+/**
+ * PBCLI-11: the lineup a seed would write here, and whether anything
+ * actually probed ready.
+ *
+ * Only the credential check participates. The SDK probe constructs an
+ * adapter and awaits `isAvailable()`, which reads whatever happens to
+ * be installed and spawns a subprocess for CLI-backed adapters: a seed
+ * consulting it would differ between a developer's machine and a clean
+ * one, and would make creating a file asynchronous.
+ */
+export function selectSeedLineup(env = process.env, home = homedir()) {
+  const ready = SEED_LINEUP.filter(
+    (entry) =>
+      checkReadiness([entry.adapter], env, home).failingAdapters.length === 0,
+  );
+  return { lineup: ready[0] ?? SEED_LINEUP[0], anyReady: ready.length > 0 };
+}
+
+/**
+ * The template is the documented default and the only source of the
+ * starter's structure and comments, so the default choice is still the
+ * byte copy it always was. A different adapter rewrites the agent
+ * scalars in place, which the Document API carries comments through.
+ */
+function seedTextForLineup(templatePath, lineup) {
+  const template = readFileSync(templatePath, "utf8");
+  if (lineup.adapter === SEED_LINEUP[0].adapter) return template;
+  const doc = parseYamlDocument(template);
+  const players = doc.getIn(["players"]);
+  const agentPaths = [
+    ["captain"],
+    ...[...(players?.items ?? [])].map((pair) => [
+      "players",
+      String(pair.key),
+    ]),
+  ];
+  for (const path of agentPaths) {
+    doc.setIn([...path, "adapter"], lineup.adapter);
+    doc.setIn([...path, "model"], lineup.model);
+    // A codex agent writes git metadata under its sandbox; claude's
+    // auto mode needs no grant, so the key exists for one adapter only.
+    if (lineup.adapter === "codex") {
+      doc.setIn([...path, "permissions", "writablePaths"], [".git"]);
+    } else {
+      doc.deleteIn([...path, "permissions", "writablePaths"]);
+    }
+  }
+  return String(doc);
+}
+
+function seedUserConfigIfMissing(
+  userConfigPath,
+  templatePath,
+  onNotice,
+  env = process.env,
+  homeDir = env.HOME ?? homedir(),
+) {
   if (existsSync(userConfigPath)) return;
   mkdirSync(dirname(userConfigPath), { recursive: true });
-  copyFileSync(templatePath, userConfigPath, constants.COPYFILE_EXCL);
+  const { lineup, anyReady } = selectSeedLineup(env, homeDir);
+  if (lineup.adapter === SEED_LINEUP[0].adapter && anyReady) {
+    // Unchanged default path: one exclusive create of the template bytes.
+    copyFileSync(templatePath, userConfigPath, constants.COPYFILE_EXCL);
+  } else {
+    // Still one exclusive create, so two seeding calls cannot disagree.
+    writeFileSync(userConfigPath, seedTextForLineup(templatePath, lineup), {
+      encoding: "utf8",
+      flag: "wx",
+    });
+  }
   onNotice(`playbook: created config at ${userConfigPath}\n`);
+  if (!anyReady) {
+    onNotice(
+      `playbook: no adapter probed ready; seeded ${lineup.adapter}\n`,
+    );
+  }
 }
 
 // DR-021 §3: migrate once, keeping the original before any rewrite.
