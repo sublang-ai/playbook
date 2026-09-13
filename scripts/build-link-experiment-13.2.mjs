@@ -74,7 +74,7 @@ const commonHashes = {
   text2gears:
     "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
   link: "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
-  producer: "4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9",
+  producer: "d6ce9eb0d1c012956a5df8691d66fd8fda0e5a827edd12eba288827af07e2ad0",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
@@ -455,6 +455,41 @@ assert.equal(
 const producer = (
   await readRegular(join(sourceRoot, "slc/gears2fsm.md"), sourceRoot)
 ).toString();
+const sourceStateProducerCorrections = [
+  {
+    intent: "IR-091",
+    current:
+      "Where a Source outcome's availability condition is deterministically knowable from execution state, such as a prior Boss reply already received by the machine, the transition shall enforce that condition with authored guards or typed state before the result can be accepted; stating the condition only in a Results description, Judge prose, or prompt text is not enough.\n" +
+      "The compiler shall update or reset those source-owned facts only at their actual Source lifecycle boundaries, and shall not attempt to mechanically decide semantic judgments that Source leaves to the acting agent.\n",
+    prior: "",
+  },
+  {
+    intent: "IR-091",
+    current:
+      "When Source requires earlier discussion or constraints on a later invocation, the compiler shall persist that source-owned history in serializable machine context before replacing or clearing the pending Q/A fields.\n" +
+      "The later `invoke.input` shall relay that persisted context on both resumed and fresh calls that Source says need it, preserving Source-owned relevance and format without imposing all-history semantics on sources that do not require it.\n" +
+      "Shared Boss-reply continuation carries only the latest Q/A pair, and a backend continuation token is not durable Source history.\n",
+    prior: "",
+  },
+];
+let beforeSourceStateProducerCorrection = producer;
+for (const correction of sourceStateProducerCorrections) {
+  assert.equal(
+    beforeSourceStateProducerCorrection.split(correction.current).length,
+    2,
+    "IR091 producer correction must occur exactly once",
+  );
+  beforeSourceStateProducerCorrection =
+    beforeSourceStateProducerCorrection.replace(
+      correction.current,
+      correction.prior,
+    );
+}
+verify(
+  beforeSourceStateProducerCorrection,
+  "4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9",
+  "v8 common producer before source-state correction",
+);
 const nestedCallProducerCorrections = [
   {
     intent: "IR-087",
@@ -496,7 +531,7 @@ const nestedCallProducerCorrections = [
     prior: "",
   },
 ];
-let beforeNestedCallProducerCorrections = producer;
+let beforeNestedCallProducerCorrections = beforeSourceStateProducerCorrection;
 for (const correction of nestedCallProducerCorrections) {
   assert.equal(
     beforeNestedCallProducerCorrections.split(correction.current).length,
@@ -775,6 +810,14 @@ const proof = {
   representationCorrections: {
     priorCommonSha256: sha(beforeRepresentations),
     sentences: representationCorrections.map(({ current, prior }) => ({
+      currentSha256: sha(current),
+      priorSha256: sha(prior),
+    })),
+  },
+  sourceStateProducerCorrections: {
+    priorCommonSha256: sha(beforeSourceStateProducerCorrection),
+    edits: sourceStateProducerCorrections.map(({ intent, current, prior }) => ({
+      intent,
       currentSha256: sha(current),
       priorSha256: sha(prior),
     })),

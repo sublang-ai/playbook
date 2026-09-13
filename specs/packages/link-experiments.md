@@ -29,13 +29,14 @@ The builder shall construct both arms from the same reviewed corrected local tex
 | ---------------------------------------- | ------------------------------------------------------------------ |
 | `text2gears.md`                          | `1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639` |
 | Link after removing the optional section | `a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7` |
-| `gears2fsm.md`                           | `4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9` |
+| `gears2fsm.md`                           | `d6ce9eb0d1c012956a5df8691d66fd8fda0e5a827edd12eba288827af07e2ad0` |
 | `materialize-link.mjs`                   | `5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb` |
 | `workflow-contracts.json`                | `de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3` |
 | `optimize.md`                            | `4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9` |
 
 The builder shall first undo only the nested-call fixed verb-phrase guidance [[compiler-nested-calls-1](compiler-nested-calls.md#compiler-nested-calls-1)] to recover the exact v7 text-to-GEARS SHA-256 `56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4`.
-The builder shall undo only the nested-call busy-tag and unreachable `onDone` guidance [[compiler-nested-tags-1](compiler-nested-tags.md#compiler-nested-tags-1)] [[compiler-nested-calls-2](compiler-nested-calls.md#compiler-nested-calls-2)] to recover the exact v7 FSM-producer SHA-256 `668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722`.
+The builder shall first undo only the source-state preservation guidance [[compiler-source-state-1](compiler-source-state.md#compiler-source-state-1)] [[compiler-source-state-2](compiler-source-state.md#compiler-source-state-2)] to recover the exact v8 FSM-producer SHA-256 `4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9`.
+The builder shall then undo only the nested-call busy-tag and unreachable `onDone` guidance [[compiler-nested-tags-1](compiler-nested-tags.md#compiler-nested-tags-1)] [[compiler-nested-calls-2](compiler-nested-calls.md#compiler-nested-calls-2)] to recover the exact v7 FSM-producer SHA-256 `668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722`.
 The builder shall then undo only the authored Boss-question field declaration [[compiler-results-5](compiler-results.md#compiler-results-5)] to recover the exact v6 text-to-GEARS SHA-256 `c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae` before the existing inverse chain.
 The builder shall then undo only the public child-validator import and authored-error recipe [[compiler-child-validation-1](compiler-child-validation.md#compiler-child-validation-1)], public linked-validator and bootstrap guidance [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] [[compiler-entry-options-3](compiler-entry-options.md#compiler-entry-options-3)], and explicit outer-versus-inner quote wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] to recover the exact v5 identities before the remaining inverse chain:
 

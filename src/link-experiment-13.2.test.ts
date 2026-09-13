@@ -108,6 +108,17 @@ describe.runIf(compiler !== undefined)(
           "56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4",
         );
         expect(a.nestedCallSyntaxCorrection.intent).toBe("IR-088");
+        expect(a.sourceStateProducerCorrections).toEqual(
+          b.sourceStateProducerCorrections,
+        );
+        expect(a.sourceStateProducerCorrections.priorCommonSha256).toBe(
+          "4e840accb47c1924be6e63a483f928a592d36edb07c57be82dbecff59b022ce9",
+        );
+        expect(
+          a.sourceStateProducerCorrections.edits.map(
+            (edit: { intent: string }) => edit.intent,
+          ),
+        ).toEqual(["IR-091", "IR-091"]);
         expect(a.nestedCallProducerCorrections).toEqual(
           b.nestedCallProducerCorrections,
         );
@@ -177,6 +188,12 @@ describe.runIf(compiler !== undefined)(
           );
           expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
             "omit an `onDone` transition whose guard",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "deterministically knowable from execution state",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "backend continuation token is not durable Source history",
           );
         }
         expect(Object.keys(a.outputs).sort()).toEqual(
