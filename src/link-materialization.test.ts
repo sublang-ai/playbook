@@ -119,6 +119,17 @@ describe('optional link materialization integration', () => {
       import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
       assert.throws(() => validateOptions(undefined), /enabled.*required/);
       for (const value of [null, [], true, 'x', {enabled: true, stray: 1}, {enabled: true, limit: Infinity}, {enabled: true, cwd: () => {}}]) assert.throws(() => validateOptions(value));
+      const nonEnumerable = {};
+      Object.defineProperty(nonEnumerable, 'enabled', { enumerable: false, value: true });
+      assert.throws(() => validateOptions(nonEnumerable));
+      let getterEvaluated = false;
+      const accessor = {};
+      Object.defineProperty(accessor, 'enabled', { enumerable: true, get() { getterEvaluated = true; return true; } });
+      assert.throws(() => validateOptions(accessor));
+      assert.equal(getterEvaluated, false);
+      const symbolKeyed = { enabled: true };
+      symbolKeyed[Symbol('unexpected')] = 1;
+      assert.throws(() => validateOptions(symbolKeyed));
       const original = {enabled: true, limit: 0};
       const validated = validateOptions(original);
       assert.deepEqual(validated, original);

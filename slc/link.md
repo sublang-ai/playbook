@@ -589,7 +589,8 @@ linker shall neither invent an empty catalog nor require it to be baked into a
 CLI link option.
 
 The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.
-It shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
+The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.
+It shall then validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against the detached snapshot, reject null and invalid options, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
 Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.
 A source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.
 

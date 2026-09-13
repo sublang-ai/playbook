@@ -154,6 +154,13 @@ describe.runIf(compiler !== undefined)(
         expect(a.representationCorrections.priorCommonSha256).toBe(
           "1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db",
         );
+        expect(a.optionSnapshotLinkCorrection).toEqual(
+          b.optionSnapshotLinkCorrection,
+        );
+        expect(a.optionSnapshotLinkCorrection.priorCommonSha256).toBe(
+          "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
+        );
+        expect(a.optionSnapshotLinkCorrection.intent).toBe("IR-095");
         expect(a.boundaryCorrections).toEqual(b.boundaryCorrections);
         expect(a.boundaryCorrections.priorCommonHashes).toEqual({
           text2gears:
@@ -173,6 +180,9 @@ describe.runIf(compiler !== undefined)(
           pr: "pr",
         });
         for (const output of [baseline, full]) {
+          expect(read(join(output, "playbook/link.md"))).toContain(
+            "snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members",
+          );
           expect(read(join(output, "playbook/text2gears.md"))).toBe(
             read(join(root, "slc/text2gears.md")),
           );

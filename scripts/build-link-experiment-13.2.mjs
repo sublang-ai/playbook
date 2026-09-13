@@ -73,7 +73,7 @@ const published = {
 const commonHashes = {
   text2gears:
     "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
-  link: "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
+  link: "27f94324b90454f7f960e84d192600fcf59813ba90012bade3b3fdad1c51e42f",
   producer: "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
@@ -397,7 +397,34 @@ assert(
 const recipe = full.slice(recipeStart, recipeEnd);
 const baseline = full.slice(0, recipeStart) + full.slice(recipeEnd);
 verify(baseline, commonHashes.link, "common corrected 13.2 link contract");
-const beforeOptionContract = beforeBoundaryCorrections("link", baseline);
+const optionSnapshotLinkCorrection = {
+  intent: "IR-095",
+  current:
+    "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.\n" +
+    "The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.\n" +
+    "It shall then validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against the detached snapshot, reject null and invalid options, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.\n",
+  prior:
+    "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.\n" +
+    "It shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.\n",
+};
+assert.equal(
+  baseline.split(optionSnapshotLinkCorrection.current).length,
+  2,
+  "IR-095 option snapshot correction must occur exactly once",
+);
+const beforeOptionSnapshotLinkCorrection = baseline.replace(
+  optionSnapshotLinkCorrection.current,
+  optionSnapshotLinkCorrection.prior,
+);
+verify(
+  beforeOptionSnapshotLinkCorrection,
+  "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
+  "v10 common link before option snapshot correction",
+);
+const beforeOptionContract = beforeBoundaryCorrections(
+  "link",
+  beforeOptionSnapshotLinkCorrection,
+);
 const guide =
   "At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.\n" +
   "Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.\n\n";
@@ -845,6 +872,12 @@ const proof = {
   builderSha256: sha(await readFile(fileURLToPath(import.meta.url))),
   publishedHashes: published,
   commonHashes,
+  optionSnapshotLinkCorrection: {
+    priorCommonSha256: sha(beforeOptionSnapshotLinkCorrection),
+    currentSha256: sha(optionSnapshotLinkCorrection.current),
+    priorSha256: sha(optionSnapshotLinkCorrection.prior),
+    intent: optionSnapshotLinkCorrection.intent,
+  },
   boundaryCorrections: {
     priorCommonHashes: v5Hashes,
     edits: Object.fromEntries(

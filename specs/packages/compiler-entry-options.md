@@ -11,7 +11,11 @@ This package defines the artifact-owned public validator used by deterministic r
 
 ### compiler-entry-options-1
 
-When emitting a linked artifact, the linker shall export a synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` function that converts only absent `undefined` to an empty option slice, validates the artifact's actual requiredness and defaults, rejects null, non-JSON values, unknown keys and invalid declared values, and returns a detached immutable plain-JSON option record without runtime construction or live host capabilities.
+When emitting a linked artifact, the linker shall export a synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` function with this validation order:
+
+1. Capture `value === undefined ? {} : value` through the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime` before reading option members, applying defaults, or constructing a replacement record, normalizing only top-level `undefined` and rejecting non-JSON input.
+2. Validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against that detached snapshot, rejecting null and invalid options.
+3. Return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
 
 ### compiler-entry-options-2
 

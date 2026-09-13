@@ -40,11 +40,33 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     // Frozen historical inputs remain unshipped reproduction artifacts.
     expect(sha(read('slc/materialize-link.mjs'))).toBe('5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb');
     expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('03a264af3ff47143b2f7e6fef9b53076fce75eecec79dcc2bf8567b965b4d0b1');
-    const validatorGuide = "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.\nIt shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.\nBoss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.\nA source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.\n\n";
-    expect(full.split(validatorGuide)).toHaveLength(2);
-    expect(full.indexOf(validatorGuide)).toBeGreaterThan(full.indexOf('## PlaybookRuntime contract'));
-    const beforeValidator = full.replace(validatorGuide, '').replace("- Exports the public `validateOptions` function specified above and supplies\n  it as the spec's identical `snapshotOptions` callback:", "- Supplies the spec's `snapshotOptions` with the same options-validation\n  semantics previously generated inline:");
+    expect(sha(full)).toBe('981b18e0ab29ff134148fa52ee4bfe380d200683a2f220ae4ac32243b586a07a');
+    const currentValidatorGuide = [
+      "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.",
+      "The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.",
+      "It shall then validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against the detached snapshot, reject null and invalid options, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.",
+    ].join('\n') + '\n';
+    const previousValidatorGuide = [
+      "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.",
+      "It shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.",
+    ].join('\n') + '\n';
+    expect(full.split(currentValidatorGuide)).toHaveLength(2);
+    expect(full.indexOf(currentValidatorGuide)).toBeGreaterThan(full.indexOf('## PlaybookRuntime contract'));
+    const historicalFull = full.replace(currentValidatorGuide, previousValidatorGuide);
+    expect(sha(historicalFull)).toBe('03a264af3ff47143b2f7e6fef9b53076fce75eecec79dcc2bf8567b965b4d0b1');
+    const validatorGuide = previousValidatorGuide + [
+      'Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.',
+      'A source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.',
+      '',
+    ].join('\n') + '\n';
+    expect(historicalFull.split(validatorGuide)).toHaveLength(2);
+    const beforeValidator = historicalFull.replace(validatorGuide, '').replace([
+      '- Exports the public `validateOptions` function specified above and supplies',
+      "  it as the spec's identical `snapshotOptions` callback:",
+    ].join('\n'), [
+      "- Supplies the spec's `snapshotOptions` with the same options-validation",
+      '  semantics previously generated inline:',
+    ].join('\n'));
     expect(sha(beforeValidator)).toBe('088d1491e619d848e25dd2d31fcc334920347e2f9910d087cd4563885ea948b3');
     const currentRecipe = full.slice(full.indexOf('## Optional deterministic materialization\n'), full.indexOf('## PlaybookRuntime contract\n'));
     const childAcceptance = "`onDone` proves successful bridge delivery without a declared child failure;\nit does not establish every caller-owned domain condition. The caller shall\nenforce its own explicit Source-authored acceptance or relay predicates on\nthe delivered output before continuing, without inventing predicates from\ncallee implementation details or overriding the child's compiled terminal\nkind with output fields.\n";
