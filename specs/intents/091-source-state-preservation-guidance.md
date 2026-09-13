@@ -33,4 +33,4 @@ Clarify gears2fsm guidance for generated FSMs that must preserve source-owned ex
 - The unchanged generated public entry passed all 24 source-aware runtime scenarios, including premature discussion-completion rejection and restored discussion-history preservation; all 11,660 C7 dependency entries remained unchanged.
 - Compiler summary: `/private/tmp/slc-c7-complex-full-evidence/compile-wm3i4U/summary.json`, SHA-256 `964bed784c2d8d616fa19efe1c14554f7e08fd136c1ac494c913fb8a18444415`.
 - Runtime summary: `/private/tmp/slc-c7-dev-wm3i4U-runtime-acceptance/summary.json`, SHA-256 `82ff7c803b8272d0a2227400d1b2aa6b7edbd6396d1444ebcef2d346ea2472ff`.
-- C7 uses the separately documented private runtime fix from IR-090; this run proves source-state behavior, not a causal compilation speed improvement.
+- C7 uses the separately documented private runtime question-origin fix; this run proves source-state behavior, not a causal compilation speed improvement.
