@@ -74,7 +74,7 @@ const commonHashes = {
   text2gears:
     "1f146b9cb00a6de016c5e02a528825daa5ce3bda055eae553e1545b6dde0b639",
   link: "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
-  producer: "d6ce9eb0d1c012956a5df8691d66fd8fda0e5a827edd12eba288827af07e2ad0",
+  producer: "5aefade11a4f45b3ebb269b921f1f013363ee129a449b368ec7f83dd0cbf75ee",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
@@ -455,6 +455,84 @@ assert.equal(
 const producer = (
   await readRegular(join(sourceRoot, "slc/gears2fsm.md"), sourceRoot)
 ).toString();
+const identityPlaceholderProducerCorrections = [
+  {
+    intent: "IR-093",
+    current:
+      "Except for a Source-declared local-role prompt-identity placeholder, every\n" +
+      "runtime-value placeholder established by Source in a direct-Captain or\n" +
+      "delegated-player prompt shall be backed by a typed ordinary actor-input field\n" +
+      "populated from typed machine context, so the linker can substitute it with the\n" +
+      "exact runtime value. Angle-bracketed metavariables quoted inside domain\n" +
+      "instructions (for example the literal `<model>` in a commit-message format)\n" +
+      "remain ordinary prompt text and are not runtime-value placeholders. For the\n" +
+      "generic Captain forms, wire `<boss-intent>` from `bossIntent`,\n" +
+      "`<enabled-playbooks>` from `enabledPlaybooks`, `<remaining-plan>` from\n" +
+      "`remainingPlan`, and `<completed-call-results>` from\n" +
+      "`completedCallResults`. Other non-identity placeholders shall retain the\n" +
+      "semantic typed field established by Source (for example `<#>` from\n" +
+      "`irNumber`). Leaving an ordinary runtime-value placeholder literal, replacing\n" +
+      "it with an empty default because its field was omitted, or making the linker\n" +
+      "recover it from untyped context is malformed.\n" +
+      "The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.\n" +
+      "When Source declares a placeholder as the current identity of a local acting\n" +
+      "role, preserve the placeholder literal in the FSM prompt and do not add any\n" +
+      "identity-value field to machine input, runtime options, machine context, or\n" +
+      "actor input, required or optional. The linker shall resolve the placeholder at\n" +
+      "prompt-composition time by calling the invocation-scoped\n" +
+      "`promptIdentity(roleId)` lookup for the declared local role identified by Source.\n",
+    prior:
+      "Every runtime-value placeholder established by Source in a direct-Captain or\n" +
+      "delegated-player prompt shall be backed by a typed actor-input field populated\n" +
+      "from typed machine context, so the linker can substitute it with the exact\n" +
+      "runtime value. Angle-bracketed metavariables quoted inside domain instructions\n" +
+      "(for example the literal `<model>` in a commit-message format) remain ordinary\n" +
+      "prompt text and are not runtime-value placeholders. For the generic Captain\n" +
+      "forms, wire `<boss-intent>` from `bossIntent`,\n" +
+      "`<enabled-playbooks>` from `enabledPlaybooks`, `<remaining-plan>` from\n" +
+      "`remainingPlan`, and `<completed-call-results>` from\n" +
+      "`completedCallResults`. Other placeholders shall retain the semantic typed\n" +
+      "field established by Source (for example `<#>` from `irNumber`). Leaving a\n" +
+      "placeholder literal, replacing it with an empty default because its field was\n" +
+      "omitted, or making the linker recover it from untyped context is malformed.\n" +
+      "The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.\n",
+  },
+  {
+    intent: "IR-093",
+    current:
+      "A non-identity placeholder whose value Source assigns to the host — for\n" +
+      "example the `<definition>` a phase host supplies to a compiled phase — is such\n" +
+      "host-owned configuration: a required machine `input` field carried into typed\n" +
+      "context and the acting actor's input, never a Boss-event or actor-output\n" +
+      "payload. A Source-declared local-role prompt-identity placeholder is the\n" +
+      "explicit exception; it resolves from the invocation-scoped `promptIdentity`\n" +
+      "lookup and is not persisted as host configuration.\n",
+    prior:
+      "A placeholder whose value Source assigns to the host — for example the\n" +
+      "`<definition>` a phase host supplies to a compiled phase — is such host-owned\n" +
+      "configuration: a required machine `input` field carried into typed context and\n" +
+      "the acting actor's input, never a Boss-event or actor-output payload.\n",
+  },
+];
+let beforeIdentityPlaceholderProducerCorrection = producer;
+for (const correction of identityPlaceholderProducerCorrections) {
+  assert.equal(
+    beforeIdentityPlaceholderProducerCorrection.split(correction.current)
+      .length,
+    2,
+    "IR093 producer correction must occur exactly once",
+  );
+  beforeIdentityPlaceholderProducerCorrection =
+    beforeIdentityPlaceholderProducerCorrection.replace(
+      correction.current,
+      correction.prior,
+    );
+}
+verify(
+  beforeIdentityPlaceholderProducerCorrection,
+  "d6ce9eb0d1c012956a5df8691d66fd8fda0e5a827edd12eba288827af07e2ad0",
+  "v9 common producer before identity-placeholder correction",
+);
 const sourceStateProducerCorrections = [
   {
     intent: "IR-091",
@@ -472,7 +550,8 @@ const sourceStateProducerCorrections = [
     prior: "",
   },
 ];
-let beforeSourceStateProducerCorrection = producer;
+let beforeSourceStateProducerCorrection =
+  beforeIdentityPlaceholderProducerCorrection;
 for (const correction of sourceStateProducerCorrections) {
   assert.equal(
     beforeSourceStateProducerCorrection.split(correction.current).length,
@@ -813,6 +892,16 @@ const proof = {
       currentSha256: sha(current),
       priorSha256: sha(prior),
     })),
+  },
+  identityPlaceholderProducerCorrections: {
+    priorCommonSha256: sha(beforeIdentityPlaceholderProducerCorrection),
+    edits: identityPlaceholderProducerCorrections.map(
+      ({ intent, current, prior }) => ({
+        intent,
+        currentSha256: sha(current),
+        priorSha256: sha(prior),
+      }),
+    ),
   },
   sourceStateProducerCorrections: {
     priorCommonSha256: sha(beforeSourceStateProducerCorrection),

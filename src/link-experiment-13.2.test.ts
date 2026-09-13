@@ -108,6 +108,17 @@ describe.runIf(compiler !== undefined)(
           "56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4",
         );
         expect(a.nestedCallSyntaxCorrection.intent).toBe("IR-088");
+        expect(a.identityPlaceholderProducerCorrections).toEqual(
+          b.identityPlaceholderProducerCorrections,
+        );
+        expect(a.identityPlaceholderProducerCorrections.priorCommonSha256).toBe(
+          "d6ce9eb0d1c012956a5df8691d66fd8fda0e5a827edd12eba288827af07e2ad0",
+        );
+        expect(
+          a.identityPlaceholderProducerCorrections.edits.map(
+            (edit: { intent: string }) => edit.intent,
+          ),
+        ).toEqual(["IR-093", "IR-093"]);
         expect(a.sourceStateProducerCorrections).toEqual(
           b.sourceStateProducerCorrections,
         );
@@ -191,6 +202,12 @@ describe.runIf(compiler !== undefined)(
           );
           expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
             "deterministically knowable from execution state",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "Source-declared local-role prompt-identity placeholder",
+          );
+          expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
+            "promptIdentity(roleId)` lookup for the declared local role",
           );
           expect(read(join(output, "playbook/gears2fsm.md"))).toContain(
             "backend continuation token is not durable Source history",
