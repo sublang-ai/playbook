@@ -588,6 +588,11 @@ remain a required readonly runtime option passed through to machine input; the
 linker shall neither invent an empty catalog nor require it to be baked into a
 CLI link option.
 
+The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.
+It shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
+Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.
+A source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.
+
 Concrete player binding and prompt identity are host policy and shall not enter `PlaybookRuntimeOptions`, machine input, or the emitted artifact.
 For a shell-hosted runtime, `PlaybookSession.roleBindings` shall carry exactly the runtime's local roles, map each to its resolved player id and current prompt identity, and be the sole source for call targeting, player-facing prompt identity, concurrency keys, and trace player ids.
 The host shall derive `promptIdentity` from the current effective model when present and the established adapter otherwise; a standalone runtime may omit the map and retain only its local role identity.
@@ -2381,8 +2386,8 @@ The thin emitted module:
   by `PlaybookSession` or another linker-owned source (§PlaybookRuntime
   contract), plus the optional `cwd` option whenever the FSM contains a
   `script` state (§Script execution).
-- Supplies the spec's `snapshotOptions` with the same options-validation
-  semantics previously generated inline: validate and JSON-snapshot the
+- Exports the public `validateOptions` function specified above and supplies
+  it as the spec's identical `snapshotOptions` callback: validate and JSON-snapshot the
   caller's options, rejecting undeclared keys and non-conforming values, so
   the factory binds an immutable options record before constructing any
   actor.

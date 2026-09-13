@@ -44,7 +44,7 @@ When validating metadata, the helper shall reject unknown descriptor members wit
 
 ### link-materialization-6
 
-When materializing an accepted descriptor, the helper shall derive the emitted module's player identities, roles and labels from the loaded FSM, schema-3 compatibility from the installed engine, and option types, immutable JSON validation, input mappings, factory wiring and applicable default-composer verification exports from the validated descriptor.
+When materializing an accepted descriptor, the helper shall derive the emitted module's player identities, roles and labels from the loaded FSM, schema-3 compatibility from the installed engine, and option types, immutable JSON validation with the public validator and identical snapshot binding of [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] and [[compiler-entry-options-2](compiler-entry-options.md#compiler-entry-options-2)], input mappings, factory wiring and applicable default-composer verification exports from the validated descriptor.
 
 ### link-materialization-7
 
@@ -137,4 +137,4 @@ When the real CLI emits and loads a quoted-relay module against each supported i
 
 ### link-materialization-26
 
-When the real CLI emits the labelled profile and loads it with the shared factory, the integration suite shall verify exact optional-line and multiline literal rendering, field and identity mapping, fresh/resumed Q&A, legacy-profile byte preservation, strict typing against the declared FSM input, rejection with existing-target preservation, and maintained CODE/DEV nested-call execution without altering their FSMs [[link-materialization-22](#link-materialization-22)] [[link-materialization-23](#link-materialization-23)] [[link-materialization-24](#link-materialization-24)] [[link-materialization-25](#link-materialization-25)].
+When the real CLI emits the labelled profile and loads it with the shared factory, the integration suite shall verify exact optional-line and multiline literal rendering, field and identity mapping, fresh/resumed Q&A, legacy-profile bytes preserved except the explicit common public-validator export and absent-slice normalization of [[link-materialization-6](#link-materialization-6)], strict typing against the declared FSM input, rejection with existing-target preservation, and maintained CODE/DEV nested-call execution without altering their FSMs [[link-materialization-22](#link-materialization-22)] [[link-materialization-23](#link-materialization-23)] [[link-materialization-24](#link-materialization-24)] [[link-materialization-25](#link-materialization-25)].

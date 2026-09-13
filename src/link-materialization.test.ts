@@ -110,12 +110,20 @@ describe('optional link materialization integration', () => {
     expect(JSON.parse(result.stdout).status).toBe('ok');
     const generated = readFileSync(out, 'utf8');
     expect(generated).toContain('Exact authored work description.');
+    expect(generated).toContain('snapshotOptions: validateOptions,');
     expect(generated).not.toContain('from "./materialize-link');
     expect(readFileSync(fsm, 'utf8')).toBe(source);
     const observation = execute(`
       import assert from 'node:assert/strict';
-      import createRuntime, { _internal } from ${JSON.stringify(pathToFileURL(out).href)};
+      import createRuntime, { _internal, validateOptions } from ${JSON.stringify(pathToFileURL(out).href)};
       import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
+      assert.throws(() => validateOptions(undefined), /enabled.*required/);
+      for (const value of [null, [], true, 'x', {enabled: true, stray: 1}, {enabled: true, limit: Infinity}, {enabled: true, cwd: () => {}}]) assert.throws(() => validateOptions(value));
+      const original = {enabled: true, limit: 0};
+      const validated = validateOptions(original);
+      assert.deepEqual(validated, original);
+      assert.notEqual(validated, original);
+      assert(Object.isFrozen(validated));
       const forbid = () => { throw new Error('unexpected host effect'); };
       const capabilities = { authority: {}, repository: { runExclusive: forbid, runDeferred: forbid }, effectLedger: { snapshot: emptyPlaybookEffectLedger, writeAhead: forbid } };
       const construct = configuredOptions => createRuntime({ configuredOptions, hostCapabilities: capabilities });
@@ -199,7 +207,7 @@ void missing;
     `);
   });
 
-  it('keeps the default profile byte-identical to the frozen v2 emitter', () => {
+  it('preserves the frozen v2 default profile except the explicit public-validator delta', () => {
     const result = emit();
     expect(result.status, result.stderr).toBe(0);
     execute(`
@@ -209,7 +217,23 @@ void missing;
       import { fixtureMachine as machine } from ${JSON.stringify(pathToFileURL(fsm).href)};
       import { materializeLink } from ${JSON.stringify(pathToFileURL(join(packageRoot, 'scripts/experiments/materialize-link-v2.mjs')).href)};
       const expected = materializeLink({ machine, descriptor: ${JSON.stringify(descriptor())}, fsmSpecifier: './fixture.fsm.js', engine });
-      assert.equal(readFileSync(${JSON.stringify(out)}, 'utf8'), expected);
+      assert.equal(readFileSync(${JSON.stringify(out)}, 'utf8'), expected
+        .replace('function snapshotOptions(value: unknown)', 'export function validateOptions(value: unknown)')
+        .replace('snapshotJsonValue(value,', 'snapshotJsonValue(value === undefined ? {} : value,')
+        .replace('  snapshotOptions,', '  snapshotOptions: validateOptions,'));
+    `);
+  });
+
+  it('validates an absent optional-only slice without runtime construction (compiler-entry-options-4)', () => {
+    const value = descriptor();
+    value.options.enabled.required = false;
+    expect(emit(value).status).toBe(0);
+    execute(`
+      import assert from 'node:assert/strict';
+      import { validateOptions } from ${JSON.stringify(pathToFileURL(out).href)};
+      assert.deepEqual(validateOptions(undefined), {});
+      assert(Object.isFrozen(validateOptions(undefined)));
+      assert.throws(() => validateOptions(null));
     `);
   });
 

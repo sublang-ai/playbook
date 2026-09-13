@@ -38,14 +38,19 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     expect(sha(recipe)).toBe('a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc');
     // The current helper includes an explicitly unmeasured labelled/nested profile.
     // Frozen historical inputs remain unshipped reproduction artifacts.
-    expect(sha(read('slc/materialize-link.mjs'))).toBe('eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf');
+    expect(sha(read('slc/materialize-link.mjs'))).toBe('5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb');
     expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('088d1491e619d848e25dd2d31fcc334920347e2f9910d087cd4563885ea948b3');
+    expect(sha(full)).toBe('03a264af3ff47143b2f7e6fef9b53076fce75eecec79dcc2bf8567b965b4d0b1');
+    const validatorGuide = "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.\nIt shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.\nBoss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.\nA source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.\n\n";
+    expect(full.split(validatorGuide)).toHaveLength(2);
+    expect(full.indexOf(validatorGuide)).toBeGreaterThan(full.indexOf('## PlaybookRuntime contract'));
+    const beforeValidator = full.replace(validatorGuide, '').replace("- Exports the public `validateOptions` function specified above and supplies\n  it as the spec's identical `snapshotOptions` callback:", "- Supplies the spec's `snapshotOptions` with the same options-validation\n  semantics previously generated inline:");
+    expect(sha(beforeValidator)).toBe('088d1491e619d848e25dd2d31fcc334920347e2f9910d087cd4563885ea948b3');
     const currentRecipe = full.slice(full.indexOf('## Optional deterministic materialization\n'), full.indexOf('## PlaybookRuntime contract\n'));
     const childAcceptance = "`onDone` proves successful bridge delivery without a declared child failure;\nit does not establish every caller-owned domain condition. The caller shall\nenforce its own explicit Source-authored acceptance or relay predicates on\nthe delivered output before continuing, without inventing predicates from\ncallee implementation details or overriding the child's compiled terminal\nkind with output fields.\n";
     const previousChildAcceptance = "Because the bridge routes a failure terminal to the error path, `onDone` alone\nproves the child succeeded and a caller never inspects a callee's output fields\nto decide that; a caller reads those fields only when its own Source relays\nthem.\n";
     expect(full.split(childAcceptance)).toHaveLength(2);
-    const fullV2 = full.replace(childAcceptance, previousChildAcceptance).replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
+    const fullV2 = beforeValidator.replace(childAcceptance, previousChildAcceptance).replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
     expect(sha(fullV2)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
     const previousGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'
       + 'manifest and live authority-envelope validation at its construction boundary.\n'

@@ -682,6 +682,7 @@ contract shall require exactly `targetId: 'routing'` plus the fresh
 **Boss entry events** start or resume from idle or recoverable states when Boss-supplied parameters can't be inferred from machine state alone.
 Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
 Boss text supplied by an entry event shall not become a required machine-construction input unless Source independently requires that value before the first Boss turn; an optional source-appropriate seed may remain.
+A generated required input annotation alone is not evidence of that independent Source bootstrap requirement.
 An entry event's copy action shall not clear per-run parameters the event omits: an absent optional field falls back to the existing (input-seeded) context value.
 The two surfaces shall not be collapsed. `BOSS_INTERRUPT` always carries its
 target id and may additionally carry typed Boss-supplied fields such as an

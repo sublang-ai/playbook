@@ -355,8 +355,8 @@ const OPTION_SCHEMA = ${json(options)} as const;
 const INPUT_MAPPING = ${json(descriptor.inputMapping)} as const;
 const RESUMABLE_STATE_IDS: ReadonlySet<string> = new Set(${json(descriptor.resumableStateIds)});
 const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set(${json(descriptor.unfinishedFinalStateIds)});
-function snapshotOptions(value: unknown): PlaybookRuntimeOptions {
-  const captured = snapshotJsonValue(value, ${JSON.stringify(`${descriptor.label} runtime options`)});
+export function validateOptions(value: unknown): PlaybookRuntimeOptions {
+  const captured = snapshotJsonValue(value === undefined ? {} : value, ${JSON.stringify(`${descriptor.label} runtime options`)});
   if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) {
     throw new TypeError(${labelledPlayer ? json(`${descriptor.label} runtime options must be an object`) : "'runtime options must be an object'"});
   }
@@ -375,7 +375,7 @@ function snapshotOptions(value: unknown): PlaybookRuntimeOptions {
 }
 ${labelledPlayer ? labelledPlayerSource(descriptor) : quotedPlayer ? quotedPlayerSource(descriptor.placeholderFields, hasContinuationMode) : ''}const runtimeSpec = {
 ${quotedPlayer || labelledPlayer ? '  composePlayerPrompt,\n' : ''}  ...${json(data)},
-  snapshotOptions,
+  snapshotOptions: validateOptions,
   machineInput: (options: PlaybookRuntimeOptions) => Object.fromEntries(
     Object.entries(INPUT_MAPPING).filter(([, key]) => options[key as keyof PlaybookRuntimeOptions] !== undefined)
       .map(([field, key]) => [field, options[key as keyof PlaybookRuntimeOptions]]),
