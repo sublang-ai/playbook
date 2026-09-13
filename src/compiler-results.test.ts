@@ -116,5 +116,63 @@ describe.runIf(compiler !== undefined)(
       expect(Object.keys(after[0].result)).toEqual(Object.keys(before.result));
       expect(after[0].result.complete).toContain(returnDuty);
     });
+
+    it("represents authored Boss-wait questions as whole-final-text fields without changing the authored guard", async () => {
+      const { checkGearsResultContract, parseGearsItems } = await import(
+        pathToFileURL(join(compiler!, "dist/verify.js")).href
+      );
+      const { defaultExtractRequiredFields, renderGovernedOutcomeContract } =
+        await import(
+          pathToFileURL(
+            join(
+              compiler!,
+              "node_modules/@sublang/playbook/src/xstate-runtime.js",
+            ),
+          ).href
+        );
+      const prompt =
+        "When the selected IR is ambiguous, Captain shall prompt Coder:\n\n> Ask Boss which IR to continue.";
+      const continuation =
+        "When Boss answers, the same Coder phase resumes with the answer.";
+      const unannotated = `${heading}${prompt}\n\nResults:\n- \`askBoss\`: Coder asks Boss which IR to continue and waits. Output shall include \`question\` and \`selectedIr: <IR identity>\`. ${continuation}\n`;
+      const annotated = unannotated.replace(
+        "`question` and `selectedIr: <IR identity>`",
+        "`question: <verbatim final text>` and `selectedIr: <IR identity>`",
+      );
+
+      expect(checkGearsResultContract(annotated)).toEqual([]);
+      const [before] = parseGearsItems(unannotated);
+      const [after] = parseGearsItems(annotated);
+      expect(after.prompt).toBe(before.prompt);
+      expect(Object.keys(after.result)).toEqual(["askBoss"]);
+      expect(after.result.askBoss).toContain(
+        "Output shall include `question: <verbatim final text>`",
+      );
+      expect(after.result.askBoss).toContain("`selectedIr: <IR identity>`");
+      expect(defaultExtractRequiredFields(after.result.askBoss)).toEqual([
+        "question",
+        "selectedIr",
+      ]);
+
+      const rendered = renderGovernedOutcomeContract(
+        "askBoss",
+        after.result.askBoss,
+        {
+          fields: { question: "presentation", selectedIr: "semantic" },
+          repositoryDisposition: "deferred",
+        },
+      );
+      expect(rendered).toContain(
+        '  Reply exactly: { "guard": "askBoss", "selectedIr": <IR identity> }',
+      );
+      expect(rendered.join("\n")).toContain(
+        "Semantic fields as authored: `selectedIr: <IR identity>`",
+      );
+      expect(rendered).toContain(
+        "  Runtime-supplied, do not include: `question` (presentation-owned)",
+      );
+      expect(rendered.join("\n")).not.toContain("needsBossReply");
+      expect(annotated).toContain(continuation);
+    });
   },
 );

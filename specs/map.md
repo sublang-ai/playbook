@@ -92,7 +92,7 @@ meta.md       The spec of specs
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
-| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries and explicit caller-visible terminal return obligations |
+| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, explicit caller-visible terminal return obligations, and authored Boss-question field declarations |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
 | [compiler-entry-options.md](packages/compiler-entry-options.md) | Public linked option validation and source-owned bootstrap requiredness |
 | [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |

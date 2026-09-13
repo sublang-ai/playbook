@@ -208,6 +208,10 @@ when the answer changes its complete runtime prompt. It shall not emit a
 second item solely for "Boss answers," "after the question," or clearing the
 consumed question/reply. The FSM and linker own the same-leaf suspension,
 continuation blocks, and consumed-context cleanup.
+When such an authored result asks Boss and waits, its `Results:` description
+shall declare `question: <verbatim final text>` as an output property; the
+result name or prose saying that a question is asked is not the field
+declaration.
 
 This rule is an exception to splitting by accumulated prompt content below.
 Split only when Source requires a genuinely different acting behavior after
