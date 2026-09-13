@@ -70,6 +70,8 @@ const published = {
     "dc8c59f02c73165f1e65b40187f2dc07def9ba43b884a04d992e400c20db6e66",
 };
 const commonHashes = {
+  text2gears:
+    "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56",
   link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
   producer: "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
@@ -153,6 +155,22 @@ for (const [name, hash] of Object.entries(published)) {
     `ordinary ${name}`,
   );
 }
+const text2gears = (
+  await readRegular(join(sourceRoot, "slc/text2gears.md"), sourceRoot)
+).toString();
+const relayCorrection =
+  "Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.\nMentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.\n\n";
+verify(text2gears, commonHashes.text2gears, "reviewed common text2gears");
+assert.equal(
+  text2gears.split(relayCorrection).length,
+  2,
+  "Common relay correction must occur exactly once",
+);
+assert.equal(
+  text2gears.replace(relayCorrection, ""),
+  original["text2gears.md"],
+  "Only the reviewed relay correction may change published text2gears",
+);
 const full = (
   await readRegular(join(sourceRoot, "slc/link.md"), sourceRoot)
 ).toString();
@@ -236,7 +254,7 @@ verify(producer, commonHashes.producer, "reviewed producer");
 verify(optimizer, commonHashes.optimizer, "reviewed optimizer");
 for (const [name, text] of Object.entries({
   "baseline link.md": baseline,
-  "text2gears.md": original["text2gears.md"],
+  "text2gears.md": text2gears,
   "gears2fsm.md": producer,
   "optimize.md": optimizer,
 })) {
@@ -266,7 +284,7 @@ assert.deepEqual(
   Object.keys(expectedInputs).sort(),
 );
 const files = new Map([
-  ["playbook/text2gears.md", original["text2gears.md"]],
+  ["playbook/text2gears.md", text2gears],
   ["playbook/gears2fsm.md", producer],
   ["playbook/optimize.md", optimizer],
   ["playbook/link.md", mode === "full" ? full : baseline],
@@ -329,6 +347,7 @@ assert.equal(
 );
 // Adjacent definition references remain functional. The copied original package
 // members retain their separate identities instead of masquerading as corrections.
+closures.text2gears.push("gears2fsm.md", "link.md", "optimize.md");
 closures.gears2fsm.push("text2gears.md", "link.md");
 closures.optimize.push("text2gears.md", "gears2fsm.md", "link.md");
 closures.link.push(
@@ -356,12 +375,13 @@ const proof = {
   publishedHashes: published,
   commonHashes,
   ordinarySemanticInputs: inputs,
+  commonRelayCorrectionSha256: sha(relayCorrection),
   optionalHelperSectionSha256: sha(recipe),
   helperSha256: sha(helper),
   treatment:
     "Only playbook/link.md optional deterministic materialization instructions differ. Both arms retain identical helper and input closure bytes; undirected helper-file existence is not hidden.",
   execution:
-    "Self-contained interpreted definitions; no compiled pins. Runtime and package-grammar citations resolve through the frozen benchmark workspace dependencies; rewritten semantic locators are snapshot locators, not the original locators.",
+    "Self-contained interpreted definitions; no compiled pins. Runtime and package-grammar citations resolve through the frozen benchmark workspace dependencies; rewritten semantic locators are snapshot locators, not the original locators. Active definition references resolve adjacent corrected files; copied published counterparts are protected evidence, not directed normative fallback.",
   outputs: Object.fromEntries(
     [...files].map(([name, bytes]) => [
       name,

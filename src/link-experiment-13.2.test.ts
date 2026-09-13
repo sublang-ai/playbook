@@ -97,6 +97,14 @@ describe.runIf(compiler !== undefined)(
           source.slice(0, start) + source.slice(end),
         );
         expect(a.ordinarySemanticInputs).toEqual(b.ordinarySemanticInputs);
+        for (const output of [baseline, full]) {
+          expect(read(join(output, "playbook/text2gears.md"))).toBe(
+            read(join(root, "slc/text2gears.md")),
+          );
+          expect(read(join(output, "playbook/text2gears.md"))).not.toContain(
+            "A `Results:` block continues until the next item or section heading",
+          );
+        }
         expect(Object.keys(a.outputs).sort()).toEqual(
           [
             ...[
@@ -121,6 +129,9 @@ describe.runIf(compiler !== undefined)(
         );
         const closureApi = await import(
           pathToFileURL(join(compiler!, "dist/pin-closure.js")).href
+        );
+        const markdown = await import(
+          pathToFileURL(join(root, "scripts/check-links.mjs")).href
         );
         for (const output of [baseline, full]) {
           const proof = JSON.parse(read(join(output, "experiment-proof.json")));
@@ -162,6 +173,19 @@ describe.runIf(compiler !== undefined)(
                 ),
               ].sort(),
             );
+            // Follow the actual active definitions, not the copied published
+            // evidence: every adjacent phase reference must be protected too.
+            for (const { target } of markdown.linksOf(
+              read(join(directory, `${phase}.md`)),
+            )) {
+              const local =
+                /^(text2gears|gears2fsm|optimize|link)\.md(?:#|$)/.exec(target);
+              if (local)
+                expect(
+                  actual.has(join(directory, `${local[1]}.md`)),
+                  `${phase} -> ${target}`,
+                ).toBe(true);
+            }
             for (const input of proof.ordinarySemanticInputs[phase]) {
               expect(actual.has(join(directory, input.rewrittenLocator))).toBe(
                 true,
