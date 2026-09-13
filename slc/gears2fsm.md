@@ -121,20 +121,28 @@ Nested-playbook output, completed-result evidence, plans, context, and machine
 output shall use that readonly type rather than a mutable array/record
 near-duplicate. The linker shall not cast or copy around a variance mismatch.
 
-Every runtime-value placeholder established by Source in a direct-Captain or
-delegated-player prompt shall be backed by a typed actor-input field populated
-from typed machine context, so the linker can substitute it with the exact
-runtime value. Angle-bracketed metavariables quoted inside domain instructions
-(for example the literal `<model>` in a commit-message format) remain ordinary
-prompt text and are not runtime-value placeholders. For the generic Captain
-forms, wire `<boss-intent>` from `bossIntent`,
+Except for a Source-declared local-role prompt-identity placeholder, every
+runtime-value placeholder established by Source in a direct-Captain or
+delegated-player prompt shall be backed by a typed ordinary actor-input field
+populated from typed machine context, so the linker can substitute it with the
+exact runtime value. Angle-bracketed metavariables quoted inside domain
+instructions (for example the literal `<model>` in a commit-message format)
+remain ordinary prompt text and are not runtime-value placeholders. For the
+generic Captain forms, wire `<boss-intent>` from `bossIntent`,
 `<enabled-playbooks>` from `enabledPlaybooks`, `<remaining-plan>` from
 `remainingPlan`, and `<completed-call-results>` from
-`completedCallResults`. Other placeholders shall retain the semantic typed
-field established by Source (for example `<#>` from `irNumber`). Leaving a
-placeholder literal, replacing it with an empty default because its field was
-omitted, or making the linker recover it from untyped context is malformed.
+`completedCallResults`. Other non-identity placeholders shall retain the
+semantic typed field established by Source (for example `<#>` from
+`irNumber`). Leaving an ordinary runtime-value placeholder literal, replacing
+it with an empty default because its field was omitted, or making the linker
+recover it from untyped context is malformed.
 The corresponding `invoke.input` object shall include that field beside `prompt`; storing it only in machine context does not satisfy the actor-input contract.
+When Source declares a placeholder as the current identity of a local acting
+role, preserve the placeholder literal in the FSM prompt and do not add any
+identity-value field to machine input, runtime options, machine context, or
+actor input, required or optional. The linker shall resolve the placeholder at
+prompt-composition time by calling the invocation-scoped
+`promptIdentity(roleId)` lookup for the declared local role identified by Source.
 The sole blockquote placeholder of a dynamic nested-playbook item is instead
 the child `textContext` field specified in §Nested playbook calls.
 
@@ -597,10 +605,13 @@ The artifact shall not bake them into machine input, options, or context; model 
 Host-owned configuration such as an enabled-playbook catalog shall remain
 immutable machine input/context for the session. Boss events and actor outputs
 shall not carry, replace, append to, or otherwise overwrite that catalog.
-A placeholder whose value Source assigns to the host — for example the
-`<definition>` a phase host supplies to a compiled phase — is such host-owned
-configuration: a required machine `input` field carried into typed context and
-the acting actor's input, never a Boss-event or actor-output payload.
+A non-identity placeholder whose value Source assigns to the host — for
+example the `<definition>` a phase host supplies to a compiled phase — is such
+host-owned configuration: a required machine `input` field carried into typed
+context and the acting actor's input, never a Boss-event or actor-output
+payload. A Source-declared local-role prompt-identity placeholder is the
+explicit exception; it resolves from the invocation-scoped `promptIdentity`
+lookup and is not persisted as host configuration.
 Every machine with a dynamic call shall receive its own registered or authored
 playbook id as immutable machine input/context named `selfPlaybookId`, and its
 dynamic-call guard shall reject that target. The leaf-level `stateId` name is
