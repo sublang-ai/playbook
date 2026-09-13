@@ -72,7 +72,7 @@ const published = {
 };
 const commonHashes = {
   text2gears:
-    "c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae",
+    "56f414ec3243fda97bb847871b460fdaaf0bba1585627e0897ccdf95a80d7aa4",
   link: "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
   producer: "668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722",
   helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
@@ -233,6 +233,29 @@ const text2gears = (
 const relayCorrection =
   "Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.\nMentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.\n\n";
 verify(text2gears, commonHashes.text2gears, "reviewed common text2gears");
+const authoredQuestionCorrection = {
+  intent: "IR-085",
+  current:
+    "When such an authored result asks Boss and waits, its `Results:` description\n" +
+    "shall declare `question: <verbatim final text>` as an output property; the\n" +
+    "result name or prose saying that a question is asked is not the field\n" +
+    "declaration.\n\n",
+  prior: "\n",
+};
+assert.equal(
+  text2gears.split(authoredQuestionCorrection.current).length,
+  2,
+  "Authored-question field correction must occur exactly once",
+);
+const beforeAuthoredQuestion = text2gears.replace(
+  authoredQuestionCorrection.current,
+  authoredQuestionCorrection.prior,
+);
+verify(
+  beforeAuthoredQuestion,
+  "c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae",
+  "v6 common text2gears before authored-question correction",
+);
 const representationCorrections = [
   {
     current: "If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.",
@@ -243,7 +266,7 @@ const representationCorrections = [
     prior: "Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.",
   },
 ];
-let beforeRepresentations = beforeBoundaryCorrections("text2gears", text2gears);
+let beforeRepresentations = beforeBoundaryCorrections("text2gears", beforeAuthoredQuestion);
 for (const correction of representationCorrections) {
   assert.equal(beforeRepresentations.split(correction.current).length, 2, "Common representation correction must occur exactly once");
   beforeRepresentations = beforeRepresentations.replace(correction.current, correction.prior);
@@ -522,6 +545,12 @@ const proof = {
   compilerInventory,
   publicCatalog: { sha256: sha(catalogBytes), bytes: catalogBytes.length, literalTargetBindings: catalog.literalTargetBindings },
   catalogGuidanceSha256: sha(catalogGuidance),
+  authoredQuestionCorrection: {
+    priorCommonSha256: sha(beforeAuthoredQuestion),
+    currentSha256: sha(authoredQuestionCorrection.current),
+    priorSha256: sha(authoredQuestionCorrection.prior),
+    intent: authoredQuestionCorrection.intent,
+  },
   commonRelayCorrectionSha256: sha(relayCorrection),
   commonResultsGuidanceSha256: sha(resultsGuidance),
   commonTerminalReturnGuidanceSha256: sha(terminalReturnGuidance.replace(representationCorrections[1].prior, representationCorrections[1].current)),

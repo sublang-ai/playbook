@@ -88,3 +88,4 @@ Each correction is checked as a unique exact inverse to the prior v5 definition/
 Only the optional link recipe remains the treatment; prior v5 roots and evidence remain unchanged.
 
 The [common-boundary C3 evidence](link-experiment-13.2-boundary-evidence.json) records verified v6 ordinary/helper roots and the scaffold-v3 pair, including all prior-input inventory checks and exact single-variable comparisons.
+The v7 ordinary/helper roots adopt only the reviewed text-to-GEARS authored-question field declaration and prove the exact inverse back to v6; this update does not retain scaffold-v3 or make a new performance claim.

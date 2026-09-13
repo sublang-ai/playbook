@@ -99,6 +99,9 @@ describe.runIf(compiler !== undefined)(
         expect(a.ordinarySemanticInputs).toEqual(b.ordinarySemanticInputs);
         expect(a.compilerInventory).toEqual(b.compilerInventory);
         expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(hash(readFileSync(join(compiler!, "dist/pipeline.js"))));
+        expect(a.authoredQuestionCorrection).toEqual(b.authoredQuestionCorrection);
+        expect(a.authoredQuestionCorrection.priorCommonSha256).toBe("c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae");
+        expect(a.authoredQuestionCorrection.intent).toBe("IR-085");
         expect(a.representationCorrections).toEqual(b.representationCorrections);
         expect(a.representationCorrections.priorCommonSha256).toBe("1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db");
         expect(a.boundaryCorrections).toEqual(b.boundaryCorrections);
@@ -114,6 +117,9 @@ describe.runIf(compiler !== undefined)(
           expect(read(join(output, "playbook/text2gears.md"))).toContain("an explicit terminal-return clause in the relevant Results description");
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",
+          );
+          expect(read(join(output, "playbook/text2gears.md"))).toContain(
+            "shall declare `question: <verbatim final text>` as an output property",
           );
         }
         expect(Object.keys(a.outputs).sort()).toEqual(
