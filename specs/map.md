@@ -80,6 +80,7 @@ meta.md       The spec of specs
 | [DR-052](decisions/052-helper-backed-compact-link.md) | 052-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
 | [DR-053](decisions/053-compact-link-definition.md) | 053-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
 | [DR-054](decisions/054-fsm-authoring-scaffold.md) | 054-fsm-authoring-scaffold.md | Optional incomplete FSM authoring scaffold, exact constants and typed actions; unmeasured experiment |
+| [DR-055](decisions/055-public-workflow-contracts.md) | 055-public-workflow-contracts.md | Public builtin output interfaces as separately packaged compiler inputs, without maintained implementation artifacts |
 
 ## Packages
 
@@ -91,6 +92,7 @@ meta.md       The spec of specs
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
 | [compiler-results.md](packages/compiler-results.md) | GEARS result-block boundaries and condition placement, preserving nested-call continuation |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
+| [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |
 | [fsm-scaffolding.md](packages/fsm-scaffolding.md) | Optional exact GEARS constants and incomplete typed FSM authoring scaffold |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |

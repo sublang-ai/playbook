@@ -16,6 +16,7 @@ import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assertWorkflowTerminal } from '../../../scripts/test-support/workflow-contracts.mjs';
 
 import {
   assertPlaybookEffectLedger,
@@ -514,6 +515,7 @@ async function simulateFix(
 
 function terminalOf(result: Awaited<ReturnType<PlaybookRuntime['handleBossInput']>>) {
   expect(result.outcome).toBe('terminal');
+  assertWorkflowTerminal('pr', result);
   if (result.outcome !== 'terminal') throw new Error('expected a terminal result');
   return result;
 }
@@ -1025,6 +1027,7 @@ describe('linked PR runtime', () => {
     });
 
     expect(resumed.outcome).toBe('terminal');
+    assertWorkflowTerminal('pr', resumed);
     expect(resumed.outcome === 'terminal' ? resumed.output : undefined).toEqual({
       status: 'merged',
       pullRequest: '12',

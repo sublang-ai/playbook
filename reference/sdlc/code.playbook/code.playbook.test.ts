@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertWorkflowTerminal } from '../../../scripts/test-support/workflow-contracts.mjs';
 
 import {
   assertPlaybookEffectLedger,
@@ -410,6 +411,7 @@ describe('linked CODE runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('code', result);
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
@@ -657,6 +659,7 @@ describe('linked CODE runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('code', result);
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
@@ -758,6 +761,7 @@ describe('linked CODE runtime', () => {
       },
     });
     expect(resumed.outcome).toBe('terminal');
+    assertWorkflowTerminal('code', resumed);
     await runtime.dispose();
   });
 
@@ -784,6 +788,7 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('code', result);
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
@@ -970,6 +975,7 @@ describe('linked CODE runtime', () => {
         signal: new AbortController().signal,
       });
       expect(result.outcome).toBe('terminal');
+      assertWorkflowTerminal('code', result);
       if (result.outcome !== 'terminal')
         throw new Error('Expected CODE terminal result');
       expect(result.terminal?.kind).toBe(accepted ? 'success' : 'failure');
@@ -1044,6 +1050,7 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
+    assertWorkflowTerminal('code', completed);
     expect(
       completed.outcome === 'terminal' ? completed.output : undefined,
     ).toMatchObject({ lastCodeCommit: host.commitOids[0] });

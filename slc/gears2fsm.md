@@ -371,6 +371,28 @@ the sibling invocations automatically.
 
 ## Nested playbook calls
 
+The independently packaged [workflow contracts](workflow-contracts.json) describe
+only the public outputs of builtin dependencies from `@sublang/playbook`.
+This pipeline adopts the catalog's `literalTargetBindings` as its default
+nested-target namespace. An explicit Source or supplied compiler-dependency
+binding overrides a default and requires the replacement's own public interface.
+Runtime hosts shall honor the compiled dependency bindings as external ABIs.
+When the call target is bound to one of those packaged builtins, read its exact
+output interface before compiling a Source-authored acceptance or relay
+predicate; do not infer field names from the desired meaning or inspect the
+callee implementation. A local basename or a custom target reusing an id does
+not establish that dependency binding.
+The shared bridge correlates the invocation and its supplied input scope;
+the builtin REVIEW result attests to that scope with `noUnsettledFindings: true`
+and `evaluatedRevision`. Do not invent `reviewedCommit` or require the final
+evaluated revision to equal the caller's earlier commit, since REVIEW may make
+its own fixes. Retain every Source-authored predicate on the declared fields.
+If an output-dependent call needs an external interface that is unavailable or
+inconsistent with the declared dependency, report `BLOCKED` with that missing
+compiler input rather than inventing fields or asking the source author to
+repair sufficient domain behavior. Missing or contradictory authored behavior
+still requires the host's source-clarification protocol.
+
 An item whose behavior is a literal or dynamic
 `Captain shall call playbook ...:` shall compile to a state that invokes a
 typed `playbook` actor, not the `captain` or `player` actor.

@@ -42,6 +42,7 @@
     "slc/scaffold-fsm.mjs",
     "slc/fsm-scaffold-guidance.md",
     "slc/slc.pin-inputs.json",
+    "slc/workflow-contracts.json",
     "slc/gears2fsm.md",
     "slc/text2gears.md",
     "slc/optimize.md",
