@@ -93,6 +93,22 @@ function sourceLicense(source) {
     .join('\n');
 }
 
+const CHILD_VALIDATION_IMPORTS = `import { validatePlaybookCallResult } from '@sublang/playbook/xstate-runtime';
+import type { PlaybookCallResult } from '@sublang/playbook/runtime';`;
+
+const CHILD_VALIDATION_HELPER = `export function authoredChildResult(error: unknown, expectedPlaybookId: string): PlaybookCallResult | undefined {
+  if (!(error instanceof Error)) return undefined;
+  try {
+    const result = validatePlaybookCallResult(
+      (error as Error & { result?: unknown }).result,
+      expectedPlaybookId,
+    );
+    return result.status !== 'ok' || result.terminal?.kind === 'failure' ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}`;
+
 function render(source, items) {
   const kinds = [...new Set(items.map(item => item.actor))];
   const constants = items.map(item => {
@@ -113,7 +129,7 @@ function render(source, items) {
   return `${license ? `${license}\n\n` : ''}// INCOMPLETE AUTHORING SCAFFOLD: replace every __AUTHOR_* marker and finish the workflow.
 // Read the complete GEARS Source and phase definition; constants are not its routing semantics.
 import { assign, fromPromise, setup } from 'xstate';
-
+${kinds.includes('playbook') ? `${CHILD_VALIDATION_IMPORTS}\n` : ''}
 // Acting prompts stay literal; carry runtime values beside invoke.input.prompt.
 // Nested prompts are templates: compose child text under the phase's actual rules.
 // Results are only authored declarations. Apply the phase's default/question/controller rules.
@@ -126,7 +142,7 @@ type Event = __AUTHOR_EVENTS__;
 export type MachineInput = __AUTHOR_MACHINE_INPUT__;
 export type MachineOutput = __AUTHOR_MACHINE_OUTPUT__;
 ${json}${types}
-
+${kinds.includes('playbook') ? `\n${CHILD_VALIDATION_HELPER}\n` : ''}
 function invocationOutput(event: unknown): unknown {
   return typeof event === 'object' && event !== null && 'output' in event ? event.output : undefined;
 }

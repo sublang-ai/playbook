@@ -21,9 +21,11 @@ Read the full Source and this phase's normative rules, then complete the target 
 - Exact `GEARS_ITEMS[id].result` values contain only authored outcomes. Apply the existing phase's single-outcome, universal question and controller rules where appropriate. Derive required payloads from Source and actual public child interfaces.
 - Replace all type/code markers with the real context, events, inputs, outputs, field relays, assignments, routing, guards, public state metadata, continuation and failure behavior. Rename or remove the example assignment as appropriate.
 - Register reusable assignments with `actorSetup.extend({ actions: { name: assign(...) } })` and reference their registered names. Narrow heterogeneous actor output from `unknown`; do not erase actor/event types with casts to reuse a standalone assignment on `onDone`.
+- For a nested call, the scaffold also exports `authoredChildResult(error, expectedPlaybookId)`. It delegates public-envelope validation to the installed stateless validator. Use the actual selected target id, not a fabricated request or child-session id; Source still owns recovery routes, output predicates and compact evidence. Remove the helper if unused.
 - Shared configuration fragments may use `machineSetup.createStateConfig(...)` to preserve their literal transition types.
 
 Emit one self-contained `.fsm.ts`, with no imports from the initializer or auxiliary semantic files.
+Its only generated imports are XState and, for a child actor, the selected Playbook public validator and public type; those stateless imports bind no runner or actor implementation.
 All ordinary strict, Source, GEARS/FSM and later runtime checks remain authoritative.
 No workflow route, child acceptance predicate or default context value is supplied by this helper.
 This technique has no accepted performance result yet.

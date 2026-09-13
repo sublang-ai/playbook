@@ -54,8 +54,10 @@ inference. Helpers that construct transition arrays shall preserve guard,
 action, and target literals with `as const`, `satisfies`, or typed action/guard
 functions rather than widening registered names to plain `string`.
 
-The artifact shall not import a runner or bake in concrete actor
-implementations. Each actor placeholder shall fail explicitly (for example,
+The artifact shall not bind or construct a runner or bake in concrete actor
+implementations. A named stateless public boundary validator is permitted;
+importing it shall not construct a runtime, bind host capabilities, or call ports.
+Each actor placeholder shall fail explicitly (for example,
 throw `'captain actor must be provided by the runner'`).
 Where the Source artifact begins with an SPDX comment block, the generated
 artifact shall preserve its license and copyright text before the imports
@@ -493,36 +495,41 @@ been created. On success, persist only `event.output`, which is the actual child
 machine output returned by the bridge, not a runtime call-result envelope.
 When that optional output is absent, omit the `output` property from the
 completed-result record rather than storing `undefined`.
-The outer trusted error is an actual `Error` instance and therefore is not a
-plain JSON object. The structural guard shall inspect its public `.result`
-property directly, then validate only that nested result before sanitizing it;
-it shall not require the outer error itself to pass a plain-object/JSON guard.
-Validation of that nested public result includes its status-specific required
-members and target identity: `playbookId` shall equal the current selected
-target, an `error` result shall carry a normalized error, and every optional
-member that is present shall have the public contract's declared shape. A
-look-alike such as `{ status: 'error' }` is malformed control data, not an
-authored child failure, and shall take the fallback `failed` arm without
-appending evidence. The guard shall not fabricate missing identity or error
-members merely because the status string happens to be recognized.
-The public result's declared optional `childSessionId` and `state` members are
-valid when their shapes satisfy the shared contract; validate and then discard
-them when building compact Captain evidence. They are not undeclared extras.
-Likewise, the public normalized error may carry its declared optional string
-`stack`; validate it and omit it from the compact `{ name, message }` evidence
-rather than rejecting an otherwise valid authored child result.
-Apply the public union exactly: an `aborted` or `error` result shall reject an
-`output` member; `childSessionId`, when present, shall be non-empty; `error`
-shall contain only non-empty `name`, string `message`, and optional string
-`stack`; and `state`, when present, shall validate every declared
-`PlaybookState` member and reject unknown or missing members. Treating an
-arbitrary JSON-safe object as a valid `state`, or checking only that these
-members have broad string/object types, is not complete public-result
-validation.
-In other words, the guard validates the complete public result it received,
-while the action retains only the current selected playbook id, status, and
-compact error. Do not implement evidence minimization by accepting only the
-three keys that survive that projection.
+Recognize authored rejected child results with the existing named
+`validatePlaybookCallResult` export from `@sublang/playbook/xstate-runtime`
+and the type-only `PlaybookCallResult` from `@sublang/playbook/runtime`:
+
+```typescript
+import { validatePlaybookCallResult } from '@sublang/playbook/xstate-runtime';
+import type { PlaybookCallResult } from '@sublang/playbook/runtime';
+
+export function authoredChildResult(error: unknown, expectedPlaybookId: string): PlaybookCallResult | undefined {
+  if (!(error instanceof Error)) return undefined;
+  try {
+    const result = validatePlaybookCallResult(
+      (error as Error & { result?: unknown }).result,
+      expectedPlaybookId,
+    );
+    return result.status !== 'ok' || result.terminal?.kind === 'failure' ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+```
+
+Pass the actual selected target id from the same source-owned target used by
+`invoke.input`; do not fabricate a request or child-session identity for this
+check. The shared bridge owns invocation correlation. Its existing validator
+owns the complete [public result union](link.md#playbookports-contract),
+including terminal/state shapes, optional abort error, and JSON validity;
+do not rewrite those structural checks or redeclare their public types.
+An invalid result returns no authored outcome and takes the existing
+control-error fallback. A validated successful child output still needs its
+separate Source-owned acceptance predicate on `onDone`.
+Validate the full public result before projecting only the permitted compact
+evidence; evidence minimization shall not narrow the accepted public union.
+The helper supplies no workflow route, child-domain predicate, runner or actor
+implementation. Its ordinary package import is an explicit artifact dependency.
 
 Before entering a dynamic call, the machine shall reject an empty target and
 empty input text, any target equal to `selfPlaybookId`, and any target that

@@ -81,6 +81,7 @@ meta.md       The spec of specs
 | [DR-053](decisions/053-compact-link-definition.md) | 053-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
 | [DR-054](decisions/054-fsm-authoring-scaffold.md) | 054-fsm-authoring-scaffold.md | Optional incomplete FSM authoring scaffold, exact constants and typed actions; unmeasured experiment |
 | [DR-055](decisions/055-public-workflow-contracts.md) | 055-public-workflow-contracts.md | Public builtin output interfaces as separately packaged compiler inputs, without maintained implementation artifacts |
+| [DR-056](decisions/056-shared-child-result-validation.md) | 056-shared-child-result-validation.md | Reuse the existing pure child-result validator in FSMs without runner binding |
 
 ## Packages
 
@@ -92,6 +93,7 @@ meta.md       The spec of specs
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
 | [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries and explicit caller-visible terminal return obligations |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
+| [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |
 | [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |
 | [fsm-scaffolding.md](packages/fsm-scaffolding.md) | Optional exact GEARS constants and incomplete typed FSM authoring scaffold |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |

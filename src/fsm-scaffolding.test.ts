@@ -46,7 +46,7 @@ function initialize(input: string, output: string) {
 
 function strict(directory: string, path: string) {
   return spawnSync(process.execPath, [requireGraph.resolve('typescript/bin/tsc'),
-    '--noEmit', '--strict', '--noUnusedLocals', '--noUnusedParameters',
+    '--noEmit', '--strict', '--types', 'node', '--typeRoots', join(graph, 'node_modules/@types'), '--noUnusedLocals', '--noUnusedParameters',
     '--erasableSyntaxOnly', '--skipLibCheck', '--target', 'ES2022',
     '--module', 'NodeNext', '--moduleResolution', 'NodeNext', path,
   ], { cwd: directory, encoding: 'utf8' });
@@ -99,7 +99,7 @@ it('initializes an original two-actor workflow with exact constants, then preser
   expect(raw.startsWith('// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2026 Example\n')).toBe(true);
   expect(raw).not.toContain('captain: fromPromise');
   expect(raw).not.toContain('script: fromPromise');
-  expect(raw.match(/from ['"][^'"]+['"]/g)).toEqual(["from 'xstate'"]);
+  expect(raw.match(/from ['"][^'"]+['"]/g)).toEqual(["from 'xstate'", "from '@sublang/playbook/xstate-runtime'", "from '@sublang/playbook/runtime'"]);
   const authored = complete(raw);
   writeFileSync(output, authored);
   const checked = strict(directory, output);
