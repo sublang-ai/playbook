@@ -262,6 +262,11 @@ text2gears shall emit an item whose behavior uses
 complete JSON-safe input-text template for that call.
 The literal target id shall be a stable configured playbook id, not a slash
 command or module specifier.
+In both literal and dynamic nested-call forms, the behavior's verb phrase shall
+be exact: `Captain shall call playbook ...:`.
+Text2gears shall not insert sequencing words such as `first`, `then`, `next`,
+or `finally` between `shall` and `call`; required sequencing belongs in the
+`When` or `While` clause or in continuation prose around the item.
 A nested-call item shall carry no `Results:` label: the child's terminal result
 is its outcome, so Source's continuation after child success, abort, or failure
 stays as prose after the blockquote for

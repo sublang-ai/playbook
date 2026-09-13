@@ -532,6 +532,12 @@ do not rewrite those structural checks or redeclare their public types.
 An invalid result returns no authored outcome and takes the existing
 control-error fallback. A validated successful child output still needs its
 separate Source-owned acceptance predicate on `onDone`.
+After preserving Source-authored success acceptance and recovery cases plus the
+public control-error `onError` fallback, omit an `onDone` transition whose guard
+cannot be reached from any legal predecessor/context after the prior ordered
+`onDone` arms.
+This rule does not require arbitrary finite enumeration, drop valid failure
+behavior, or relax verifier obligations.
 Validate the full public result before projecting only the permitted compact
 evidence; evidence minimization shall not narrow the accepted public union.
 The helper supplies no workflow route, child-domain predicate, runner or actor
