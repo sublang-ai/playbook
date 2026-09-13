@@ -8,6 +8,7 @@
 Accepted.
 [DR-040](040-outcome-authority-effect-reconciliation.md) grounds CODE, REVIEW, and DECIDE action results in accepted outcomes and canonical structured terminal or bounded unresolved-effect settlements rather than aggregate player or judge prose, with deterministic Boss reporting of exact available receipt identity.
 Amended by [DR-049](049-portable-session-contract.md): immediate fresh retry limited to definite pre-execution session rejection.
+Amended by [DR-051](051-host-selected-runtime-recovery.md): a `runtime` turn may be decided by the embedding host instead of the hidden decision call.
 
 ## Context
 

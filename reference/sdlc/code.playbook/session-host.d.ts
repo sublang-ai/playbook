@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import type { PlaybookControlAction } from '@sublang/playbook/runtime';
 import type { PlaybookCaptainShell, PlaybookCaptainShellSnapshot } from './playbook-captain.js';
 import type { PlaybookEffectLedger } from './host-capabilities.js';
 import type { PlaybookSessionLifecycle, SessionExecutionProjection, SessionStructuralProjection, SessionFreshBoundary, SessionRecovery } from './session-store.js';
@@ -68,6 +69,18 @@ export interface SessionHostController {
   readonly lease: PlaybookSessionLifecycle;
   read(): Promise<SessionRecovery | undefined>;
   handleBossTurn(input: string): Promise<SessionRecovery>;
+  /**
+   * The active leaf's currently advertised runtime actions, read live between
+   * turns; empty whenever nothing is advertised, a turn is active, or the
+   * leaf's control view cannot be read.
+   */
+  listRuntimeActions(): readonly PlaybookControlAction[];
+  /**
+   * Submit one currently advertised runtime action as the session's next turn.
+   * The turn is the same durable transaction `handleBossTurn` runs, and its
+   * decision is the submitted selection, so no decision model call is made.
+   */
+  submitRuntimeAction(actionId: string): Promise<SessionRecovery>;
   retry(): Promise<SessionRecovery>;
   dispose(): Promise<void>;
 }

@@ -12210,6 +12210,174 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
   });
 });
 
+describe('host-published runtime actions (CAPTAIN-60, CAPTAIN-7)', () => {
+  // One engaged leaf whose control view is whatever the case needs it to be.
+  function engaging(
+    control: (runtime: FakeRuntime) => void,
+  ): ReturnType<typeof fakeCodeEntry> {
+    const code = fakeCodeEntry();
+    delete code.entry.summaryPolicy;
+    const createRuntime = code.entry.createRuntime;
+    code.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      control(runtime);
+      return runtime;
+    };
+    return code;
+  }
+
+  const RETRY = Object.freeze({
+    id: 'retry:step',
+    label: 'Retry: run the failing step again',
+  });
+
+  function advertising(
+    actions: readonly { id: string; label: string }[],
+    applied: { actionId: string; key: string }[] = [],
+  ): ReturnType<typeof fakeCodeEntry> {
+    return engaging((runtime) => {
+      runtime.describe = () => ({
+        state: playbookState('failed'),
+        stateDescription: 'The step failed and is waiting for Boss.',
+        pendingQuestions: [],
+        actions: [...actions],
+      });
+      runtime.apply = async ({ actionId, key }) => {
+        applied.push({ actionId, key });
+        return {
+          disposition: 'executed',
+          run: { outcome: 'quiescent', state: playbookState('ready') },
+        };
+      };
+    });
+  }
+
+  it('advertises nothing while idle, without a control surface, or when the view cannot be read', async () => {
+    const idle = makeShell(fakeCodeEntry());
+    await idle.init!(stubSession().session);
+    expect(idle.describeRuntimeActions!()).toEqual([]);
+    await idle.dispose?.();
+
+    // A leaf whose runtime feature-detects out of the control surface.
+    const surfaceless = makeShell(fakeCodeEntry());
+    await surfaceless.init!(stubSession().session);
+    await surfaceless.handleBossTurn(
+      turn('/code first task'),
+      stubContext().context,
+    );
+    expect(surfaceless.describeRuntimeActions!()).toEqual([]);
+    await surfaceless.dispose?.();
+
+    // A control view that exists and throws states nothing about the leaf.
+    const unreadable = makeShell(
+      engaging((runtime) => {
+        runtime.describe = () => {
+          throw new Error('the control view is unreadable');
+        };
+        runtime.apply = async () => ({
+          disposition: 'rejected',
+          reason: 'unreachable',
+        });
+        // An unreadable view is fail-closed evidence of unresolved effects,
+        // so the shell asks this runtime for its envelope identities.
+        runtime.unresolvedEffectEnvelopes = () => [];
+      }),
+    );
+    await unreadable.init!(stubSession().session);
+    await unreadable.handleBossTurn(
+      turn('/code first task'),
+      stubContext().context,
+    );
+    expect(unreadable.describeRuntimeActions!()).toEqual([]);
+    expect(() => unreadable.submitRuntimeAction!('retry:step')).toThrow(
+      /does not advertise/,
+    );
+    await unreadable.dispose?.();
+  });
+
+  it('publishes the leaf’s advertised pairs as a detached frozen reading', async () => {
+    const code = advertising([RETRY, { id: 'abandon:step', label: 'Give up' }]);
+    const shell = makeShell(code);
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), stubContext().context);
+
+    const published = shell.describeRuntimeActions!();
+    expect(published).toEqual([
+      { id: 'retry:step', label: 'Retry: run the failing step again' },
+      { id: 'abandon:step', label: 'Give up' },
+    ]);
+    expect(Object.isFrozen(published)).toBe(true);
+    expect(Object.isFrozen(published[0])).toBe(true);
+    await shell.dispose?.();
+  });
+
+  it('runs a host-selected action as that turn’s decision with no decision call', async () => {
+    const applied: { actionId: string; key: string }[] = [];
+    const code = advertising([RETRY], applied);
+    const shell = makeShell(code);
+    const context = stubContext();
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+
+    const text = shell.submitRuntimeAction!(RETRY.id);
+    expect(text).toBe(RETRY.label);
+    await shell.handleBossTurn(turn(text, 2), context.context);
+
+    // The leaf's own `apply` ran once, under the turn's idempotency key.
+    expect(applied).toEqual([{ actionId: RETRY.id, key: 'turn-2-apply-retry:step' }]);
+    // No decision call was allocated, for this turn or the command turn.
+    expect(
+      context.captainCalls.filter((call) => isDecisionPrompt(call.prompt)),
+    ).toHaveLength(0);
+    // The closing reply is the loop's own, composed from the outcome report:
+    // one for the command turn that started CODE, one for this action.
+    const closing = context.captainCalls.filter((call) =>
+      isClosingReplyPrompt(call.prompt),
+    );
+    expect(closing).toHaveLength(2);
+    expect(closing.at(-1)!.prompt).toContain('Runtime action receipt: executed');
+    expect(closing.at(-1)!.prompt).toContain(RETRY.label);
+    expect(context.replies).toHaveLength(2);
+    // The action ran through `apply`, so the label reached no leaf as text.
+    expect(code.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'first task',
+    ]);
+    await shell.dispose?.();
+  });
+
+  it('refuses an unadvertised or mistimed selection and lets an unrelated turn drop it', async () => {
+    const applied: { actionId: string; key: string }[] = [];
+    const code = advertising([RETRY], applied);
+    const shell = makeShell(code);
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'deliver' }),
+      { status: 'ok', turnId: 2, finalText: 'Delivered.' },
+    ]);
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+
+    expect(() => shell.submitRuntimeAction!('retry:absent')).toThrow(
+      /does not advertise/,
+    );
+    expect(() => shell.submitRuntimeAction!('')).toThrow(/nonempty string/);
+
+    // A selection an unrelated turn does not carry is dropped, not applied:
+    // that turn is decided the ordinary way.
+    shell.submitRuntimeAction!(RETRY.id);
+    await shell.handleBossTurn(turn('keep going on your own', 2), context.context);
+    expect(applied).toEqual([]);
+    expect(code.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'first task',
+      'keep going on your own',
+    ]);
+    expect(
+      context.captainCalls.filter((call) => isDecisionPrompt(call.prompt)),
+    ).toHaveLength(1);
+    await shell.dispose?.();
+  });
+});
+
 describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
   it('resolves the package shell export as a CODE-registered Captain factory', async () => {
     const mod = await import('@sublang/playbook/playbook-captain');

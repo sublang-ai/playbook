@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An embedding host can read a parked leaf's advertised runtime actions and select one as the session's next turn.** The Captain shell publishes the active leaf's currently advertised `{ id, label }` pairs between turns — the same pairs the ControlView digest names, under the digest's own rules: an idle shell, a leaf whose runtime exposes no control surface, and a control view that cannot be read advertise nothing, while a leaf under the retained-effect fence advertises only its two fence controls. The answer is read from the leaf when asked and enters no snapshot, so nothing durable claims an action the leaf no longer offers. A host selects one of those ids and submits it as the next turn: the selection is that turn's decision, so no decision call and no durable conversation call are spent on deciding it, while validation against the leaf's current `describe()`, the per-turn idempotency key, the outcome report, and the closing reply stay exactly as they are for a model-decided `runtime` action. A selection naming an action the leaf does not advertise is refused with a reason and starts no turn; the selected action's own Boss-facing label is the text of the turn it decides, and a turn carrying other text drops the selection and is decided the ordinary way ([DR-051](specs/decisions/051-host-selected-runtime-recovery.md), [[playbook-captain-60](specs/packages/playbook-captain.md#playbook-captain-60)], [[playbook-captain-7](specs/packages/playbook-captain.md#playbook-captain-7)], [[playbook-captain-61](specs/packages/playbook-captain.md#playbook-captain-61)]).
+- `SessionHostController` gains `listRuntimeActions()` and `submitRuntimeAction(actionId)`, backed by the shell's new optional `describeRuntimeActions()` and `submitRuntimeAction(actionId)` members; a shell that publishes neither advertises nothing to its host ([[playbook-captain-41](specs/packages/playbook-captain.md#playbook-captain-41)], [[release-33](specs/packages/release.md#release-33)]).
+
 ## [13.2.0] - 2026-09-12
 
 ### Added

@@ -322,8 +322,9 @@ telemetry that it passes through.
 #### playbook-captain-7
 
 Where the Playbook Captain shell receives a Boss turn, the shell
-shall parse registered commands first and resolve the parse
-deterministically, with no model call parsing the command:
+shall resolve it deterministically before any model call — a host
+selection first, then a registered-command parse — with no model call
+parsing the command:
 
 | Input | Shell state | Resolution |
 | --- | --- | --- |
@@ -332,8 +333,16 @@ deterministically, with no model call parsing the command:
 | `/<command> <text>`, enabled command absent from the active path | engaged | `switch` to that playbook with `<text>` |
 | `/<command> <text>`, command names an active non-leaf ancestor | engaged | `respond` only |
 | bare `/<command>`, enabled command | any | `respond` only — status or clarification, never a restart |
+| the text a host selection of an advertised runtime action returned, on the turn carrying it [[playbook-captain-60](#playbook-captain-60)] | engaged | `runtime` that selected action id |
 | unregistered `/<x>` or ordinary text | any | the session Captain's decision call |
 
+A host selection ([DR-051](../decisions/051-host-selected-runtime-recovery.md))
+shall name one action the active leaf currently advertises
+[[playbook-captain-60](#playbook-captain-60)], shall be refused with a reason and
+start nothing when it names any other, shall return that action's
+Boss-facing label as the text of the turn the host then submits, and
+shall decide only the turn carrying exactly that text: any other turn
+drops the selection and resolves as this table states.
 A parse-resolved turn shall bypass only the decision model call: the
 shell shall inject the parsed resolution into the session Captain's
 controller FSM as that turn's decision object
@@ -341,6 +350,12 @@ controller FSM as that turn's decision object
 execution, the outcome report, and the closing reply shall flow
 through the controller loop identically to a model-decided turn; the
 shell shall execute no parsed action outside that loop.
+A host-decided `runtime` turn shall bypass only that same call: the
+shell shall supply the selected action id to the session Captain's
+decision state as that turn's decision, spending no decision call and
+no durable conversation call on it, and that selection shall reach the
+shell for validation and execution through the controller port like
+every other ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]).
 For a parse-resolved `respond`, the session Captain's one durable
 prose call settles the turn as captain speech
 ([[playbook-captain-9](#playbook-captain-9)]), and the shell shall execute no action for
@@ -349,8 +364,8 @@ Empty or whitespace-only input shall allocate no call, session, or
 telemetry.
 The shell shall submit every other non-empty Boss turn to the
 session Captain for its hidden decision call, and every selection —
-parse-injected or model-decided — arrives through the host-supplied
-controller port ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]) as one
+parse-injected, host-selected, or model-decided — arrives through the
+host-supplied controller port ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]) as one
 of `respond`, `resume`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`,
 a model-decided `respond` carrying the turn's reply prose so a chat
 turn settles in that one decision call.
@@ -424,6 +439,20 @@ no action id and shall pass no free text into `apply`.
 The shell shall not pre-classify playbook events, choose
 `BOSS_INTERRUPT` targets, expose jumpable state lists through the
 registry, or otherwise decide in-playbook FSM events.
+
+#### playbook-captain-60
+
+While no Boss turn is active, when its embedding host asks which runtime actions the active leaf currently advertises, the Playbook Captain shell shall answer with the `{ id, label }` pairs that turn's ControlView digest would name [[playbook-captain-9](#playbook-captain-9)], detached and frozen, taking that digest's own rules for what is advertised ([DR-051](../decisions/051-host-selected-runtime-recovery.md)):
+
+| Shell state | Answer |
+| --- | --- |
+| idle, or a leaf whose runtime declares no `describe` | nothing |
+| a leaf whose `describe` throws | nothing |
+| a leaf under the retained-effect fence of [[playbook-captain-54](#playbook-captain-54)] | only that fence's two controls, and nothing at all unless the leaf also declares `apply` |
+| any other engaged leaf | every pair its control view advertises, in its order |
+
+- while a Boss turn is active the shell shall advertise nothing and read no leaf's control view for this answer, because that view is then the turn's decision grounding [[playbook-captain-9](#playbook-captain-9)];
+- the answer shall be read from the leaf when asked and shall enter no shell snapshot or settlement, so nothing durable claims an action a leaf no longer offers [[playbook-captain-41](#playbook-captain-41)].
 
 ### Captain calls and ports
 
@@ -1023,7 +1052,7 @@ the underlying diagnostic outside Boss-visible prose.
 
 #### playbook-captain-41
 
-Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainUnresolvedEffect`, `assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[]`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>`, `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, and `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`.
+Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainUnresolvedEffect`, `assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[]`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>`, `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`, optional `describeRuntimeActions?(): readonly PlaybookControlAction[]` [[playbook-captain-60](#playbook-captain-60)], and optional `submitRuntimeAction?(actionId: string): string` [[playbook-captain-7](#playbook-captain-7)], the two host members declared optional so a shell that publishes neither advertises nothing.
 The module's default shell factory shall return `PlaybookCaptainShell`.
 `PlaybookCaptainShellSnapshot` shall be a detached JSON-safe schema-version-4 value with these exact common and mode-discriminated members:
 
@@ -1216,6 +1245,16 @@ carries one nonempty scalar input: a parse-resolved selection carries
 its command remainder unchanged, a model-decided selection after
 several planning turns may carry the complete agreed request, and a
 missing, empty, or non-string input is rejected before any effect (verifying [[playbook-captain-1](#playbook-captain-1)], [[playbook-captain-2](#playbook-captain-2)], [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-9](#playbook-captain-9)]).
+
+#### playbook-captain-61
+
+Where the test suite drives the Playbook Captain shell with an engaged leaf whose control view it scripts, and drives one real session host over a real store whose real CODE artifact parks in its recoverable failure state, the test suite shall fail unless the host's reading and its selection both hold:
+
+- an idle shell, a leaf whose runtime exposes no control surface, and a leaf whose control view throws each publish no action, while an engaged leaf publishes its advertised `{ id, label }` pairs frozen and in order [[playbook-captain-60](#playbook-captain-60)];
+- a selection naming an action the leaf does not advertise, and one naming no action at all, are refused with a reason and start no turn [[playbook-captain-7](#playbook-captain-7)];
+- the selected action's turn allocates no decision call, applies exactly that action id once through the leaf's `apply` under that turn's idempotency key [[playbook-captain-8](#playbook-captain-8)], and closes with the ordinary outcome-report reply naming the action by its Boss-facing label [[playbook-captain-20](#playbook-captain-20)];
+- a turn whose text is not the selection's is decided by the ordinary decision call, with the selection dropped and nothing applied [[playbook-captain-7](#playbook-captain-7)];
+- over the session host, the selection settles one durable turn whose Boss text is that advertised label and leaves the real artifact out of its failure state, with no decision call made for it or for the command turn that parked it [[playbook-captain-7](#playbook-captain-7)] [[playbook-captain-60](#playbook-captain-60)].
 
 ### Lifecycle and telemetry
 

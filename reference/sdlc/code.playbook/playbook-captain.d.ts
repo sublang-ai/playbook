@@ -1,6 +1,6 @@
 import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
-import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
+import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
 interface SessionAgent {
@@ -215,6 +215,19 @@ export interface PlaybookCaptainShell extends Captain {
     exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
     exportSettlement(): PlaybookCaptainSettlement | undefined;
     restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>;
+    /**
+     * The active leaf's currently advertised runtime actions, as the host's own
+     * reading of the control view the ControlView digest reads (CAPTAIN-60).
+     * Declared optional because capability absence is member absence: a shell
+     * that publishes no reader advertises nothing.
+     */
+    describeRuntimeActions?(): readonly PlaybookControlAction[];
+    /**
+     * Select one currently advertised runtime action as the next Boss turn's
+     * decision and return that turn's Boss text, which the host submits through
+     * `handleBossTurn` (CAPTAIN-7).
+     */
+    submitRuntimeAction?(actionId: string): string;
 }
 export declare function assertPlaybookCaptainUnresolvedEffects(value: unknown): readonly PlaybookCaptainUnresolvedEffect[];
 /** Validate, detach, and freeze one untrusted shell snapshot. */

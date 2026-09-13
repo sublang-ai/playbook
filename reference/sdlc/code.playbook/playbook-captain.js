@@ -1732,6 +1732,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // CAPTAIN-40's corrective re-ask on the very call whose prose it surfaces —
     // the selection reaches the controller port after that call's frame is gone.
     let decisionCall;
+    // CAPTAIN-7: the runtime action the host selected for the turn it is about
+    // to submit, held with the exact Boss text that turn carries so an unrelated
+    // turn never consumes the selection. One turn consumes it, whichever it is.
+    let pendingRuntimeSelection;
     let lastAction;
     let lastSettlementStatus;
     const retainedGenerationCandidates = new Map();
@@ -3889,6 +3893,70 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         lines.push(retainedResumptionDigest());
         return lines.join('\n');
     };
+    // CAPTAIN-60: the same reading the ControlView digest performs, published as
+    // data instead of prose. It states what the digest states and withholds what
+    // the digest withholds: an idle shell, a leaf with no control surface, and a
+    // control view that cannot be read all advertise nothing, and a leaf fenced
+    // for repository-effect reconciliation advertises only its fence controls.
+    // The pairs are detached and frozen, so a host holds the shell's reading
+    // rather than a live view the runtime can rewrite underneath it.
+    const advertisedRuntimeActions = () => {
+        const empty = Object.freeze([]);
+        if (lifecycle !== 'ready' || terminallyDisposed)
+            return empty;
+        // Between turns: while a turn is running, the leaf's control view is the
+        // decision's grounding and the host can act on no selection, so the shell
+        // publishes none and reads nothing from a runtime mid-run.
+        if (activeTurn !== undefined || activeTurnHostCalls !== undefined) {
+            return empty;
+        }
+        const leaf = leafFrame();
+        if (!leaf || typeof leaf.runtime.describe !== 'function')
+            return empty;
+        refreshRetainedEffectFence();
+        const fenced = retainedEffectReconciliation !== undefined;
+        if (fenced && typeof leaf.runtime.apply !== 'function')
+            return empty;
+        let actions;
+        try {
+            actions = leaf.runtime.describe().actions;
+        }
+        catch {
+            // An unreadable control view advertises nothing.
+            return empty;
+        }
+        return Object.freeze(actions
+            .filter((action) => !fenced ||
+            action.id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+            action.id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID)
+            .map((action) => Object.freeze({ id: action.id, label: action.label })));
+    };
+    // CAPTAIN-7: the host's own selection of one advertised action, validated
+    // here against the same live reading and validated again at the controller
+    // port before any effect. The returned text is the turn the host submits.
+    const selectRuntimeAction = (actionId) => {
+        if (lifecycle !== 'ready' || terminallyDisposed) {
+            throw new Error('a runtime action requires an initialized or restored Captain shell');
+        }
+        if (activeTurn !== undefined || activeTurnHostCalls !== undefined) {
+            throw new Error('a runtime action cannot be selected during a Boss turn');
+        }
+        if (typeof actionId !== 'string' || actionId.length === 0) {
+            throw new TypeError('a runtime action id must be a nonempty string');
+        }
+        const advertised = advertisedRuntimeActions().find((action) => action.id === actionId);
+        if (advertised === undefined) {
+            // CAPPLAY-5: the chosen id is control data whether or not the leaf
+            // advertises it, so the refusal names the fact and not the string.
+            throw new Error('the active leaf does not advertise that action');
+        }
+        const text = typeof advertised.label === 'string' ? advertised.label.trim() : '';
+        if (text.length === 0) {
+            throw new Error('the advertised action carries no Boss-facing label to submit as its turn');
+        }
+        pendingRuntimeSelection = { actionId, text };
+        return text;
+    };
     // The catalog is registry-authored, not shell-authored: an id, a command,
     // and an intent all arrive from an enabled module. They pass the same seam
     // the ControlView lines do, so an intent carrying a newline cannot open a
@@ -4341,6 +4409,20 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     ? []
                     : [labeledBlock('Conversation recap', options.reseedDigest)]),
             ]);
+            // CAPTAIN-7: a turn whose decision the host already made allocates no
+            // decision call. The host's selection is this state's decision reply, so
+            // it passes the runtime's own reply validation and reaches the shell
+            // through the controller port like every other selection — validation,
+            // execution, the outcome report, and the closing reply are the loop's.
+            if (kind === 'decision' && turn?.hostRuntimeActionId !== undefined) {
+                return {
+                    status: 'ok',
+                    finalText: JSON.stringify({
+                        action: 'runtime',
+                        actionId: turn.hostRuntimeActionId,
+                    }),
+                };
+            }
             const outcome = await durableCall(context, compose);
             if (kind === 'decision') {
                 // A model-decided `respond` surfaces this call's own prose, so the
@@ -6151,6 +6233,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         exportSettlement,
         restore: restoreShellSnapshot,
         installRetainedGenerations,
+        describeRuntimeActions: advertisedRuntimeActions,
+        submitRuntimeAction: selectRuntimeAction,
         async handleBossTurn(turn, context) {
             if (lifecycle !== 'ready' || terminallyDisposed) {
                 throw new Error('init must be called first, or restore must complete before handling a Boss turn');
@@ -6184,13 +6268,24 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const turnHostCalls = new Set();
             activeTurnHostCalls = turnHostCalls;
             activeContext = context;
-            const parsed = resolveCommandTurn(turn.prompt);
+            // CAPTAIN-7: one host selection is consumed by one turn. It decides only
+            // the turn carrying the exact text the selection was made for; any other
+            // turn drops it and resolves normally.
+            const selected = pendingRuntimeSelection;
+            pendingRuntimeSelection = undefined;
+            const hostRuntimeActionId = selected !== undefined && selected.text === turn.prompt
+                ? selected.actionId
+                : undefined;
+            const parsed = hostRuntimeActionId === undefined
+                ? resolveCommandTurn(turn.prompt)
+                : undefined;
             activeTurn = {
                 id: ++turnSequence,
                 captainSyncedJournalSeq: journalSeq,
                 bossText: turn.prompt,
                 authoritativeText: parsed?.authoritativeText ?? turn.prompt,
                 ...(parsed ? { resolution: parsed.resolution } : {}),
+                ...(hostRuntimeActionId === undefined ? {} : { hostRuntimeActionId }),
                 settled: false,
                 presentationAttempted: false,
                 settlementFacts: [],
@@ -6324,6 +6419,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 failure ??= error;
             }
         }
+        pendingRuntimeSelection = undefined;
         // Quarantine is session-wide by design. Only terminal teardown may drop
         // its ownership after every frame host call and the Captain are drained.
         playerTransactions.clear();
