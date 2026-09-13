@@ -804,10 +804,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/dev/registry');
     expect(seeded).toContain('@sublang/playbook/branch/registry');
     expect(seeded).toContain('@sublang/playbook/pr/registry');
-    expect(seeded).toContain('gpt-5.6-sol');
     expect(seeded).toContain('claude-opus-5');
     expect(seeded).not.toContain('committer:');
-    expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
     // PBCLI-11/13: the seed writes stable top-level players and explicit roles.
@@ -821,11 +819,10 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     });
     expect(seededParsed.players).toEqual({
       'dev.coder': {
-        adapter: 'codex',
-        model: 'gpt-5.6-sol',
-        effort: 'ultra',
-        fastMode: true,
-        permissions: { mode: 'auto', writablePaths: ['.git'] },
+        adapter: 'claude',
+        model: 'claude-opus-5',
+        effort: 'high',
+        permissions: { mode: 'auto' },
       },
       'dev.reviewer': {
         adapter: 'claude',
@@ -840,6 +837,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         permissions: { mode: 'auto' },
       },
     });
+    // The comments still document codex as an option; no seeded value names it.
+    expect(JSON.stringify(seededParsed)).not.toContain('codex');
     expect(seededParsed.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
     expect(seededParsed.playbooks.review.roles).toEqual({
       coder: 'dev.coder',
@@ -869,11 +868,10 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.players).toEqual([
       {
         id: 'dev.coder',
-        adapter: 'codex',
-        model: 'gpt-5.6-sol',
-        effort: 'ultra',
-        fastMode: true,
-        permissions: { mode: 'auto', writablePaths: ['.git'] },
+        adapter: 'claude',
+        model: 'claude-opus-5',
+        effort: 'high',
+        permissions: { mode: 'auto' },
       },
       {
         id: 'dev.reviewer',
@@ -898,14 +896,14 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       roles: {
         coder: {
           playerId: 'dev.coder',
+          // PBCLI-11: the role names no model or effort of its own, so
+          // both inherit the seeded player default rather than falling
+          // back to the provider's.
           model: {
             kind: 'value',
-            value: 'gpt-5.6-sol',
+            value: 'claude-opus-5',
           },
-          effort: { kind: 'value', value: 'ultra' },
-          // PBCLI-11: the role omits fastMode, so it inherits the seeded
-          // player default rather than falling back to the provider's.
-          fastMode: true,
+          effort: { kind: 'value', value: 'high' },
         },
       },
       options: {},

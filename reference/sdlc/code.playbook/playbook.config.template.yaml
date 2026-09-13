@@ -21,7 +21,8 @@
 # Drop an adapter from this file and you can skip its SDK entirely.
 # Every seeded agent runs in cligent's protected auto mode
 # (permissions.mode: auto): claude maps it to permissionMode auto, codex to
-# on-request + auto_review. Codex roles also grant writablePaths: ['.git']
+# on-request + auto_review. A codex agent additionally needs
+# writablePaths: ['.git'] to write git metadata under its sandbox.
 # so they can inspect and work with repository metadata under the sandbox.
 
 # The Captain/Judge agent.
@@ -46,15 +47,13 @@ notifications:
 # shares one provider conversation across those playbooks.
 players:
   dev.coder:
-    adapter: codex
-    model: gpt-5.6-sol
-    effort: ultra
+    adapter: claude
+    model: claude-opus-5
+    effort: high
     # Adapter-scoped fast mode is validated by the installed Cligent contract;
     # omitting it takes the provider default.
-    fastMode: true
     permissions:
       mode: auto
-      writablePaths: ['.git']
 
   dev.reviewer:
     adapter: claude

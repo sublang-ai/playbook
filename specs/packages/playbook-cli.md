@@ -348,21 +348,18 @@ Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
 config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, and PR with their `playbooks.<id>.from` values set to the matching public registry modules.
 The starter shall define players `dev.coder`, `dev.reviewer`, and `dev.analyst`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)), and BRANCH and PR shall each bind `coder` to that same `dev.coder` with no player added, so the Coder that reads the issue and names the branch makes the commits and then describes them in the pull request ([DR-050](../decisions/050-pull-request-delivery.md)).
-The seeded lineup shall configure Captain with adapter `claude`, model
-`claude-opus-5`, and reasoning effort `high`; Coder with adapter
-`codex`, model `gpt-5.6-sol`, reasoning effort `ultra`, and fast mode
-enabled; and Reviewer and Analyst each with adapter `claude`, model `claude-opus-5`, and
-reasoning effort `xhigh`.
+The seeded lineup shall configure Captain and Coder each with adapter
+`claude`, model `claude-opus-5`, and reasoning effort `high`, and
+Reviewer and Analyst each with adapter `claude`, model `claude-opus-5`,
+and reasoning effort `xhigh`.
 The starter config shall carry no `profiles` map: Captain settings shall be inline under top-level `captain`, player settings shall be inline under top-level `players`, and each playbook shall contain only explicit role bindings ([DR-032](../decisions/032-explicit-roles-session-players.md)).
 Every seeded agent — the Captain and the three players — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
 codex to on-request + auto_review) without routine in-session approval
 prompts.
-For every seeded agent on adapter `codex`, the starter config shall
-additionally set `permissions.writablePaths: ['.git']`, so the default
-Codex player can write git metadata under the codex sandbox; seeded
-`claude` agents need no writablePaths grant under their auto mode.
+No seeded agent shall carry a `permissions.writablePaths` grant: every
+one of them runs on `claude`, whose auto mode needs none.
 The starter config shall set top-level
 `notifications: { player_finished: bell, turn_finished: desktop }`;
 these `adapter` / `model` / `effort` / `fastMode` values are defaults and
@@ -1122,7 +1119,7 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-5`; player `dev.coder` on `codex` / `gpt-5.6-sol` at `ultra` effort with fast mode enabled; players `dev.reviewer` and `dev.analyst` each on `claude` / `claude-opus-5`; explicit CODE, REVIEW, DECIDE, DEV, BRANCH, and PR role bindings with BRANCH's and PR's `coder` on `dev.coder`; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Coder's additional `.git` writable path; and the notification defaults.
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain and player `dev.coder` each on `claude` / `claude-opus-5` at `high` effort; players `dev.reviewer` and `dev.analyst` each on `claude` / `claude-opus-5`; explicit CODE, REVIEW, DECIDE, DEV, BRANCH, and PR role bindings with BRANCH's and PR's `coder` on `dev.coder`; no `profiles` map; `permissions.mode: auto` on every seeded agent with no writable-path grant on any; and the notification defaults.
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed.
 

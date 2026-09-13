@@ -55,8 +55,8 @@ key is that playbook's option slice. Every manifest role must be present
 exactly once. The launcher injects the rest — you do not write host wiring by
 hand.
 
-The seeded config runs the stable Coder player on GPT-5.6 Sol with fast mode
-enabled and the stable Reviewer player on Claude Opus 5:
+The seeded config runs every stable player on Claude Opus 5 — the Coder at
+`high` effort, the Reviewer and Analyst at `xhigh`:
 
 ```yaml
 captain:
@@ -68,14 +68,11 @@ captain:
 
 players:
   dev.coder:
-    adapter: codex
-    model: gpt-5.6-sol
-    effort: ultra
-    fastMode: true
+    adapter: claude
+    model: claude-opus-5
+    effort: high
     permissions:
-      mode: auto
-      writablePaths:
-        - .git # allow git metadata writes under Codex auto mode
+      mode: auto # protected auto mode for the Claude Coder
 
   dev.reviewer:
     adapter: claude
