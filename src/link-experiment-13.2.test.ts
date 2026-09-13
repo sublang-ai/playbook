@@ -105,6 +105,7 @@ describe.runIf(compiler !== undefined)(
           expect(read(join(output, "playbook/text2gears.md"))).toBe(
             read(join(root, "slc/text2gears.md")),
           );
+          expect(read(join(output, "playbook/text2gears.md"))).toContain("When Source requires a terminal return to the caller");
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",
           );

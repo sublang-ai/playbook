@@ -12,7 +12,7 @@ node scripts/build-fsm-scaffold-experiment-13.2.mjs /absolute/frozen-compiler /p
 
 The absent output root must be outside the supplied compiler and builder checkout, with an existing parent directory.
 Its `baseline/` and `scaffold/` children are pipeline-path roots, each containing `playbook/`; a sibling `experiment-proof.json` records the complete pair.
-Both arms contain the same corrected producer/catalog, retained Results guidance, ordinary link contract, optimizer, copied published semantic inputs, scaffold initializer and subdirectory guide.
+Both arms contain the same corrected producer/catalog, retained Results guidance and terminal-return correction, ordinary link contract, optimizer, copied published semantic inputs, scaffold initializer and subdirectory guide.
 The helper and guide are undirected visible files in the baseline; their existence is not hidden.
 Only the scaffold arm's `gears2fsm.md` appends the optional guide, rebasing its helper link from the guide subdirectory to the phase directory.
 Exactly the four existing phases remain discoverable.
@@ -37,3 +37,5 @@ PLAYBOOK_EXPERIMENT_COMPILER=/absolute/frozen-compiler \
 
 The integration tests execute actual CLI assembly, supplied-compiler discovery and closure, exact appended-only comparison, source identity and refusal controls.
 Without the supplied compiler, help tests alone do not establish a valid pair.
+
+[Final C3 assembly evidence](link-experiment-13.2-catalog-scaffold-evidence.json) records the first verified pair and unchanged input inventories; this is preparation evidence, not an accepted provider performance result.
