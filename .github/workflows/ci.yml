@@ -231,6 +231,11 @@ jobs:
       # it from the missing subset only made two partial trees alternate
       # forever, since each distinct package set is a distinct tree — and
       # must never emit a literal `playbook ...` placeholder.
+      #
+      # The two adapters are written here rather than taken from the seeded
+      # starter: this gate is about the alternation, not about whichever
+      # lineup the starter happens to ship, and coupling the two made a
+      # single-adapter starter silently retire the case (PBCLI-11).
       - name: Gate the partially supplied exec tree — expect a one-hop re-run
         run: |
           export npm_config_cache=/tmp/npxcache
@@ -240,7 +245,39 @@ jobs:
             --package=@anthropic-ai/claude-agent-sdk \
             --call 'command -v playbook')
           export HOME=/tmp/npxhome XDG_CONFIG_HOME=/tmp/npxhome/.config
-          mkdir -p "$HOME"
+          mkdir -p "$HOME/.spex/playbook"
+          cat > "$HOME/.spex/playbook/playbook.config.yaml" <<'YAML'
+          captain:
+            adapter: claude
+            model: claude-opus-5
+            effort: high
+            permissions:
+              mode: auto
+          players:
+            dev.coder:
+              adapter: claude
+              model: claude-opus-5
+              effort: high
+              permissions:
+                mode: auto
+            dev.reviewer:
+              adapter: codex
+              model: gpt-5.5
+              effort: high
+              permissions:
+                mode: auto
+                writablePaths: ['.git']
+          playbooks:
+            code:
+              from: '@sublang/playbook/code/registry'
+              roles:
+                coder: dev.coder
+            review:
+              from: '@sublang/playbook/review/registry'
+              roles:
+                coder: dev.coder
+                reviewer: dev.reviewer
+          YAML
           set +e
           OUT=$(ANTHROPIC_API_KEY=x OPENAI_API_KEY=y "$BIN" 2>&1)
           STATUS=$?
