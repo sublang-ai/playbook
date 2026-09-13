@@ -90,7 +90,8 @@ meta.md       The spec of specs
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
-| [link-materialization.md](packages/link-materialization.md) | Optional flat-default link materialization, strict descriptor, atomic emission, and semantic closure |
+| [link-experiments.md](packages/link-experiments.md) | Isolated matched Playbook 13.2 compiler-definition experiments and frozen input identity |
+| [link-materialization.md](packages/link-materialization.md) | Optional link materialization, experimental labelled/nested profile, strict descriptor, atomic emission, and semantic closure |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
