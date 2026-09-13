@@ -54,3 +54,10 @@ Generation takes 193,607 ms and the original strict TypeScript, entry import, fo
 The runtime delivers the exact literal Boss task to one delegated call, makes one commit in its own repository, and reaches terminal success.
 This one accepted observation uses the default helper profile and demonstrates the five-minute demo target; it supplies neither a general latency guarantee nor an isolated full-compilation or default-profile speed ratio.
 The quoted-relay pair's 63.1% improvement remains the separately controlled retention evidence.
+
+## Addendum A1: Unmeasured labelled/nested candidate
+
+An explicitly selected `flat-labelled-relays` experiment supports flat player/script/nested-call machines using literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
+The descriptor retains all existing semantic responsibilities and additionally names the exact exported player-input type.
+The shared factory still owns the nested bridge; this tool never derives child semantics or changes the FSM.
+This candidate supersedes the earlier profile exclusion only for its explicitly supported forms, does not expand the measured retention claim above, and requires a matched accepted comparison before performance adoption.

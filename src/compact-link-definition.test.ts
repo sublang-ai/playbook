@@ -36,11 +36,11 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     expect(full).toContain('## Optional deterministic materialization');
     expect(full).not.toContain('## Supported recipe');
     expect(sha(recipe)).toBe('a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc');
-    // V3 adds only the explicit quoted-relay profile; the prior version remains
-    // an unshipped reproduction input for the rejected compact experiment.
-    expect(sha(read('slc/materialize-link.mjs'))).toBe('0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253');
+    // The current helper includes an explicitly unmeasured labelled/nested profile.
+    // Frozen historical inputs remain unshipped reproduction artifacts.
+    expect(sha(read('slc/materialize-link.mjs'))).toBe('eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf');
     expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('60061f7e0a54281f883a429ec84a0685a7990e886c0d289c23b70e7c160ab2c2');
+    expect(sha(full)).toBe('5b91d6d553fbae8581cd8aaa8856a4e0686060bbd0e3018c6178f35f0749b767');
     const currentRecipe = full.slice(full.indexOf('## Optional deterministic materialization\n'), full.indexOf('## PlaybookRuntime contract\n'));
     const fullV2 = full.replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
     expect(sha(fullV2)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
@@ -54,7 +54,8 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     const currentClause = 'whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, additional typed ledger commands for the same atomic completion, one `deferred` binding carrying optional UUID `operationId` plus exact `pendingQuestion` and `playerContinuation`, or literal `unresolved: true`, where `deferred` shall be mutually exclusive with `unresolved`, `logicalOperationId`, and commands;';
     expect(sha(previousFull.replace(currentClause, previousClause))).toBe('75e2e6e51a49a8621dd713d4d081db001a6256b28fc565a2ca192471ad084043');
     const entryAnchors = anchorsOf(recipe);
-    for (const anchor of anchorsOf(full)) expect(entryAnchors.has(anchor), anchor).toBe(true);
+    // The rejected archive covers its original contract, not later optional profiles.
+    for (const anchor of anchorsOf(fullV2)) expect(entryAnchors.has(anchor), anchor).toBe(true);
     for (const { target } of linksOf(recipe).filter(({ target }: { target: string }) => target.startsWith('references/link-contract.md#'))) {
       expect(anchorsOf(full).has(target.split('#')[1]), target).toBe(true);
     }
@@ -77,10 +78,15 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
 // Optional exact-version experiment acceptance: supply the actual installed
 // package, not a fabricated baseline or a runtime/dependency adoption.
 const baselinePackage = process.env.PLAYBOOK_MATERIALIZATION_BASELINE;
-it.runIf(baselinePackage !== undefined)('reconstructs the reviewed 12.3 candidate and refuses modified baselines or existing output', () => {
+// The exact 12.3 builder belongs to its historical source commit; the evolving
+// 13.2 helper/definitions are intentionally not substituted into that archive.
+const archiveSource = process.env.PLAYBOOK_MATERIALIZATION_ARCHIVE_SOURCE;
+it.runIf(baselinePackage !== undefined && archiveSource !== undefined)('reconstructs the reviewed 12.3 candidate and refuses modified baselines or existing output', () => {
   const scratch = mkdtempSync(join(tmpdir(), 'playbook-compact-builder-'));
   const installed = baselinePackage!;
-  const builder = join(root, 'scripts/build-link-experiment-12.3.mjs');
+  const sourceRoot = archiveSource!;
+  const read = (file: string) => readFileSync(join(sourceRoot, file), 'utf8');
+  const builder = join(sourceRoot, 'scripts/build-link-experiment-12.3.mjs');
   const run = (source: string, output: string, mode?: '--full' | '--baseline' | '--compact') => execFileSync(process.execPath, [builder, source, output, ...(mode ? [mode] : [])], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -19,7 +19,7 @@ When loading the source FSM, the helper shall accept JavaScript on supported Nod
 
 ### link-materialization-3
 
-The helper shall accept only schema `sublang.playbook.link.v1`, profiles `flat-defaults` and `flat-quoted-relays`, flat ordinary player/script machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
+The helper shall accept only schema `sublang.playbook.link.v1`, profiles `flat-defaults` and `flat-quoted-relays` for flat ordinary player/script machines, and the experimental `flat-labelled-relays` profile for flat player/script/nested-playbook machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
 
 ### link-materialization-4
 
@@ -27,7 +27,7 @@ The descriptor shall carry the exact erased and authored metadata through these 
 
 | Member | Shape |
 | --- | --- |
-| `schema`, `profile` | Exactly `sublang.playbook.link.v1` and either `flat-defaults` or `flat-quoted-relays`. |
+| `schema`, `profile` | Exactly `sublang.playbook.link.v1` and one of the profiles in [[link-materialization-3](#link-materialization-3)]. |
 | `machineExport`, `label` | Exported JavaScript identifier and nonblank diagnostic label. |
 | `options` | Option-name map of `{ type: 'string' \| 'boolean' \| 'number', required: boolean }`; constrained primitive types require ordinary linking. |
 | `inputMapping` | FSM input-field to declared option-name map; every non-`cwd` option is mapped. |
@@ -97,6 +97,22 @@ Where the descriptor selects `flat-quoted-relays`, the emitted player composer s
 
 Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall prefix its rendered body once with the installed shared composer's continuation for an empty body, forwarding the continuation mode only when the engine exposes that API and leaving question, reply, and source input values unchanged under the [full prompt contract](../../slc/link.md#player-prompt-composition).
 
+### link-materialization-22
+
+Where the descriptor selects the experimental `flat-labelled-relays` profile, the helper shall additionally require the exact exported player-input type name in `playerInputExport`, an explicit duplicate-free `omitEmptyRelayLines` array of complete source lines matching `> ` followed by an optional literal label and one terminal placeholder, and an explicit `identityPlaceholders` token-to-canonical-local-role map; it shall reject overlapping identity/field mappings, identity-backed omitted lines, undeclared roles, or any of these extra members on another profile.
+
+### link-materialization-23
+
+Where that profile is selected, the emitted player composer shall import the declared FSM player-input type and render each original line once, replacing string placeholders literally, quoting every continuation line of a value inserted into an authored `> ` line, preserving LF/CRLF separators and placeholder-looking inserted text, and removing an exact declared optional relay line with its separator only when its mapped string value is empty; missing or non-string values shall remain source tokens, and undeclared empty relays shall retain their authored text.
+
+### link-materialization-24
+
+Where that profile declares an identity placeholder, the emitted composer shall obtain its value only through the invocation-scoped identity lookup for the declared local role, preserve the source input, and expose the same canonical composer arguments as the runtime uses; fresh/resumed continuation shall come from the installed shared `composePlayerContinuation` [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], with absence of that API making the profile unsupported.
+
+### link-materialization-25
+
+Where that profile encounters a nested `playbook` invocation, the helper shall leave its input, text, target, output guards, recovery, and terminal semantics in the unchanged FSM and let the shared factory provide the bridge; direct Captain actors, compound or parallel topology, structured/custom prompt strategies, and nonprimitive option contracts shall remain outside this profile [[link-materialization-5](#link-materialization-5)].
+
 ## Verification
 
 ### link-materialization-17
@@ -118,3 +134,7 @@ When checking the packed definition surface, the integration suite shall verify 
 ### link-materialization-21
 
 When the real CLI emits and loads a quoted-relay module against each supported installed continuation API, the integration suite shall verify mapped and ordinary literal tokens, empty relay positions, LF/CRLF and blank lines, missing values, unchanged source inputs, and fresh/resumed Q&A rendering [[link-materialization-14](#link-materialization-14)] [[link-materialization-15](#link-materialization-15)].
+
+### link-materialization-26
+
+When the real CLI emits the labelled profile and loads it with the shared factory, the integration suite shall verify exact optional-line and multiline literal rendering, field and identity mapping, fresh/resumed Q&A, legacy-profile byte preservation, strict typing against the declared FSM input, rejection with existing-target preservation, and maintained CODE/DEV nested-call execution without altering their FSMs [[link-materialization-22](#link-materialization-22)] [[link-materialization-23](#link-materialization-23)] [[link-materialization-24](#link-materialization-24)] [[link-materialization-25](#link-materialization-25)].

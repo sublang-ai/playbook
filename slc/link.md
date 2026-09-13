@@ -44,7 +44,7 @@ use the adjacent `materialize-link.mjs` tool to emit the thin module.
 The complete definition below remains binding; the tool replaces repetitive
 module generation, not semantic analysis or emitted conformance verification.
 Read the actual FSM and supply every erased or authored contract exactly.
-Do not use these profiles when another custom composer, classifier, required-field
+Do not use `flat-defaults` or `flat-quoted-relays` when another custom composer, classifier, required-field
 extractor, session-derived input mapping, controller strategy, nested call,
 parallel state, or compound state is needed.
 
@@ -122,6 +122,42 @@ Exit 2 reports `unsupported` without changing the target: continue ordinary
 linking under this complete definition.
 Exit 1 reports invalid metadata, loading, preflight, or output failure:
 correct the identified problem before treating linking as successful.
+
+### Experimental labelled-string and nested-call profile
+
+`flat-labelled-relays` is an unmeasured candidate for flat single-region
+machines with delegated players, scripts, and nested `playbook` calls. It
+requires the installed shared `composePlayerContinuation` API. It leaves
+nested input composition, child targets, result guards, recovery, and terminal
+semantics in the unchanged FSM; the shared factory provides the nested bridge.
+It does not authorize generating or importing maintained workflow artifacts.
+
+Select it only for literal string substitution in unchanged player templates,
+including labelled `> Label: <token>` lines and source-declared role-identity
+tokens. In addition to every descriptor member above, supply:
+
+- `playerInputExport`: the exact exported FSM player-input type name.
+- `omitEmptyRelayLines`: exact complete source lines to omit only when their
+  mapped string value is empty, for example
+  `["> Run results: <run-results>"]`. Each line starts with `> ` and ends in
+  one placeholder; any preceding label is literal. Use an explicit empty
+  array when no line is optional; never infer optionality from a missing value.
+- `identityPlaceholders`: an explicit token-to-canonical-local-role map, such
+  as `{ "coder-llm": "coder" }` only where Source requires that identity.
+  These values come solely from the invocation-scoped identity lookup, never
+  from options, FSM context, or model prose. Use `{}` when none is authored.
+
+The composer replaces original tokens once, prefixes each continuation line
+of a value inserted into a quoted source line with `> `, preserves line
+separators and literal inserted text, and leaves missing/non-string values as
+source tokens. Undeclared empty relay lines retain their authored text.
+The emitted verification composer has the same identity and optional third
+resume arguments as the runtime; the shared helper owns fresh/resumed Q&A.
+Structured rendering, custom classifiers/extractors/controllers, direct
+Captain actors, compound/parallel topology, and constrained/nonprimitive
+options remain unsupported. Source-derived metadata and all existing
+conformance checks remain mandatory. This profile changes no runtime bridge,
+workflow semantics, or measured performance claim.
 
 ## PlaybookRuntime contract
 

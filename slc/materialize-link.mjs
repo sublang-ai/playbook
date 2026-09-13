@@ -34,6 +34,34 @@ function quotedPlayerSource(placeholderFields, continuationMode) {
 `;
 }
 
+function labelledPlayerSource(descriptor) {
+  return `function renderPlayerPrompt(input: SourcePlayerInput, promptIdentity: XStatePromptIdentity, resuming = false): string {
+  const fields = input as unknown as Readonly<Record<string, unknown>>;
+  const mapping: Readonly<Record<string, string>> = ${JSON.stringify(descriptor.placeholderFields)};
+  const identities: Readonly<Record<string, string>> = ${JSON.stringify(descriptor.identityPlaceholders)};
+  const omitted = new Set<string>(${JSON.stringify(descriptor.omitEmptyRelayLines)});
+  const fieldFor = (token: string): string => Object.hasOwn(mapping, token) ? mapping[token]! : (token === '#' ? 'irNumber' : token.replace(/-([A-Za-z0-9_$])/g, (_match: string, next: string) => next.toUpperCase()));
+  const parts = input.prompt.split(/(\\r?\\n)/);
+  let body = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index]!;
+    if (omitted.has(line)) {
+      const token = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>$/.exec(line)![1]!;
+      if (fields[fieldFor(token)] === '') continue;
+    }
+    body += line.replace(/<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g, (match: string, token: string): string => {
+      const value = Object.hasOwn(identities, token) ? promptIdentity(identities[token]!) : fields[fieldFor(token)];
+      if (typeof value !== 'string') return match;
+      return line.startsWith('> ') ? value.replace(/\\r?\\n/g, (ending: string) => ending + '> ') : value;
+    }) + (parts[index + 1] ?? '');
+  }
+  return composePlayerContinuation(input, body, resuming);
+}
+const composePlayerPrompt = (input: PlaybookPlayerInput, promptIdentity: XStatePromptIdentity, resuming?: boolean): string =>
+  renderPlayerPrompt(input as SourcePlayerInput, promptIdentity, resuming);
+`;
+}
+
 export class UnsupportedLinkProfile extends Error {
   constructor(message) {
     super(message);
@@ -50,6 +78,8 @@ const DESCRIPTOR_KEYS = [
   'transitionEventFields', 'verbatimPayloadFields', 'resumableStateIds',
   'unfinishedFinalStateIds', 'controlContextFields',
 ];
+const LABELLED_KEYS = ['playerInputExport', 'omitEmptyRelayLines', 'identityPlaceholders'];
+const TOKEN = /^(#|[A-Za-z_$][A-Za-z0-9_$-]*)$/;
 const CONTRACT_TYPES = [
   'PlayerResult', 'PlayerCallOptions', 'PlayerSessionStore', 'CaptainResult',
   'CaptainCallOptions', 'JsonValue', 'NormalizedError', 'PlaybookCallRequest',
@@ -94,9 +124,21 @@ function strings(value, path, allowEmptyStrings = false) {
 
 function validateDescriptor(value, engine) {
   const descriptor = engine.snapshotJsonValue(value, 'link descriptor');
-  record(descriptor, 'descriptor', DESCRIPTOR_KEYS, DESCRIPTOR_KEYS);
+  const labelled = descriptor?.profile === 'flat-labelled-relays';
+  const keys = labelled ? [...DESCRIPTOR_KEYS, ...LABELLED_KEYS] : DESCRIPTOR_KEYS;
+  record(descriptor, 'descriptor', keys, keys);
   if (descriptor.schema !== SCHEMA) throw new TypeError(`descriptor.schema must equal ${SCHEMA}`);
-  if (!['flat-defaults', 'flat-quoted-relays'].includes(descriptor.profile)) throw new UnsupportedLinkProfile('profile requires ordinary normative linking');
+  if (!['flat-defaults', 'flat-quoted-relays', 'flat-labelled-relays'].includes(descriptor.profile)) throw new UnsupportedLinkProfile('profile requires ordinary normative linking');
+  if (labelled) {
+    if (typeof engine.composePlayerContinuation !== 'function') throw new UnsupportedLinkProfile('labelled relays require the shared continuation API');
+    if (typeof descriptor.playerInputExport !== 'string' || !IDENTIFIER.test(descriptor.playerInputExport)) throw new TypeError('playerInputExport must name the exported FSM player-input type');
+    strings(descriptor.omitEmptyRelayLines, 'omitEmptyRelayLines');
+    record(descriptor.identityPlaceholders, 'identityPlaceholders');
+    for (const [token, role] of Object.entries(descriptor.identityPlaceholders)) {
+      if (!TOKEN.test(token)) throw new TypeError('identityPlaceholders key must be a placeholder token');
+      nonempty(role, `identityPlaceholders.${token}`);
+    }
+  }
   nonempty(descriptor.label, 'descriptor.label');
   if (typeof descriptor.machineExport !== 'string' || !IDENTIFIER.test(descriptor.machineExport)) {
     throw new TypeError('descriptor.machineExport must be an exported JavaScript identifier');
@@ -167,13 +209,23 @@ function validateDescriptor(value, engine) {
     nonempty(key, 'placeholder token');
     nonempty(value, `placeholderFields.${key}`);
   }
+  if (labelled) {
+    for (const token of Object.keys(descriptor.identityPlaceholders)) {
+      if (Object.hasOwn(descriptor.placeholderFields, token)) throw new TypeError(`identity placeholder ${token} also declares a field mapping`);
+    }
+    for (const line of descriptor.omitEmptyRelayLines) {
+      const matched = /^> [^<>\r\n]*<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>$/.exec(line);
+      if (!matched) throw new UnsupportedLinkProfile('optional relay must be a complete quoted line with one terminal placeholder');
+      if (Object.hasOwn(descriptor.identityPlaceholders, matched[1])) throw new TypeError('an identity relay cannot be optional');
+    }
+  }
   for (const field of ['transitionEventFields', 'verbatimPayloadFields', 'resumableStateIds', 'unfinishedFinalStateIds', 'controlContextFields']) {
     strings(descriptor[field], field);
   }
   return descriptor;
 }
 
-function inspectMachine(machine, engine) {
+function inspectMachine(machine, engine, labelled = false) {
   const config = machine?.config;
   if (!config || typeof config !== 'object' || !config.states) throw new TypeError('FSM export must be an XState machine');
   if (config.type === 'parallel' || config.invoke) throw new UnsupportedLinkProfile('root parallel states or invocations require ordinary linking');
@@ -189,9 +241,9 @@ function inspectMachine(machine, engine) {
     const invokes = Array.isArray(state.invoke) ? state.invoke : state.invoke ? [state.invoke] : [];
     if (invokes.length > 1) throw new UnsupportedLinkProfile(`state ${key} has multiple actors`);
     for (const invoke of invokes) {
-      if (!['player', 'script'].includes(invoke.src)) throw new UnsupportedLinkProfile(`state ${key} actor ${String(invoke.src)} requires ordinary linking`);
+      if (!(labelled ? ['player', 'script', 'playbook'] : ['player', 'script']).includes(invoke.src)) throw new UnsupportedLinkProfile(`state ${key} actor ${String(invoke.src)} requires ordinary linking`);
       if (invoke.src === 'script') hasScript = true;
-      else {
+      else if (invoke.src === 'player') {
         const role = nonempty(state.meta?.playbook?.role, `state ${key} role`);
         const label = nonempty(descriptions.get(key), `state ${key} description`);
         roleStates[key] = { role, label };
@@ -226,7 +278,15 @@ export function materializeLink({ machine, descriptor: value, fsmSpecifier, engi
     throw new TypeError('FSM import must be an extension-bearing relative .ts or .js specifier');
   }
   const descriptor = validateDescriptor(value, engine);
-  const { roleStates, hasScript } = inspectMachine(machine, engine);
+  const labelledPlayer = descriptor.profile === 'flat-labelled-relays';
+  const { roleStates, hasScript } = inspectMachine(machine, engine, labelledPlayer);
+  if (labelledPlayer) {
+    const roles = new Set(Object.values(roleStates).map((state) => state.role));
+    if (!roles.size) throw new UnsupportedLinkProfile('labelled profile requires a delegated player');
+    for (const role of Object.values(descriptor.identityPlaceholders)) {
+      if (!roles.has(role)) throw new TypeError(`identity placeholder names undeclared role ${role}`);
+    }
+  }
   const options = { ...descriptor.options };
   if (hasScript) {
     if (options.cwd && (options.cwd.type !== 'string' || options.cwd.required)) {
@@ -271,10 +331,10 @@ export function materializeLink({ machine, descriptor: value, fsmSpecifier, engi
   return `// SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 // Generated by slc/materialize-link.mjs; governed by the complete slc/link.md.
-// FSM: ${JSON.stringify(fsmSpecifier)}; export: ${descriptor.machineExport}; strategies: ${quotedPlayer ? 'shared defaults with standalone quoted relays' : 'shared defaults'}.
+// FSM: ${JSON.stringify(fsmSpecifier)}; export: ${descriptor.machineExport}; strategies: ${labelledPlayer ? 'shared defaults with labelled string relays and nested actors' : quotedPlayer ? 'shared defaults with standalone quoted relays' : 'shared defaults'}.
 ${fsmImport}
-import {
-  createXStatePlaybookRuntime, snapshotJsonValue,${hasPlayer ? '\n  defaultComposePlayerPrompt,' : ''}
+${labelledPlayer ? `import type { ${descriptor.playerInputExport} as SourcePlayerInput } from ${JSON.stringify(fsmSpecifier)};\n` : ''}import {
+  createXStatePlaybookRuntime, snapshotJsonValue,${labelledPlayer ? '\n  composePlayerContinuation, type XStatePromptIdentity,' : hasPlayer ? '\n  defaultComposePlayerPrompt,' : ''}
   ${hasPlayer ? 'type PlaybookPlayerInput,' : ''}
   type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeFactory,
@@ -298,23 +358,23 @@ const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set(${json(descripto
 function snapshotOptions(value: unknown): PlaybookRuntimeOptions {
   const captured = snapshotJsonValue(value, ${JSON.stringify(`${descriptor.label} runtime options`)});
   if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) {
-    throw new TypeError('runtime options must be an object');
+    throw new TypeError(${labelledPlayer ? json(`${descriptor.label} runtime options must be an object`) : "'runtime options must be an object'"});
   }
   const fields = captured as Readonly<Record<string, unknown>>;
   for (const key of Object.keys(captured)) {
-    if (!Object.hasOwn(OPTION_SCHEMA, key)) throw new TypeError('runtime options.' + key + ' is not declared');
+    if (!Object.hasOwn(OPTION_SCHEMA, key)) throw new TypeError(${labelledPlayer ? json(`${descriptor.label} runtime options.`) : "'runtime options.'"} + key + ' is not declared');
   }
   for (const [key, schema] of Object.entries(OPTION_SCHEMA) as [string, { type: string; required: boolean }][]) {
     if (!Object.hasOwn(captured, key)) {
-      if (schema.required) throw new TypeError('runtime options.' + key + ' is required');
+      if (schema.required) throw new TypeError(${labelledPlayer ? json(`${descriptor.label} runtime options.`) : "'runtime options.'"} + key + ' is required');
     } else if (typeof fields[key] !== schema.type || (schema.type === 'number' && !Number.isFinite(fields[key]))) {
-      throw new TypeError('runtime options.' + key + ' must be ' + schema.type);
+      throw new TypeError(${labelledPlayer ? json(`${descriptor.label} runtime options.`) : "'runtime options.'"} + key + ${labelledPlayer ? "' must be a '" : "' must be '"} + schema.type);
     }
   }
   return captured as unknown as PlaybookRuntimeOptions;
 }
-${quotedPlayer ? quotedPlayerSource(descriptor.placeholderFields, hasContinuationMode) : ''}const runtimeSpec = {
-${quotedPlayer ? '  composePlayerPrompt,\n' : ''}  ...${json(data)},
+${labelledPlayer ? labelledPlayerSource(descriptor) : quotedPlayer ? quotedPlayerSource(descriptor.placeholderFields, hasContinuationMode) : ''}const runtimeSpec = {
+${quotedPlayer || labelledPlayer ? '  composePlayerPrompt,\n' : ''}  ...${json(data)},
   snapshotOptions,
   machineInput: (options: PlaybookRuntimeOptions) => Object.fromEntries(
     Object.entries(INPUT_MAPPING).filter(([, key]) => options[key as keyof PlaybookRuntimeOptions] !== undefined)
@@ -326,7 +386,7 @@ ${quotedPlayer ? '  composePlayerPrompt,\n' : ''}  ...${json(data)},
 } satisfies XStatePlaybookRuntimeSpecV3<PlaybookRuntimeOptions>;
 
 export const _internal = {
-  ${quotedPlayer ? 'composePlayerPrompt,\n  ' : hasPlayer ? `composePlayerPrompt: (input: PlaybookPlayerInput, _identity?: unknown${hasContinuationMode ? ', resuming = false' : ''}) =>
+  ${quotedPlayer || labelledPlayer ? 'composePlayerPrompt,\n  ' : hasPlayer ? `composePlayerPrompt: (input: PlaybookPlayerInput, _identity?: unknown${hasContinuationMode ? ', resuming = false' : ''}) =>
     defaultComposePlayerPrompt(input, ${json(descriptor.placeholderFields)}${hasContinuationMode ? ', resuming' : ''}),\n  ` : ''}RESUMABLE_STATE_IDS,
   UNFINISHED_FINAL_STATE_IDS,
 };
