@@ -14,7 +14,7 @@ Clarify the existing producer obligation after a REVIEW output retained revision
 ## Deliverables
 
 - [x] Minimal common definition clarification with real-parser/composer delivery checks.
-- [ ] Identical common correction in both Results experiment arms and both full-compilation link arms.
+- [x] Identical common correction in both Results experiment arms and both full-compilation link arms.
 - [ ] Source-aware REVIEW clean, mutant, and restored observations after the correction, preserving the original failure.
 
 ## Tasks
@@ -28,3 +28,4 @@ Clarify the existing producer obligation after a REVIEW output retained revision
 - Preserve source and artifact hashes in `/private/tmp/slc-current-code-adjudication/cases-006-009.json`.
 - Keep this correctness clarification separate from the unmeasured Results-boundary treatment.
 - Preserve the compiled-execution contract and add no model call, natural-language checker heuristic, or new author question for the generated omission.
+- The immutable `/private/tmp/playbook-13.2-relay-common-v3-{baseline,full}` link pair and `/private/tmp/slc-results-boundary-pair-v1/{baseline,treatment}` phase pair share the common correction; only the latter treatment adds the separate Results reminder.
