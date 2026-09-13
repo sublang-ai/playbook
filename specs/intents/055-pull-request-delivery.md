@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress (started 2026-09-12).
+Done (2026-09-12): released as Playbook 13.2.0 after the local release smoke and the live acceptance suite passed.
 
 ## Intent
 
@@ -14,11 +14,11 @@ Adopt [DR-050](../decisions/050-pull-request-delivery.md): compile the new BRANC
 ## Deliverables
 
 - [x] `reference/sdlc/branch.md`, `reference/sdlc/pr.md`, and the amended `reference/sdlc/dev.md` with DR-050 and this ledger.
-- [ ] `reference/sdlc/branch.playbook` and `reference/sdlc/pr.playbook`: GEARS, FSM, linked runtime, registry, siblings, and conformance suites under artifact schema 3; PR's five mechanical items compiled as script states.
-- [ ] `reference/sdlc/dev.playbook` recompiled to the amended source: two planning outcomes, the `branch` and `pr` calls, and their coverage.
-- [ ] Host adoption: public `./branch/*` and `./pr/*` subpaths, packaged files, starter-config enablement, launch validation, release-surface pins, and documentation.
+- [x] `reference/sdlc/branch.playbook` and `reference/sdlc/pr.playbook`: GEARS, FSM, linked runtime, registry, siblings, and conformance suites under artifact schema 3; PR's five mechanical items compiled as script states.
+- [x] `reference/sdlc/dev.playbook` recompiled to the amended source: two planning outcomes, the `branch` and `pr` calls, and their coverage.
+- [x] Host adoption: public `./branch/*` and `./pr/*` subpaths, packaged files, starter-config enablement, launch validation, release-surface pins, and documentation.
 - [x] Package specs reconciled: maintained-workflow enumerations and conformance items cover BRANCH, PR, and the six-outcome DEV.
-- [ ] Release 13.2.0 published through the CI-gated workflow.
+- [x] Release 13.2.0 published through the CI-gated workflow.
 
 ## Tasks
 
