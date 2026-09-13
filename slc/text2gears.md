@@ -76,7 +76,7 @@ text2gears shall not move a shared instruction ahead of behavior-specific contex
 
 Where Source says that a runtime value is relayed in quotes, the leading `>` is prompt content rather than Source-only blockquote syntax.
 If Source supplies a blockquoted template for that relay, text2gears shall keep one literal leading `>` on every quoted line; the target GEARS line therefore uses its outer blockquote marker followed by the literal marker, such as `> > Coder output: <coder-output>`.
-If Source names the relayed value but supplies no template, text2gears shall emit its canonical typed placeholder on a line beginning with literal `> ` and shall not summarize, paraphrase, or invent a value in its place.
+If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.
 An ordinary Source blockquote that specifies a complete acting prompt without requiring quoted relay retains the existing rule above: its one leading marker is Source syntax and is not prompt content.
 
 Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.
@@ -196,7 +196,7 @@ applies instead.
 
 When Source requires a terminal return to the caller, preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS.
 Merely naming a value in a completion predicate or an acting result does not state that the workflow returns it.
-Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.
+Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose, an explicit terminal-return clause in the relevant Results description, or existing nested-call continuation; do not create a Captain action solely to restate the return.
 
 ### Boss-reply continuation
 

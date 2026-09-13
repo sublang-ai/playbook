@@ -18,7 +18,7 @@ Nested-playbook items shall remain without `Results:` and retain their child-con
 ### compiler-results-3
 
 When Source requires a terminal return to its caller, text2gears shall preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS; merely naming a value in a completion predicate or acting result shall not substitute for that obligation.
-The terminal-return requirement shall remain non-acting prose outside prompt blockquotes, before the acting blockquote or in existing nested-call continuation, without a new Captain action solely to restate it.
+The terminal-return requirement shall remain non-acting semantics outside prompt blockquotes, before the acting blockquote, in an explicit terminal-return clause of the relevant Results description, or in existing nested-call continuation, without a new Captain action solely to restate it.
 
 ## Verification
 
@@ -36,4 +36,5 @@ When the integration suite checks candidate GEARS through the supplied SLC insta
 ### compiler-results-4
 
 When the integration suite parses terminal-return fixtures through the supplied SLC installation, it shall verify that explicit return prose before a delegated prompt or in nested-call continuation leaves the authored prompt, acting-item count, and acting result contract unchanged [[compiler-results-3](#compiler-results-3)].
+It shall also verify that an explicit return clause in a complete Results description preserves the existing prompt, actor count and guard while retaining the clause [[compiler-results-3](#compiler-results-3)].
 This representation check shall not claim to detect a model's omission of a terminal-return requirement.

@@ -104,6 +104,17 @@ describe.runIf(compiler !== undefined)(
         expect(preserved[0].result).toEqual(original[0].result);
         expect(preserved[0].playbookId).toBe(original[0].playbookId);
       }
+      const complete = "Results:\n- `complete`: The inspection is complete.";
+      const described = `${heading}${delegated}\n\n${complete} ${returnDuty}\n`;
+      const [before] = parseGearsItems(
+        `${heading}${delegated}\n\n${complete}\n`,
+      );
+      const after = parseGearsItems(described);
+      expect(checkGearsResultContract(described)).toEqual([]);
+      expect(after).toHaveLength(1);
+      expect(after[0].prompt).toBe(before.prompt);
+      expect(Object.keys(after[0].result)).toEqual(Object.keys(before.result));
+      expect(after[0].result.complete).toContain(returnDuty);
     });
   },
 );

@@ -27,6 +27,30 @@ it("clarifies that prose-authored relays govern every applicable complete acting
 describe.runIf(compiler !== undefined)(
   "actual parsed prompts and runtime composition preserve the delivery boundary",
   () => {
+    it("accepts a bare prose-required relay and only Source-authored labels", async () => {
+      const { checkSourceGearsContract } = await import(
+        pathToFileURL(join(compiler!, "dist/verify-source.js")).href
+      );
+      const source =
+        "# Inspect\n\nCaptain shall give Inspector this instruction:\n\n```markdown\nInspect the supplied evidence.\n```\n\nCaptain shall relay the evidence in quotes (`>`).\n";
+      const gears = (relay: string) =>
+        `# Inspect\n\n### INSPECT-1\n\nWhen inspection starts, Captain shall prompt Inspector:\n\n> Inspect the supplied evidence.\n>\n> ${relay}\n`;
+      expect(checkSourceGearsContract(source, gears("> <evidence>"))).toEqual(
+        [],
+      );
+      expect(
+        checkSourceGearsContract(source, gears("> Evidence: <evidence>")),
+      ).toEqual([
+        'INSPECT-1: prompt line is not an authored fragment: "> Evidence: <evidence>"',
+      ]);
+      expect(
+        checkSourceGearsContract(
+          source + "\n> Evidence: <evidence>\n",
+          gears("> Evidence: <evidence>"),
+        ),
+      ).toEqual([]);
+    });
+
     it.each([true, false])(
       "quoted relay present in each governed item: %s",
       async (deliver) => {
