@@ -27,15 +27,26 @@ The builder shall construct both arms from the same reviewed corrected local tex
 
 | Common member | SHA-256 |
 | --- | --- |
-| `text2gears.md` | `bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970` |
-| Link after removing the optional section | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
-| `gears2fsm.md` | `7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a` |
+| `text2gears.md` | `c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae` |
+| Link after removing the optional section | `a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7` |
+| `gears2fsm.md` | `668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722` |
+| `materialize-link.mjs` | `5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb` |
 | `workflow-contracts.json` | `de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3` |
 | `optimize.md` | `4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9` |
 
+The builder shall first undo only the public child-validator import and authored-error recipe [[compiler-child-validation-1](compiler-child-validation.md#compiler-child-validation-1)], public linked-validator and bootstrap guidance [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] [[compiler-entry-options-3](compiler-entry-options.md#compiler-entry-options-3)], and explicit outer-versus-inner quote wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] to recover the exact v5 identities before the existing inverse chain:
+
+| Prior common member | SHA-256 |
+| --- | --- |
+| `text2gears` | `bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970` |
+| `link` | `89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86` |
+| `producer` | `7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a` |
+| `helper` | `eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf` |
+
+Each inverse shall match its reviewed current text exactly once, and the proof shall record every correction's intent and before/after text hashes.
 The builder shall prove exact reconstruction of the published link bytes by undoing only the common authority-boundary guidance, three repository-disposition lines, corrected completion-mapper clause and caller-owned child-acceptance paragraph, and prove exact full-entry restoration by reinserting the extracted optional section.
 The builder shall prove that removing only the public-catalog consumption section recovers the prior producer SHA-256 `9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e`.
-The builder shall first recover the prior common text-to-GEARS SHA-256 `1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db` by undoing only the bare-untemplated-relay wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] and the explicit terminal-return placement in a Results description [[compiler-results-3](compiler-results.md#compiler-results-3)].
+After recovering v5, the builder shall recover the prior common text-to-GEARS SHA-256 `1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db` by undoing only the bare-untemplated-relay wording [[compiler-prompt-relays-3](compiler-prompt-relays.md#compiler-prompt-relays-3)] and the explicit terminal-return placement in a Results description [[compiler-results-3](compiler-results.md#compiler-results-3)].
 The builder shall then recover the exact published text-to-GEARS bytes by removing only the common terminal-return preservation paragraph [[compiler-results-3](compiler-results.md#compiler-results-3)] to recover SHA-256 `6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305`, then the retained common Results-placement guidance [[compiler-results-1](compiler-results.md#compiler-results-1)], first recovering SHA-256 `c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56`, and then its two-sentence common authored-relay clarification.
 Both arms shall contain the same retained Results guidance; its earlier measured comparison remains a separate unchanged experiment.
 

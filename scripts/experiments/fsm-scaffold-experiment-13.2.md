@@ -39,3 +39,5 @@ The integration tests execute actual CLI assembly, supplied-compiler discovery a
 Without the supplied compiler, help tests alone do not establish a valid pair.
 
 [Final C3 assembly evidence](link-experiment-13.2-catalog-scaffold-evidence.json) records the first verified pair and unchanged input inventories; this is preparation evidence, not an accepted provider performance result.
+
+The [common-boundary C3 evidence](link-experiment-13.2-boundary-evidence.json) records scaffold-v3 with the IR081/IR082/IR083 common corrections and unchanged C3 plus prior-pair inventories.

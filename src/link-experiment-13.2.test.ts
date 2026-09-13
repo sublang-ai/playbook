@@ -101,6 +101,8 @@ describe.runIf(compiler !== undefined)(
         expect(a.compilerInventory["dist/pipeline.js"].sha256).toBe(hash(readFileSync(join(compiler!, "dist/pipeline.js"))));
         expect(a.representationCorrections).toEqual(b.representationCorrections);
         expect(a.representationCorrections.priorCommonSha256).toBe("1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db");
+        expect(a.boundaryCorrections).toEqual(b.boundaryCorrections);
+        expect(a.boundaryCorrections.priorCommonHashes).toEqual({"text2gears": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970", "link": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86", "producer": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a", "helper": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf"});
         expect(a.publicCatalog).toEqual(b.publicCatalog);
         expect(a.publicCatalog.literalTargetBindings).toEqual({ review: "review", decide: "decide", code: "code", branch: "branch", pr: "pr" });
         for (const output of [baseline, full]) {
@@ -108,7 +110,7 @@ describe.runIf(compiler !== undefined)(
             read(join(root, "slc/text2gears.md")),
           );
           expect(read(join(output, "playbook/text2gears.md"))).toContain("When Source requires a terminal return to the caller");
-          expect(read(join(output, "playbook/text2gears.md"))).toContain("a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose");
+          expect(read(join(output, "playbook/text2gears.md"))).toContain("a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file");
           expect(read(join(output, "playbook/text2gears.md"))).toContain("an explicit terminal-return clause in the relevant Results description");
           expect(read(join(output, "playbook/text2gears.md"))).toContain(
             "A `Results:` block continues until the next item or section heading",

@@ -72,12 +72,82 @@ const published = {
 };
 const commonHashes = {
   text2gears:
-    "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
-  link: "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
-  producer: "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+    "c38555a7e5e1d33d0c1c71d34beb3b581e62abea819722905ae1af87775922ae",
+  link: "a5c82f9aa30814039f5282d2644373134c076bf9795a6a7df030dc31b6d981a7",
+  producer: "668b8aad77f16e6cdd0878dd34c536ba06825e3b3b1d0ae509e00aeacd9e1722",
+  helper: "5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb",
   catalog: "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
   optimizer: "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
 };
+const v5Hashes = {
+  "text2gears": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
+  "link": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
+  "producer": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+  "helper": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf"
+};
+const boundaryCorrections = {
+  "text2gears": [
+    {
+      "intent": "IR-083",
+      "current": "If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file because the first marker encloses the prompt and the second is literal content, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.\n",
+      "prior": "If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted placeholder line, exactly `> <token>`, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.\n"
+    }
+  ],
+  "link": [
+    {
+      "intent": "IR-082",
+      "current": "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.\nIt shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.\nBoss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.\nA source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.\n\n",
+      "prior": ""
+    },
+    {
+      "intent": "IR-082",
+      "current": "- Exports the public `validateOptions` function specified above and supplies\n  it as the spec's identical `snapshotOptions` callback:",
+      "prior": "- Supplies the spec's `snapshotOptions` with the same options-validation\n  semantics previously generated inline:"
+    }
+  ],
+  "producer": [
+    {
+      "intent": "IR-082",
+      "current": "A generated required input annotation alone is not evidence of that independent Source bootstrap requirement.\n",
+      "prior": ""
+    },
+    {
+      "intent": "IR-081",
+      "current": "The artifact shall not bind or construct a runner or bake in concrete actor\nimplementations. A named stateless public boundary validator is permitted;\nimporting it shall not construct a runtime, bind host capabilities, or call ports.\nEach actor placeholder shall fail explicitly (for example,\n",
+      "prior": "The artifact shall not import a runner or bake in concrete actor\nimplementations. Each actor placeholder shall fail explicitly (for example,\n"
+    },
+    {
+      "intent": "IR-081",
+      "current": "Recognize authored rejected child results with the existing named\n`validatePlaybookCallResult` export from `@sublang/playbook/xstate-runtime`\nand the type-only `PlaybookCallResult` from `@sublang/playbook/runtime`:\n\n```typescript\nimport { validatePlaybookCallResult } from '@sublang/playbook/xstate-runtime';\nimport type { PlaybookCallResult } from '@sublang/playbook/runtime';\n\nexport function authoredChildResult(error: unknown, expectedPlaybookId: string): PlaybookCallResult | undefined {\n  if (!(error instanceof Error)) return undefined;\n  try {\n    const result = validatePlaybookCallResult(\n      (error as Error & { result?: unknown }).result,\n      expectedPlaybookId,\n    );\n    return result.status !== 'ok' || result.terminal?.kind === 'failure' ? result : undefined;\n  } catch {\n    return undefined;\n  }\n}\n```\n\nPass the actual selected target id from the same source-owned target used by\n`invoke.input`; do not fabricate a request or child-session identity for this\ncheck. The shared bridge owns invocation correlation. Its existing validator\nowns the complete [public result union](link.md#playbookports-contract),\nincluding terminal/state shapes, optional abort error, and JSON validity;\ndo not rewrite those structural checks or redeclare their public types.\nAn invalid result returns no authored outcome and takes the existing\ncontrol-error fallback. A validated successful child output still needs its\nseparate Source-owned acceptance predicate on `onDone`.\nValidate the full public result before projecting only the permitted compact\nevidence; evidence minimization shall not narrow the accepted public union.\nThe helper supplies no workflow route, child-domain predicate, runner or actor\nimplementation. Its ordinary package import is an explicit artifact dependency.\n\n",
+      "prior": "The outer trusted error is an actual `Error` instance and therefore is not a\nplain JSON object. The structural guard shall inspect its public `.result`\nproperty directly, then validate only that nested result before sanitizing it;\nit shall not require the outer error itself to pass a plain-object/JSON guard.\nValidation of that nested public result includes its status-specific required\nmembers and target identity: `playbookId` shall equal the current selected\ntarget, an `error` result shall carry a normalized error, and every optional\nmember that is present shall have the public contract's declared shape. A\nlook-alike such as `{ status: 'error' }` is malformed control data, not an\nauthored child failure, and shall take the fallback `failed` arm without\nappending evidence. The guard shall not fabricate missing identity or error\nmembers merely because the status string happens to be recognized.\nThe public result's declared optional `childSessionId` and `state` members are\nvalid when their shapes satisfy the shared contract; validate and then discard\nthem when building compact Captain evidence. They are not undeclared extras.\nLikewise, the public normalized error may carry its declared optional string\n`stack`; validate it and omit it from the compact `{ name, message }` evidence\nrather than rejecting an otherwise valid authored child result.\nApply the public union exactly: an `aborted` or `error` result shall reject an\n`output` member; `childSessionId`, when present, shall be non-empty; `error`\nshall contain only non-empty `name`, string `message`, and optional string\n`stack`; and `state`, when present, shall validate every declared\n`PlaybookState` member and reject unknown or missing members. Treating an\narbitrary JSON-safe object as a valid `state`, or checking only that these\nmembers have broad string/object types, is not complete public-result\nvalidation.\nIn other words, the guard validates the complete public result it received,\nwhile the action retains only the current selected playbook id, status, and\ncompact error. Do not implement evidence minimization by accepting only the\nthree keys that survive that projection.\n\n"
+    }
+  ],
+  "helper": [
+    {
+      "intent": "IR-082",
+      "current": "export function validateOptions(value: unknown): PlaybookRuntimeOptions {",
+      "prior": "function snapshotOptions(value: unknown): PlaybookRuntimeOptions {"
+    },
+    {
+      "intent": "IR-082",
+      "current": "const captured = snapshotJsonValue(value === undefined ? {} : value, ${JSON.stringify(`${descriptor.label} runtime options`)});",
+      "prior": "const captured = snapshotJsonValue(value, ${JSON.stringify(`${descriptor.label} runtime options`)});"
+    },
+    {
+      "intent": "IR-082",
+      "current": "  snapshotOptions: validateOptions,\n  machineInput:",
+      "prior": "  snapshotOptions,\n  machineInput:"
+    }
+  ]
+};
+function beforeBoundaryCorrections(kind, text) {
+  for (const correction of boundaryCorrections[kind]) {
+    assert.equal(text.split(correction.current).length, 2, `${kind}: ${correction.intent} correction must occur exactly once`);
+    text = text.replace(correction.current, correction.prior);
+  }
+  verify(text, v5Hashes[kind], `exact v5 ${kind} before common boundary corrections`);
+  return text;
+}
 const grammarInputs = [
   "node_modules/@sublang/spex/scaffold/specs/meta.md",
   "node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
@@ -173,7 +243,7 @@ const representationCorrections = [
     prior: "Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose or existing nested-call continuation; do not create a Captain action solely to restate the return.",
   },
 ];
-let beforeRepresentations = text2gears;
+let beforeRepresentations = beforeBoundaryCorrections("text2gears", text2gears);
 for (const correction of representationCorrections) {
   assert.equal(beforeRepresentations.split(correction.current).length, 2, "Common representation correction must occur exactly once");
   beforeRepresentations = beforeRepresentations.replace(correction.current, correction.prior);
@@ -213,6 +283,7 @@ assert(
 const recipe = full.slice(recipeStart, recipeEnd);
 const baseline = full.slice(0, recipeStart) + full.slice(recipeEnd);
 verify(baseline, commonHashes.link, "common corrected 13.2 link contract");
+const beforeOptionContract = beforeBoundaryCorrections("link", baseline);
 const guide =
   "At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.\n" +
   "Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.\n\n";
@@ -254,7 +325,7 @@ assert.equal(
 assert.equal(oldCompletion.length, 1);
 assert.equal(newCompletion.length, 1);
 assert.equal(
-  baseline
+  beforeOptionContract
     .replace(guide, "")
     .replace(effects.join("\n") + "\n", "")
     .replace(newCompletion[0], oldCompletion[0])
@@ -278,6 +349,9 @@ const helper = await readRegular(
   sourceRoot,
 );
 verify(producer, commonHashes.producer, "reviewed producer");
+const beforeProducerBoundaries = beforeBoundaryCorrections("producer", producer);
+verify(helper, commonHashes.helper, "reviewed helper");
+beforeBoundaryCorrections("helper", helper.toString());
 const catalogBytes = await readRegular(join(sourceRoot, "slc/workflow-contracts.json"), sourceRoot);
 verify(catalogBytes, commonHashes.catalog, "reviewed public workflow catalog");
 const catalog = JSON.parse(catalogBytes);
@@ -288,7 +362,7 @@ const catalogEnd = producer.indexOf("An item whose behavior is a literal or dyna
 assert(catalogStart >= 0 && catalogEnd > catalogStart, "Unique catalog-consumption section is required");
 const catalogGuidance = producer.slice(catalogStart, catalogEnd);
 assert.equal(producer.split(catalogGuidance).length, 2);
-verify(producer.replace(catalogGuidance, ""), "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e", "prior producer after removing only catalog guidance");
+verify(beforeProducerBoundaries.replace(catalogGuidance, ""), "9eb6e5c1ad681901730186e8f3f681940e16b8b22af748991d00c5bacf7a5a9e", "prior producer after removing only catalog guidance");
 verify(optimizer, commonHashes.optimizer, "reviewed optimizer");
 for (const [name, text] of Object.entries({
   "baseline link.md": baseline,
@@ -443,6 +517,7 @@ const proof = {
   builderSha256: sha(await readFile(fileURLToPath(import.meta.url))),
   publishedHashes: published,
   commonHashes,
+  boundaryCorrections: { priorCommonHashes: v5Hashes, edits: Object.fromEntries(Object.entries(boundaryCorrections).map(([kind, edits]) => [kind, edits.map(({intent, current, prior}) => ({intent, currentSha256: sha(current), priorSha256: sha(prior)}))])) },
   ordinarySemanticInputs: inputs,
   compilerInventory,
   publicCatalog: { sha256: sha(catalogBytes), bytes: catalogBytes.length, literalTargetBindings: catalog.literalTargetBindings },

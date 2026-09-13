@@ -49,7 +49,7 @@ Every ordinary per-phase semantic member is copied under `playbook/_inputs/<comp
 Published package-definition members remain distinct from their corrected adjacent counterparts.
 The new sidecar includes all original members plus the local definition references and helper needed by each phase.
 Both arms include the exact public `workflow-contracts.json` catalog, including its explicit `literalTargetBindings`, in every active phase closure because those phases reach the corrected FSM contract directly or through adjacent references.
-Removing only the catalog-consumption section restores the prior FSM producer; the catalog contains public interfaces, not maintained implementation artifacts.
+Undoing only the reviewed public-validator, bootstrap and quote-layer corrections first restores each v5 member; removing the catalog-consumption section then restores the prior FSM producer; the catalog contains public interfaces, not maintained implementation artifacts.
 The current text-to-GEARS closure explicitly includes its adjacent `gears2fsm.md`, `link.md` and `optimize.md` references; earlier v1/v2 input snapshots retained the ordinary grammar-and-lock closure for that phase and are preserved unchanged.
 Active Markdown references resolve to adjacent corrected definitions, never to the copied `_inputs` counterparts; those copies remain separately identified protected evidence rather than a directed normative fallback.
 It intentionally uses snapshot locators and does not present them as the original ordinary locators.
@@ -82,3 +82,9 @@ Successful assembly and local correctness checks establish reproducibility only.
 Retaining a performance technique requires a separately recorded same-input comparison and strict, source-fidelity and real-runtime acceptance of both generated artifacts.
 
 The separate [FSM scaffold pair builder](fsm-scaffold-experiment-13.2.md) reuses this corrected baseline and isolates only optional initialization guidance.
+
+The v6 common-boundary revision includes IR081 shared child validation, IR082 public entry-option validation and bootstrap guidance, and IR083 quote-layer clarification in both arms.
+Each correction is checked as a unique exact inverse to the prior v5 definition/helper hashes before the existing published reconstruction.
+Only the optional link recipe remains the treatment; prior v5 roots and evidence remain unchanged.
+
+The [common-boundary C3 evidence](link-experiment-13.2-boundary-evidence.json) records verified v6 ordinary/helper roots and the scaffold-v3 pair, including all prior-input inventory checks and exact single-variable comparisons.
