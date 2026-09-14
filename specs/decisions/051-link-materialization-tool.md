@@ -5,8 +5,8 @@
 
 ## Status
 
-Accepted for the measured flat single-player/script workflow with standalone quoted relays (2026-09-12).
-A separate accepted cold minimal demo demonstrates the five-minute overall target once; isolated linking gains outside the quoted-relay case remain unproven.
+Accepted for the measured flat single-player/script workflow with standalone quoted relays (2026-09-12) and one labelled CODE materializer comparison (2026-09-14).
+A separate accepted cold minimal demo demonstrates the five-minute overall target once; isolated linking gains outside the quoted-relay and labelled CODE observations remain unproven.
 
 ## Context
 
@@ -19,7 +19,8 @@ Some required metadata disappears under TypeScript erasure or belongs to authore
 An optional Playbook-owned tool materializes the existing thin module from the loaded FSM and a strict declarative descriptor.
 Its initial domain is flat ordinary player/script workflows using shared default strategies and primitive options.
 An explicit `flat-quoted-relays` profile extends that domain only with deterministic string substitution for standalone `> <token>` lines, keeping shared continuation behavior and the same descriptor keys.
-The linker selects it only when the source needs that exact relay convention; labelled relays, identity-specific composition, structured renderers, and other custom strategies still require ordinary linking.
+An explicit `flat-labelled-relays` profile extends that domain only for flat player/script/nested-call machines with literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
+The linker selects a materializer profile only when the source needs that exact supported convention; identity-specific composition outside the labelled profile, structured renderers, and other custom strategies still require ordinary linking.
 The agent remains responsible for exact erased and authored metadata and every requirement of the complete link definition.
 Unsupported workflows retain ordinary normative linking; invalid descriptors and preflight failures produce diagnostics without replacing the target.
 The tool uses the artifact's installed engine, emits no dependency on itself, and belongs to the definition's machine-readable semantic-input closure.
@@ -55,9 +56,16 @@ The runtime delivers the exact literal Boss task to one delegated call, makes on
 This one accepted observation uses the default helper profile and demonstrates the five-minute demo target; it supplies neither a general latency guarantee nor an isolated full-compilation or default-profile speed ratio.
 The quoted-relay pair's 63.1% improvement remains the separately controlled retention evidence.
 
-## Addendum A1: Unmeasured labelled/nested candidate
+## Addendum A1: Labelled/nested profile scope
 
-An explicitly selected `flat-labelled-relays` experiment supports flat player/script/nested-call machines using literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
+An explicitly selected `flat-labelled-relays` profile supports flat player/script/nested-call machines using literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
 The descriptor retains all existing semantic responsibilities and additionally names the exact exported player-input type.
 The shared factory still owns the nested bridge; this tool never derives child semantics or changes the FSM.
-This candidate supersedes the earlier profile exclusion only for its explicitly supported forms, does not expand the measured retention claim above, and requires a matched accepted comparison before performance adoption.
+This profile supersedes the earlier profile exclusion only for its explicitly supported forms and does not expand the measured retention claim beyond the accepted observations recorded in this decision.
+
+## Addendum A2: Labelled CODE observation
+
+The [accepted labelled CODE comparison](../../scripts/experiments/c10-v13-code-link-pair-evidence.json) used the same CODE source, accepted GEARS and FSM, immutable C10 engine, emitted public entry, strict typecheck, import check, all four generated suites and the 18-case runtime profile.
+The ordinary linked baseline `c10-v13-code-link-baseline` completed in 638,219 ms total, including 636,735 ms link compilation; the `flat-labelled-relays` materializer candidate `c10-v13-code-link-prefer-materializer` completed in 206,865 ms total, including 205,227 ms link compilation.
+The observed reduction for this one pair is 67.59% total and 67.77% link compilation, with provider calls moving from 2 to 1.
+This is one paired observation for CODE under the labelled profile; it is not a DEV result, population ratio, cold full-compilation claim, or authorization to widen descriptors, drop custom strategies, alter generated assertions, or weaken verification.

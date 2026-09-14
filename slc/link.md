@@ -159,6 +159,15 @@ options remain unsupported. Source-derived metadata and all existing
 conformance checks remain mandatory. This profile changes no runtime bridge,
 workflow semantics, or measured performance claim.
 
+For an FSM that satisfies one of the materializer profiles above, derive its
+complete source-owned descriptor and run `materialize-link.mjs` before writing
+an ordinary linked module by hand. Use the supported profile whose composer
+matches the actual source. An unsupported-profile exit continues ordinary
+linking under this definition; invalid metadata must be corrected. Never
+widen an option, omit a required custom strategy, change the FSM, or relax a
+verification check to make a profile fit.
+
+
 ## PlaybookRuntime contract
 
 The emitted module shall default-export a factory of the following shape:

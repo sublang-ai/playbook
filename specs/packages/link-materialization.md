@@ -19,7 +19,7 @@ When loading the source FSM, the helper shall accept JavaScript on supported Nod
 
 ### link-materialization-3
 
-The helper shall accept only schema `sublang.playbook.link.v1`, profiles `flat-defaults` and `flat-quoted-relays` for flat ordinary player/script machines, and the experimental `flat-labelled-relays` profile for flat player/script/nested-playbook machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
+The helper shall accept only schema `sublang.playbook.link.v1`, profiles `flat-defaults` and `flat-quoted-relays` for flat ordinary player/script machines, the `flat-labelled-relays` profile for flat player/script/nested-playbook machines, and unconstrained string, boolean, or finite-number options with explicit requiredness.
 
 ### link-materialization-4
 
@@ -97,9 +97,20 @@ Where the descriptor selects `flat-quoted-relays`, the emitted player composer s
 
 Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall prefix its rendered body once with the installed shared composer's continuation for an empty body, forwarding the continuation mode only when the engine exposes that API and leaving question, reply, and source input values unchanged under the [full prompt contract](../../slc/link.md#player-prompt-composition).
 
+### link-materialization-16
+
+Where an FSM satisfies one supported materializer profile, when linking implementation is selected, the linker shall apply this policy:
+
+| Case | Required behavior |
+| --- | --- |
+| Supported profile | Derive the complete source-owned descriptor and try `materialize-link.mjs` with the matching composer profile before ordinary handwritten linking. |
+| Unsupported-profile exit | Continue ordinary linking under the complete link definition. |
+| Invalid metadata | Correct the metadata before treating linking as successful. |
+| Profile fit constraints | Do not widen options, omit required custom strategies, change the FSM, or relax verification. |
+
 ### link-materialization-22
 
-Where the descriptor selects the experimental `flat-labelled-relays` profile, the helper shall additionally require the exact exported player-input type name in `playerInputExport`, an explicit duplicate-free `omitEmptyRelayLines` array of complete source lines matching `> ` followed by an optional literal label and one terminal placeholder, and an explicit `identityPlaceholders` token-to-canonical-local-role map; it shall reject overlapping identity/field mappings, identity-backed omitted lines, undeclared roles, or any of these extra members on another profile.
+Where the descriptor selects the `flat-labelled-relays` profile, the helper shall additionally require the exact exported player-input type name in `playerInputExport`, an explicit duplicate-free `omitEmptyRelayLines` array of complete source lines matching `> ` followed by an optional literal label and one terminal placeholder, and an explicit `identityPlaceholders` token-to-canonical-local-role map; it shall reject overlapping identity/field mappings, identity-backed omitted lines, undeclared roles, or any of these extra members on another profile.
 
 ### link-materialization-23
 
@@ -129,7 +140,7 @@ Where a built SLC installation is supplied, the integration probe shall execute 
 
 ### link-materialization-20
 
-When checking the packed definition surface, the integration suite shall verify the reviewed helper, complete normative entry and resolving contract references [[link-materialization-1](#link-materialization-1)] [[link-materialization-12](#link-materialization-12)].
+When checking the packed definition surface, the integration suite shall verify the reviewed helper, complete normative entry, supported-profile preference, and resolving contract references [[link-materialization-1](#link-materialization-1)] [[link-materialization-12](#link-materialization-12)] [[link-materialization-16](#link-materialization-16)].
 
 ### link-materialization-21
 

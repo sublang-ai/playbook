@@ -36,14 +36,29 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     expect(full).toContain('## Optional deterministic materialization');
     expect(full).not.toContain('## Supported recipe');
     expect(sha(recipe)).toBe('a00a5b7996d1449bff312299f804906256c6dcd5fef18d472dd99833c6d0f7dc');
-    // The current helper includes an explicitly unmeasured labelled/nested profile.
+    // The current helper includes an accepted labelled/nested CODE profile.
     // Frozen historical inputs remain unshipped reproduction artifacts.
     expect(sha(read('slc/materialize-link.mjs'))).toBe('5024778548509370d899f3709829fd7609d67bc4fe5d72b2c76d5d0ab26f59eb');
     expect(sha(read('scripts/experiments/materialize-link-v2.mjs'))).toBe('fe7336bc4c1511c4170ac3cdaeda4ffc30f3848b40ae7301f6660c20067e58e0');
-    expect(sha(full)).toBe('3fbeb50e2cfeefba844c74491336ac1558bd921b0e8cb672d1ad6b1d9dab9d57');
+    expect(sha(full)).toBe('680b0d2af76bf629c7f7c7417d27aa08205a5cde2ba2eb924389a2df0435642e');
+    const preferenceGuide = [
+      'For an FSM that satisfies one of the materializer profiles above, derive its',
+      'complete source-owned descriptor and run `materialize-link.mjs` before writing',
+      'an ordinary linked module by hand. Use the supported profile whose composer',
+      'matches the actual source. An unsupported-profile exit continues ordinary',
+      'linking under this definition; invalid metadata must be corrected. Never',
+      'widen an option, omit a required custom strategy, change the FSM, or relax a',
+      'verification check to make a profile fit.',
+      '',
+      '',
+      '',
+    ].join('\n');
+    expect(full.split(preferenceGuide)).toHaveLength(2);
+    const beforePreferenceGuide = full.replace(preferenceGuide, '');
+    expect(sha(beforePreferenceGuide)).toBe('3fbeb50e2cfeefba844c74491336ac1558bd921b0e8cb672d1ad6b1d9dab9d57');
     const entryGuardGuide = "A generated entry guard that requires the text already in context is likewise\nnot independent Source evidence; it is a producer defect when the entry action\nhas yet to copy the event's text. Do not compensate with a required option or\ninvented startup task. `entryEvent.contextField` supplies failure-retry text;\nit does not populate fresh entry context before FSM guards execute.\n";
-    expect(full.split(entryGuardGuide)).toHaveLength(2);
-    const beforeEntryGuard = full.replace(entryGuardGuide, '');
+    expect(beforePreferenceGuide.split(entryGuardGuide)).toHaveLength(2);
+    const beforeEntryGuard = beforePreferenceGuide.replace(entryGuardGuide, '');
     expect(sha(beforeEntryGuard)).toBe('981b18e0ab29ff134148fa52ee4bfe380d200683a2f220ae4ac32243b586a07a');
     const currentValidatorGuide = [
       "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.",
@@ -54,8 +69,8 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
       "The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.",
       "It shall normalize only absent `undefined` to an empty option slice, retain actual required options and source-authored defaults, reject null, non-JSON values, unknown keys and invalid declared values, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.",
     ].join('\n') + '\n';
-    expect(full.split(currentValidatorGuide)).toHaveLength(2);
-    expect(full.indexOf(currentValidatorGuide)).toBeGreaterThan(full.indexOf('## PlaybookRuntime contract'));
+    expect(beforePreferenceGuide.split(currentValidatorGuide)).toHaveLength(2);
+    expect(beforePreferenceGuide.indexOf(currentValidatorGuide)).toBeGreaterThan(beforePreferenceGuide.indexOf('## PlaybookRuntime contract'));
     const historicalFull = beforeEntryGuard.replace(currentValidatorGuide, previousValidatorGuide);
     expect(sha(historicalFull)).toBe('03a264af3ff47143b2f7e6fef9b53076fce75eecec79dcc2bf8567b965b4d0b1');
     const validatorGuide = previousValidatorGuide + [
@@ -72,10 +87,10 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
       '  semantics previously generated inline:',
     ].join('\n'));
     expect(sha(beforeValidator)).toBe('088d1491e619d848e25dd2d31fcc334920347e2f9910d087cd4563885ea948b3');
-    const currentRecipe = full.slice(full.indexOf('## Optional deterministic materialization\n'), full.indexOf('## PlaybookRuntime contract\n'));
+    const currentRecipe = beforePreferenceGuide.slice(beforePreferenceGuide.indexOf('## Optional deterministic materialization\n'), beforePreferenceGuide.indexOf('## PlaybookRuntime contract\n'));
     const childAcceptance = "`onDone` proves successful bridge delivery without a declared child failure;\nit does not establish every caller-owned domain condition. The caller shall\nenforce its own explicit Source-authored acceptance or relay predicates on\nthe delivered output before continuing, without inventing predicates from\ncallee implementation details or overriding the child's compiled terminal\nkind with output fields.\n";
     const previousChildAcceptance = "Because the bridge routes a failure terminal to the error path, `onDone` alone\nproves the child succeeded and a caller never inspects a callee's output fields\nto decide that; a caller reads those fields only when its own Source relays\nthem.\n";
-    expect(full.split(childAcceptance)).toHaveLength(2);
+    expect(beforePreferenceGuide.split(childAcceptance)).toHaveLength(2);
     const fullV2 = beforeValidator.replace(childAcceptance, previousChildAcceptance).replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
     expect(sha(fullV2)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
     const previousGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'

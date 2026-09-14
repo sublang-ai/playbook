@@ -76,7 +76,7 @@ meta.md       The spec of specs
 | [DR-048](decisions/048-typed-terminal-outcomes.md) | 048-typed-terminal-outcomes.md | Every final state declares its terminal kind, a completed child's call result carries that record, and the nested-call bridge rejects a failure terminal so a caller routes it mechanically |
 | [DR-049](decisions/049-portable-session-contract.md) | 049-portable-session-contract.md | Portable sessions: shared lifecycle, token-free recovery, exact-checkpoint hints and historical context |
 | [DR-050](decisions/050-pull-request-delivery.md) | 050-pull-request-delivery.md | BRANCH and PR join the maintained set: unchanged-governed branch creation with a receipt-owned base revision, script-state check wait, fix publication, merge, and fast-forward, one nested `code` fix, typed terminals with no merge-commit claim; DEV gains pull-request paths; the starter binds both Coders to `dev.coder` |
-| [DR-051](decisions/051-link-materialization-tool.md) | 051-link-materialization-tool.md | Optional thin-module materializer retained for measured flat quoted-relay linking; full-compilation performance remains separate |
+| [DR-051](decisions/051-link-materialization-tool.md) | 051-link-materialization-tool.md | Optional thin-module materializer retained for measured flat quoted-relay linking and one accepted labelled CODE comparison |
 | [DR-052](decisions/052-helper-backed-compact-link.md) | 052-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
 | [DR-053](decisions/053-compact-link-definition.md) | 053-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
 | [DR-054](decisions/054-fsm-authoring-scaffold.md) | 054-fsm-authoring-scaffold.md | Optional incomplete FSM authoring scaffold, exact constants and typed actions; unmeasured experiment |
@@ -104,7 +104,7 @@ meta.md       The spec of specs
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
 | [link-experiments.md](packages/link-experiments.md) | Isolated matched Playbook 13.2 compiler-definition experiments and frozen input identity |
-| [link-materialization.md](packages/link-materialization.md) | Optional link materialization, experimental labelled/nested profile, strict descriptor, atomic emission, and semantic closure |
+| [link-materialization.md](packages/link-materialization.md) | Optional link materialization, supported labelled/nested CODE profile, strict descriptor, atomic emission, and semantic closure |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
