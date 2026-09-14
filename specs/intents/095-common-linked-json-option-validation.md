@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress.
+Complete.
 
 ## Intent
 
@@ -20,7 +20,7 @@ Prevent generated public option validators from accepting non-JSON inputs by dir
 ## Tasks
 
 1. [x] Update the common definition and existing spec, verify the existing public helper through emitted-validator integration, and preserve actual failed-artifact evidence.
-2. [ ] Record the real paired artifact controls and subsequent compilation acceptance under the combined guidance.
+2. [x] Record the real paired artifact controls and subsequent compilation acceptance under the combined guidance.
 
 ## Verification
 
@@ -34,3 +34,7 @@ Prevent generated public option validators from accepting non-JSON inputs by dir
 - `/private/tmp/playbook-13.2-common-v11-readiness/readiness.json` records those focused results and the separately passing 11-test C8 builder suite.
 - Subsequent compilation under the combined v11 guidance remains pending.
 - The baseline's compiler success and source/runtime checks do not establish full option-contract acceptance; no provider run or speed improvement is claimed by this guidance change.
+
+- The [accepted C10/v13 CODE pair](../../scripts/experiments/c10-v13-code-link-pair-evidence.json) preserves original Source and accepted GEARS, then uses real resumed FSM `2E2YFN` and links `crYwRj` / `aMUkFr`; each ordinary emitted entry passes strict TypeScript, import, eight generated tests, and all eighteen runtime cases with real Git and controlled player/child responses.
+- Both public validators accept empty options and optional caller/run-results strings, reject unknown and non-JSON values including non-enumerable/accessor properties, and perform zero getter reads.
+- Post-runtime checks preserve all 11921 baseline and 11922 candidate wrapper inputs; this is accepted resumed phase-chain correctness and a matched link measurement, not a cold full-source CODE timing.
