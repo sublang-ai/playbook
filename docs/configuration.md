@@ -55,8 +55,16 @@ key is that playbook's option slice. Every manifest role must be present
 exactly once. The launcher injects the rest — you do not write host wiring by
 hand.
 
-The seeded config runs every stable player on Claude Opus 5 — the Coder at
-`high` effort, the Reviewer and Analyst at `xhigh`:
+The launcher seeds one adapter for the Captain and all stable players from
+locally visible credentials: Claude first, then Codex. It uses Claude Opus 5
+for Claude or GPT-5.6 Sol for Codex, with Captain and Coder at `high` effort
+and Reviewer and Analyst at `xhigh`. If neither adapter is configured, it
+seeds Claude and prints a notice. Credentials do not prove SDK availability
+or remaining quota; launch still checks the configured adapter. Existing
+configs are left unchanged.
+
+The Claude default is shown below. A Codex seed also adds
+`permissions.writablePaths: ['.git']` to each agent:
 
 ```yaml
 captain:

@@ -45,6 +45,7 @@ class ScriptedAdapter implements AgentAdapter {
   static decisionCalls = 0;
   static closingCalls = 0;
   static refuseCaptain = false;
+  static changeBeforeFailure: string | undefined;
   readonly agent = 'claude-code';
 
   async *run(
@@ -87,6 +88,9 @@ class ScriptedAdapter implements AgentAdapter {
         ScriptedAdapter.playerScript[ScriptedAdapter.playerCalls] ?? 'ok';
       ScriptedAdapter.playerCalls += 1;
       if (fate === 'error') {
+        if (ScriptedAdapter.changeBeforeFailure) {
+          await writeFile(ScriptedAdapter.changeBeforeFailure, 'unresolved edit\n');
+        }
         yield createEvent(
           'done',
           this.agent,
@@ -172,13 +176,14 @@ function withFixture(prefix: string, run: (dir: string) => Promise<void>) {
   };
 }
 
-async function openParkedSession(dir: string) {
+async function openParkedSession(dir: string, unresolved = false) {
   ScriptedAdapter.playerScript = ['error'];
   ScriptedAdapter.playerCalls = 0;
   ScriptedAdapter.decisionCalls = 0;
   ScriptedAdapter.closingCalls = 0;
   ScriptedAdapter.refuseCaptain = false;
   const cwd = await initializeTestRepository(dir);
+  ScriptedAdapter.changeBeforeFailure = unresolved ? join(cwd, 'tracked.txt') : undefined;
   const configPath = join(dir, 'playbook.config.yaml');
   await writeFile(
     configPath,
@@ -232,6 +237,32 @@ async function openParkedSession(dir: string) {
 }
 
 describe('host-selected give-up over a real session host', () => {
+  it(
+    'durably abandons unresolved work before clearing its root',
+    withFixture('playbook-host-giveup-effects-', async (dir) => {
+      const { controller, replies } = await openParkedSession(dir, true);
+      try {
+        const parked = await controller.handleBossTurn('/code edit the widget');
+        expect(parked.unresolvedEffects).toHaveLength(1);
+        ScriptedAdapter.refuseCaptain = true;
+        const callsBefore = ScriptedAdapter.closingCalls;
+        const stopped = await controller.submitShellAction('give-up');
+        expect(stopped.state).toBe('settled');
+        expect(stopped.snapshot.mode).toBe('chat');
+        expect(stopped.retainedGenerations?.code).toBeUndefined();
+        expect(stopped.unresolvedEffects).toEqual(parked.unresolvedEffects);
+        expect(stopped.settledAbandonment).toBeDefined();
+        expect(await controller.read()).toEqual(stopped);
+        expect(replies.at(-1)).toContain('Observed repository change');
+        expect(ScriptedAdapter.closingCalls).toBe(callsBefore);
+        expect(ScriptedAdapter.decisionCalls).toBe(0);
+      } finally {
+        await controller.dispose();
+      }
+    }),
+    60_000,
+  );
+
   it(
     'ends the parked run with no model call of any kind and offers no resumption',
     withFixture('playbook-host-giveup-', async (dir) => {

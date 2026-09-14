@@ -3310,9 +3310,13 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     await shell.dispose?.();
   });
 
-  it.each(['capability', 'begin', 'dispose', 'complete'] as const)(
-    'keeps unresolved-effect abandonment failed when host %s fails',
-    async (failurePoint) => {
+  it.each(
+    (['capability', 'begin', 'dispose', 'complete'] as const).flatMap(
+      (failurePoint) => [false, true].map((giveUp) => [failurePoint, giveUp] as const),
+    ),
+  )(
+    'keeps unresolved-effect abandonment failed when host %s fails (give-up: %s)',
+    async (failurePoint, giveUp) => {
       const rootSessionId = '21000000-0000-4000-8000-000000000041';
       const ledger = unresolvedEffectTestLedger('code', rootSessionId);
       const failureMessage =
@@ -3414,26 +3418,28 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       ]);
 
       await shell.handleBossTurn(
-        turn('abandon the unresolved attempt', 2),
+        turn(giveUp ? shell.submitShellAction!('give-up') : 'abandon the unresolved attempt', 2),
         abandonment.context,
       );
 
-      const report = turnSummaryCalls(abandonment).at(-1)?.prompt ?? '';
-      expect(report).toContain('Settlement status: failed');
-      expect(report).toContain('Runtime action receipt: failed');
-      expect(report).toContain(failureMessage);
-      expect(report).not.toContain(
-        'Applied "abandon:unresolved-effect"',
-      );
-      expect(order).toEqual(
-        failurePoint === 'capability'
-          ? ['apply', 'present']
-          : failurePoint === 'begin'
-          ? ['apply', 'begin', 'present']
-          : failurePoint === 'dispose'
-            ? ['apply', 'begin', 'dispose', 'present']
-            : ['apply', 'begin', 'dispose', 'complete', 'present'],
-      );
+      if (giveUp) {
+        expect(abandonment.captainCalls).toEqual([]);
+        expect(abandonment.replies).toHaveLength(1);
+        expect(abandonment.replies[0]).not.toContain('Stopped that workflow');
+        expect(abandonment.replies[0]).toContain('could not confirm');
+        expect(abandonment.replies[0]).toContain('Possible repository effect');
+      } else {
+        const report = turnSummaryCalls(abandonment).at(-1)?.prompt ?? '';
+        expect(report).toContain('Settlement status: failed');
+        expect(report).toContain('Runtime action receipt: failed');
+        expect(report).toContain(failureMessage);
+        expect(report).not.toContain('Applied "abandon:unresolved-effect"');
+      }
+      const expectedOrder = failurePoint === 'capability'
+        ? [] : failurePoint === 'begin'
+          ? ['begin'] : failurePoint === 'dispose'
+            ? ['begin', 'dispose'] : ['begin', 'dispose', 'complete'];
+      expect(order).toEqual(giveUp ? expectedOrder : ['apply', ...expectedOrder, 'present']);
       expect(registry.runtimes[0]?.disposeCount).toBe(
         failurePoint === 'capability' || failurePoint === 'begin' ? 0 : 1,
       );
@@ -10140,7 +10146,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     };
   };
 
-  it('parks a pre-effect retained generation behind its authoritative ledger suffix', async () => {
+  it.each(['incomplete', 'unchanged'] as const)('gives up a retained nested generation with %s effects', async (effect) => {
     let authoritativeLedger = incompleteRetainedLedger();
     const code = fakeCodeEntry();
     const review = fakePlaybookEntry('review', 'review');
@@ -10199,7 +10205,10 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
           writeAhead: vi.fn(async () => authoritativeLedger),
         }),
       });
+    const begin = vi.fn(async () => {});
+    const complete = vi.fn(async () => {});
     const shell = makeShell([code, review], {
+      unresolvedEffectSettlement: { begin, complete },
       sessionIds: [TARGET_ROOT_ID, TARGET_CHILD_ID],
       hostCapabilities: {
         code: capabilities,
@@ -10304,35 +10313,59 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         ?.prompt,
     ).toContain('Advertised actions: none.');
 
-    authoritativeLedger = completedRetainedLedger();
-    code.runtimes[0]!.snapshot = {
-      ...code.runtimes[0]!.snapshot!,
-      effectLedger: authoritativeLedger,
-    };
-    review.runtimes[0]!.snapshot = {
-      ...review.runtimes[0]!.snapshot!,
-      effectLedger: authoritativeLedger,
-    };
-    const stillFenced = stubContext([
-      captainJson({ action: 'deliver' }),
-      {
-        status: 'ok',
-        turnId: 3,
-        finalText: 'The retained frame still needs reconciliation.',
-      },
-    ]);
-    await shell.handleBossTurn(
-      turn('try the retained child', 3),
-      stillFenced.context,
-    );
+    if (effect === 'unchanged') {
+      authoritativeLedger = completedRetainedLedger();
+      code.runtimes[0]!.snapshot = {
+        ...code.runtimes[0]!.snapshot!,
+        effectLedger: authoritativeLedger,
+      };
+      review.runtimes[0]!.snapshot = {
+        ...review.runtimes[0]!.snapshot!,
+        effectLedger: authoritativeLedger,
+      };
+      const stillFenced = stubContext([
+        captainJson({ action: 'deliver' }),
+        {
+          status: 'ok',
+          turnId: 3,
+          finalText: 'The retained frame still needs reconciliation.',
+        },
+      ]);
+      await shell.handleBossTurn(
+        turn('try the retained child', 3),
+        stillFenced.context,
+      );
+      expect(code.runtimes[0]?.inputs).toEqual([]);
+      expect(review.runtimes[0]?.inputs).toEqual([]);
+      expect(
+        stillFenced.captainCalls.find((call) =>
+          isDecisionPrompt(call.prompt),
+        )?.prompt,
+      ).toContain('Advertised actions: none.');
+
+    }
+
+    const effects = shell.exportSettlement()!.unresolvedEffects;
+    const stopped = stubContext();
+    await shell.handleBossTurn(turn(shell.submitShellAction!('give-up'), 4), stopped.context);
+    expect(stopped.captainCalls).toEqual([]);
+    expect(stopped.replies[0]).toContain('Stopped that workflow');
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(review.runtimes[0]?.disposeCount).toBe(1);
     expect(code.runtimes[0]?.inputs).toEqual([]);
     expect(review.runtimes[0]?.inputs).toEqual([]);
-    expect(
-      stillFenced.captainCalls.find((call) =>
-        isDecisionPrompt(call.prompt),
-      )?.prompt,
-    ).toContain('Advertised actions: none.');
-
+    if (effect === 'incomplete') {
+      expect(begin).toHaveBeenCalledWith({ rootPlaybookId: 'code', unresolvedEffects: effects });
+      expect(complete).toHaveBeenCalledWith({ rootPlaybookId: 'code', unresolvedEffects: effects });
+    } else {
+      expect(begin).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+    }
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      unresolvedEffects: effects,
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+    });
     await shell.dispose?.();
   });
 

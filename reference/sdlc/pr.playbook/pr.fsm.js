@@ -41,7 +41,7 @@ const PUBLISH_FIX_COMMAND = [
     'sleep 5',
     'done',
 ].join('\n');
-const MERGE_PULL_REQUEST_COMMAND = 'gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"';
+const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
 const UPDATE_LOCAL_DEFAULT_COMMAND = 'git pull --ff-only';
 const WAIT_FOR_CHECKS_RESULTS = {
     checksPassed: "The command exited with status zero: the pull request's checks passed, or the repository still reported no checks after a brief wait for them to register.",
@@ -57,7 +57,7 @@ const WAIT_FOR_CHECKS_AFTER_FIX_RESULTS = {
 };
 const MERGE_PULL_REQUEST_RESULTS = {
     merged: 'The command exited with status zero: the pull request is merged with a merge commit on the repository default branch, the remote and local branch are deleted, and the local default branch is checked out.',
-    mergeRefused: 'The command exited with a nonzero status: GitHub refused the merge, or the merge landed but the local switch to the default branch or the branch deletion failed.',
+    mergeRefused: 'The command exited with a nonzero status: GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.',
 };
 const UPDATE_LOCAL_DEFAULT_RESULTS = {
     localDefaultUpdated: 'The command exited with status zero: the local default branch is fast-forwarded to the merged head.',

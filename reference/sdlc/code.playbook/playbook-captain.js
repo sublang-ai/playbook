@@ -3321,6 +3321,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
      * may return an executed receipt to its result phase.
      */
     const settleUnresolvedEffectAbandonment = async (unresolvedLeaf) => {
+        abandonmentSettlementUnsafe = true;
         if (leafFrame() !== unresolvedLeaf) {
             throw new Error('unresolved-effect abandonment requires the active leaf');
         }
@@ -3347,6 +3348,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             rootPlaybookId,
         });
         await runEffect(() => unresolvedEffectSettlement.complete(settlement));
+        abandonmentSettlementUnsafe = false;
     };
     const callResultFor = (frame, result) => {
         if (result.outcome === 'unresolved-effect') {
@@ -4693,6 +4695,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (!root)
             return false;
         const label = frameLabel(root);
+        if (activeTurn?.hostGiveUp === true &&
+            freezeTurnUnresolvedEffects().length > 0) {
+            await settleUnresolvedEffectAbandonment(leafFrame());
+            facts.push(`Dismissed the ${label} engagement with unresolved repository effects reported.`);
+            return false;
+        }
         // Dismissal leaves the procedure unfinished. Persist the latest safe
         // generation captured for this turn before disposal erases the frames —
         // unless the Boss gave up on it (CAPTAIN-44), in which case retaining it
@@ -5066,7 +5074,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 selection.actionId === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID) &&
             fencedLeaf !== undefined;
         if (retainedEffectReconciliation !== undefined &&
-            !routesRetainedReconciliation) {
+            !routesRetainedReconciliation &&
+            !(selection.action === 'dismiss' && turn.hostGiveUp === true)) {
             return rejectSelection(selection, 'retained work must reconcile its repository-effect evidence before an ordinary action can run');
         }
         if (selection.action === 'resume') {
@@ -5359,7 +5368,6 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     await settleUnresolvedEffectAbandonment(leaf);
                 }
                 catch (error) {
-                    abandonmentSettlementUnsafe = true;
                     const normalized = normalizeErrorCompact(error) ?? {
                         name: 'Error',
                         message: String(error),
@@ -5473,8 +5481,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const giveUpReplyText = () => {
         const report = activeTurn?.report;
         const facts = report?.bossFacts ?? report?.facts ?? [];
-        const opening = 'Stopped that workflow. I will not resume it.';
-        const closing = 'Send the command again to start fresh work.';
+        const stopped = report?.status === 'ok';
+        const opening = stopped
+            ? 'Stopped that workflow. I will not resume it.'
+            : 'I could not confirm that the workflow was stopped.';
+        const closing = stopped
+            ? 'Send the command again to start fresh work.'
+            : 'The stop did not settle successfully; recover the session before continuing.';
         const composed = [
             opening,
             ...(facts.length === 0

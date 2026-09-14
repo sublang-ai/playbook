@@ -5229,6 +5229,7 @@ export function createPlaybookCaptainShell(
   const settleUnresolvedEffectAbandonment = async (
     unresolvedLeaf: EngagementFrame,
   ): Promise<void> => {
+    abandonmentSettlementUnsafe = true;
     if (leafFrame() !== unresolvedLeaf) {
       throw new Error(
         'unresolved-effect abandonment requires the active leaf',
@@ -5263,6 +5264,7 @@ export function createPlaybookCaptainShell(
       rootPlaybookId,
     });
     await runEffect(() => unresolvedEffectSettlement.complete(settlement));
+    abandonmentSettlementUnsafe = false;
   };
 
   const callResultFor = (
@@ -6913,6 +6915,14 @@ export function createPlaybookCaptainShell(
     const root = rootFrame();
     if (!root) return false;
     const label = frameLabel(root);
+    if (
+      activeTurn?.hostGiveUp === true &&
+      freezeTurnUnresolvedEffects().length > 0
+    ) {
+      await settleUnresolvedEffectAbandonment(leafFrame()!);
+      facts.push(`Dismissed the ${label} engagement with unresolved repository effects reported.`);
+      return false;
+    }
     // Dismissal leaves the procedure unfinished. Persist the latest safe
     // generation captured for this turn before disposal erases the frames —
     // unless the Boss gave up on it (CAPTAIN-44), in which case retaining it
@@ -7368,7 +7378,8 @@ export function createPlaybookCaptainShell(
       fencedLeaf !== undefined;
     if (
       retainedEffectReconciliation !== undefined &&
-      !routesRetainedReconciliation
+      !routesRetainedReconciliation &&
+      !(selection.action === 'dismiss' && turn.hostGiveUp === true)
     ) {
       return rejectSelection(
         selection,
@@ -7726,7 +7737,6 @@ export function createPlaybookCaptainShell(
         try {
           await settleUnresolvedEffectAbandonment(leaf);
         } catch (error) {
-          abandonmentSettlementUnsafe = true;
           const normalized = normalizeErrorCompact(error) ?? {
             name: 'Error',
             message: String(error),
@@ -7852,8 +7862,13 @@ export function createPlaybookCaptainShell(
   const giveUpReplyText = (): string => {
     const report = activeTurn?.report;
     const facts = report?.bossFacts ?? report?.facts ?? [];
-    const opening = 'Stopped that workflow. I will not resume it.';
-    const closing = 'Send the command again to start fresh work.';
+    const stopped = report?.status === 'ok';
+    const opening = stopped
+      ? 'Stopped that workflow. I will not resume it.'
+      : 'I could not confirm that the workflow was stopped.';
+    const closing = stopped
+      ? 'Send the command again to start fresh work.'
+      : 'The stop did not settle successfully; recover the session before continuing.';
     const composed = [
       opening,
       ...(facts.length === 0

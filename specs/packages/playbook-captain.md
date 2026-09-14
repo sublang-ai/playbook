@@ -482,6 +482,7 @@ Where a Boss turn's decision came from a give-up selection [[playbook-captain-62
 - no decision call shall be allocated, the host having supplied that turn's decision [[playbook-captain-7](#playbook-captain-7)];
 - the shell shall compose the closing reply of [[playbook-captain-19](#playbook-captain-19)] itself from that settlement's outcome-report facts and present it through the one presentation seam under the same single-attempt rule, making no result-phase call [[playbook-captain-20](#playbook-captain-20)];
 - the durable conversation shall learn of the turn through the catch-up suffix of [[playbook-captain-35](#playbook-captain-35)] rather than through a call of its own.
+- the give-up shall pass the retained-effect fence without reconciling or executing a leaf action, freeze unresolved evidence before removing any frame, and, where that evidence is nonempty, use the durable root-abandonment transaction of [[playbook-captain-58](#playbook-captain-58)]; any failure shall preserve that transaction's unsafe settlement boundary, and the closing reply shall claim a successful stop only after an `ok` settlement.
 
 ### Captain calls and ports
 
@@ -1303,6 +1304,7 @@ Where the test suite drives the Playbook Captain shell with an engaged leaf whos
 - a turn whose text is not the selection's is decided by the ordinary decision call, with the selection dropped and the root still engaged [[playbook-captain-7](#playbook-captain-7)];
 - over the session host, the selection settles one durable turn leaving the shell idle with that root's retained generation cleared, so the settled session offers no resumption of it [[playbook-captain-44](#playbook-captain-44)];
 - a leaf publishing no control surface, one whose control view throws, and one standing behind the retained-effect fence each publish the shell's control all the same, the surfaces staying disjoint in both directions [[playbook-captain-62](#playbook-captain-62)].
+- selecting give-up over a real unresolved CODE run and a retained nested stack shall dispose the entire root without a leaf action or parent resumption, preserve the exact evidence through durable abandonment and presentation, and clear retention; absent settlement capability or failure at begin, disposal, or completion shall leave settlement unexportable and present no successful-stop claim [[playbook-captain-63](#playbook-captain-63)].
 
 ### Lifecycle and telemetry
 

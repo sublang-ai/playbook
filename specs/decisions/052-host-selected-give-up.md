@@ -27,6 +27,7 @@ An exit that works only while the provider is healthy is not an exit.
 - A give-up turn makes no model call. Its decision is the host's, and its closing reply is the shell's own deterministic rendering of that settlement, presented through the one presentation seam under the same single-attempt rule. The durable conversation learns of the turn through the catch-up this shell already defines, never through a second memory channel.
 - A give-up clears the root's retained generation instead of retaining it. An ordinary dismissal preserves the turn-start candidate so the work can resume; a Boss who gave up is not offered it back on their next message.
 - A give-up reports unresolved repository effects rather than reconciling them. The control advertises whether or not the root stands behind the retained-effect fence, and the settlement carries the fence's own ordered report, so effects of unknown standing are named to the Boss and never vanish with the run.
+- Where unresolved effects remain, give-up uses the existing durable abandonment transaction before removing the root; it needs no leaf action, and any persistence or disposal failure retains the unsafe boundary and cannot produce a successful-stop reply.
 - The host surface stays additive and optional: a shell publishing neither member advertises nothing, which is what an older shell already means to a host.
 
 ## Consequences

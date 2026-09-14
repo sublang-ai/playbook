@@ -241,6 +241,7 @@ function successfulMergeScript(repo: string, remote: string): string {
     'git checkout -q main',
     'git branch -q -D "$branch"',
     'git push -q origin --delete "$branch"',
+    `echo MERGED > '${repo}/../control/pr.state'`,
     '',
   ].join('\n');
 }
@@ -275,7 +276,14 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
       '    cat "$control/checks.out"',
       '    exit 0',
       '    ;;',
+      "  'repo view')",
+      '    echo main; exit 0',
+      '    ;;',
       "  'pr view')",
+      '    case "$*" in',
+      `      *'--json url'*) echo '${PULL_REQUEST_URL}'; exit 0 ;;`,
+      `      *'--json state'*) cat "$control/pr.state"; exit $? ;;`,
+      '    esac',
       '    if [ -f "$control/head.oid" ]; then cat "$control/head.oid"; else git rev-parse HEAD; fi',
       '    exit 0',
       '    ;;',
@@ -309,6 +317,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
   const setMerge = async (script: string): Promise<void> => {
     await writeFile(join(control, 'merge.sh'), script, 'utf8');
   };
+  await writeFile(join(control, 'pr.state'), 'OPEN\n');
   await setChecks();
   await setMerge(successfulMergeScript(repo, remote));
 
@@ -519,6 +528,26 @@ function terminalOf(result: Awaited<ReturnType<PlaybookRuntime['handleBossInput'
 }
 
 describe('linked PR runtime', () => {
+  it.each(['queued', 'unreadable state', 'unchanged checkout'] as const)(
+    'refuses a zero-exit merge with %s', async (scenario) => {
+    const host = await harness({ players: [publishedCoder], judges: [OPENED] });
+    const merge = successfulMergeScript(host.repo, host.remote);
+    await host.setMerge(scenario === 'queued'
+      ? '#!/bin/sh\necho "Already queued to merge" >&2\nexit 0\n'
+      : scenario === 'unreadable state'
+        ? `${merge}rm '${host.control}/pr.state'\n`
+        : merge.replace('git checkout -q main', `echo MERGED > '${host.control}/pr.state'\nexit 0\ngit checkout -q main`));
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    const result = terminalOf(await runtime.handleBossInput({
+      text: CALLER_INPUT, signal: new AbortController().signal,
+    }));
+    expect(result.output).toMatchObject({ status: 'not-merged', reason: 'merge-refused' });
+    expect(scriptEvents(host)).not.toContainEqual(expect.objectContaining({ stateId: 'updateLocalDefault' }));
+    expect(await git(host.repo, 'branch', '--show-current')).toBe(scenario === 'unreadable state' ? 'main' : BRANCH);
+    await runtime.dispose();
+  });
+
   it('labels only the publication round PR itself owns', () => {
     expect(prStateCountLabels).toEqual({ openPullRequest: 'publication round' });
     expect(prCopyPasteGuardNames).toEqual(['opened']);
@@ -629,7 +658,10 @@ describe('linked PR runtime', () => {
     expect(await ghCommands(host)).toEqual([
       'pr checks',
       'pr checks --watch --fail-fast',
+      'pr view --json url --jq .url',
+      'repo view --json defaultBranchRef --jq .defaultBranchRef.name',
       `pr merge --merge --delete-branch --match-head-commit ${branchHead}`,
+      `pr view ${PULL_REQUEST_URL} --json state --jq .state`,
     ]);
     expect(await host.sleepLog()).toEqual([]);
 
@@ -668,6 +700,9 @@ describe('linked PR runtime', () => {
     expect(result.output).toMatchObject({ status: 'merged', localDefaultUpdated: true });
     // Every gh invocation ran in the governed repository, not the process cwd.
     expect((await host.ghLog()).map((line) => line.split('\t')[0])).toEqual([
+      host.repo,
+      host.repo,
+      host.repo,
       host.repo,
       host.repo,
       host.repo,
@@ -741,7 +776,8 @@ describe('linked PR runtime', () => {
     // Six polls, then the wait exits zero without ever watching.
     expect(commands.filter((command) => command === 'pr checks')).toHaveLength(6);
     expect(commands).not.toContain('pr checks --watch --fail-fast');
-    expect(commands.at(-1)).toMatch(/^pr merge /);
+    expect(commands.at(-2)).toMatch(/^pr merge /);
+    expect(commands.at(-1)).toBe(`pr view ${PULL_REQUEST_URL} --json state --jq .state`);
     expect(await host.sleepLog()).toEqual(['10', '10', '10', '10', '10']);
     await runtime.dispose();
   });
@@ -977,7 +1013,10 @@ describe('linked PR runtime', () => {
       'pr view --json headRefOid --jq .headRefOid',
       'pr checks',
       'pr checks --watch --fail-fast',
+      'pr view --json url --jq .url',
+      'repo view --json defaultBranchRef --jq .defaultBranchRef.name',
       `pr merge --merge --delete-branch --match-head-commit ${fixCommit}`,
+      `pr view ${PULL_REQUEST_URL} --json state --jq .state`,
     ]);
     // The fix reached the remote before the merge and is in the merged head.
     expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
@@ -1032,7 +1071,7 @@ describe('linked PR runtime', () => {
       localDefaultUpdated: true,
     });
     expect((await ghCommands(host)).at(-1)).toBe(
-      `pr merge --merge --delete-branch --match-head-commit ${fixCommit}`,
+      `pr view ${PULL_REQUEST_URL} --json state --jq .state`,
     );
     await runtime.dispose();
   });

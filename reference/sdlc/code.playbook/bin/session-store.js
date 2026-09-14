@@ -3163,7 +3163,7 @@ async function createLease({
     }
     if (
       snapshot.mode !== 'chat' ||
-      snapshot.lastAction !== 'runtime' ||
+      (snapshot.lastAction !== 'runtime' && snapshot.lastAction !== 'dismiss') ||
       snapshot.lastSettlementStatus !== 'ok'
     ) {
       throw new Error(
@@ -4221,7 +4221,7 @@ function validateCanonicalCaptainSessionRecord(
     }
     if (
       snapshot.mode !== 'chat' ||
-      snapshot.lastAction !== 'runtime' ||
+      (snapshot.lastAction !== 'runtime' && snapshot.lastAction !== 'dismiss') ||
       snapshot.lastSettlementStatus !== 'ok' ||
       Object.hasOwn(record.retainedGenerations ?? {}, rootPlaybookId)
     ) {

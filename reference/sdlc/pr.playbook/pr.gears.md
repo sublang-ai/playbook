@@ -120,15 +120,21 @@ Workflow outcomes:
 
 When the checks pass, before or after the one fix attempt, Captain shall run:
 
-> gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+> pr=$(gh pr view --json url --jq .url) || exit 1
+> base=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1
+> [ -n "$pr" ] && [ -n "$base" ] || exit 1
+> gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)" || exit 1
+> [ "$(gh pr view "$pr" --json state --jq .state)" = MERGED ] || exit 1
+> [ "$(git branch --show-current)" = "$base" ]
 
 Results:
 - `merged`: The command exited with status zero: the pull request is merged with a merge commit on the repository default branch, the remote and local branch are deleted, and the local default branch is checked out.
-- `mergeRefused`: The command exited with a nonzero status: GitHub refused the merge, or the merge landed but the local switch to the default branch or the branch deletion failed.
+- `mergeRefused`: The command exited with a nonzero status: GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.
 
 Workflow outcomes:
 - The merge creates a merge commit on the repository default branch, deletes the remote and local branch, and checks out the local default branch; GitHub closes the linked issue on merge.
 - The merge has exactly two outcomes decided by the exit status alone: merged on status zero and merge refused otherwise.
+- The command captures the inferred pull-request URL before the checkout can change and confirms its merged state and the default-branch checkout after the merge command succeeds; a queued pull request is not a merged result.
 - Merge refused is an authored failure that leaves the pull request in the state GitHub reports: GitHub refused the merge for a conflict, a branch protection, a forbidden merge method, or a head that moved, or the merge landed but the local switch to the default branch or the branch deletion failed.
 
 ### PR-7

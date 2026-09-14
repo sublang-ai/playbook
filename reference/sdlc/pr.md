@@ -92,10 +92,16 @@ Checks still failing is an authored failure that leaves the pull request open; t
 
 When the checks pass, before or after the one fix attempt, Captain shall merge the pull request by running exactly the following command in the repository, with no other action and without reading its output:
 
-> gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+> pr=$(gh pr view --json url --jq .url) || exit 1
+> base=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1
+> [ -n "$pr" ] && [ -n "$base" ] || exit 1
+> gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)" || exit 1
+> [ "$(gh pr view "$pr" --json state --jq .state)" = MERGED ] || exit 1
+> [ "$(git branch --show-current)" = "$base" ]
 
 The merge creates a merge commit on the repository default branch, deletes the remote and local branch, and checks out the local default branch; GitHub closes the linked issue on merge.
 The merge has exactly two outcomes decided by the exit status alone: merged on status zero and merge refused otherwise.
+The command captures the inferred pull-request URL before the checkout can change and confirms its merged state and the default-branch checkout after the merge command succeeds; a queued pull request is not a merged result.
 Merge refused is an authored failure that leaves the pull request in the state GitHub reports: GitHub refused the merge for a conflict, a branch protection, a forbidden merge method, or a head that moved, or the merge landed but the local switch to the default branch or the branch deletion failed.
 
 When the pull request is merged, Captain shall bring the local default branch to the merged head by running exactly the following command in the repository, with no other action and without reading its output:
