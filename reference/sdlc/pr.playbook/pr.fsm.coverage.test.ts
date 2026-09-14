@@ -493,7 +493,7 @@ describe('PR FSM transition coverage', () => {
         'done',
         'gh pr checks --watch --fail-fast >/dev/null 2>&1',
       ].join('\n'),
-      "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
+      "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
       'git pull --ff-only',
     ]);
   });
@@ -765,9 +765,9 @@ describe('PR FSM transition coverage', () => {
       (value) => value.status === 'done',
     );
     expect(snapshot.value).toBe('mergeRefused');
+    // The command ran, so the machine claims neither a merge nor its absence.
     expect(snapshot.output).toEqual({
-      status: 'not-merged',
-      reason: 'merge-refused',
+      status: 'merge-unconfirmed',
       pullRequest: '12',
       pullRequestUrl: PULL_REQUEST_URL,
     });

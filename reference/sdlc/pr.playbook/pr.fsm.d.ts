@@ -113,11 +113,21 @@ export type PrPlaybookOutput = {
     readonly childResult: CompletedChildResult;
 } | {
     readonly status: 'not-merged';
-    readonly reason: 'fix-not-published' | 'checks-failed' | 'merge-refused';
+    readonly reason: 'fix-not-published' | 'checks-failed';
+    readonly pullRequest: string;
+    readonly pullRequestUrl: string;
+}
+/**
+ * The merge command exited nonzero. It ran, so whether GitHub merged the
+ * pull request is unknown — script output never enters context — and the
+ * result claims neither a merge nor its absence.
+ */
+ | {
+    readonly status: 'merge-unconfirmed';
     readonly pullRequest: string;
     readonly pullRequestUrl: string;
 };
-export type PrCompletion = 'merged' | 'not-published' | 'fix-failed' | 'fix-not-published' | 'checks-failed' | 'merge-refused';
+export type PrCompletion = 'merged' | 'not-published' | 'fix-failed' | 'fix-not-published' | 'checks-failed' | 'merge-unconfirmed';
 /** The machine reads no input: the caller input arrives on `START_PR`. */
 export type PrInput = Readonly<Record<never, never>>;
 export type PrContext = {
@@ -290,7 +300,11 @@ export declare const prMachine: import("xstate").StateMachine<PrContext, {
     readonly childResult: CompletedChildResult;
 } | {
     readonly status: "not-merged";
-    readonly reason: "fix-not-published" | "checks-failed" | "merge-refused";
+    readonly reason: "fix-not-published" | "checks-failed";
+    readonly pullRequest: string;
+    readonly pullRequestUrl: string;
+} | {
+    readonly status: "merge-unconfirmed";
     readonly pullRequest: string;
     readonly pullRequestUrl: string;
 }, import("xstate").EventObject, import("xstate").MetaObject, {

@@ -83,7 +83,7 @@ describe('PR FSM introspection', () => {
       'checksStillFailing',
     ]);
     expect(inputs[3]?.command).toBe(
-      "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
+      "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
     );
     expect(inputs[4]?.command).toBe('git pull --ff-only');
     // A script input is ungoverned and agent-free: it carries no prompt and no role.

@@ -32,11 +32,13 @@ BRANCH and PR join CODE, REVIEW, DECIDE, and DEV as maintained workflows compile
   An unoptimized compile is a valid GEARS package whose mechanical steps run through the host Captain's own tools — the tool restriction is source-owned and applies only to a routing-only Captain — but it is not a release form.
 - The check wait polls `gh pr checks` while it reports no checks, for about a minute, so checks registering after creation or after a push are not mistaken for absence; a pull request whose repository still reports no checks then counts as passed, and otherwise `gh pr checks --watch --fail-fast` decides [[1]].
   The fix publication pushes and then waits until the pull request's head equals the local HEAD [[4]], so a check result for the previous head is never watched.
-  The merge captures the inferred pull-request URL and repository default branch, runs `gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"` [[2]], then requires that same pull request to report `MERGED` and the checkout to name the default branch before reporting success.
+  The merge captures the inferred pull-request URL and repository default branch, requires that pull request to target that default branch [[4]], runs `gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)"` [[2]], then requires that same pull request to report `MERGED` and the checkout to name the default branch before reporting success.
+  Reuse can hand PR a pull request opened against another branch, and the merge is irreversible, so the base check precedes it rather than following it.
   An already queued pull request can make `gh pr merge` exit zero without merging, so command success alone is insufficient; an unconfirmed merge or checkout takes the existing merge-refused outcome without a local pull.
 - Red checks call playbook `code` exactly once (`PR-3`) with a coding request, so the fix commit and its review are owned by `code` and `review`; the bound is structural — a second wait item whose failure is terminal — not a runtime counter.
 - PR's terminals are typed per [DR-048](048-typed-terminal-outcomes.md): success `merged` and `mergedLocalBehind`, distinguished by `localDefaultUpdated`, because the pull request is merged either way and only the local checkout differs; failure `notPublished`, `fixFailed` (relaying `code`'s canonical result), `fixNotPublished`, `checksStillFailing`, and `mergeRefused`, each leaving the pull request in the state GitHub reports.
   PR returns no merge-commit identity: only a script observes the merge, script output never enters context, and no governed call follows it, so the field is omitted rather than fabricated.
+  The same blindness bounds what a terminal may assert: `mergeRefused` reports `status: 'merge-unconfirmed'` rather than `not-merged`, because its command ran and a merge may have landed before the confirmation, checkout, or deletion failed; and no terminal claims a branch was deleted, because `gh pr merge --delete-branch` skips the remote deletion for a pull request from another repository or one already merged [[5]] and exits zero anyway.
 - DEV's planning prompt gains one instruction: a request naming a GitHub issue or asking for pull-request delivery reads the issue and its comments during planning — still `unchanged`-governed — and selects `code via pull request` or `decide then code via pull request`; the planning result has six semantic outcomes.
   On either outcome DEV calls `branch` (`DEV-5`) before its existing path and `pr` (`DEV-6`) after `code` succeeds, consuming `branch`, `baseRevision`, `issueSummary`, `lastCodeCommit`, and `finalEvaluatedRevision` only from canonical child outputs.
   `DEV-1` through `DEV-4` keep their ids and prompts; the pull-request path enters `DEV-2` and `DEV-3` through a typed routing field, DEV's three final states are unchanged, and a plain request compiles to the same prompts, edges, and composed child inputs as before.
@@ -54,10 +56,10 @@ Considered and rejected:
 ## Consequences
 
 - `/dev` on a request such as "fix #12" ends with a merged pull request and a closed issue when checks and branch protection allow it, and with a named typed failure and an open pull request when they do not; every other `/dev` request behaves exactly as before.
-- BRANCH and PR are usable directly through their commands; a rerun of `/pr` on a branch that already has an open pull request reuses it, while a rerun of `/dev` on the same issue refuses at `branch` until the stale branch is removed.
+- BRANCH and PR are usable directly through their commands; a rerun of `/pr` on a branch that already has an open pull request reuses it, ending at an unconfirmed merge without merging when that pull request targets another branch, while a rerun of `/dev` on the same issue refuses at `branch` until the stale branch is removed.
 - The conformance, registry, CLI, and release specs extend their maintained-workflow sets to six: playbook item sets `BRANCH-1`, `PR-1` through `PR-7`, and `DEV-1` through `DEV-6`; the starter-config lineup and seeding checks; the CLI documentation of Boss turns and repository-effect reconciliation; and a conformance test that the maintained PR artifact's five mechanical items are script states, which makes the optimize pass part of the maintained compile for the first time.
 - A check wait runs under the turn's abort signal with no authored timeout: a long pipeline holds the Boss turn, and a Boss interrupt kills the script and leaves the pull request open for a later `/pr`.
-- A repository without checks merges on the strength of CODE's nested review alone; one that forbids merge commits or requires a review ends at `mergeRefused`, and one that uses a merge queue may report a queued merge as refused, until the source is revised.
+- A repository without checks merges on the strength of CODE's nested review alone; one that forbids merge commits or requires a review ends at `mergeRefused`, and one that uses a merge queue may report a queued merge as unconfirmed, until the source is revised.
 - The DEV `done` output may carry `childPlaybookId: 'pr'`, and a relayed child failure may name `branch` or `pr`.
 
 ## References
@@ -65,4 +67,5 @@ Considered and rejected:
 [1]: https://cli.github.com/manual/gh_pr_checks "gh pr checks — --watch, --fail-fast, and exit statuses"
 [2]: https://cli.github.com/manual/gh_pr_merge "gh pr merge — --merge, --delete-branch, --match-head-commit"
 [3]: https://cli.github.com/manual/gh_pr_create "gh pr create — default base branch and Closes #N linking"
-[4]: https://cli.github.com/manual/gh_pr_view "gh pr view — headRefOid JSON field"
+[4]: https://cli.github.com/manual/gh_pr_view "gh pr view — headRefOid and baseRefName JSON fields"
+[5]: https://github.com/cli/cli/blob/trunk/pkg/cmd/pr/merge/merge.go "gh pr merge — deleteRemoteBranch skips a cross-repository or already-merged pull request"

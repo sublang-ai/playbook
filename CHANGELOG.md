@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host-selected give-up now uses durable abandonment for unresolved repository effects, including retained nested runs, preserves their evidence, and reports a failed stop truthfully.
 - PR confirms the captured pull request is merged and the local checkout is on the repository default branch before reporting merge success or pulling; an already queued pull request no longer counts as merged.
 - Setup documentation now describes credential-based adapter seeding and the credentials required by the selected adapter.
+- PR requires the pull request it captured to target the repository default branch before the irreversible `gh pr merge`, so a reused pull request opened against another branch is never merged into it.
+- PR's refused-merge terminal now reports `status: 'merge-unconfirmed'` instead of `not-merged`, and no terminal claims a branch was deleted: the merge command may have landed a merge before its confirmation failed, and `gh` skips the requested remote deletion for a pull request from another repository or one already merged.
 
 ## [13.3.0] - 2026-09-13
 

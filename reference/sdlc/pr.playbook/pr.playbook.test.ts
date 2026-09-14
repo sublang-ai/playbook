@@ -58,7 +58,7 @@ const FIX_CODING_REQUEST =
   "The pull request's checks are red on the checked-out branch. Inspect the failing checks with `gh pr checks` and `gh run view --log-failed`, fix their cause on this branch with a minimal change, and make the checks pass.";
 
 const MERGED_DESCRIPTION =
-  'The pull request is merged with a merge commit on the repository default branch, both branches are deleted, and the local default branch is fast-forwarded to the merged head.';
+  'The pull request is merged with a merge commit on the repository default branch, which is checked out and fast-forwarded to the merged head; the merge requested deletion of the remote and local branch.';
 
 type RepositoryEffect = 'publish' | 'unchanged' | 'commit' | 'worktree';
 
@@ -283,6 +283,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
       '    case "$*" in',
       `      *'--json url'*) echo '${PULL_REQUEST_URL}'; exit 0 ;;`,
       `      *'--json state'*) cat "$control/pr.state"; exit $? ;;`,
+      `      *'--json baseRefName'*) cat "$control/pr.base"; exit $? ;;`,
       '    esac',
       '    if [ -f "$control/head.oid" ]; then cat "$control/head.oid"; else git rev-parse HEAD; fi',
       '    exit 0',
@@ -317,7 +318,12 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
   const setMerge = async (script: string): Promise<void> => {
     await writeFile(join(control, 'merge.sh'), script, 'utf8');
   };
+  // The branch the pull request targets, as `gh pr view` reports it.
+  const setPullRequestBase = async (base: string): Promise<void> => {
+    await writeFile(join(control, 'pr.base'), `${base}\n`, 'utf8');
+  };
   await writeFile(join(control, 'pr.state'), 'OPEN\n');
+  await setPullRequestBase('main');
   await setChecks();
   await setMerge(successfulMergeScript(repo, remote));
 
@@ -425,6 +431,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
     hostCapabilities: capabilities.pr,
     setChecks,
     setMerge,
+    setPullRequestBase,
     ghLog: () => readLines(join(control, 'gh.log')),
     sleepLog: () => readLines(join(control, 'sleep.log')),
   };
@@ -542,7 +549,11 @@ describe('linked PR runtime', () => {
     const result = terminalOf(await runtime.handleBossInput({
       text: CALLER_INPUT, signal: new AbortController().signal,
     }));
-    expect(result.output).toMatchObject({ status: 'not-merged', reason: 'merge-refused' });
+    expect(result.output).toEqual({
+      status: 'merge-unconfirmed',
+      pullRequest: '12',
+      pullRequestUrl: PULL_REQUEST_URL,
+    });
     expect(scriptEvents(host)).not.toContainEqual(expect.objectContaining({ stateId: 'updateLocalDefault' }));
     expect(await git(host.repo, 'branch', '--show-current')).toBe(scenario === 'unreadable state' ? 'main' : BRANCH);
     await runtime.dispose();
@@ -660,6 +671,7 @@ describe('linked PR runtime', () => {
       'pr checks --watch --fail-fast',
       'pr view --json url --jq .url',
       'repo view --json defaultBranchRef --jq .defaultBranchRef.name',
+      `pr view ${PULL_REQUEST_URL} --json baseRefName --jq .baseRefName`,
       `pr merge --merge --delete-branch --match-head-commit ${branchHead}`,
       `pr view ${PULL_REQUEST_URL} --json state --jq .state`,
     ]);
@@ -699,14 +711,9 @@ describe('linked PR runtime', () => {
 
     expect(result.output).toMatchObject({ status: 'merged', localDefaultUpdated: true });
     // Every gh invocation ran in the governed repository, not the process cwd.
-    expect((await host.ghLog()).map((line) => line.split('\t')[0])).toEqual([
-      host.repo,
-      host.repo,
-      host.repo,
-      host.repo,
-      host.repo,
-      host.repo,
-    ]);
+    expect((await host.ghLog()).map((line) => line.split('\t')[0])).toEqual(
+      Array.from({ length: 7 }, () => host.repo),
+    );
     expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
     await runtime.dispose();
   });
@@ -732,7 +739,7 @@ describe('linked PR runtime', () => {
     );
 
     expect(result.stateDescription).toBe(
-      'The pull request is merged with a merge commit on the repository default branch and both branches are deleted, but the local default branch could not be fast-forwarded to the merged head.',
+      'The pull request is merged with a merge commit on the repository default branch, which is checked out but could not be fast-forwarded to the merged head; the merge requested deletion of the remote and local branch.',
     );
     expect(result.output).toEqual({
       status: 'merged',
@@ -1015,6 +1022,7 @@ describe('linked PR runtime', () => {
       'pr checks --watch --fail-fast',
       'pr view --json url --jq .url',
       'repo view --json defaultBranchRef --jq .defaultBranchRef.name',
+      `pr view ${PULL_REQUEST_URL} --json baseRefName --jq .baseRefName`,
       `pr merge --merge --delete-branch --match-head-commit ${fixCommit}`,
       `pr view ${PULL_REQUEST_URL} --json state --jq .state`,
     ]);
@@ -1360,14 +1368,56 @@ describe('linked PR runtime', () => {
     );
 
     expect(result.stateDescription).toBe(
-      'GitHub refused the merge, or the merge landed but the local switch to the default branch or the branch deletion failed; the pull request is in the state GitHub reports.',
+      'The merge did not complete: the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
     );
+    // The merge command ran, so the result claims no merged state either way.
     expect(result.output).toEqual({
-      status: 'not-merged',
-      reason: 'merge-refused',
+      status: 'merge-unconfirmed',
       pullRequest: '12',
       pullRequestUrl: PULL_REQUEST_URL,
     });
+    expect(scriptEvents(host)).toEqual([
+      { stateId: 'waitForChecks', sourceItem: 'PR-2', exitStatus: 0 },
+      { stateId: 'mergePullRequest', sourceItem: 'PR-6', exitStatus: 1 },
+    ]);
+    expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH);
+    expect(await git(host.repo, 'rev-parse', 'HEAD')).toBe(branchHead);
+    await git(host.repo, 'fetch', '--quiet', 'origin');
+    expect(await git(host.repo, 'rev-parse', 'origin/main')).toBe(remoteMain);
+    await runtime.dispose();
+  });
+
+  it('never merges a reused pull request that targets another branch', async () => {
+    const host = await harness({
+      players: [publishedCoder],
+      judges: [OPENED],
+    });
+    // PR-1 may reuse an open pull request someone opened against `release`.
+    await host.setPullRequestBase('release');
+    const branchHead = await git(host.repo, 'rev-parse', 'HEAD');
+    const remoteMain = await git(host.repo, 'rev-parse', 'origin/main');
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = terminalOf(
+      await runtime.handleBossInput({
+        text: CALLER_INPUT,
+        signal: new AbortController().signal,
+      }),
+    );
+
+    expect(result.output).toEqual({
+      status: 'merge-unconfirmed',
+      pullRequest: '12',
+      pullRequestUrl: PULL_REQUEST_URL,
+    });
+    // The base check precedes the irreversible merge, so `gh pr merge` never
+    // ran and nothing was merged into the branch the pull request targets.
+    const commands = await ghCommands(host);
+    expect(commands.at(-1)).toBe(
+      `pr view ${PULL_REQUEST_URL} --json baseRefName --jq .baseRefName`,
+    );
+    expect(commands.some((command) => command.startsWith('pr merge'))).toBe(false);
     expect(scriptEvents(host)).toEqual([
       { stateId: 'waitForChecks', sourceItem: 'PR-2', exitStatus: 0 },
       { stateId: 'mergePullRequest', sourceItem: 'PR-6', exitStatus: 1 },

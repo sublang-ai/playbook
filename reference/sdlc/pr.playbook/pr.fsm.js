@@ -41,7 +41,7 @@ const PUBLISH_FIX_COMMAND = [
     'sleep 5',
     'done',
 ].join('\n');
-const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
+const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
 const UPDATE_LOCAL_DEFAULT_COMMAND = 'git pull --ff-only';
 const WAIT_FOR_CHECKS_RESULTS = {
     checksPassed: "The command exited with status zero: the pull request's checks passed, or the repository still reported no checks after a brief wait for them to register.",
@@ -56,8 +56,8 @@ const WAIT_FOR_CHECKS_AFTER_FIX_RESULTS = {
     checksStillFailing: "The command exited with a nonzero status: the pull request's checks are still failing after the one fix attempt.",
 };
 const MERGE_PULL_REQUEST_RESULTS = {
-    merged: 'The command exited with status zero: the pull request is merged with a merge commit on the repository default branch, the remote and local branch are deleted, and the local default branch is checked out.',
-    mergeRefused: 'The command exited with a nonzero status: GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.',
+    merged: 'The command exited with status zero: the pull request targeted the repository default branch and is merged into it with a merge commit, deletion of the remote and local branch was requested, and the local default branch is checked out.',
+    mergeRefused: 'The command exited with a nonzero status: the pull request does not target the repository default branch, GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.',
 };
 const UPDATE_LOCAL_DEFAULT_RESULTS = {
     localDefaultUpdated: 'The command exited with status zero: the local default branch is fast-forwarded to the merged head.',
@@ -76,13 +76,13 @@ const STATE_DESCRIPTIONS = {
     updateLocalDefault: 'Fast-forwarding the local default branch to the merged head.',
     awaitBossReply: 'Waiting for Boss to answer Coder.',
     failed: 'The pull-request delivery workflow failed and is waiting for new caller input.',
-    merged: 'The pull request is merged with a merge commit on the repository default branch, both branches are deleted, and the local default branch is fast-forwarded to the merged head.',
-    mergedLocalBehind: 'The pull request is merged with a merge commit on the repository default branch and both branches are deleted, but the local default branch could not be fast-forwarded to the merged head.',
+    merged: 'The pull request is merged with a merge commit on the repository default branch, which is checked out and fast-forwarded to the merged head; the merge requested deletion of the remote and local branch.',
+    mergedLocalBehind: 'The pull request is merged with a merge commit on the repository default branch, which is checked out but could not be fast-forwarded to the merged head; the merge requested deletion of the remote and local branch.',
     notPublished: 'The branch was not published or its pull request could not be opened; Coder reported the reason and no pull request is guaranteed to exist.',
     fixFailed: "The pull request's checks were red and the single CODE fix attempt returned an authored abort, failure, or insufficient terminal result; the pull request remains open.",
     fixNotPublished: "The fix could not be published: the push was rejected or the pull request's head did not advance to the pushed commit; the pull request remains open.",
     checksStillFailing: "The pull request's checks are still failing after the one fix attempt; the pull request remains open.",
-    mergeRefused: 'GitHub refused the merge, or the merge landed but the local switch to the default branch or the branch deletion failed; the pull request is in the state GitHub reports.',
+    mergeRefused: 'The merge did not complete: the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
 };
 function playbookMeta(stateId, role) {
     return {
@@ -489,7 +489,7 @@ const machineSetup = setup({
             completion: 'checks-failed',
         }),
         completeMergeRefused: assign({
-            completion: 'merge-refused',
+            completion: 'merge-unconfirmed',
         }),
         completeMerged: assign({
             completion: 'merged',
@@ -543,9 +543,14 @@ export const prMachine = machineSetup.createMachine({
                 childResult: context.childFailure,
             };
         }
+        if (context.completion === 'merge-unconfirmed') {
+            return {
+                status: 'merge-unconfirmed',
+                ...pullRequestIdentity(context),
+            };
+        }
         if (context.completion === 'fix-not-published' ||
-            context.completion === 'checks-failed' ||
-            context.completion === 'merge-refused') {
+            context.completion === 'checks-failed') {
             return {
                 status: 'not-merged',
                 reason: context.completion,

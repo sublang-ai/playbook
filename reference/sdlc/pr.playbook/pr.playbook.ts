@@ -100,7 +100,8 @@ const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'coderOutput',
 ]);
 // Every failure terminal leaves the delivery unfinished: no pull request is
-// guaranteed to exist after notPublished, and the other four leave it open.
+// guaranteed to exist after notPublished, the three fix terminals leave it
+// open, and mergeRefused leaves it in the state GitHub reports.
 const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set([
   'notPublished',
   'fixFailed',
