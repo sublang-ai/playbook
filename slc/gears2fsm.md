@@ -83,7 +83,9 @@ comment delimiters into a TypeScript target.
 - `stateId`: the stable id of the invoking working leaf;
 - `sourceItem`: the GEARS item ID this state realizes;
 - `command`: the script item's blockquote text, verbatim after Markdown
-  unescaping;
+  unescaping, with every runtime-value placeholder it carries substituted from
+  typed machine context — a script has no prose contract to carry the field
+  separately, and the provided actor executes `command` verbatim;
 - `result`: a record whose keys are the item's two declared guard names, first
   the zero-exit guard, then the nonzero-exit guard.
 
@@ -315,7 +317,12 @@ An item that prompts or relays to a named role shall map to exactly one `player`
 A nested-call item shall map to exactly one `playbook` invocation.
 A script item (`Captain shall run:`) shall map to
 exactly one `script` invocation whose `input.command` carries the blockquote
-verbatim and whose `result` preserves the item's two guards in declared order.
+with its runtime-value placeholders substituted, and whose `result` preserves
+the item's two guards in declared order.
+Where the substituted value is absent, the compiled input shall keep the
+placeholder literal rather than an empty default, so the command compares
+against text no output can equal and the step refuses instead of acting on an
+unbound target.
 The compiler shall not infer one actor kind from a
 runtime player name or encode Captain as a player.
 A script state is not agent-invoking: the compiler shall not add

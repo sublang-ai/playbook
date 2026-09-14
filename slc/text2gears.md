@@ -299,8 +299,13 @@ compiled items.
 The kind is defined here so every consumer of the GEARS format shares one
 item-syntax contract.
 
-A script item's blockquote is static shell text: it shall contain no
-`<placeholder>`, and Markdown escapes resolve exactly as in acting prompts.
+A script item's blockquote is static shell text apart from the
+`<placeholder>` forms an acting prompt may carry, which relay a runtime value
+the machine already retains; Markdown escapes resolve exactly as in acting
+prompts.
+A script reads no conversation and produces no prose, so a placeholder is
+sound there only to bind the command to a target the script cannot otherwise
+name — never to carry a value the script would have to interpret.
 A script item shall carry a `Results:` label with exactly two bullets in this
 fixed interpretation: the first guard reports the script exiting with status
 zero, the second reports a nonzero exit status.

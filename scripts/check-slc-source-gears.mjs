@@ -122,6 +122,9 @@ export function parseGearsContract(gearsText) {
     }
     const acting = section.slice(0, Math.max(firstQuote, 0)).join(' ');
     const delegated = /\bCaptain shall (?:prompt\b|relay\b)/.test(acting);
+    // slc/text2gears.md "Script behaviors": fixed machine syntax, so the
+    // clause stays in this exact English form in every source language.
+    const script = /\bCaptain shall run:/.test(acting);
     const player = actingPlayer(acting);
     const results = [];
     for (const line of section.slice(Math.max(cursor, 0))) {
@@ -133,7 +136,7 @@ export function parseGearsContract(gearsText) {
         fields: resultFields(bullet[2]),
       });
     }
-    return { id: start.id, ordinal, delegated, player, prompt, results };
+    return { id: start.id, ordinal, delegated, script, player, prompt, results };
   });
 }
 
@@ -270,6 +273,10 @@ export function checkSourceGearsContract(sourceText, gearsText) {
 
   const reported = new Set();
   for (const item of items) {
+    // A script blockquote is shell text no agent ever reads, so a placeholder
+    // there binds the command to its target rather than relaying player text
+    // into a prompt; the literal quote marker does not apply to it.
+    if (item.script) continue;
     for (const line of item.prompt) {
       for (const match of line.matchAll(PLACEHOLDER)) {
         const field = placeholderField(match[1]);

@@ -11,7 +11,8 @@ The caller supplies the original request including the issue it names, if any; t
 `pr` delivers a reviewed branch into the repository default branch through a GitHub pull request: it publishes the branch, waits for the pull request's checks, fixes red checks through playbook `code` no more than once, and merges.
 It changes no files and owns no repository commit; the one fix it may request is owned by `code`.
 The check waits, the fix publication, the merge, and the local update are mechanical steps: each runs one fixed command whose exit status alone decides its two outcomes, reads no conversation, and produces no prose.
-`gh` infers the pull request from the checked-out branch, so no mechanical step needs a runtime value.
+`gh` infers the pull request from the checked-out branch, which the run does not own: the nested `code` call suspends across Boss turns, so the checkout can change before the fix is published or the merge runs.
+The two steps that act on the pull request itself therefore carry one runtime value — the pull request `pr` published — and refuse unless the checkout still infers exactly it.
 
 ## Coder
 
@@ -80,6 +81,7 @@ Workflow outcomes:
 
 When `code` succeeds, Captain shall run:
 
+> [ "$(gh pr view --json url --jq .url)" = "<pull-request-url>" ] || exit 1
 > git push || exit 1
 > n=0
 > until [ "$(gh pr view --json headRefOid --jq .headRefOid 2>/dev/null)" = "$(git rev-parse HEAD)" ]; do
@@ -90,10 +92,11 @@ When `code` succeeds, Captain shall run:
 
 Results:
 - `fixPublished`: The command exited with status zero: the fix is pushed and the pull request's head is the pushed commit.
-- `fixNotPublished`: The command exited with a nonzero status: the push was rejected or the pull request's head did not advance to the pushed commit.
+- `fixNotPublished`: The command exited with a nonzero status: the checkout no longer infers the published pull request, the push was rejected, or the pull request's head did not advance to the pushed commit.
 
 Workflow outcomes:
 - The publication has exactly two outcomes decided by the exit status alone: fix published on status zero, once the pull request's head is the pushed commit, and fix not published otherwise.
+- The command pushes nothing until the checked-out branch infers the pull request `pr` published, so a checkout that changed while `code` ran publishes to no other branch.
 - Fix not published is an authored failure that leaves the pull request open.
 
 ### PR-5
@@ -121,8 +124,9 @@ Workflow outcomes:
 When the checks pass, before or after the one fix attempt, Captain shall run:
 
 > pr=$(gh pr view --json url --jq .url) || exit 1
+> [ "$pr" = "<pull-request-url>" ] || exit 1
 > base=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1
-> [ -n "$pr" ] && [ -n "$base" ] || exit 1
+> [ -n "$base" ] || exit 1
 > [ "$(gh pr view "$pr" --json baseRefName --jq .baseRefName)" = "$base" ] || exit 1
 > gh pr merge --merge --delete-branch --match-head-commit "$(git rev-parse HEAD)" || exit 1
 > [ "$(gh pr view "$pr" --json state --jq .state)" = MERGED ] || exit 1
@@ -130,13 +134,13 @@ When the checks pass, before or after the one fix attempt, Captain shall run:
 
 Results:
 - `merged`: The command exited with status zero: the pull request targeted the repository default branch and is merged into it with a merge commit, deletion of the remote and local branch was requested, and the local default branch is checked out.
-- `mergeRefused`: The command exited with a nonzero status: the pull request does not target the repository default branch, GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.
+- `mergeRefused`: The command exited with a nonzero status: the checkout no longer infers the published pull request, the pull request does not target the repository default branch, GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.
 
 Workflow outcomes:
 - The merge creates a merge commit on the repository default branch, requests deletion of the remote and local branch, and checks out the local default branch; GitHub closes the linked issue on merge.
 - The merge has exactly two outcomes decided by the exit status alone: merged on status zero and merge refused otherwise.
-- The command captures the inferred pull-request URL and the repository default branch, requires that pull request to target that default branch before the irreversible merge, and confirms its merged state and the default-branch checkout after the merge command succeeds; a queued pull request is not a merged result.
-- Merge refused is an authored failure that leaves the pull request in the state GitHub reports: the pull request targets another branch, GitHub refused the merge for a conflict, a branch protection, a forbidden merge method, or a head that moved, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed.
+- The command requires the inferred pull request to be the one `pr` published and to target the repository default branch before the irreversible merge, and confirms that same pull request's merged state and the default-branch checkout after the merge command succeeds; a queued pull request is not a merged result.
+- Merge refused is an authored failure that leaves the pull request in the state GitHub reports: the checkout no longer infers the published pull request, the pull request targets another branch, GitHub refused the merge for a conflict, a branch protection, a forbidden merge method, or a head that moved, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed.
 - A refused merge does not establish that the pull request is unmerged, so `pr` reports it as an unconfirmed merge rather than as not merged, and no outcome claims a branch was deleted, because `gh` skips the remote deletion for a pull request from another repository or one already merged and exits zero anyway.
 
 ### PR-7

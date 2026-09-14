@@ -20,9 +20,22 @@ const OPEN_PULL_REQUEST_RESULTS = {
     notPublished: 'Coder reported that the branch could not be published or its pull request could not be opened, with the reason. Output shall include `coderOutput: <verbatim final text>`.',
     needsBossReply: NEEDS_BOSS_REPLY_RESULT,
 };
-// The mechanical steps are static POSIX shell text (slc/optimize.md): no
-// placeholder, no runtime value, and no prose — `gh` infers the pull request
-// from the checked-out branch.
+// The mechanical steps are static POSIX shell text (slc/optimize.md) with no
+// prose. `gh` infers the pull request from the checked-out branch, which the
+// run does not own, so the two steps that act on the pull request itself relay
+// one runtime value — the pull request PR-1 published — through the same
+// placeholder relay an acting prompt uses.
+const PULL_REQUEST_URL_PLACEHOLDER = '<pull-request-url>';
+// Substitute the retained identity into a script command. Without it the
+// literal placeholder stays, and no `gh` output equals it, so the step refuses
+// instead of acting on whatever the checkout now infers. Every script state is
+// reachable only after `rememberPullRequest`, so the refusal is unreachable by
+// construction and exists to keep the failure closed if that ever changes.
+function scriptCommand(command, context) {
+    return isNonEmptyString(context.pullRequestUrl)
+        ? command.replaceAll(PULL_REQUEST_URL_PLACEHOLDER, context.pullRequestUrl)
+        : command;
+}
 const WAIT_FOR_CHECKS_COMMAND = [
     'n=0',
     "while gh pr checks 2>&1 | grep -q 'no checks reported'; do",
@@ -33,6 +46,7 @@ const WAIT_FOR_CHECKS_COMMAND = [
     'gh pr checks --watch --fail-fast >/dev/null 2>&1',
 ].join('\n');
 const PUBLISH_FIX_COMMAND = [
+    '[ "$(gh pr view --json url --jq .url)" = "<pull-request-url>" ] || exit 1',
     'git push || exit 1',
     'n=0',
     'until [ "$(gh pr view --json headRefOid --jq .headRefOid 2>/dev/null)" = "$(git rev-parse HEAD)" ]; do',
@@ -41,7 +55,7 @@ const PUBLISH_FIX_COMMAND = [
     'sleep 5',
     'done',
 ].join('\n');
-const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
+const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\n[ \"$pr\" = \"<pull-request-url>\" ] || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
 const UPDATE_LOCAL_DEFAULT_COMMAND = 'git pull --ff-only';
 const WAIT_FOR_CHECKS_RESULTS = {
     checksPassed: "The command exited with status zero: the pull request's checks passed, or the repository still reported no checks after a brief wait for them to register.",
@@ -49,7 +63,7 @@ const WAIT_FOR_CHECKS_RESULTS = {
 };
 const PUBLISH_FIX_RESULTS = {
     fixPublished: "The command exited with status zero: the fix is pushed and the pull request's head is the pushed commit.",
-    fixNotPublished: "The command exited with a nonzero status: the push was rejected or the pull request's head did not advance to the pushed commit.",
+    fixNotPublished: "The command exited with a nonzero status: the checkout no longer infers the published pull request, the push was rejected, or the pull request's head did not advance to the pushed commit.",
 };
 const WAIT_FOR_CHECKS_AFTER_FIX_RESULTS = {
     checksPassed: "The command exited with status zero: the pull request's checks passed after the fix, or the repository still reported no checks after a brief wait for them to register.",
@@ -57,7 +71,7 @@ const WAIT_FOR_CHECKS_AFTER_FIX_RESULTS = {
 };
 const MERGE_PULL_REQUEST_RESULTS = {
     merged: 'The command exited with status zero: the pull request targeted the repository default branch and is merged into it with a merge commit, deletion of the remote and local branch was requested, and the local default branch is checked out.',
-    mergeRefused: 'The command exited with a nonzero status: the pull request does not target the repository default branch, GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.',
+    mergeRefused: 'The command exited with a nonzero status: the checkout no longer infers the published pull request, the pull request does not target the repository default branch, GitHub refused the merge, its merged state could not be confirmed, or the local switch to the default branch or the branch deletion failed.',
 };
 const UPDATE_LOCAL_DEFAULT_RESULTS = {
     localDefaultUpdated: 'The command exited with status zero: the local default branch is fast-forwarded to the merged head.',
@@ -80,9 +94,9 @@ const STATE_DESCRIPTIONS = {
     mergedLocalBehind: 'The pull request is merged with a merge commit on the repository default branch, which is checked out but could not be fast-forwarded to the merged head; the merge requested deletion of the remote and local branch.',
     notPublished: 'The branch was not published or its pull request could not be opened; Coder reported the reason and no pull request is guaranteed to exist.',
     fixFailed: "The pull request's checks were red and the single CODE fix attempt returned an authored abort, failure, or insufficient terminal result; the pull request remains open.",
-    fixNotPublished: "The fix could not be published: the push was rejected or the pull request's head did not advance to the pushed commit; the pull request remains open.",
+    fixNotPublished: "The fix could not be published: the checked-out branch no longer carries the published pull request, the push was rejected, or the pull request's head did not advance to the pushed commit; the pull request remains open.",
     checksStillFailing: "The pull request's checks are still failing after the one fix attempt; the pull request remains open.",
-    mergeRefused: 'The merge did not complete: the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
+    mergeRefused: 'The merge did not complete: the checked-out branch no longer carries the published pull request, the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
 };
 function playbookMeta(stateId, role) {
     return {
@@ -708,10 +722,10 @@ export const prMachine = machineSetup.createMachine({
             tags: ['playbook.busy'],
             invoke: {
                 src: 'script',
-                input: () => ({
+                input: ({ context }) => ({
                     stateId: 'publishFix',
                     sourceItem: 'PR-4',
-                    command: PUBLISH_FIX_COMMAND,
+                    command: scriptCommand(PUBLISH_FIX_COMMAND, context),
                     result: PUBLISH_FIX_RESULTS,
                 }),
                 onDone: [
@@ -770,10 +784,10 @@ export const prMachine = machineSetup.createMachine({
             tags: ['playbook.busy'],
             invoke: {
                 src: 'script',
-                input: () => ({
+                input: ({ context }) => ({
                     stateId: 'mergePullRequest',
                     sourceItem: 'PR-6',
-                    command: MERGE_PULL_REQUEST_COMMAND,
+                    command: scriptCommand(MERGE_PULL_REQUEST_COMMAND, context),
                     result: MERGE_PULL_REQUEST_RESULTS,
                 }),
                 onDone: [

@@ -60,7 +60,10 @@ For each eligible item, the pass shall:
   stays in this exact English form even when the surrounding item text is
   in another language.
 - Replace the blockquoted prompt with the exact POSIX shell script that
-  performs the behavior, static text only.
+  performs the behavior: static text, apart from a `<placeholder>` the
+  original item already established for a runtime value the script needs to
+  bind itself to its target
+  ([text2gears "Script behaviors"](text2gears.md#script-behaviors-optimizer-introduced)).
 - Emit exactly two `Results:` bullets per
   [text2gears "Script behaviors"](text2gears.md#script-behaviors-optimizer-introduced):
   first the zero-exit guard, then the nonzero-exit guard. When the original

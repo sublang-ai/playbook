@@ -217,8 +217,17 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       expect(gearsSection(id)).toContain(`${SCRIPT_CONDITIONS[id]} run:\n`);
       expect(source).toContain(SCRIPT_CONDITIONS[id]);
       const input = script.getInput(CONTEXT);
+      const blockquote = item?.prompt.join('\n') ?? '';
       expect(rawStates[script.stateId]?.invoke?.src).toBe('script');
-      expect(input.command).toBe(item?.prompt.join('\n'));
+      // The compiled command is the source blockquote with its one runtime
+      // value substituted from typed context; only the two steps that act on
+      // the pull request carry that placeholder, and none survives compilation.
+      expect(input.command).toBe(
+        blockquote.replaceAll('<pull-request-url>', CONTEXT.pullRequestUrl ?? ''),
+      );
+      expect(blockquote.includes('<pull-request-url>')).toBe(
+        id === 'PR-4' || id === 'PR-6',
+      );
       expect(input.command).not.toMatch(/<[A-Za-z_$#][A-Za-z0-9_$#-]*>/);
       // Exactly two guards, zero-exit first, nonzero second; no needsBossReply.
       expect(item?.results).toHaveLength(2);
@@ -259,12 +268,28 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     expect(commands.get('PR-2')).toContain(
       'gh pr checks --watch --fail-fast >/dev/null 2>&1',
     );
+    // PR-4 and PR-6 bind themselves to the published pull request before the
+    // push and before the irreversible merge; an absent identity leaves the
+    // literal placeholder, which no `gh` output equals, so the step refuses.
+    for (const id of ['PR-4', 'PR-6'] as const) {
+      expect(commands.get(id)).toContain(
+        `= "${CONTEXT.pullRequestUrl}" ] || exit 1`,
+      );
+      const unbound = scripts
+        .find((script) => script.sourceItem === id)!
+        .getInput({ callerInput: CONTEXT.callerInput }).command;
+      expect(unbound).toContain('= "<pull-request-url>" ] || exit 1');
+    }
+    expect(commands.get('PR-4')?.indexOf('gh pr view --json url')).toBeLessThan(
+      commands.get('PR-4')!.indexOf('git push || exit 1'),
+    );
+    expect(commands.get('PR-6')?.indexOf('= "<')).toBe(-1);
     expect(commands.get('PR-4')).toContain('git push || exit 1');
     expect(commands.get('PR-4')).toContain(
       'gh pr view --json headRefOid --jq .headRefOid',
     );
     expect(commands.get('PR-6')).toBe(
-      "pr=$(gh pr view --json url --jq .url) || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$pr\" ] && [ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
+      "pr=$(gh pr view --json url --jq .url) || exit 1\n[ \"$pr\" = \"https://github.com/acme/widgets/pull/12\" ] || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]",
     );
     expect(commands.get('PR-7')).toBe('git pull --ff-only');
   });

@@ -7,6 +7,7 @@
 
 Accepted.
 Amended by [DR-019](019-shared-linked-runtime-factory.md): the `script` actor implementation moved from each emitted module into the shared linked-runtime factory — the linker emits no script executor inside a factory-backed module, and `node:child_process` is imported by the shared engine rather than per artifact.
+Amended by [DR-050](050-pull-request-delivery.md): a script blockquote may carry a `<placeholder>` relaying a runtime value the machine retains, because a command whose target is ambient state the run does not own cannot otherwise stay bound to it; the script still reads no conversation and produces no prose.
 
 ## Context
 

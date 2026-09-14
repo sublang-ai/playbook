@@ -281,7 +281,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
       '    ;;',
       "  'pr view')",
       '    case "$*" in',
-      `      *'--json url'*) echo '${PULL_REQUEST_URL}'; exit 0 ;;`,
+      `      *'--json url'*) cat "$control/pr.url"; exit $? ;;`,
       `      *'--json state'*) cat "$control/pr.state"; exit $? ;;`,
       `      *'--json baseRefName'*) cat "$control/pr.base"; exit $? ;;`,
       '    esac',
@@ -322,8 +322,14 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
   const setPullRequestBase = async (base: string): Promise<void> => {
     await writeFile(join(control, 'pr.base'), `${base}\n`, 'utf8');
   };
+  // The pull request `gh` infers from the checked-out branch. A test changes
+  // it to model a checkout that moved to another branch mid-run.
+  const setInferredPullRequest = async (url: string): Promise<void> => {
+    await writeFile(join(control, 'pr.url'), `${url}\n`, 'utf8');
+  };
   await writeFile(join(control, 'pr.state'), 'OPEN\n');
   await setPullRequestBase('main');
+  await setInferredPullRequest(PULL_REQUEST_URL);
   await setChecks();
   await setMerge(successfulMergeScript(repo, remote));
 
@@ -432,6 +438,7 @@ async function harness(fixtures: Partial<Fixtures> = {}) {
     setChecks,
     setMerge,
     setPullRequestBase,
+    setInferredPullRequest,
     ghLog: () => readLines(join(control, 'gh.log')),
     sleepLog: () => readLines(join(control, 'sleep.log')),
   };
@@ -1017,6 +1024,7 @@ describe('linked PR runtime', () => {
     expect(await ghCommands(host)).toEqual([
       'pr checks',
       'pr checks --watch --fail-fast',
+      'pr view --json url --jq .url',
       'pr view --json headRefOid --jq .headRefOid',
       'pr checks',
       'pr checks --watch --fail-fast',
@@ -1241,7 +1249,7 @@ describe('linked PR runtime', () => {
     );
 
     expect(result.stateDescription).toBe(
-      "The fix could not be published: the push was rejected or the pull request's head did not advance to the pushed commit; the pull request remains open.",
+      "The fix could not be published: the checked-out branch no longer carries the published pull request, the push was rejected, or the pull request's head did not advance to the pushed commit; the pull request remains open.",
     );
     expect(result.output).toEqual({
       status: 'not-merged',
@@ -1253,8 +1261,13 @@ describe('linked PR runtime', () => {
       { stateId: 'waitForChecks', sourceItem: 'PR-2', exitStatus: 1 },
       { stateId: 'publishFix', sourceItem: 'PR-4', exitStatus: 1 },
     ]);
-    // `git push || exit 1` never reached the head-sync poll.
-    expect(await ghCommands(host)).toEqual(['pr checks', 'pr checks --watch --fail-fast']);
+    // The publication bound itself to the published pull request, then
+    // `git push || exit 1` failed before the head-sync poll.
+    expect(await ghCommands(host)).toEqual([
+      'pr checks',
+      'pr checks --watch --fail-fast',
+      'pr view --json url --jq .url',
+    ]);
     expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH);
     await runtime.dispose();
   });
@@ -1368,7 +1381,7 @@ describe('linked PR runtime', () => {
     );
 
     expect(result.stateDescription).toBe(
-      'The merge did not complete: the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
+      'The merge did not complete: the checked-out branch no longer carries the published pull request, the pull request does not target the repository default branch, GitHub refused the merge, or the merge may have landed while its confirmation, the local switch to the default branch, or the branch deletion failed; the pull request is in the state GitHub reports.',
     );
     // The merge command ran, so the result claims no merged state either way.
     expect(result.output).toEqual({
@@ -1380,6 +1393,101 @@ describe('linked PR runtime', () => {
       { stateId: 'waitForChecks', sourceItem: 'PR-2', exitStatus: 0 },
       { stateId: 'mergePullRequest', sourceItem: 'PR-6', exitStatus: 1 },
     ]);
+    expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH);
+    expect(await git(host.repo, 'rev-parse', 'HEAD')).toBe(branchHead);
+    await git(host.repo, 'fetch', '--quiet', 'origin');
+    expect(await git(host.repo, 'rev-parse', 'origin/main')).toBe(remoteMain);
+    await runtime.dispose();
+  });
+
+  it('publishes no fix when the suspended CODE call left another branch checked out', async () => {
+    const host = await harness({
+      players: [publishedCoder],
+      judges: [OPENED],
+      children: [{ state: 'suspended', childSessionId: 'code-suspended' }],
+    });
+    await host.setChecks({ watchExit: 1 });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const suspended = await runtime.handleBossInput({
+      text: CALLER_INPUT,
+      signal: new AbortController().signal,
+    });
+    expect(suspended.outcome).toBe('suspended');
+    if (suspended.outcome !== 'suspended') throw new Error('expected suspension');
+
+    // The nested call spans Boss turns. Boss checks out another branch at the
+    // same commit meanwhile, so `gh` now infers that branch's pull request.
+    const branchHead = await git(host.repo, 'rev-parse', 'HEAD');
+    await git(host.repo, 'checkout', '--quiet', '-b', 'issue-99-other');
+    await git(host.repo, 'push', '--quiet', '-u', 'origin', 'issue-99-other');
+    const otherHead = await git(host.repo, 'rev-parse', 'origin/issue-99-other');
+    await host.setInferredPullRequest('https://github.com/acme/widgets/pull/99');
+    const fixCommit = await simulateFix(host);
+
+    const resumed = await runtime.resumePlaybookCall({
+      callId: suspended.pendingCall.callId,
+      signal: new AbortController().signal,
+      result: {
+        status: 'ok',
+        playbookId: 'code',
+        childSessionId: 'code-suspended',
+        output: codeComplete(fixCommit),
+      },
+    });
+
+    // PR-4 refuses: it pushed nothing and never reached the merge, so the
+    // other branch's pull request was neither published to nor merged.
+    expect(terminalOf(resumed).output).toEqual({
+      status: 'not-merged',
+      reason: 'fix-not-published',
+      pullRequest: '12',
+      pullRequestUrl: PULL_REQUEST_URL,
+    });
+    const commands = await ghCommands(host);
+    expect(commands.at(-1)).toBe('pr view --json url --jq .url');
+    expect(commands.some((command) => command.startsWith('pr merge'))).toBe(false);
+    expect(scriptEvents(host)).toEqual([
+      { stateId: 'waitForChecks', sourceItem: 'PR-2', exitStatus: 1 },
+      { stateId: 'publishFix', sourceItem: 'PR-4', exitStatus: 1 },
+    ]);
+    await git(host.repo, 'fetch', '--quiet', 'origin');
+    expect(await git(host.repo, 'rev-parse', 'origin/' + BRANCH)).toBe(branchHead);
+    // Neither branch received the fix: the drifted branch's remote head is
+    // exactly where it was before `code` ran.
+    expect(await git(host.repo, 'rev-parse', 'origin/issue-99-other')).toBe(otherHead);
+    expect(await git(host.repo, 'rev-parse', 'origin/issue-99-other')).not.toBe(fixCommit);
+    await runtime.dispose();
+  });
+
+  it('never merges when the checkout no longer infers the published pull request', async () => {
+    const host = await harness({
+      players: [publishedCoder],
+      judges: [OPENED],
+    });
+    await host.setInferredPullRequest('https://github.com/acme/widgets/pull/99');
+    const branchHead = await git(host.repo, 'rev-parse', 'HEAD');
+    const remoteMain = await git(host.repo, 'rev-parse', 'origin/main');
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = terminalOf(
+      await runtime.handleBossInput({
+        text: CALLER_INPUT,
+        signal: new AbortController().signal,
+      }),
+    );
+
+    expect(result.output).toEqual({
+      status: 'merge-unconfirmed',
+      pullRequest: '12',
+      pullRequestUrl: PULL_REQUEST_URL,
+    });
+    // The identity check precedes the base check and the merge itself.
+    const commands = await ghCommands(host);
+    expect(commands.at(-1)).toBe('pr view --json url --jq .url');
+    expect(commands.some((command) => command.startsWith('pr merge'))).toBe(false);
     expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH);
     expect(await git(host.repo, 'rev-parse', 'HEAD')).toBe(branchHead);
     await git(host.repo, 'fetch', '--quiet', 'origin');
