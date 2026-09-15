@@ -76,7 +76,7 @@ it.each([['code', code], ['dev', dev]] as const)('emits and strictly checks the 
   expect(readFileSync(value.fsm, 'utf8')).toBe(value.source);
   const checked = spawnSync(process.execPath, [engineRequire.resolve('typescript/lib/tsc.js'), '--noEmit', '--allowImportingTsExtensions', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck', '--typeRoots', join(packageRoot, 'node_modules/@types'), value.output], { cwd: root, encoding: 'utf8' });
   expect(checked.status, checked.stdout + checked.stderr).toBe(0);
-}, 30_000);
+});
 
 it('renders labelled strings and identities literally through the actual emitted canonical seam', () => {
   const result = code.emit();
@@ -137,7 +137,7 @@ it('refuses unsupported strategies and metadata without replacing an accepted ta
   const checked = spawnSync(process.execPath, [engineRequire.resolve('typescript/lib/tsc.js'), '--noEmit', '--allowImportingTsExtensions', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck', '--typeRoots', join(packageRoot, 'node_modules/@types'), code.output], { cwd: root, encoding: 'utf8' });
   expect(checked.status).not.toBe(0);
   expect(checked.stdout).toContain('DoesNotExist');
-}, 30_000);
+});
 
 it('passes maintained CODE/DEV real-Git and nested-boundary suites with only their factory wiring replaced', () => {
   for (const [name, value] of [['code', code], ['dev', dev]] as const) {
