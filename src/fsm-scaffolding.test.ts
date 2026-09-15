@@ -46,9 +46,9 @@ function initialize(input: string, output: string) {
   return spawnSync(process.execPath, [helper, '--source', input, '--out', output], { encoding: 'utf8' });
 }
 
-function strict(directory: string, path: string) {
+function strict(directory: string, path: string, emit = false) {
   return spawnSync(process.execPath, [requireGraph.resolve('typescript/bin/tsc'),
-    '--noEmit', '--strict', '--types', 'node', '--typeRoots', join(graph, 'node_modules/@types'), '--noUnusedLocals', '--noUnusedParameters',
+    emit ? '--noEmitOnError' : '--noEmit', '--strict', '--types', 'node', '--typeRoots', join(graph, 'node_modules/@types'), '--noUnusedLocals', '--noUnusedParameters',
     '--erasableSyntaxOnly', '--skipLibCheck', '--target', 'ES2022',
     '--module', 'NodeNext', '--moduleResolution', 'NodeNext', path,
   ], { cwd: directory, encoding: 'utf8' });
@@ -104,12 +104,12 @@ it('initializes an original two-actor workflow with exact constants, then preser
   expect(raw.match(/from ['"][^'"]+['"]/g)).toEqual(["from 'xstate'", "from '@sublang/playbook/xstate-runtime'", "from '@sublang/playbook/runtime'"]);
   const authored = complete(raw);
   writeFileSync(output, authored);
-  const checked = strict(directory, output);
+  const checked = strict(directory, output, true);
   expect(checked.status, checked.stdout + checked.stderr).toBe(0);
   const probe = `
     import assert from 'node:assert/strict';
     import { createActor, fromPromise, waitFor } from 'xstate';
-    import { machine, GEARS_ITEMS } from './sample.fsm.ts';
+    import { machine, GEARS_ITEMS } from './sample.fsm.js';
     const inputs = [];
     const actor = createActor(machine.provide({ actors: {
       player: fromPromise(async ({ input }) => { inputs.push(input); return { guard: 'done', answer: 'Exact answer.' }; }),
@@ -125,7 +125,7 @@ it('initializes an original two-actor workflow with exact constants, then preser
     actor.stop();
     console.log(JSON.stringify(GEARS_ITEMS));
   `;
-  const executed = execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', probe], { cwd: directory, encoding: 'utf8' });
+  const executed = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: directory, encoding: 'utf8' });
   const items = JSON.parse(executed);
   expect(items['CASE-1'].prompt).toBe(prompt);
   expect(items['CASE-2']).not.toHaveProperty('result');

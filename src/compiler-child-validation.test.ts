@@ -42,7 +42,7 @@ it('emits strict standalone canonical validation and agrees with the real nested
     const modulePath = join(directory, 'authored-child.ts');
     writeFileSync(modulePath, imports.join('\n') + '\n\n' + helper + '\n');
     const strict = spawnSync(process.execPath, [requireGraph.resolve('typescript/bin/tsc'),
-      '--noEmit', '--strict', '--types', 'node', '--typeRoots', join(graph, 'node_modules/@types'), '--noUnusedLocals', '--noUnusedParameters', '--noImplicitOverride',
+      '--noEmitOnError', '--strict', '--types', 'node', '--typeRoots', join(graph, 'node_modules/@types'), '--noUnusedLocals', '--noUnusedParameters', '--noImplicitOverride',
       '--verbatimModuleSyntax', '--erasableSyntaxOnly', '--isolatedModules', '--skipLibCheck',
       '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', modulePath,
     ], { cwd: directory, encoding: 'utf8' });
@@ -51,7 +51,7 @@ it('emits strict standalone canonical validation and agrees with the real nested
       import assert from 'node:assert/strict';
       import { createActor, toPromise } from 'xstate';
       import { createNestedPlaybookBridge, validatePlaybookCallResult } from '@sublang/playbook/xstate-runtime';
-      import { authoredChildResult } from './authored-child.ts';
+      import { authoredChildResult } from './authored-child.js';
       const base = { playbookId: 'inspect', childSessionId: 'child-1' };
       const state = { value: 'done', activeStateIds: ['done'], tags: [], status: 'done', quiescent: true, stateId: 'done' };
       const error = { name: 'InspectionFailure', message: 'Inspection stopped.', stack: 'synthetic stack' };
@@ -108,7 +108,7 @@ it('emits strict standalone canonical validation and agrees with the real nested
       assert.equal(authoredChildResult(throwing, 'inspect'), undefined);
       console.log(JSON.stringify({ cases: records, outerLookalikesRejected: true }));
     `;
-    const result = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', probe], { cwd: directory, encoding: 'utf8', timeout: 20_000 }));
+    const result = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: directory, encoding: 'utf8', timeout: 20_000 }));
     expect(result.cases).toHaveLength(15);
     expect(result.cases.every((row: { matchesActualBridge: boolean }) => row.matchesActualBridge)).toBe(true);
     expect(result.outerLookalikesRejected).toBe(true);

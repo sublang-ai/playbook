@@ -91,7 +91,9 @@ it('ships the full contract and keeps the rejected compact recipe outside the pa
     const childAcceptance = "`onDone` proves successful bridge delivery without a declared child failure;\nit does not establish every caller-owned domain condition. The caller shall\nenforce its own explicit Source-authored acceptance or relay predicates on\nthe delivered output before continuing, without inventing predicates from\ncallee implementation details or overriding the child's compiled terminal\nkind with output fields.\n";
     const previousChildAcceptance = "Because the bridge routes a failure terminal to the error path, `onDone` alone\nproves the child succeeded and a caller never inspects a callee's output fields\nto decide that; a caller reads those fields only when its own Source relays\nthem.\n";
     expect(beforePreferenceGuide.split(childAcceptance)).toHaveLength(2);
-    const fullV2 = beforeValidator.replace(childAcceptance, previousChildAcceptance).replace(currentRecipe, read('scripts/experiments/materializer-v2-recipe.md'));
+    const archivedRecipe = read('scripts/experiments/materializer-v2-recipe.md')
+      .replace(/^(?:<!-- SPDX-[^\n]+ -->\n)+\n/, '');
+    const fullV2 = beforeValidator.replace(childAcceptance, previousChildAcceptance).replace(currentRecipe, archivedRecipe);
     expect(sha(fullV2)).toBe('d6e8f850e8e679016d1bfd0d6ef42d19b51948fcce09e818eadf099df63afe82');
     const previousGuide = 'Its factory preflight checks linked metadata; the Captain host owns registry\n'
       + 'manifest and live authority-envelope validation at its construction boundary.\n'

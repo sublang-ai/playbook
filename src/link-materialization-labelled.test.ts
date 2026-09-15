@@ -41,8 +41,14 @@ function fixture(name: 'code' | 'dev') {
   const declaration = module.statements.flatMap((s) => ts.isVariableStatement(s) ? [...s.declarationList.declarations] : []).find((d) => d.name.getText(module) === 'runtimeSpec')!;
   const spec = (declaration.initializer as ts.SatisfiesExpression).expression as ts.ObjectLiteralExpression;
   const member = (key: string) => literal((spec.properties.find((p) => p.name?.getText(module) === key) as ts.PropertyAssignment).initializer);
-  const fsm = join(root, `${name}.fsm.ts`);
-  const source = readFileSync(join(originalDir, `${name}.fsm.ts`), 'utf8');
+  // Execute the compiled input on every supported Node version; its unchanged
+  // TypeScript sibling supplies the erased player-input type to strict checks.
+  const typedSource = readFileSync(join(originalDir, `${name}.fsm.ts`), 'utf8');
+  writeFileSync(join(root, `${name}.fsm.ts`), typedSource);
+  const fsm = join(root, `${name}.fsm.js`);
+  const source = ts.transpileModule(typedSource, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
   writeFileSync(fsm, source);
   const output = join(root, `${name}.playbook.ts`);
   const descriptor: Record<string, any> = {
@@ -70,14 +76,18 @@ it.each([['code', code], ['dev', dev]] as const)('emits and strictly checks the 
   expect(readFileSync(value.fsm, 'utf8')).toBe(value.source);
   const checked = spawnSync(process.execPath, [engineRequire.resolve('typescript/lib/tsc.js'), '--noEmit', '--allowImportingTsExtensions', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck', '--typeRoots', join(packageRoot, 'node_modules/@types'), value.output], { cwd: root, encoding: 'utf8' });
   expect(checked.status, checked.stdout + checked.stderr).toBe(0);
-});
+}, 30_000);
 
 it('renders labelled strings and identities literally through the actual emitted canonical seam', () => {
   const result = code.emit();
   expect(result.status, result.stderr).toBe(0);
+  const compiled = join(root, 'code.playbook.js');
+  writeFileSync(compiled, ts.transpileModule(readFileSync(code.output, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText);
   const probe = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
-    import { _internal } from ${JSON.stringify(pathToFileURL(code.output).href)};
+    import { _internal } from ${JSON.stringify(pathToFileURL(compiled).href)};
     const value = { stateId: 'runFirstPhase', sourceItem: 'CODE-1', role: 'coder', result: {},
       prompt: '> Original request: <caller-input>\\r\\n> Run results: <run-results>\\r\\n> Other: <empty>\\r\\nCoder is <coder-llm>; missing <missing>.',
       callerInput: 'one\\r\\n\\r\\ntwo <coder-llm> $&', runResults: '', empty: '',
@@ -127,7 +137,7 @@ it('refuses unsupported strategies and metadata without replacing an accepted ta
   const checked = spawnSync(process.execPath, [engineRequire.resolve('typescript/lib/tsc.js'), '--noEmit', '--allowImportingTsExtensions', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck', '--typeRoots', join(packageRoot, 'node_modules/@types'), code.output], { cwd: root, encoding: 'utf8' });
   expect(checked.status).not.toBe(0);
   expect(checked.stdout).toContain('DoesNotExist');
-});
+}, 30_000);
 
 it('passes maintained CODE/DEV real-Git and nested-boundary suites with only their factory wiring replaced', () => {
   for (const [name, value] of [['code', code], ['dev', dev]] as const) {

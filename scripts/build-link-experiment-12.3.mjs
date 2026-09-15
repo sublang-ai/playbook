@@ -105,7 +105,9 @@ const rejectedHelperGuide = 'Its factory preflight checks linked metadata; the C
   + 'manifest and live authority-envelope validation at its construction boundary.\n'
   + 'Do not audit the bare shared factory as if it owned that Captain-host boundary\n'
   + 'or synthesize host capabilities in the emitted artifact.\n';
-const helperV2Recipe = await readFile(join(repo, 'scripts/experiments/materializer-v2-recipe.md'), 'utf8');
+// The archive's licensing prologue is outside the frozen embedded recipe.
+const helperV2Recipe = (await readFile(join(repo, 'scripts/experiments/materializer-v2-recipe.md'), 'utf8'))
+  .replace(/^(?:<!-- SPDX-[^\n]+ -->\n)+\n/, '');
 verify(helperV2Recipe, expected.helperV2Recipe, 'unchanged v2 helper recipe');
 const rejectedFull12 = full12.replace(helperRecipe, helperV2Recipe).replace(commonGuide, '').replace('Its factory preflight checks linked metadata.\n', rejectedHelperGuide);
 verify(rejectedFull12, expected.rejectedFull12, 'unchanged rejected compact full contract');
