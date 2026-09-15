@@ -83,9 +83,15 @@ comment delimiters into a TypeScript target.
 - `stateId`: the stable id of the invoking working leaf;
 - `sourceItem`: the GEARS item ID this state realizes;
 - `command`: the script item's blockquote text, verbatim after Markdown
-  unescaping, with every runtime-value placeholder it carries substituted from
-  typed machine context — a script has no prose contract to carry the field
-  separately, and the provided actor executes `command` verbatim;
+  unescaping, with every runtime-value placeholder it carries bound from typed
+  machine context — a script has no prose contract to carry the field
+  separately, and the provided actor executes `command` verbatim.
+  A bound value is data, never syntax: the placeholder occupies a
+  single-quoted shell word, and binding replaces that whole word — quotes
+  included — with the value encoded as its own single-quoted literal, each
+  embedded `'` written `'\''`. Interpolating a value into double-quoted or
+  unquoted command text is malformed, because a retained value is reported
+  text that would otherwise expand or run as shell syntax;
 - `result`: a record whose keys are the item's two declared guard names, first
   the zero-exit guard, then the nonzero-exit guard.
 

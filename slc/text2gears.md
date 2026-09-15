@@ -306,6 +306,9 @@ prompts.
 A script reads no conversation and produces no prose, so a placeholder is
 sound there only to bind the command to a target the script cannot otherwise
 name — never to carry a value the script would have to interpret.
+It shall occupy a single-quoted shell word, so the authored command is valid
+shell as written and the compiled one binds a literal
+([gears2fsm "Setup"](gears2fsm.md#setup)).
 A script item shall carry a `Results:` label with exactly two bullets in this
 fixed interpretation: the first guard reports the script exiting with status
 zero, the second reports a nonzero exit status.

@@ -25,16 +25,28 @@ const OPEN_PULL_REQUEST_RESULTS = {
 // run does not own, so the two steps that act on the pull request itself relay
 // one runtime value — the pull request PR-1 published — through the same
 // placeholder relay an acting prompt uses.
-const PULL_REQUEST_URL_PLACEHOLDER = '<pull-request-url>';
-// Substitute the retained identity into a script command. Without it the
-// literal placeholder stays, and no `gh` output equals it, so the step refuses
-// instead of acting on whatever the checkout now infers. Every script state is
+// The placeholder occupies a single-quoted shell word, and binding replaces
+// that whole word — quotes included — with the value's own quoted literal.
+const QUOTED_PULL_REQUEST_URL = "'<pull-request-url>'";
+// A retained value is reported text, so it reaches the shell as one
+// single-quoted literal word: no command substitution, no expansion, no word
+// splitting. A single quote inside the value closes the literal, escapes
+// itself, and reopens it — the only character single quotes cannot hold.
+function shellLiteral(value) {
+    return `'${value.split("'").join("'\\''")}'`;
+}
+// Bind the retained identity into a script command. Without it the quoted
+// placeholder stays, and no `gh` output equals it, so the step refuses instead
+// of acting on whatever the checkout now infers. Every script state is
 // reachable only after `rememberPullRequest`, so the refusal is unreachable by
 // construction and exists to keep the failure closed if that ever changes.
 function scriptCommand(command, context) {
-    return isNonEmptyString(context.pullRequestUrl)
-        ? command.replaceAll(PULL_REQUEST_URL_PLACEHOLDER, context.pullRequestUrl)
-        : command;
+    const url = context.pullRequestUrl;
+    if (!isNonEmptyString(url))
+        return command;
+    // A function replacement keeps `$`-patterns in the value from being read as
+    // replacement syntax.
+    return command.replaceAll(QUOTED_PULL_REQUEST_URL, () => shellLiteral(url));
 }
 const WAIT_FOR_CHECKS_COMMAND = [
     'n=0',
@@ -46,7 +58,7 @@ const WAIT_FOR_CHECKS_COMMAND = [
     'gh pr checks --watch --fail-fast >/dev/null 2>&1',
 ].join('\n');
 const PUBLISH_FIX_COMMAND = [
-    '[ "$(gh pr view --json url --jq .url)" = "<pull-request-url>" ] || exit 1',
+    '[ "$(gh pr view --json url --jq .url)" = \'<pull-request-url>\' ] || exit 1',
     'git push || exit 1',
     'n=0',
     'until [ "$(gh pr view --json headRefOid --jq .headRefOid 2>/dev/null)" = "$(git rev-parse HEAD)" ]; do',
@@ -55,7 +67,7 @@ const PUBLISH_FIX_COMMAND = [
     'sleep 5',
     'done',
 ].join('\n');
-const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\n[ \"$pr\" = \"<pull-request-url>\" ] || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
+const MERGE_PULL_REQUEST_COMMAND = "pr=$(gh pr view --json url --jq .url) || exit 1\n[ \"$pr\" = '<pull-request-url>' ] || exit 1\nbase=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1\n[ -n \"$base\" ] || exit 1\n[ \"$(gh pr view \"$pr\" --json baseRefName --jq .baseRefName)\" = \"$base\" ] || exit 1\ngh pr merge --merge --delete-branch --match-head-commit \"$(git rev-parse HEAD)\" || exit 1\n[ \"$(gh pr view \"$pr\" --json state --jq .state)\" = MERGED ] || exit 1\n[ \"$(git branch --show-current)\" = \"$base\" ]";
 const UPDATE_LOCAL_DEFAULT_COMMAND = 'git pull --ff-only';
 const WAIT_FOR_CHECKS_RESULTS = {
     checksPassed: "The command exited with status zero: the pull request's checks passed, or the repository still reported no checks after a brief wait for them to register.",

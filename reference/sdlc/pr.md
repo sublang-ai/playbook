@@ -21,6 +21,7 @@ It changes no files and owns no repository commit; the one fix it may request is
 The check waits, the fix publication, the merge, and the local update are mechanical steps: each runs one fixed command whose exit status alone decides its two outcomes, reads no conversation, and produces no prose.
 `gh` infers the pull request from the checked-out branch, which the run does not own: the nested `code` call suspends across Boss turns, so the checkout can change before the fix is published or the merge runs.
 The two steps that act on the pull request itself therefore carry one runtime value — the pull request `pr` published — and refuse unless the checkout still infers exactly it.
+That identity is reported text, so it binds as a single-quoted shell literal: the command compares it as data and never executes it as shell syntax.
 
 When the caller gives its input, Captain shall relay the complete caller input in quotes (`>`) to Coder, along with the following instruction:
 
@@ -67,7 +68,7 @@ When the nested `code` call fails outside that authored result contract, `pr` sh
 
 When `code` succeeds, Captain shall publish the fix to the pull request by running exactly the following command in the repository, with no other action and without reading its output:
 
-> [ "$(gh pr view --json url --jq .url)" = "<pull-request-url>" ] || exit 1
+> [ "$(gh pr view --json url --jq .url)" = '<pull-request-url>' ] || exit 1
 > git push || exit 1
 > n=0
 > until [ "$(gh pr view --json headRefOid --jq .headRefOid 2>/dev/null)" = "$(git rev-parse HEAD)" ]; do
@@ -96,7 +97,7 @@ Checks still failing is an authored failure that leaves the pull request open; t
 When the checks pass, before or after the one fix attempt, Captain shall merge the pull request by running exactly the following command in the repository, with no other action and without reading its output:
 
 > pr=$(gh pr view --json url --jq .url) || exit 1
-> [ "$pr" = "<pull-request-url>" ] || exit 1
+> [ "$pr" = '<pull-request-url>' ] || exit 1
 > base=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) || exit 1
 > [ -n "$base" ] || exit 1
 > [ "$(gh pr view "$pr" --json baseRefName --jq .baseRefName)" = "$base" ] || exit 1

@@ -3,6 +3,7 @@
 
 import { execFile } from 'node:child_process';
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -1492,6 +1493,49 @@ describe('linked PR runtime', () => {
     expect(await git(host.repo, 'rev-parse', 'HEAD')).toBe(branchHead);
     await git(host.repo, 'fetch', '--quiet', 'origin');
     expect(await git(host.repo, 'rev-parse', 'origin/main')).toBe(remoteMain);
+    await runtime.dispose();
+  });
+
+  it('binds a Coder-reported pull request URL as data, never as shell syntax', async () => {
+    // The URL is Coder's reported text. This one carries a command
+    // substitution that would run `touch` and expand to nothing, leaving the
+    // comparison equal to the pull request the checkout really infers.
+    const hostile = `${PULL_REQUEST_URL}$(touch pwned.txt)`;
+    const host = await harness({
+      players: [
+        {
+          ...publishedCoder,
+          finalText: `Pushed ${BRANCH} and opened pull request #12: ${hostile}`,
+        },
+      ],
+      judges: [{ guard: 'opened', pullRequest: '12', pullRequestUrl: hostile }],
+    });
+    const branchHead = await git(host.repo, 'rev-parse', 'HEAD');
+    const remoteMain = await git(host.repo, 'rev-parse', 'origin/main');
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+
+    const result = terminalOf(
+      await runtime.handleBossInput({
+        text: CALLER_INPUT,
+        signal: new AbortController().signal,
+      }),
+    );
+
+    // The substitution never ran, and the literal it stayed matches no pull
+    // request, so the merge refused instead of merging on a forged equality.
+    await expect(access(join(host.repo, 'pwned.txt'))).rejects.toThrow();
+    expect(result.output).toEqual({
+      status: 'merge-unconfirmed',
+      pullRequest: '12',
+      pullRequestUrl: hostile,
+    });
+    const commands = await ghCommands(host);
+    expect(commands.some((command) => command.startsWith('pr merge'))).toBe(false);
+    expect(await git(host.repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH);
+    await git(host.repo, 'fetch', '--quiet', 'origin');
+    expect(await git(host.repo, 'rev-parse', 'origin/main')).toBe(remoteMain);
+    expect(await git(host.repo, 'rev-parse', 'HEAD')).toBe(branchHead);
     await runtime.dispose();
   });
 

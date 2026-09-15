@@ -31,8 +31,11 @@ The pass shall rewrite an item only when **all** of the following hold:
 - The item's behavior is mechanical: a fixed shell command performs it
   completely, with no judgment, no natural-language generation, and no
   reading of conversational context.
-- The command is static: it needs no `<placeholder>` and no runtime value
-  beyond the working directory the runtime executes in.
+- The command is static apart from naming its target: it needs no runtime
+  value beyond the working directory the runtime executes in, except a
+  `<placeholder>` the source already established for a target the command
+  cannot otherwise identify, which binds as a shell literal
+  ([text2gears "Script behaviors"](text2gears.md#script-behaviors-optimizer-introduced)).
 - No other item's condition or prompt consumes prose this item's acting agent
   would have produced; the item's effect is entirely on the environment
   (files, repository state, directories) plus a success/failure signal.
@@ -60,9 +63,8 @@ For each eligible item, the pass shall:
   stays in this exact English form even when the surrounding item text is
   in another language.
 - Replace the blockquoted prompt with the exact POSIX shell script that
-  performs the behavior: static text, apart from a `<placeholder>` the
-  original item already established for a runtime value the script needs to
-  bind itself to its target
+  performs the behavior: static text, apart from the eligible target
+  `<placeholder>`, written as a single-quoted shell word
   ([text2gears "Script behaviors"](text2gears.md#script-behaviors-optimizer-introduced)).
 - Emit exactly two `Results:` bullets per
   [text2gears "Script behaviors"](text2gears.md#script-behaviors-optimizer-introduced):

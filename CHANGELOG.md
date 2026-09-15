@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PR confirms the captured pull request is merged and the local checkout is on the repository default branch before reporting merge success or pulling; an already queued pull request no longer counts as merged.
 - Setup documentation now describes credential-based adapter seeding and the credentials required by the selected adapter.
 - PR requires the pull request it captured to target the repository default branch before the irreversible `gh pr merge`, so a reused pull request opened against another branch is never merged into it.
+- A pull-request URL relayed into PR's fix-publication and merge commands binds as a single-quoted shell literal. Interpolated into double-quoted command text, a Coder-reported `$(…)` both executed and expanded to whatever made the continuity check succeed.
 - PR's fix publication and merge each refuse unless the checked-out branch still infers the pull request PR published. The nested `code` fix suspends across Boss turns, so a checkout that moved meanwhile could publish to and merge another branch's pull request while the result named the original.
 - PR's refused-merge terminal now reports `status: 'merge-unconfirmed'` instead of `not-merged`, and no terminal claims a branch was deleted: the merge command may have landed a merge before its confirmation failed, and `gh` skips the requested remote deletion for a pull request from another repository or one already merged.
 
