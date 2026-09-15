@@ -94,12 +94,12 @@ meta.md       The spec of specs
 | [captain-playbook.md](packages/captain-playbook.md) | Compiled session Captain behavior, controller contract, compilation, and verification |
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
-| [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
+| [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Source-authored runtime relays through prompt placeholders and typed actor inputs |
 | [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, terminal return obligations, authored Boss-question fields, and unambiguous output guidance |
 | [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
 | [compiler-nested-calls.md](packages/compiler-nested-calls.md) | Nested-playbook call syntax and child-output routing duties |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
-| [compiler-source-state.md](packages/compiler-source-state.md) | Source-owned generated-FSM availability facts and continuation history preservation |
+| [compiler-source-state.md](packages/compiler-source-state.md) | Generated-FSM availability facts, Source-owned history, and canonical Boss-reply context |
 | [compiler-entry-options.md](packages/compiler-entry-options.md) | Public linked option validation and source-owned bootstrap requiredness |
 | [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |
 | [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |
