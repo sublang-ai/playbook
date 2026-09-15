@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.0.0] - 2026-09-15
+
 ### Added
 
 - Published `slc/workflow-contracts.json` with the builtin workflow output schemas and default literal target bindings, so compilers and embedders can consume those interfaces independently of workflow implementations.
@@ -665,7 +667,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v13.3.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v14.0.0...HEAD
+[14.0.0]: https://github.com/sublang-ai/playbook/compare/v13.3.0...v14.0.0
 [13.3.0]: https://github.com/sublang-ai/playbook/compare/v13.2.0...v13.3.0
 [13.2.0]: https://github.com/sublang-ai/playbook/compare/v13.1.0...v13.2.0
 [13.1.0]: https://github.com/sublang-ai/playbook/compare/v13.0.0...v13.1.0
