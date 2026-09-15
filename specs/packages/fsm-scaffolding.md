@@ -32,7 +32,7 @@ A nested prompt constant shall remain a source template, without prescribing run
 
 When emitting the typed structure, the initializer shall declare only the source's used Captain, player and static-playbook actor kinds as explicit failing placeholders, export their input/output contracts and machine input, and use `setup(...).extend(...)` for registered assignments followed by `createMachine(...)`.
 Unresolved authoring markers shall require the compiler to supply context, external events, machine input/output, acting result payload types, runtime input fields, assignments, complete machine configuration and every workflow decision before the result can pass strict TypeScript.
-Nested actor output shall use the readonly JSON boundary with optional absence; the initializer shall infer no child interface.
+Nested actor output shall use the readonly JSON boundary with optional absence [[playbook-runtime-42](playbook-runtime.md#playbook-runtime-42)]; the initializer shall infer no child interface.
 The target shall embed its constants without initializer imports or auxiliary semantic files and import only XState, plus the selected public stateless validator and its public type when a child actor is used.
 For that child profile it shall emit the generic authored-failure helper under [[compiler-child-validation-1](compiler-child-validation.md#compiler-child-validation-1)] without deriving a workflow predicate or recovery route; this pure import shall not bind a runner [[compiler-child-validation-2](compiler-child-validation.md#compiler-child-validation-2)].
 

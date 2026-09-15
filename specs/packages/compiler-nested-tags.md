@@ -12,7 +12,7 @@ It changes no nested-call result routing or runtime engine behavior.
 
 ### compiler-nested-tags-1
 
-When gears2fsm emits an invoking working leaf, the compiler shall tag direct-Captain, delegated-player, and script leaves with `playbook.busy` while tagging nested-playbook call states with `playbook.suspended` and omitting `playbook.busy` from that call state and every ancestor state including the machine root, without forbidding an independently active sibling Captain, player, or script leaf from remaining busy.
+When gears2fsm emits an invoking working leaf, the compiler shall tag direct-Captain, delegated-player, and script leaves with `playbook.busy` while tagging nested-playbook call states with `playbook.suspended` and omitting `playbook.busy` from that call state and every ancestor state including the machine root [[playbook-runtime-41](playbook-runtime.md#playbook-runtime-41)], without forbidding an independently active sibling Captain, player, or script leaf from remaining busy.
 
 ## Verification
 

@@ -23,12 +23,12 @@ The terminal-return requirement shall remain non-acting semantics outside prompt
 
 ### compiler-results-5
 
-When Source gives a direct-Captain or delegated-player acting result that asks Boss a question and waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, guard name, wait, and answer-dependent continuation while declaring the result's `question` output property in the annotated `question: <verbatim final text>` form.
-The result name or prose alone shall not satisfy the field declaration, and text2gears shall not emit the framework-owned `needsBossReply` result.
+When Source gives a direct-Captain or delegated-player acting result that asks Boss a question and waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, guard name, wait, and answer-dependent continuation [[playbook-runtime-11](playbook-runtime.md#playbook-runtime-11)] while declaring the result's `question` output property in the annotated `question: <verbatim final text>` form [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
+The result name or prose alone shall not satisfy the field declaration, and text2gears shall not emit the framework-owned `needsBossReply` result added by [gears2fsm's Boss-reply suspension](../../slc/gears2fsm.md#boss-reply-suspension).
 
 ### compiler-results-7
 
-When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
+When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
 
 ## Verification
 

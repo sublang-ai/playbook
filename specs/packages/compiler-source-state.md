@@ -15,7 +15,7 @@ Where a Source outcome's availability condition is deterministically knowable fr
 
 ### compiler-source-state-2
 
-Where Source requires earlier discussion or constraints on a later invocation, when gears2fsm emits Boss-reply suspension and continuation, it shall persist the needed earlier exchanges or constraints in serializable machine context before replacing or clearing pending Q/A fields, relay that source-owned context on fresh as well as resumed calls, preserve Source-owned relevance and format, avoid imposing all-history semantics on sources that do not require them, and avoid treating shared continuation's latest Q/A pair or a backend continuation token as durable Source history.
+Where Source requires earlier discussion or constraints on a later invocation, when gears2fsm emits Boss-reply suspension and continuation, it shall persist the needed earlier exchanges or constraints in serializable machine context before replacing or clearing pending Q/A fields, relay that source-owned context on fresh as well as resumed calls, preserve Source-owned relevance and format, avoid imposing all-history semantics on sources that do not require them, and avoid treating shared continuation's latest Q/A pair [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)] or a backend continuation token [[playbook-runtime-38](playbook-runtime.md#playbook-runtime-38)] as durable Source history.
 
 ## Verification
 

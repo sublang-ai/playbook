@@ -33,7 +33,7 @@ The descriptor shall carry the exact erased and authored metadata through these 
 | `inputMapping` | FSM input-field to declared option-name map; every non-`cwd` option is mapped. |
 | `entryEvent` | `{ type, textField, contextField? }` strings, or explicit null. |
 | `bossEvents` | Exact additional event contracts with `type` and optional `fields` mapping each field to `{ source: 'judge' \| 'text', required?: boolean, values?: string[] }`. |
-| `outcomeAuthority` | `{ governedPlayerStates: { [state]: { [outcome]: { fields, repositoryDisposition } } } }` with the existing schema-3 authorities and dispositions. |
+| `outcomeAuthority` | `{ governedPlayerStates: { [state]: { [outcome]: { fields, repositoryDisposition } } } }` with the existing schema-3 authorities and dispositions [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)]. |
 | `placeholderFields` | Authored placeholder-token to input-field string map. |
 | `resumableStateIds` | Explicit duplicate-free delegated-player state ids allowed to suspend for and resume from a Boss reply, according to the FSM's resumption registry or `BOSS_REPLY` branches, independently of its interrupt targets. |
 | `transitionEventFields`, `verbatimPayloadFields`, `unfinishedFinalStateIds`, `controlContextFields` | Explicit duplicate-free string arrays, including empty arrays. |
@@ -44,7 +44,7 @@ When validating metadata, the helper shall reject unknown descriptor members wit
 
 ### link-materialization-6
 
-When materializing an accepted descriptor, the helper shall derive the emitted module's player identities, roles and labels from the loaded FSM, schema-3 compatibility from the installed engine, and option types, immutable JSON validation with the public validator and identical snapshot binding of [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] and [[compiler-entry-options-2](compiler-entry-options.md#compiler-entry-options-2)], input mappings, factory wiring and applicable default-composer verification exports from the validated descriptor.
+When materializing an accepted descriptor, the helper shall derive the emitted module's player identities, roles and labels from the loaded FSM, schema-3 compatibility from the installed engine [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], and option types, immutable JSON validation with the public validator and identical snapshot binding of [[compiler-entry-options-1](compiler-entry-options.md#compiler-entry-options-1)] and [[compiler-entry-options-2](compiler-entry-options.md#compiler-entry-options-2)], input mappings, factory wiring and applicable default-composer verification exports from the validated descriptor.
 
 ### link-materialization-7
 
@@ -52,11 +52,11 @@ Where the FSM declares a script actor, the helper shall include optional string 
 
 ### link-materialization-8
 
-The generated construction type shall require opaque live authority alongside shared repository and effect-ledger capabilities, without defining a host-specific type or synthesizing a capability value.
+The generated construction type shall require opaque live authority alongside shared repository and effect-ledger capabilities [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], without defining a host-specific type or synthesizing a capability value.
 
 ### link-materialization-9
 
-Before replacing the declared target, the helper shall validate the descriptor and invoke the artifact-resolved shared factory for structural preflight, require the output location to resolve that same engine, and atomically replace only the declared target after successful generation.
+Before replacing the declared target, the helper shall validate the descriptor and invoke the artifact-resolved shared factory for structural preflight [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] [[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)], require the output location to resolve that same engine, and atomically replace only the declared target after successful generation.
 
 ### link-materialization-10
 
@@ -91,11 +91,11 @@ Where the descriptor selects `flat-quoted-relays`, the emitted player composer s
 | Standalone `> <token>` line with an empty string | Omit the entire line, including its line ending. |
 | Standalone `> <token>` line with a nonempty string | Prefix every nonempty value line with `> `, preserving blank lines, LF or CRLF separators, and the template line ending without inventing empty quoted lines. |
 | Missing or non-string value | Preserve the source token or relay line unchanged. |
-| Token-to-field lookup | Use `placeholderFields` first, then `<#>` to `irNumber`, otherwise the shared kebab-token-to-camel-field convention. |
+| Token-to-field lookup | Use `placeholderFields` first, then `<#>` to `irNumber`, otherwise the shared kebab-token-to-camel-field convention [[playbook-6](playbook.md#playbook-6)]. |
 
 ### link-materialization-15
 
-Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall prefix its rendered body once with the installed shared composer's continuation for an empty body, forwarding the continuation mode only when the engine exposes that API and leaving question, reply, and source input values unchanged under the [full prompt contract](../../slc/link.md#player-prompt-composition).
+Where the descriptor selects `flat-quoted-relays`, the emitted player composer shall prefix its rendered body once with the installed shared composer's continuation for an empty body [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], forwarding the continuation mode only when the engine exposes that API and leaving question, reply, and source input values unchanged under the [full prompt contract](../../slc/link.md#player-prompt-composition).
 
 ### link-materialization-16
 
@@ -118,11 +118,11 @@ Where that profile is selected, the emitted player composer shall import the dec
 
 ### link-materialization-24
 
-Where that profile declares an identity placeholder, the emitted composer shall obtain its value only through the invocation-scoped identity lookup for the declared local role, preserve the source input, and expose the same canonical composer arguments as the runtime uses; fresh/resumed continuation shall come from the installed shared `composePlayerContinuation` [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], with absence of that API making the profile unsupported.
+Where that profile declares an identity placeholder, the emitted composer shall obtain its value only through the invocation-scoped identity lookup for the declared local role [[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)], preserve the source input, and expose the same canonical composer arguments as the runtime uses; fresh/resumed continuation shall come from the installed shared `composePlayerContinuation` [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], with absence of that API making the profile unsupported.
 
 ### link-materialization-25
 
-Where that profile encounters a nested `playbook` invocation, the helper shall leave its input, text, target, output guards, recovery, and terminal semantics in the unchanged FSM and let the shared factory provide the bridge; direct Captain actors, compound or parallel topology, structured/custom prompt strategies, and nonprimitive option contracts shall remain outside this profile [[link-materialization-5](#link-materialization-5)].
+Where that profile encounters a nested `playbook` invocation, the helper shall leave its input, text, target, output guards, recovery, and terminal semantics in the unchanged FSM and let the shared factory provide the bridge [[playbook-runtime-42](playbook-runtime.md#playbook-runtime-42)]; direct Captain actors, compound or parallel topology, structured/custom prompt strategies, and nonprimitive option contracts shall remain outside this profile [[link-materialization-5](#link-materialization-5)].
 
 ## Verification
 

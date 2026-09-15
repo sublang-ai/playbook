@@ -12,11 +12,11 @@ It introduces no new domain behavior or semantic adjudicator.
 
 ### compiler-prompt-relays-1
 
-When Source requires a runtime value relayed to an acting role, text2gears shall include the required quoted placeholder in the complete prompt blockquote of every acting behavior governed by that relay, including a relay described only in prose; mentioning the value in a condition, result contract, or machine context shall not substitute for delivery in the prompt.
+When Source requires a runtime value relayed to an acting role, text2gears shall include the required quoted placeholder [[playbook-6](playbook.md#playbook-6)] in the complete prompt blockquote of every acting behavior governed by that relay, including a relay described only in prose; mentioning the value in a condition, result contract, or machine context shall not substitute for delivery in the prompt.
 
 ### compiler-prompt-relays-3
 
-Where Source names a relayed value without authoring its prompt template, text2gears shall render the value as a bare quoted prompt-content line `> <token>`, written as `> > <token>` in the GEARS file because its first marker encloses the prompt, without an added label or surrounding prose; Source-authored template labels shall remain part of their original prompt fragments.
+Where Source names a relayed value without authoring its prompt template, text2gears shall render the value as a bare quoted prompt-content line `> <token>` [[playbook-6](playbook.md#playbook-6)], written as `> > <token>` in the GEARS file because its first marker encloses the prompt, without an added label or surrounding prose; Source-authored template labels shall remain part of their original prompt fragments.
 
 ## Verification
 

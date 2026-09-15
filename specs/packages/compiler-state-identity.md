@@ -11,7 +11,7 @@ This package defines the GEARS-to-FSM producer boundary between the machine root
 
 ### compiler-state-identity-1
 
-When emitting an FSM, the compiler shall place public `meta.playbook` state metadata only on nodes declared under `states` and omit that namespace from the machine root, without restricting the root's XState `id`, description, or metadata outside that namespace.
+When emitting an FSM, the compiler shall place public `meta.playbook` state metadata [[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)] only on nodes declared under `states` and omit that namespace from the machine root, without restricting the root's XState `id`, description, or metadata outside that namespace.
 
 ## Verification
 

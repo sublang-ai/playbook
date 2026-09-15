@@ -16,7 +16,7 @@ When Source requires a literal or dynamic nested playbook call, text2gears shall
 
 ### compiler-nested-calls-2
 
-When gears2fsm emits nested-call routing, after preserving Source-authored success acceptance and recovery cases plus the public control-error `onError` fallback, it shall omit an `onDone` transition whose guard cannot be reached from any legal predecessor/context after the prior ordered `onDone` arms, without requiring arbitrary finite enumeration, dropping valid failure behavior, or relaxing verifier obligations.
+When gears2fsm emits nested-call routing, after preserving Source-authored success acceptance and recovery cases plus the public control-error `onError` fallback [[playbook-runtime-84](playbook-runtime.md#playbook-runtime-84)], it shall omit an `onDone` transition whose guard cannot be reached from any legal predecessor/context after the prior ordered `onDone` arms, without requiring arbitrary finite enumeration, dropping valid failure behavior, or relaxing verifier obligations.
 
 ## Verification
 
