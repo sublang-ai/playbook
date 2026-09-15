@@ -251,12 +251,13 @@ The published package shall ship the following compiler assets through the publi
 | Package path | Purpose |
 | --- | --- |
 | `slc/text2gears.md`, `slc/gears2fsm.md`, `slc/optimize.md`, `slc/link.md` | Authored compiler-phase definitions. |
-| `slc/materialize-link.mjs` | Optional thin-module materializer [[link-materialization-1](link-materialization.md#link-materialization-1)]. |
-| `slc/scaffold-fsm.mjs`, `slc/experiments/fsm-scaffold-guidance.md` | Optional incomplete FSM initializer and its opt-in guidance [[fsm-scaffolding-1](fsm-scaffolding.md#fsm-scaffolding-1)]. |
+| `slc/materialize-link.mjs` | Optional thin-module materializer CLI [[link-materialization-1](link-materialization.md#link-materialization-1)]. |
+| `slc/scaffold-fsm.mjs`, `slc/experiments/fsm-scaffold-guidance.md` | Optional incomplete FSM initializer CLI and its opt-in guidance [[fsm-scaffolding-1](fsm-scaffolding.md#fsm-scaffolding-1)]. |
 | `slc/slc.pin-inputs.json` | Phase-set semantic-input declaration for incremental invalidation [[link-materialization-13](link-materialization.md#link-materialization-13)]. |
 | `slc/workflow-contracts.json` | Independently readable builtin workflow output catalog [[compiler-workflow-contracts-1](compiler-workflow-contracts.md#compiler-workflow-contracts-1)]. |
 
 A consumer shall be able to locate each asset by resolving `@sublang/playbook/<package-path>` via `import.meta.resolve` and reading the resolved file from disk.
+The two `.mjs` helpers' public API shall comprise their resolvable file paths and specified CLI contracts; their JavaScript module exports shall remain internal implementation details outside public API compatibility guarantees.
 Removing or renaming a published `slc/*` path shall be released under
 [[release-1](#release-1)] SemVer.
 
@@ -686,8 +687,8 @@ unpinned along with `exports['./code/playbook']`,
 `exports['./playbook-captain']`, and other compiled-workflow subpaths,
 and a fifth name added here would have left the sixth to the next
 reviewer. Deriving it turns a subpath added to the manifest red until it
-is recorded. `exports['./slc/*']` is the recorded exclusion: a wildcard
-directory mapping to authored specs, not a module with an export set.
+is recorded.
+`exports['./slc/*']` shall be the recorded exclusion from module-export pinning because it maps to compiler definitions, data, and CLI tools whose public contract covers asset paths and specified CLI behavior rather than their internal JavaScript exports (verifying [[release-16](#release-16)]).
 The JavaScript and declaration sets shall be recorded separately, since
 one recorded set cannot describe both: a declaration file exports types
 the JavaScript module has no key for, so a single set forces the

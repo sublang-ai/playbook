@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarified that the published compiler helpers `slc/materialize-link.mjs` and `slc/scaffold-fsm.mjs` support their resolvable paths and documented CLI contracts; their JavaScript module exports are internal and carry no SemVer compatibility guarantee.
 - **Breaking:** PR's refused-merge terminal now reports `status: 'merge-unconfirmed'` instead of `not-merged`; consumers must handle the new discriminator. No terminal claims a branch was deleted: the merge command may have landed a merge before its confirmation failed, and `gh` skips the requested remote deletion for a pull request from another repository or one already merged.
 - **Breaking:** DEV's exported `_internal.composePlayerPrompt` now exposes the installed runtime composer signature `(input, identity, resuming?)`. Direct callers must supply the identity argument and pass any resume flag as the third argument.
 - Governed Git observation runs independent HEAD, visibility, and status probes concurrently within each sample, preserving the two-sample consistency check and diagnostic precedence.

@@ -464,5 +464,8 @@ Five supporting assets use the same resolution mechanism:
 For example, resolve `@sublang/playbook/slc/workflow-contracts.json`, read it
 with `readFile`, and parse the result as JSON to inspect the published workflow
 interfaces. Execute the `.mjs` helpers with Node and their documented CLI
-arguments. The initializer requires further semantic compilation and verification
+arguments: their supported public interfaces are their resolvable paths and CLI
+contracts. Their JavaScript module exports are internal implementation details
+and carry no SemVer compatibility guarantee.
+The initializer requires further semantic compilation and verification
 before its output is runnable.

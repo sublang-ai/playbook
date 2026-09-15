@@ -1224,7 +1224,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   // a subpath added to `package.json` go red until it is recorded.
   const UNPINNABLE_SUBPATHS: Record<string, string> = {
     './slc/*':
-      'a wildcard compiler-asset mapping covered by RELEASE-17/18',
+      'compiler assets and CLI tools; module exports are internal per RELEASE-16',
   };
 
   const publicSubpaths = (): string[] =>
