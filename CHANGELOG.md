@@ -10,8 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Published `slc/workflow-contracts.json` with the builtin workflow output schemas and default literal target bindings, so compilers and embedders can consume those interfaces independently of workflow implementations.
+- Published `slc/materialize-link.mjs`, an optional thin-module emitter for supported FSMs and descriptors, with ordinary, quoted-relay, and experimental labelled-relay/nested-call profiles. The link definition prefers it for supported inputs while retaining the full semantic compilation and verification requirements.
+- Published the optional `slc/scaffold-fsm.mjs` initializer and `slc/experiments/fsm-scaffold-guidance.md` opt-in guidance. They produce an incomplete typed FSM scaffold from supported GEARS source; ordinary phase discovery remains unchanged.
+- Published `slc/slc.pin-inputs.json` to include the workflow catalog and link helper in the relevant compiler semantic-input closures, invalidating incremental reuse when those inputs change.
+- Linked-artifact generation now requires a standalone pure `validateOptions` export, shared with runtime option validation, so registry entries can validate detached JSON options without constructing a runtime or live host capabilities.
+
+### Changed
+
+- **Breaking:** PR's refused-merge terminal now reports `status: 'merge-unconfirmed'` instead of `not-merged`; consumers must handle the new discriminator. No terminal claims a branch was deleted: the merge command may have landed a merge before its confirmation failed, and `gh` skips the requested remote deletion for a pull request from another repository or one already merged.
+- **Breaking:** DEV's exported `_internal.composePlayerPrompt` now exposes the installed runtime composer signature `(input, identity, resuming?)`. Direct callers must supply the identity argument and pass any resume flag as the third argument.
+- Governed Git observation runs independent HEAD, visibility, and status probes concurrently within each sample, preserving the two-sample consistency check and diagnostic precedence.
+
 ### Fixed
 
+- The runtime distinguishes an authored `unchanged` Boss-question outcome from a canonical `deferred` outcome using the latest matching owned boundary. The authored question can resume without a deferred-operation binding, while canonical deferred questions retain their operation and checkpoint requirements across restore.
+- Compiler definitions preserve authored terminal returns, intermediate state, literal prompt relays, and Boss task/entry boundaries, and explicitly separate authored question fields from canonical question outcomes. Nested calls retain caller-owned child predicates, failure routing, and busy tags; generated artifacts use the shared public child and option validators and retain declared repository authority.
 - The optimizer’s Git setup examples distinguish membership in an ancestor’s working tree from requiring the current directory to be its own repository root.
 - Host-selected give-up now uses durable abandonment for unresolved repository effects, including retained nested runs, preserves their evidence, and reports a failed stop truthfully.
 - PR confirms the captured pull request is merged and the local checkout is on the repository default branch before reporting merge success or pulling; an already queued pull request no longer counts as merged.
@@ -19,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PR requires the pull request it captured to target the repository default branch before the irreversible `gh pr merge`, so a reused pull request opened against another branch is never merged into it.
 - A pull-request URL relayed into PR's fix-publication and merge commands binds as a single-quoted shell literal. Interpolated into double-quoted command text, a Coder-reported `$(…)` both executed and expanded to whatever made the continuity check succeed.
 - PR's fix publication and merge each refuse unless the checked-out branch still infers the pull request PR published. The nested `code` fix suspends across Boss turns, so a checkout that moved meanwhile could publish to and merge another branch's pull request while the result named the original.
-- PR's refused-merge terminal now reports `status: 'merge-unconfirmed'` instead of `not-merged`, and no terminal claims a branch was deleted: the merge command may have landed a merge before its confirmation failed, and `gh` skips the requested remote deletion for a pull request from another repository or one already merged.
 
 ## [13.3.0] - 2026-09-13
 

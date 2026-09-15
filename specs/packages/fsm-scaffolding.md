@@ -12,8 +12,8 @@ It owns source-constant copying and a typing scaffold, not workflow compilation 
 
 ### fsm-scaffolding-1
 
-When invoked with `--source <GEARS.md> --out <new.fsm.ts>`, the initializer shall emit one incomplete TypeScript target containing the supported source constants, only its used actor kinds and the typed XState authoring structure, or return a nonzero diagnostic without replacing an existing target.
-The optional guidance shall reside in a subdirectory excluded from ordinary phase discovery, and the default entry definition shall remain unchanged until an explicit experiment selects it.
+When invoked with `--source <GEARS.md> --out <new.fsm.ts>`, the `slc/scaffold-fsm.mjs` initializer shall emit one incomplete TypeScript target containing the supported source constants, only its used actor kinds and the typed XState authoring structure, or return a nonzero diagnostic without replacing an existing target.
+The optional guidance shall reside at `slc/experiments/fsm-scaffold-guidance.md`, excluded from ordinary phase discovery, and the default entry definition shall remain unchanged until an explicit experiment selects it.
 
 ### fsm-scaffolding-2
 

@@ -11,7 +11,7 @@ This package defines the optional phase-owned helper of [DR-058](../decisions/05
 
 ### link-materialization-1
 
-When invoked with `--fsm <path>` and `--out <path>`, the helper shall consume one JSON descriptor from standard input and emit one erasable TypeScript module at the declared target using the shared factory and contract imports [[playbook-runtime-5](playbook-runtime.md#playbook-runtime-5)], without adding a runtime dependency on the helper.
+When invoked with `--fsm <path>` and `--out <path>`, the `slc/materialize-link.mjs` helper shall consume one JSON descriptor from standard input and emit one erasable TypeScript module at the declared target using the shared factory and contract imports [[playbook-runtime-5](playbook-runtime.md#playbook-runtime-5)], without adding a runtime dependency on the helper.
 
 ### link-materialization-2
 
@@ -78,7 +78,7 @@ The optional tool shall leave the full normative [link contract](../../slc/link.
 
 ### link-materialization-13
 
-The shipped phase-set sidecar shall include the helper in the link definition's semantic-input closure so a helper-content change invalidates incremental link reuse.
+The shipped phase-set sidecar `slc/slc.pin-inputs.json` shall include the helper in the link definition's semantic-input closure so a helper-content change invalidates incremental link reuse.
 
 ### link-materialization-14
 

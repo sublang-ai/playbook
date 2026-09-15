@@ -433,7 +433,7 @@ defines the files, versions and compatibility rules.
 
 ## Reading the published spec contracts
 
-The authored compiler-phase specs ship in the package and are exposed
+The compiler definitions and supporting assets ship in the package and are exposed
 as a public, semver-stable surface under `@sublang/playbook/slc/*`.
 Resolve and read one with `import.meta.resolve` plus `fs`:
 
@@ -450,3 +450,19 @@ The four specs are [`slc/text2gears.md`](../slc/text2gears.md),
 [`slc/link.md`](../slc/link.md) — the FSM-to-runtime contract that
 `@sublang/playbook/runtime` projects into TypeScript — and
 [`slc/optimize.md`](../slc/optimize.md).
+
+Five supporting assets use the same resolution mechanism:
+
+| Asset | Purpose |
+| --- | --- |
+| [`slc/workflow-contracts.json`](../slc/workflow-contracts.json) | Public output schemas and default literal target bindings for the builtin REVIEW, DECIDE, CODE, BRANCH, and PR workflows; compilers and embedders can read them without importing workflow implementations. |
+| [`slc/materialize-link.mjs`](../slc/materialize-link.mjs) | Optional CLI that emits a thin linked module from a supported FSM and JSON descriptor; see the profiles and invocation in `slc/link.md`. |
+| [`slc/scaffold-fsm.mjs`](../slc/scaffold-fsm.mjs) | Optional CLI that initializes an incomplete typed FSM from supported GEARS source. |
+| [`slc/experiments/fsm-scaffold-guidance.md`](../slc/experiments/fsm-scaffold-guidance.md) | Opt-in compiler guidance for the initializer, outside ordinary phase discovery. |
+| [`slc/slc.pin-inputs.json`](../slc/slc.pin-inputs.json) | SLC semantic-input closures for `gears2fsm` and `link`, including the workflow catalog and, for `link`, the materializer. Other phases use SLC's inline-input discovery. |
+
+For example, resolve `@sublang/playbook/slc/workflow-contracts.json`, read it
+with `readFile`, and parse the result as JSON to inspect the published workflow
+interfaces. Execute the `.mjs` helpers with Node and their documented CLI
+arguments. The initializer requires further semantic compilation and verification
+before its output is runnable.

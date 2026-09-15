@@ -27,7 +27,17 @@ const repoRoot = fileURLToPath(packageRootUrl);
 // consumer type-check program exceed Vitest's five-second default on a
 // loaded CI runner, so every such case gets one generous explicit budget.
 const SUBPROCESS_TIMEOUT_MS = 120_000;
-const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md', 'optimize.md'];
+const SLC_ASSETS = [
+  'link.md',
+  'gears2fsm.md',
+  'text2gears.md',
+  'optimize.md',
+  'materialize-link.mjs',
+  'scaffold-fsm.mjs',
+  'experiments/fsm-scaffold-guidance.md',
+  'slc.pin-inputs.json',
+  'workflow-contracts.json',
+];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
 const CAPTAIN_BASE = 'reference/sdlc/captain.playbook/';
@@ -593,16 +603,16 @@ describe('public slc/* surface (RELEASE-17)', () => {
   // RELEASE-17 and the README name `import.meta.resolve` specifically.
   // vitest does not provide it (`__vite_ssr_import_meta__.resolve is not
   // a function`), so exercise the real Node API in a subprocess whose
-  // package scope is this package — resolving each spec through the
+  // package scope is this package — resolving each asset through the
   // published `./slc/*` export exactly as a consumer would.
-  it('resolves every published slc spec via import.meta.resolve', () => {
+  it('resolves every published slc asset via import.meta.resolve', () => {
     const script = `
       import { readFileSync } from 'node:fs';
       import { fileURLToPath } from 'node:url';
-      for (const name of ${JSON.stringify(SLC_SPECS)}) {
+      for (const name of ${JSON.stringify(SLC_ASSETS)}) {
         const url = import.meta.resolve('@sublang/playbook/slc/' + name);
         if (readFileSync(fileURLToPath(url), 'utf8').length === 0) {
-          throw new Error('empty spec: ' + name);
+          throw new Error('empty asset: ' + name);
         }
       }
       process.stdout.write('OK');
@@ -902,11 +912,9 @@ describe('packed tarball contents (RELEASE-18)', () => {
         doc,
       );
     }
-    for (const name of SLC_SPECS) {
-      expect(packed, `tarball missing slc/${name}`).toContain(`slc/${name}`);
-    }
-    expect(packed).toContain('slc/materialize-link.mjs');
-    expect(packed).toContain('slc/slc.pin-inputs.json');
+    expect(packed.filter((path) => path.startsWith('slc/')).sort()).toEqual(
+      SLC_ASSETS.map((name) => `slc/${name}`).sort(),
+    );
   }, SUBPROCESS_TIMEOUT_MS);
 
   // RELEASE-20: every Markdown file the tarball ships must be link-closed
@@ -1216,7 +1224,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   // a subpath added to `package.json` go red until it is recorded.
   const UNPINNABLE_SUBPATHS: Record<string, string> = {
     './slc/*':
-      'a wildcard directory mapping to authored specs, not a module with an export set',
+      'a wildcard compiler-asset mapping covered by RELEASE-17/18',
   };
 
   const publicSubpaths = (): string[] =>
