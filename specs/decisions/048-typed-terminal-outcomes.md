@@ -20,12 +20,13 @@ The machine state is the outcome, and the compiler already decides at compile ti
 
 - Every final state of a schema-3 artifact declares its terminal kind, `success` or `failure`, in its `meta.playbook` metadata; the compiler derives the kind from the source's own outcome wording, exactly as it derives the state's description, and the maintained artifacts declare theirs.
 - A completed child's public call result carries its reached final state's `terminal` record — state id, kind, and description — as runtime-owned data read from the artifact, never from an agent reply.
-- The nested-call bridge resolves the caller's `playbook` actor only for a success terminal; a failure terminal rejects the actor through the caller's existing error path with an `Error` carrying that same public result, so the caller's first `onError` arm accepts an authored abort, an authored error, or a completed child whose terminal kind is `failure`, and `onDone` proves success mechanically with no knowledge of the callee's fields.
+- The nested-call bridge delivers a success terminal through the caller's `playbook` actor; a failure terminal rejects through its existing error path with an `Error` carrying that same public result, so the caller's first `onError` arm accepts an authored abort, an authored error, or a completed child whose terminal kind is `failure`.
+- `onDone` proves successful bridge delivery without a declared child failure, not satisfaction of every caller-owned domain condition: the caller still enforces any explicit source-authored acceptance or relay predicates on the delivered output, without inventing predicates from callee implementation details or reclassifying the child's compiled terminal kind.
 - An artifact whose final states declare no kind keeps today's delivery: its completion resolves the actor and carries no `terminal` record.
 - No agent call is added: the kind is fixed at compile time and read at run time from the reached state.
 
 ## Consequences
 
-- "Does not prove the success required for the selected path" compiles to the caller's error path for every callee, so a compiled caller needs no field knowledge of its callees and a source never names one.
+- A generic child-success requirement uses the terminal kind and needs no invented callee field contract; an additional source-authored requirement, such as CODE's evaluated-review evidence, remains a caller-owned predicate after successful delivery.
 - A caller that relays a failed child's canonical result still receives the child's output inside the rejected result.
 - The distinction between an authored abort, an authored error, and a completed failure terminal stays visible to the caller and in the trace, so nothing collapses into an invented enum.

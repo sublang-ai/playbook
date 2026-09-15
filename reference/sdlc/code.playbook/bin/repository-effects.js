@@ -659,10 +659,18 @@ export async function resolveCanonicalGitWorktree(cwd) {
 }
 
 async function sampleWorktree(worktree, env) {
-  const head = await resolveHead(worktree, env);
-  const indexVisibility = await rawIndexVisibility(worktree, env);
+  const [headResult, visibilityResult, statusResult] = await Promise.allSettled([
+    resolveHead(worktree, env),
+    rawIndexVisibility(worktree, env),
+    rawRepositoryStatus(worktree, env),
+  ]);
+  if (headResult.status === 'rejected') throw headResult.reason;
+  if (visibilityResult.status === 'rejected') throw visibilityResult.reason;
+  const head = headResult.value;
+  const indexVisibility = visibilityResult.value;
   assertIndexVisibility(indexVisibility);
-  const status = await rawRepositoryStatus(worktree, env);
+  if (statusResult.status === 'rejected') throw statusResult.reason;
+  const status = statusResult.value;
   const projection = await projectionFromStatus(worktree, status);
   return { head, indexVisibility, status, projection };
 }

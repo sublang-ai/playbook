@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The optimizer’s Git setup examples distinguish membership in an ancestor’s working tree from requiring the current directory to be its own repository root.
 - Host-selected give-up now uses durable abandonment for unresolved repository effects, including retained nested runs, preserves their evidence, and reports a failed stop truthfully.
 - PR confirms the captured pull request is merged and the local checkout is on the repository default branch before reporting merge success or pulling; an already queued pull request no longer counts as merged.
 - Setup documentation now describes credential-based adapter seeding and the credentials required by the selected adapter.

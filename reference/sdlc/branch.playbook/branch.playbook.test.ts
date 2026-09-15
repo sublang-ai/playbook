@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertWorkflowTerminal } from '../../../scripts/test-support/workflow-contracts.mjs';
 
 import {
   assertPlaybookEffectLedger,
@@ -364,6 +365,7 @@ describe('linked BRANCH runtime', () => {
       });
 
       expect(result.outcome).toBe('terminal');
+      assertWorkflowTerminal('branch', result);
       if (result.outcome !== 'terminal') throw new Error('expected terminal');
       expect(result.stateDescription).toBe(BRANCHED_DESCRIPTION);
       // DR-048: the reached final state's compiled kind is the run's
@@ -443,6 +445,7 @@ describe('linked BRANCH runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('branch', result);
     if (result.outcome !== 'terminal') throw new Error('expected terminal');
     expect(result.stateDescription).toBe(REFUSED_DESCRIPTION);
     expect(result.terminal).toEqual({
@@ -602,6 +605,7 @@ describe('linked BRANCH runtime', () => {
       });
 
       expect(result.outcome).toBe('terminal');
+      assertWorkflowTerminal('branch', result);
       if (result.outcome !== 'terminal') throw new Error('expected terminal');
       expect(result.output).toEqual({
         status: 'branched',
@@ -669,6 +673,7 @@ describe('linked BRANCH runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
+    assertWorkflowTerminal('branch', completed);
     expect(completed.outcome === 'terminal' ? completed.output : undefined).toEqual({
       status: 'branched',
       branch: BRANCH_NAME,

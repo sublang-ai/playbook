@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 
 import { describe, expect, it, vi } from 'vitest';
+import { assertWorkflowTerminal } from '../../../scripts/test-support/workflow-contracts.mjs';
 
 import type {
   PlayerResult,
@@ -2863,6 +2864,22 @@ describe('DECIDE local-role continuation', () => {
 });
 
 describe('DECIDE terminal settlement from REVIEW', () => {
+  it.each(['success', 'aborted'] as const)('matches the public output catalog after actual %s settlement', async (mode) => {
+    const { runtime, request } = await runToReview();
+    try {
+      const result = await runtime.resumePlaybookCall({
+        callId: request.callId,
+        result: mode === 'success'
+          ? { status: 'ok', playbookId: 'review', childSessionId: 'review-child', output: { evaluatedRevision: EVALUATED_REVISION, noUnsettledFindings: true } }
+          : { status: 'aborted', playbookId: 'review', childSessionId: 'review-child' },
+        signal: signal(),
+      });
+      assertWorkflowTerminal('decide', result);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('completes only on the evaluated revision and no-unsettled-findings facts, returning the decide-owned commit and that revision', async () => {
     const { runtime, request } = await runToReview();
     await expect(

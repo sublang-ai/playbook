@@ -1,0 +1,502 @@
+{
+  "schema": "sublang.playbook.representation-experiment.v1",
+  "status": "assembled_verified_inputs_only",
+  "providerCalls": 0,
+  "performanceAccepted": false,
+  "compilerRoot": "/private/tmp/slc-fidelity-compiler-ehkjoo54",
+  "compilerCommit": "b091e80c1dd7a3c745796495cf766c74bf69f3b5",
+  "commonProducerCommit": "7cdbd6b",
+  "roots": {
+    "baseline": "/private/tmp/playbook-13.2-common-v5-baseline",
+    "full": "/private/tmp/playbook-13.2-common-v5-full",
+    "scaffoldPair": "/private/tmp/playbook-13.2-fsm-scaffold-v2-pair"
+  },
+  "proofs": {
+    "baseline": {
+      "path": "/private/tmp/playbook-13.2-common-v5-baseline/experiment-proof.json",
+      "bytes": 37882,
+      "sha256": "92edefd00976b47920a701d5d1537ef6401720e3efa4c3e4e14be6b12ebc2eba"
+    },
+    "full": {
+      "path": "/private/tmp/playbook-13.2-common-v5-full/experiment-proof.json",
+      "bytes": 37878,
+      "sha256": "ed267b971e60c816e0e50f9bfe3f14f5e946179d01b704665dcbe8231bd0f4e0"
+    },
+    "scaffoldPair": {
+      "path": "/private/tmp/playbook-13.2-fsm-scaffold-v2-pair/experiment-proof.json",
+      "bytes": 45996,
+      "sha256": "3f875b40e79177428ee41ed0a178392134b394c006b05df98ea491c90e6d2761"
+    }
+  },
+  "commonHashes": {
+    "text2gears": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
+    "link": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
+    "producer": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+    "catalog": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
+    "optimizer": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+  },
+  "representationCorrections": {
+    "priorCommonSha256": "1a7d9bb8b29bfa40de8ae14f001dd5eeedc51da140fcecfa61698f4282ce13db",
+    "sentences": [
+      {
+        "currentSha256": "e7af155d32e03bdca8e42faf9775a3bfd950515db48f6d2467aa1a015fad5c0b",
+        "priorSha256": "3d2d0ab862d30402b528f8a3d472c702e99ded814b07e7e9ba71dc9010c4efe7"
+      },
+      {
+        "currentSha256": "1976267c38d5b45f7f79f1687ddc8e52decb47a7bbea73dd94eb6546255c66a6",
+        "priorSha256": "f7c1b4fbb254a29c62828b0cead1bfbe73d0a0010b89181b5ca69b28c67473f1"
+      }
+    ]
+  },
+  "singleVariableComparisons": {
+    "link": [
+      "playbook/link.md"
+    ],
+    "scaffold": [
+      "playbook/gears2fsm.md"
+    ],
+    "priorV4ToV5CommonBaseline": [
+      "playbook/text2gears.md"
+    ]
+  },
+  "publicCatalog": {
+    "sha256": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
+    "bytes": 10057,
+    "literalTargetBindings": {
+      "review": "review",
+      "decide": "decide",
+      "code": "code",
+      "branch": "branch",
+      "pr": "pr"
+    }
+  },
+  "ordinarySemanticInputs": {
+    "text2gears": [
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      {
+        "originalLocator": "../../package-lock.json",
+        "compilerRelativePath": "package-lock.json",
+        "rewrittenLocator": "_inputs/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      }
+    ],
+    "gears2fsm": [
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/text2gears.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/text2gears.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/text2gears.md",
+        "bytes": 20806,
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/link.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/link.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/link.md",
+        "bytes": 154025,
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      {
+        "originalLocator": "../../package-lock.json",
+        "compilerRelativePath": "package-lock.json",
+        "rewrittenLocator": "_inputs/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      }
+    ],
+    "link": [
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/text2gears.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/text2gears.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/text2gears.md",
+        "bytes": 20806,
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "bytes": 50379,
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      {
+        "originalLocator": "../../package-lock.json",
+        "compilerRelativePath": "package-lock.json",
+        "rewrittenLocator": "_inputs/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      }
+    ],
+    "optimize": [
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/text2gears.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/text2gears.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/text2gears.md",
+        "bytes": 20806,
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md",
+        "bytes": 50379,
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/playbook/slc/link.md",
+        "compilerRelativePath": "node_modules/@sublang/playbook/slc/link.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/playbook/slc/link.md",
+        "bytes": 154025,
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md",
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      {
+        "originalLocator": "../../node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "compilerRelativePath": "node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "rewrittenLocator": "_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md",
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      {
+        "originalLocator": "../../package-lock.json",
+        "compilerRelativePath": "package-lock.json",
+        "rewrittenLocator": "_inputs/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      }
+    ]
+  },
+  "linkOutputs": {
+    "baseline": {
+      "playbook/text2gears.md": {
+        "sha256": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
+        "bytes": 22057
+      },
+      "playbook/gears2fsm.md": {
+        "sha256": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+        "bytes": 53028
+      },
+      "playbook/optimize.md": {
+        "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
+        "bytes": 5676
+      },
+      "playbook/link.md": {
+        "sha256": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86",
+        "bytes": 155337
+      },
+      "playbook/materialize-link.mjs": {
+        "sha256": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf",
+        "bytes": 27546
+      },
+      "playbook/workflow-contracts.json": {
+        "sha256": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
+        "bytes": 10057
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md": {
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a",
+        "bytes": 8439
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md": {
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82",
+        "bytes": 9153
+      },
+      "playbook/_inputs/package-lock.json": {
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5",
+        "bytes": 201787
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/text2gears.md": {
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb",
+        "bytes": 20806
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/link.md": {
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d",
+        "bytes": 154025
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md": {
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e",
+        "bytes": 50379
+      },
+      "playbook/slc.pin-inputs.json": {
+        "sha256": "7972e7f0c05718c886ae8b1adf8a0c722e81ba162e50d8d21460ea35735dfc36",
+        "bytes": 1705
+      }
+    },
+    "full": {
+      "playbook/text2gears.md": {
+        "sha256": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970",
+        "bytes": 22057
+      },
+      "playbook/gears2fsm.md": {
+        "sha256": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a",
+        "bytes": 53028
+      },
+      "playbook/optimize.md": {
+        "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9",
+        "bytes": 5676
+      },
+      "playbook/link.md": {
+        "sha256": "088d1491e619d848e25dd2d31fcc334920347e2f9910d087cd4563885ea948b3",
+        "bytes": 162189
+      },
+      "playbook/materialize-link.mjs": {
+        "sha256": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf",
+        "bytes": 27546
+      },
+      "playbook/workflow-contracts.json": {
+        "sha256": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3",
+        "bytes": 10057
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md": {
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a",
+        "bytes": 8439
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md": {
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82",
+        "bytes": 9153
+      },
+      "playbook/_inputs/package-lock.json": {
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5",
+        "bytes": 201787
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/text2gears.md": {
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb",
+        "bytes": 20806
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/link.md": {
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d",
+        "bytes": 154025
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md": {
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e",
+        "bytes": 50379
+      },
+      "playbook/slc.pin-inputs.json": {
+        "sha256": "7972e7f0c05718c886ae8b1adf8a0c722e81ba162e50d8d21460ea35735dfc36",
+        "bytes": 1705
+      }
+    }
+  },
+  "scaffoldOutputs": {
+    "baseline": {
+      "playbook/text2gears.md": {
+        "bytes": 22057,
+        "sha256": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970"
+      },
+      "playbook/gears2fsm.md": {
+        "bytes": 53028,
+        "sha256": "7059aefbdaee40a8fc9abb1973627e6ec891076a03c9571682b8a925ea1d139a"
+      },
+      "playbook/optimize.md": {
+        "bytes": 5676,
+        "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+      },
+      "playbook/link.md": {
+        "bytes": 155337,
+        "sha256": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86"
+      },
+      "playbook/materialize-link.mjs": {
+        "bytes": 27546,
+        "sha256": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf"
+      },
+      "playbook/workflow-contracts.json": {
+        "bytes": 10057,
+        "sha256": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3"
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md": {
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md": {
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      "playbook/_inputs/package-lock.json": {
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/text2gears.md": {
+        "bytes": 20806,
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/link.md": {
+        "bytes": 154025,
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md": {
+        "bytes": 50379,
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e"
+      },
+      "playbook/slc.pin-inputs.json": {
+        "bytes": 1993,
+        "sha256": "8481095f009b5cbc9a7239b8e4e10639db67655a722498d13a9d8f8aae816000"
+      },
+      "playbook/scaffold-fsm.mjs": {
+        "bytes": 10192,
+        "sha256": "92d245fc02830977d005f9c360ffb163c818796f657426faba89c789de7832a4"
+      },
+      "playbook/experiments/fsm-scaffold-guidance.md": {
+        "bytes": 2587,
+        "sha256": "6cb54f4be27a70749424423962c8161bc5069c9ab73c9a96a98745981154a5e9"
+      }
+    },
+    "scaffold": {
+      "playbook/text2gears.md": {
+        "bytes": 22057,
+        "sha256": "bbefc6806bd84c5b181ef1014a7cbe2d21663be3ce4e2098499b07b134835970"
+      },
+      "playbook/gears2fsm.md": {
+        "bytes": 55613,
+        "sha256": "a018e383ec49f9d689ad79e8ce2ae2b8a9ca897fb3319cc1de68941e2418d335"
+      },
+      "playbook/optimize.md": {
+        "bytes": 5676,
+        "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+      },
+      "playbook/link.md": {
+        "bytes": 155337,
+        "sha256": "89e40b53e2bbed25eabceb57a4e61ce27a2fbee14d0cd886215a66ef0160bc86"
+      },
+      "playbook/materialize-link.mjs": {
+        "bytes": 27546,
+        "sha256": "eeed4082c2bb0b0bdb9b8685b16ba4bdb6e70b418e171f851cfb1a9dd6c861bf"
+      },
+      "playbook/workflow-contracts.json": {
+        "bytes": 10057,
+        "sha256": "de862f4b772ffb6860c2cab3ed75ab281b378dffa0a6217ebc8e049302c05dd3"
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/specs/meta.md": {
+        "bytes": 8439,
+        "sha256": "ed90e3e82e18d3893e52d18e80d795406bc9a0b5915416ee73295a4d7c7ff52a"
+      },
+      "playbook/_inputs/node_modules/@sublang/spex/scaffold/i18n/zh/specs/meta.md": {
+        "bytes": 9153,
+        "sha256": "78e528aee1d8f5b4946c53e119a81c7548df53bd09f8458152c2c2aaa386cd82"
+      },
+      "playbook/_inputs/package-lock.json": {
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/text2gears.md": {
+        "bytes": 20806,
+        "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/link.md": {
+        "bytes": 154025,
+        "sha256": "294f41c6ebeeb970fb53d2b801e2769dbff3c18a5910b7569c5b547b3daaea5d"
+      },
+      "playbook/_inputs/node_modules/@sublang/playbook/slc/gears2fsm.md": {
+        "bytes": 50379,
+        "sha256": "c549458f39337b4ce1697e1103ee2010656ced0b8a08b2fe57a103f9186c2b1e"
+      },
+      "playbook/slc.pin-inputs.json": {
+        "bytes": 1993,
+        "sha256": "8481095f009b5cbc9a7239b8e4e10639db67655a722498d13a9d8f8aae816000"
+      },
+      "playbook/scaffold-fsm.mjs": {
+        "bytes": 10192,
+        "sha256": "92d245fc02830977d005f9c360ffb163c818796f657426faba89c789de7832a4"
+      },
+      "playbook/experiments/fsm-scaffold-guidance.md": {
+        "bytes": 2587,
+        "sha256": "6cb54f4be27a70749424423962c8161bc5069c9ab73c9a96a98745981154a5e9"
+      }
+    }
+  },
+  "builderIdentities": [
+    {
+      "path": "/private/tmp/playbook-complex-performance/scripts/build-link-experiment-13.2.mjs",
+      "bytes": 21616,
+      "sha256": "06a066ae7103923c7127ef00e63b16d5dae430686a8bf44cf3077b8cceaf4e93"
+    },
+    {
+      "path": "/private/tmp/playbook-complex-performance/scripts/build-fsm-scaffold-experiment-13.2.mjs",
+      "bytes": 7832,
+      "sha256": "62fceb840ce04366751e3af331e0877f07864e950752802a1ee19ea18cc93222"
+    }
+  ],
+  "priorV4Evidence": {
+    "path": "/private/tmp/playbook-complex-performance/scripts/experiments/link-experiment-13.2-catalog-scaffold-evidence.json",
+    "bytes": 20618,
+    "sha256": "daa3d14f54a21e6dc9679ad9874a03e0920127949b2b5d8bd1bcc2483ff4e389"
+  },
+  "validation": {
+    "actualC3BuilderDiscoveryClosureCasesPassed": 14,
+    "strictTestFileTypecheckPassed": true,
+    "testLog": {
+      "path": "/private/tmp/slc-v5-builder-proof/tests.log",
+      "bytes": 1671,
+      "sha256": "b685abeebccad83bf2a435674d806b56a45ec4e6470c23f8bc599cca69b6a4bc"
+    },
+    "compilerInventoryEntries": 228,
+    "existingCacheEntries": 1,
+    "priorRootMembers": {
+      "/private/tmp/playbook-13.2-common-v4-baseline": 14,
+      "/private/tmp/playbook-13.2-common-v4-full": 14,
+      "/private/tmp/playbook-13.2-fsm-scaffold-v1-pair": 31
+    },
+    "compilerCacheAndPriorInputsUnchanged": true,
+    "before": {
+      "path": "/private/tmp/slc-v5-builder-proof/before.json",
+      "bytes": 47945,
+      "sha256": "5a46307bf5610f3b58b3b8fc47c4fa48a57a06a0c3aeea9de39e3d0c23895da2"
+    },
+    "after": {
+      "path": "/private/tmp/slc-v5-builder-proof/after.json",
+      "bytes": 47945,
+      "sha256": "5a46307bf5610f3b58b3b8fc47c4fa48a57a06a0c3aeea9de39e3d0c23895da2"
+    }
+  },
+  "limits": [
+    "Correctness input adoption only; no accepted provider compilation or measured efficacy follows.",
+    "Link arms share every input except the optional link recipe; scaffold arms share every input except the appended FSM authoring guidance.",
+    "Both arms expose identical undirected helper files; helper discovery is not hidden.",
+    "All prior roots and durable v4 evidence remain unchanged; reproduce their recorded source commits."
+  ]
+}

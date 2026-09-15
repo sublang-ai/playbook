@@ -1,0 +1,230 @@
+{
+  "scope": "One accepted cold minimal compilation including original acceptance checks; no isolated helper speed ratio or general latency guarantee",
+  "run": "9lTnki",
+  "summary": {
+    "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/summary.json",
+    "sha256": "957190d310e74eb73300ae9e6693961438fe9dec1927ce9567d4b59ce3e60540"
+  },
+  "status": "success",
+  "cold": true,
+  "startedAt": "2026-09-12T21:31:04.523Z",
+  "finishedAt": "2026-09-12T21:34:21.138Z",
+  "generationMs": 193607,
+  "totalWithAcceptanceMs": 196601,
+  "selection": {
+    "agent": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "low"
+  },
+  "reviewerDisabled": true,
+  "freshPhaseSessions": false,
+  "performingCompilationCalls": 5,
+  "toolCalls": 8,
+  "source": {
+    "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.txt",
+    "bytes": 292,
+    "sha256": "7e627b1d32e3b08fafdad971cbf97ce03ee6d64f5c8ddecf23b518c1e362cf92",
+    "original": null
+  },
+  "slcSourceCommit": "6ba16d093ece135f67a11203e09d4c7f6821e1bd",
+  "playbookDefinitionCommit": "1c5a4e67162ba58ab1e96e0f91df56ae13f39d71",
+  "frozenCompilerSha256": "94e7e042fd1d44d735cb2c408df6c08f47f919d84451baf2cfcfa7ad8ebf8ee0",
+  "verificationHarness": {
+    "files": [
+      {
+        "path": "/private/tmp/slc-gpt6-current-v8/scripts/benchmark-compile.mjs",
+        "bytes": 28021,
+        "sha256": "713db56cf3230bcd791a558a786ffaa472f92408f2563d01cc9d0c4e24d09f07"
+      },
+      {
+        "path": "/private/tmp/slc-gpt6-current-v8/scripts/benchmark-runtime.mjs",
+        "bytes": 10576,
+        "sha256": "775238913f9e1915887bf5fd38813a148e16d217ecf5db14ac18ef71a5cdccb8"
+      }
+    ],
+    "sha256": "e34915cde97a220082aba868560798e8ea8c2a4b9e8149ab0016190bac273a71"
+  },
+  "frozenLock": {
+    "path": "/private/tmp/slc-gpt6-current-v8/package-lock.json",
+    "bytes": 188194,
+    "sha256": "546a33e16e46b16e12c364550bf1d1cc0d0c685bcf355e66211569b30e05beb1"
+  },
+  "dependencies": {
+    "@sublang/slc": "0.9.0",
+    "@sublang/playbook": "12.3.0",
+    "@sublang/cligent": "0.24.0",
+    "@openai/codex-sdk": "0.153.4",
+    "@anthropic-ai/claude-agent-sdk": "0.3.223",
+    "xstate": "5.32.4",
+    "typescript": "6.0.3"
+  },
+  "nodeVersion": "v25.5.0",
+  "pipelineMembers": [
+    {
+      "name": "gears2fsm.md",
+      "bytes": 51293,
+      "sha256": "576218f65416b0589197c3543aca4cd087e6d7061a466648df6337864eee9bda"
+    },
+    {
+      "name": "link.md",
+      "bytes": 159645,
+      "sha256": "532b0ad904203200d971b1d4794a7f412db96e151e6c00e49ef2017d8ab22706"
+    },
+    {
+      "name": "materialize-link.mjs",
+      "bytes": 22784,
+      "sha256": "0d3163b79757e48abd9e2f90a1156309a572e540d2b458a442a2c14c0ee4c253"
+    },
+    {
+      "name": "optimize.md",
+      "bytes": 5676,
+      "sha256": "4f3111e1a8a2124c8a174d63752be368ab763493b603f7a4df4bed60c264cfb9"
+    },
+    {
+      "name": "link-contract.md",
+      "bytes": 159699,
+      "sha256": "406541706fad41b89d5afa0118d7ad0a79e104afefb43959820ea84230792e74"
+    },
+    {
+      "name": "slc.pin-inputs.json",
+      "bytes": 217,
+      "sha256": "6bce47e6270f0771d676ca3aa97d0677ab8110ceeb07202ce0cb111d68899390"
+    },
+    {
+      "name": "text2gears.md",
+      "bytes": 20806,
+      "sha256": "48a6a5d3f02a1d90dcc0883170da74e16c29b1554533913eb4fd7cefc49251bb"
+    }
+  ],
+  "phaseTimes": [
+    {
+      "phase": "normalize",
+      "elapsedMs": 44107,
+      "status": "success"
+    },
+    {
+      "phase": "text2gears",
+      "elapsedMs": 19928,
+      "status": "success"
+    },
+    {
+      "phase": "optimize",
+      "elapsedMs": 14140,
+      "status": "success"
+    },
+    {
+      "phase": "gears2fsm",
+      "elapsedMs": 71230,
+      "status": "success"
+    },
+    {
+      "phase": "link",
+      "elapsedMs": 44033,
+      "status": "success"
+    }
+  ],
+  "acceptance": {
+    "strictTypecheck": true,
+    "entryImport": true,
+    "allFourGeneratedSuites": true,
+    "runtime": {
+      "ok": true,
+      "profile": "minimal",
+      "performingCalls": 1,
+      "setupCaptainCalls": 0,
+      "judgeCalls": 1,
+      "ownRepository": true,
+      "exactBossTask": true,
+      "taskPresentation": "literal",
+      "commits": 1,
+      "terminalKind": "success",
+      "elapsedMs": 1109,
+      "code": 0,
+      "terminationSignal": null
+    }
+  },
+  "artifactMembers": [
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.text.md",
+      "bytes": 354,
+      "sha256": "dab6285eec1840cdff9366427eef016f9297f1314ced2ec89cc2b3bd5204d178"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.gears.raw.md",
+      "bytes": 550,
+      "sha256": "ad6e68b1f060e42067b8823a264ecd78be8a751d07a8669b29b93b19a4b1942c"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.gears.md",
+      "bytes": 659,
+      "sha256": "52f2316387e6680a1840b3615e31c5f2774212b13b186ddeaec9681b3339f4c0"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.fsm.ts",
+      "bytes": 14340,
+      "sha256": "d9f4a40e409a986d03645b226b1d3302ff675d45c90a0b49491995ab3ee56377"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.playbook.ts",
+      "bytes": 4899,
+      "sha256": "bd37934fc638404521fc8c6ca5c797d87d64030fb3842dca2e4a8c445b358ba9"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/hash.js",
+      "bytes": 3269,
+      "sha256": "9546165b310e9863bd029747ba99dbd94006f8cd8c97e9d40e50531ca05273d3"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/hash.d.ts",
+      "bytes": 1662,
+      "sha256": "bc0a8ba0f9f256c2e19b84a6814e68a7322691d0b9acc001259d021be654de0f"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/verify.js",
+      "bytes": 121831,
+      "sha256": "37eccacf091da62a23a02aa10fb23ca3cc7c56cd8b6c9bb3c87c48c2998e3d27"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/verify.d.ts",
+      "bytes": 25879,
+      "sha256": "cb198c0608859b451651830d8edd9288f947c23f419c3fd8d5ec3c20382d6ee3"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/verify-coverage.js",
+      "bytes": 108321,
+      "sha256": "c5bf101848eba910bcbac2ad8872f6a9e2d906d2e7053adcb3c5b22f118cc0fc"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/.slc-verify/verify-coverage.d.ts",
+      "bytes": 4141,
+      "sha256": "5a6c26bf5b442efe2ab3ab8dd6d25cdec118bfc82adc0fc45a8557d6fe5c83c4"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.gears-fsm.test.ts",
+      "bytes": 1066,
+      "sha256": "3e933963c6ce3ac3da6f993a5fa62cbd6df57526bfafa34c1d3d6ec9653ddd51"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.fsm.introspect.test.ts",
+      "bytes": 2641,
+      "sha256": "7cae219a021a3797391fb6c0127d03b490ec3250b93e98618ee4a1c122b0271f"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.prompt-contract.test.ts",
+      "bytes": 2104,
+      "sha256": "dfc8d4f48273eed6432575d2976833fb271f37c329a7b728c1edc5aaf15fab3a"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.playbook/minimal.fsm.coverage.test.ts",
+      "bytes": 772,
+      "sha256": "0cee7f849d54dfec49659ffd185421eb2f00bc61ee049f0aa87ce1d5a83d3a79"
+    },
+    {
+      "path": "/private/tmp/slc-performance-evidence/compile-9lTnki/work/minimal.ts",
+      "bytes": 2230,
+      "sha256": "573e325a4f046711719526115d0b340e52ac026ca54ba22c5b0d25515eef03ca"
+    }
+  ],
+  "allRecordedInputAndArtifactHashesVerified": true,
+  "relationToControlledPair": "The earlier quoted-relay matched pair remains the only isolated 63.1% linking result; this flat-defaults cold run establishes the full-demo target once, not a separate causal materializer ratio."
+}

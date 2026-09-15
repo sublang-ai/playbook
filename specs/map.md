@@ -79,6 +79,13 @@ meta.md       The spec of specs
 | [DR-051](decisions/051-host-selected-runtime-recovery.md) | 051-host-selected-runtime-recovery.md | Host-selected runtime recovery: the shell publishes the parked leaf's advertised runtime actions to its embedding host and accepts one as a turn's decision, with no decision call and every existing validation, receipt, and reporting rule unchanged |
 | [DR-052](decisions/052-host-selected-give-up.md) | 052-host-selected-give-up.md | Host-selected give-up: the shell publishes its own give-up control, a host may decide that turn, and the shell settles its result phase with no model call, clearing the root's retained generation |
 | [DR-053](decisions/053-seeding-picks-a-ready-adapter.md) | 053-seeding-picks-a-ready-adapter.md | Seeding picks a ready adapter: the seeded lineup is selected from adapters whose credentials are present, by fixed precedence, with a documented default and a notice when none is ready |
+| [DR-054](decisions/054-fsm-authoring-scaffold.md) | 054-fsm-authoring-scaffold.md | Optional incomplete FSM authoring scaffold, exact constants and typed actions; unmeasured experiment |
+| [DR-055](decisions/055-public-workflow-contracts.md) | 055-public-workflow-contracts.md | Public builtin output interfaces as separately packaged compiler inputs, without maintained implementation artifacts |
+| [DR-056](decisions/056-shared-child-result-validation.md) | 056-shared-child-result-validation.md | Reuse the existing pure child-result validator in FSMs without runner binding |
+| [DR-057](decisions/057-public-linked-option-validator.md) | 057-public-linked-option-validator.md | Pure public artifact option validation for deterministic entries without engine changes |
+| [DR-058](decisions/058-link-materialization-tool.md) | 058-link-materialization-tool.md | Optional thin-module materializer retained for measured flat quoted-relay linking and one accepted labelled CODE comparison |
+| [DR-059](decisions/059-helper-backed-compact-link.md) | 059-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
+| [DR-060](decisions/060-compact-link-definition.md) | 060-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
 
 ## Packages
 
@@ -86,8 +93,21 @@ meta.md       The spec of specs
 | --- | --- |
 | [captain-playbook.md](packages/captain-playbook.md) | Compiled session Captain behavior, controller contract, compilation, and verification |
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
+| [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
+| [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Every source-authored runtime relay delivered through each governed acting prompt |
+| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, terminal return obligations, authored Boss-question fields, and unambiguous output guidance |
+| [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
+| [compiler-nested-calls.md](packages/compiler-nested-calls.md) | Nested-playbook call syntax and child-output routing duties |
+| [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
+| [compiler-source-state.md](packages/compiler-source-state.md) | Source-owned generated-FSM availability facts and continuation history preservation |
+| [compiler-entry-options.md](packages/compiler-entry-options.md) | Public linked option validation and source-owned bootstrap requiredness |
+| [compiler-child-validation.md](packages/compiler-child-validation.md) | Canonical public child-result validation in generated FSMs without runner construction |
+| [compiler-workflow-contracts.md](packages/compiler-workflow-contracts.md) | Packaged builtin output contracts, source-owned caller predicates, and interface drift checks |
+| [fsm-scaffolding.md](packages/fsm-scaffolding.md) | Optional exact GEARS constants and incomplete typed FSM authoring scaffold |
 | [git.md](packages/git.md) | Commit preparation, message format, and AI co-authorship |
 | [licensing.md](packages/licensing.md) | SPDX header scope, requirements, and repository checks |
+| [link-experiments.md](packages/link-experiments.md) | Isolated matched Playbook 13.2 compiler-definition experiments and frozen input identity |
+| [link-materialization.md](packages/link-materialization.md) | Optional link materialization, supported labelled/nested CODE profile, strict descriptor, atomic emission, and semantic closure |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |

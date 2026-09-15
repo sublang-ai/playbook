@@ -24,6 +24,9 @@ Hosts are out of scope for this phase.
 Each host has an adapter that loads a `PlaybookRuntime` module and supplies the host's primitives as `PlaybookPorts`.
 The adapter shall speak only `PlaybookPorts` to the runtime and shall not leak host types back into it.
 
+At construction, the shared factory validates linked metadata and the shared construction shape; the Captain host owns registry-manifest and live authority-envelope validation at its construction boundary.
+Do not audit the bare shared factory as if it owned that Captain-host boundary or synthesize host capabilities in the emitted artifact.
+
 The link compiler shall not modify the FSM artifact and shall not re-derive Captain prompts, result keys, or guard semantics — those are fixed by the FSM.
 
 ## Formats
@@ -32,6 +35,138 @@ The link compiler shall not modify the FSM artifact and shall not re-derive Capt
 | ------ | -------- | --------- |
 | source | fsm      | .ts       |
 | target | playbook | .ts       |
+
+## Optional deterministic materialization
+
+For an ordinary flat workflow using only `player` and `script` actors,
+the supported prompt profile below, shared remaining strategies, and primitive configured options, the linker may
+use the adjacent `materialize-link.mjs` tool to emit the thin module.
+The complete definition below remains binding; the tool replaces repetitive
+module generation, not semantic analysis or emitted conformance verification.
+Read the actual FSM and supply every erased or authored contract exactly.
+Do not use `flat-defaults` or `flat-quoted-relays` when another custom composer, classifier, required-field
+extractor, session-derived input mapping, controller strategy, nested call,
+parallel state, or compound state is needed.
+
+Invoke the tool with the actual definition directory, source FSM, and declared
+target; supply a JSON descriptor on standard input:
+
+```sh
+node "<definition-directory>/materialize-link.mjs" --fsm "<source.fsm.ts>" --out "<target.playbook.ts>" <<'JSON'
+{
+  "schema": "sublang.playbook.link.v1",
+  "profile": "flat-defaults",
+  "machineExport": "exampleMachine",
+  "label": "EXAMPLE",
+  "options": {},
+  "inputMapping": {},
+  "entryEvent": { "type": "BOSS_TASK", "textField": "bossIntent", "contextField": "bossIntent" },
+  "bossEvents": [],
+  "outcomeAuthority": {
+    "governedPlayerStates": {
+      "work": {
+        "done": { "fields": {}, "repositoryDisposition": "one-descendant-commit" },
+        "needsBossReply": { "fields": { "question": "presentation" }, "repositoryDisposition": "deferred" }
+      }
+    }
+  },
+  "placeholderFields": {},
+  "transitionEventFields": ["bossIntent", "answer", "questionId"],
+  "verbatimPayloadFields": [],
+  "resumableStateIds": ["work"],
+  "unfinishedFinalStateIds": [],
+  "controlContextFields": []
+}
+JSON
+```
+
+This descriptor is an example shape, not default workflow semantics.
+Select `flat-defaults` for the unchanged shared player composer, or
+`flat-quoted-relays` when the source requires standalone `> <token>` relay lines.
+The latter uses the same descriptor keys and `placeholderFields` mappings;
+ordinary string tokens substitute literally, while standalone relay values
+quote each nonempty line with `> ` and preserve LF/CRLF and blank lines.
+An empty relay value omits its complete template line; missing or non-string
+values retain the token. Inserted values are never substituted again.
+The emitted composer preserves the installed shared fresh/resumed Q&A prefix
+and does not modify the original input. Labelled relays, identity-specific
+composition, structured renderers, and other custom strategies require
+ordinary linking; do not select either profile for those requirements.
+Every top-level member is required; unknown members are errors.
+`options` maps each configured option to `{ "type": "string" | "number" |
+"boolean", "required": true | false }`; `inputMapping` maps each FSM input
+field to its supplying option name.
+Option unions, closed values, range constraints, nested structures, and
+session-derived input values are outside this profile; do not widen their
+contracts to an unconstrained primitive.
+The tool adds optional string `cwd` for script-bearing machines; it does not
+put `cwd` in FSM input unless the descriptor explicitly maps it.
+An explicit `entryEvent: null` selects the shared classifier only where this
+definition permits no deterministic entry; it does not relax entry rules.
+`bossEvents` retains the exact additional erased event fields, source ownership,
+requiredness, and closed values specified under Output.
+The state/outcome/field authority map, placeholder exceptions, transition and
+verbatim fields, resumable states, unfinished finals, and safe ordered context
+projection retain their exact obligations under Output.
+The tool copies role labels and identities from the machine and never guesses
+result semantics by executing an invocation against invented context.
+
+The helper resolves the installed shared engine from the source and target
+locations and refuses differing engine resolutions.
+Its factory preflight checks linked metadata.
+It accepts `.fsm.js` on supported Node versions; `.fsm.ts` requires native
+type stripping (Node 23.6+, or Node 22.18+).
+On success it atomically writes only the declared target after factory
+preflight; run all existing conformance checks afterward.
+Exit 2 reports `unsupported` without changing the target: continue ordinary
+linking under this complete definition.
+Exit 1 reports invalid metadata, loading, preflight, or output failure:
+correct the identified problem before treating linking as successful.
+
+### Experimental labelled-string and nested-call profile
+
+`flat-labelled-relays` is an unmeasured candidate for flat single-region
+machines with delegated players, scripts, and nested `playbook` calls. It
+requires the installed shared `composePlayerContinuation` API. It leaves
+nested input composition, child targets, result guards, recovery, and terminal
+semantics in the unchanged FSM; the shared factory provides the nested bridge.
+It does not authorize generating or importing maintained workflow artifacts.
+
+Select it only for literal string substitution in unchanged player templates,
+including labelled `> Label: <token>` lines and source-declared role-identity
+tokens. In addition to every descriptor member above, supply:
+
+- `playerInputExport`: the exact exported FSM player-input type name.
+- `omitEmptyRelayLines`: exact complete source lines to omit only when their
+  mapped string value is empty, for example
+  `["> Run results: <run-results>"]`. Each line starts with `> ` and ends in
+  one placeholder; any preceding label is literal. Use an explicit empty
+  array when no line is optional; never infer optionality from a missing value.
+- `identityPlaceholders`: an explicit token-to-canonical-local-role map, such
+  as `{ "coder-llm": "coder" }` only where Source requires that identity.
+  These values come solely from the invocation-scoped identity lookup, never
+  from options, FSM context, or model prose. Use `{}` when none is authored.
+
+The composer replaces original tokens once, prefixes each continuation line
+of a value inserted into a quoted source line with `> `, preserves line
+separators and literal inserted text, and leaves missing/non-string values as
+source tokens. Undeclared empty relay lines retain their authored text.
+The emitted verification composer has the same identity and optional third
+resume arguments as the runtime; the shared helper owns fresh/resumed Q&A.
+Structured rendering, custom classifiers/extractors/controllers, direct
+Captain actors, compound/parallel topology, and constrained/nonprimitive
+options remain unsupported. Source-derived metadata and all existing
+conformance checks remain mandatory. This profile changes no runtime bridge,
+workflow semantics, or measured performance claim.
+
+For an FSM that satisfies one of the materializer profiles above, derive its
+complete source-owned descriptor and run `materialize-link.mjs` before writing
+an ordinary linked module by hand. Use the supported profile whose composer
+matches the actual source. An unsupported-profile exit continues ordinary
+linking under this definition; invalid metadata must be corrected. Never
+widen an option, omit a required custom strategy, change the FSM, or relax a
+verification check to make a profile fit.
+
 
 ## PlaybookRuntime contract
 
@@ -364,7 +499,7 @@ The roleless session-Captain is the sole signature exception: its public options
 
 Artifact schema `3` shall require `outcomeAuthority` as an own plain-JSON data property and shall instantiate the shared factory with exactly `{ configuredOptions, hostCapabilities }`, where `configuredOptions` is the registry-validated plain-JSON workflow slice and `hostCapabilities` is a non-null live current-host object.
 For schema `3`, the `Options` argument of the one-argument shared `PlaybookRuntimeFactory<Options>` shall be `XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>`; the registry's public entry receives the two members separately and composes that one internal argument only at the artifact boundary.
-For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations, whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, and additional typed ledger commands for the same atomic completion; and the ledger exposes its synchronous detached `snapshot(): PlaybookEffectLedger` mirror plus `writeAhead(commands: PlaybookEffectLedgerCommandBatch): Promise<PlaybookEffectLedger>` against the current host's atomic writer.
+For a Captain-hosted schema-3 artifact, `hostCapabilities` shall contain exactly `authority`, `repository`, and `effectLedger`: authority binds that artifact's id, schema, detached role and cohort declarations, current configured working directory, logical session and lease-owner identities, and canonical worktree; repository exposes that same canonical identity plus host-bound observation, acquisition, exclusive-call, and cohort operations, whose optional live completion mapper may return only detached `finalText`, `semanticCandidate`, `logicalOperationId`, additional typed ledger commands for the same atomic completion, one `deferred` binding carrying optional UUID `operationId` plus exact `pendingQuestion` and `playerContinuation`, or literal `unresolved: true`, where `deferred` shall be mutually exclusive with `unresolved`, `logicalOperationId`, and commands; and the ledger exposes its synchronous detached `snapshot(): PlaybookEffectLedger` mirror plus `writeAhead(commands: PlaybookEffectLedgerCommandBatch): Promise<PlaybookEffectLedger>` against the current host's atomic writer.
 Only `configuredOptions` may reach option snapshotting and FSM input.
 The capability object, its callbacks, lease token, and live claim or store handles shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, retained generations, nor continuation identity; the detached ledger data and canonical identities returned by its ledger channel shall instead persist only through the versioned effect-ledger members defined below.
 
@@ -425,6 +560,9 @@ Each state shall name exactly the outcomes in that state's `invoke.input.result`
 The outcome key owns the semantic discriminator, so `guard` shall not appear in `fields`; the `fields` keys shall equal every additional payload field named by that outcome's result description.
 Each field shall have exactly one authority from `presentation`, `semantic`, `effect`, or `runtime`; every linker-declared verbatim payload field and `question` shall be `presentation`, `latestCommit` shall be `effect`, and the payload fields `irNumber` and `irTask` shall be `semantic`, while outcome keys such as `moreTasks` and `finalTask` remain semantic discriminators.
 Each repository disposition shall be exactly `unchanged`, `one-descendant-commit`, or `deferred`; an effect-owned field is valid on `one-descendant-commit` and `unchanged` and never on `deferred`, and `deferred` is valid only on `needsBossReply` with presentation-owned `question` and another outcome in that state declaring `one-descendant-commit`.
+The linker shall derive each disposition from the source-derived operation and the outcome's required repository effect, independently of whether its result description declares an effect-owned payload field.
+A completion that requires committing the result to Git shall declare `one-descendant-commit` even when its outcome is simply `done` with `fields: {}`; its eligible `needsBossReply` arm shall declare `deferred` under the rule above.
+The absence of `latestCommit` or any other effect-owned field shall never justify defaulting that completion to `unchanged`.
 The shared factory shall reject every legacy artifact schema and reject schema-3 missing, extra, unknown, wrongly owned, or inconsistent metadata before the affected player call.
 
 `init` receives the host-owned playbook session identity and ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
@@ -458,6 +596,17 @@ source. In particular, a required immutable `enabledPlaybooks` catalog shall
 remain a required readonly runtime option passed through to machine input; the
 linker shall neither invent an empty catalog nor require it to be baked into a
 CLI link option.
+
+The linked module shall export public synchronous pure `validateOptions(value: unknown): PlaybookRuntimeOptions` and bind that same function as the shared spec's `snapshotOptions`.
+The validator shall first capture `value === undefined ? {} : value` with the public `snapshotJsonValue` exported by `@sublang/playbook/xstate-runtime`, before reading option members, applying defaults, or constructing a replacement record; only top-level `undefined` is normalized, and non-JSON input rejects through that shared boundary.
+It shall then validate the artifact's actual option shape, requiredness, source-authored defaults, unknown keys, and declared values against the detached snapshot, reject null and invalid options, and return a detached immutable plain-JSON option record without runtime construction or live host capabilities.
+Boss text supplied by the entry event is not a required startup option unless Source independently requires it before the first Boss turn; a generated required type annotation alone is not that evidence.
+A generated entry guard that requires the text already in context is likewise
+not independent Source evidence; it is a producer defect when the entry action
+has yet to copy the event's text. Do not compensate with a required option or
+invented startup task. `entryEvent.contextField` supplies failure-retry text;
+it does not populate fresh entry context before FSM guards execute.
+A source-appropriate optional seed may remain, and genuine required bootstrap catalogs or other options shall not be erased or filled with invented defaults.
 
 Concrete player binding and prompt identity are host policy and shall not enter `PlaybookRuntimeOptions`, machine input, or the emitted artifact.
 For a shell-hosted runtime, `PlaybookSession.roleBindings` shall carry exactly the runtime's local roles, map each to its resolved player id and current prompt identity, and be the sole source for call targeting, player-facing prompt identity, concurrency keys, and trace player ids.
@@ -1457,10 +1606,12 @@ artifact declares its reached final state's kind: the runtime reads
 `meta.playbook.terminal` and that state's authored description from the
 artifact, never from an agent reply, and a declared value other than `success`
 or `failure` is a control-plane error rather than a child outcome.
-Because the bridge routes a failure terminal to the error path, `onDone` alone
-proves the child succeeded and a caller never inspects a callee's output fields
-to decide that; a caller reads those fields only when its own Source relays
-them.
+`onDone` proves successful bridge delivery without a declared child failure;
+it does not establish every caller-owned domain condition. The caller shall
+enforce its own explicit Source-authored acceptance or relay predicates on
+the delivered output before continuing, without inventing predicates from
+callee implementation details or overriding the child's compiled terminal
+kind with output fields.
 Unknown, duplicate, or stale call ids reject without changing actor state.
 The finish trace shall therefore precede any parent FSM transition caused by
 the child return.
@@ -2250,8 +2401,8 @@ The thin emitted module:
   by `PlaybookSession` or another linker-owned source (§PlaybookRuntime
   contract), plus the optional `cwd` option whenever the FSM contains a
   `script` state (§Script execution).
-- Supplies the spec's `snapshotOptions` with the same options-validation
-  semantics previously generated inline: validate and JSON-snapshot the
+- Exports the public `validateOptions` function specified above and supplies
+  it as the spec's identical `snapshotOptions` callback: validate and JSON-snapshot the
   caller's options, rejecting undeclared keys and non-conforming values, so
   the factory binds an immutable options record before constructing any
   actor.

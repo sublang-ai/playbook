@@ -73,11 +73,6 @@ function composePlayerPrompt(input, resuming = false) {
     });
     return composePlayerContinuation(input, body, resuming);
 }
-export const _internal = {
-    composePlayerPrompt,
-    VERBATIM_PAYLOAD_FIELDS,
-    UNFINISHED_FINAL_STATE_IDS,
-};
 const runtimeSpec = {
     label: 'DEV',
     // DR-022 / slc/link.md: the declaration carries the value current at link
@@ -140,6 +135,11 @@ const runtimeSpec = {
     controlContextFields: [],
     unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
     transitionEventFields: ['developmentRequest', 'answer', 'questionId'],
+};
+export const _internal = {
+    composePlayerPrompt: runtimeSpec.composePlayerPrompt,
+    VERBATIM_PAYLOAD_FIELDS,
+    UNFINISHED_FINAL_STATE_IDS,
 };
 const createPlaybookRuntime = createXStatePlaybookRuntime(devMachine, runtimeSpec);
 export default createPlaybookRuntime;

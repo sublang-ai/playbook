@@ -2455,6 +2455,39 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 throw new Error(`createPlaybookRuntime.${method}: deferred settlement recovery is required`, { cause: deferredSettlementClosure });
             }
         }
+        function pendingHasExactUnchangedOrigin(pending) {
+            // The outcome menu is not the selected outcome: a source-authored
+            // unchanged question may share its state with needsBossReply: deferred.
+            // An open operation nevertheless always retains its checkpoint and
+            // cumulative receipt authority, even if a later boundary looks alike.
+            if (runtimeLogicalOperations().some((operation) => operation.logicalReceipt === undefined)) {
+                return false;
+            }
+            const latest = effectLedgerMirror.boundaries
+                .filter(runtimeBoundaryIsOwned)
+                .at(-1);
+            if (latest === undefined ||
+                latest.sourceStateId !== pending.resumeStateId ||
+                pending.asker.kind !== 'role' ||
+                latest.roleId !== pending.asker.roleId ||
+                latest.logicalOperationId !== undefined ||
+                latest.physicalReceipt?.classification !== 'unchanged') {
+                return false;
+            }
+            // Reuse the persisted authority/receipt check rather than infer an arm
+            // from question prose or search older evidence for a convenient match.
+            const persisted = persistedBoundaryReconciliation(latest, effectLedgerMirror);
+            if (persisted === undefined ||
+                persisted.historicalDeferred ||
+                persisted.reconciliation.status !== 'resolved') {
+                return false;
+            }
+            const output = persisted.reconciliation.output;
+            const declaration = outcomeAuthority.governedPlayerStates[latest.sourceStateId]?.[output.guard];
+            return (declaration?.repositoryDisposition === 'unchanged' &&
+                typeof output.question === 'string' &&
+                output.question === pending.question);
+        }
         function currentBoundDeferredOperation(pending) {
             const projected = {
                 questionId: pending.questionId,
@@ -5779,7 +5812,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             deferredPending = pendingBossQuestionForState(normalizePlaybookSnapshot(snapshot), snapshotContext);
                             pendingRequiresDeferredBinding =
                                 deferredPending !== undefined &&
-                                    outcomeAuthority?.governedPlayerStates[deferredPending.resumeStateId]?.needsBossReply?.repositoryDisposition === 'deferred';
+                                    outcomeAuthority?.governedPlayerStates[deferredPending.resumeStateId]?.needsBossReply?.repositoryDisposition === 'deferred' &&
+                                    !pendingHasExactUnchangedOrigin(deferredPending);
                             deferredOperation =
                                 !pendingRequiresDeferredBinding
                                     ? undefined

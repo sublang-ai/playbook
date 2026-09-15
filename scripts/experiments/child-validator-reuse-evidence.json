@@ -1,0 +1,58 @@
+{
+  "scope": "Structural replacement and local import/check feasibility; not compilation throughput",
+  "compiler": "/private/tmp/slc-fidelity-compiler-ehkjoo54",
+  "baselineFsm": {
+    "path": "/private/tmp/slc-c3-complex-full-evidence/compile-CKr2Ni/work/code.playbook/code.fsm.ts",
+    "sha256": "e3e067387dfa43df28dc7e8f3cf57e2904c7efb594bede176d88876a0e756f7c",
+    "bytes": 38429
+  },
+  "baselineReplaceableBlock": {
+    "startLine": 262,
+    "endLine": 333,
+    "bytes": 2899,
+    "sha256": "1ba8bf3c24df309a4a590e57efe779aef380614305bee54c6fe5a50f642fda27"
+  },
+  "replacement": {
+    "path": "/private/tmp/slc-child-validator-reuse-proof/validator.ts",
+    "bytes": 591,
+    "sha256": "03ad515669ee72df49d4d4218093857a080c5963a97d5ef5d4db17c3cf0ab18b"
+  },
+  "structuralBytesRemoved": 2308,
+  "percentageOfOriginalFsm": 6.005880975305108,
+  "strict": {
+    "ok": true,
+    "elapsedMs": 1242.686458
+  },
+  "moduleImportMs": 65.696958,
+  "firstSyntheticValidationMs": 0.34341699999981756,
+  "actualBridgeCases": 15,
+  "focusedTests": 22,
+  "testLog": {
+    "path": "/private/tmp/slc-child-validator-tests.log",
+    "sha256": "b4431a3f4f847807a85042f71f75609324350cc005c4500093e7120feffeaecf"
+  },
+  "originalFsmUnchanged": true,
+  "providerCalls": 0,
+  "liveEfficacy": "pending new immutable cohort",
+  "limits": [
+    "The original FSM was not patched or accepted.",
+    "The comparison removes only the child public-envelope block; other JSON helpers remain used elsewhere.",
+    "Import/check/call timings are one local observation, not an A/B performance comparison or model-output timing.",
+    "The named import loads the public engine closure but constructs no runner or host operation."
+  ],
+  "reproduction": {
+    "path": "/private/tmp/slc-child-validator-reuse-proof/replay.mjs",
+    "bytes": 4771,
+    "sha256": "3fff972df6fd487a7dfbf1f1690309257fbb91aa432598b547a48cafcb65fa57"
+  },
+  "localEvidence": {
+    "path": "/private/tmp/slc-child-validator-reuse-proof/evidence.json",
+    "bytes": 1708,
+    "sha256": "2ffdfc450d7e1810a634cb26d351d17642a52a97b1765443f8e0efbe25815469"
+  },
+  "measurementScript": {
+    "path": "/private/tmp/slc-child-validator-reuse-proof/measure.mjs",
+    "bytes": 4676,
+    "sha256": "43409deaa389a223da209eff08fae1aa6979fe0f5440ccb4107b3e267a810061"
+  }
+}

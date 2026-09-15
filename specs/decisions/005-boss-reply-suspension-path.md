@@ -24,6 +24,9 @@ The runtime must yield the active Boss turn before a human can answer, otherwise
 A player-invoking state may declare a `needsBossReply` result carrying the player's verbatim question.
 The FSM shall park that invocation in a quiescent Boss-reply state that records the originating state, player, source item, question, and stable question id.
 A parallel workflow shall park only the branch that asked while other branches continue, and multiple pending questions shall remain independently addressable.
+The canonical machine-context storage is `context.pendingBossQuestion` and `context.bossReply` for scalar suspension, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for keyed suspension.
+A private wrapper cannot replace these fields: the shared factory reads the scalar record directly, while branch-local invocation inputs select their keyed record into the same singular question/reply contract.
+This placement clarification preserves the existing compiler/runtime boundary rather than adding a storage adapter or a new runtime strategy.
 
 ### 2. Boss reply event
 

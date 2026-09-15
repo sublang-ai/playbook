@@ -1,0 +1,3296 @@
+{
+  "intent": "IR-068",
+  "baselineRevision": "a000e37815024acc8051855adda72fcedbbfcedb",
+  "integrationParent": "677a9ea21f902a256f2b34957512374daae5fd1b",
+  "decision": "Retain only as measured repository observation/receipt latency improvement; no model or complete workflow throughput claim.",
+  "privacy": "Only synthetic timing, equality and implementation identities; no source content, provider prompts or results.",
+  "runs": [
+    {
+      "name": "private-pinned-comparison",
+      "rawEvidenceSha256": "81dfbf2c65506c549b3786c79aa3c5398a2c2080b94b868892fee4b212f78700",
+      "createdAt": "2026-09-13T02:22:21.878Z",
+      "identity": {
+        "baseRevision": "a000e37815024acc8051855adda72fcedbbfcedb",
+        "changePath": "reference/sdlc/code.playbook/bin/repository-effects.js",
+        "node": "v25.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "baselineSha256": "ff8955e5203d9719d6c00e5ae9b64921810a07204ea45a58972f214079a85716",
+        "candidateSha256": "3ba90976a6d23e08448ee63125edbdbfd1074c2c8c8c6d26cc33e1160dc46dc5",
+        "lockSha256": "afc0e810538b1501e9e09887cb6876916d3371b35a09cfc3e6df1f5d7372251b",
+        "scriptSha256": "ab7c63b7d700a43f07faa99bf4b8b8477b3e3ae58761b322ce22125795a74d01",
+        "git": "git version 2.50.1 (Apple Git-155)",
+        "dependencies": {
+          "typescript": "5.9.3",
+          "xstate": "5.31.1",
+          "vitest": "3.2.4",
+          "@sublang/cligent": "0.26.0",
+          "@sublang/tmux-play": null
+        }
+      },
+      "method": {
+        "freshFixturePerPair": true,
+        "trackedFiles": 100,
+        "dirtyOverlay": {
+          "trackedEdits": 10,
+          "untrackedFiles": 10
+        },
+        "sequentialPairs": true,
+        "alternatingFirstObservation": true,
+        "oppositeCaptureOrder": true,
+        "warmupPerCase": 3,
+        "measuredPairsPerCase": 20,
+        "twoOrderedSamplesPreserved": true
+      },
+      "scope": "Exported public host-capability observeGitRepository plus captureRepositoryReceipt; excludes Git setup, implementation commit execution, claim acquisition, durable ledger/checkpoint writes, provider calls and workflow orchestration.",
+      "summaries": [
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "n": 20,
+          "baselineMedianMs": 307.19693699999925,
+          "candidateMedianMs": 152.21441649999997,
+          "baselineMeanMs": 314.90465424999945,
+          "candidateMeanMs": 166.33663115000007,
+          "pairedMedianSavedMs": 152.51777100000027,
+          "pairedMeanSavedMs": 148.56802309999944,
+          "pairedWins": 20,
+          "medianRatio": 0.5158768113372055,
+          "medianPairedReductionPercent": 48.41231886627945
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "n": 20,
+          "baselineMedianMs": 328.34016599999995,
+          "candidateMedianMs": 188.6724164999996,
+          "baselineMeanMs": 362.89849139999967,
+          "candidateMeanMs": 201.70625629999995,
+          "pairedMedianSavedMs": 133.74287450000156,
+          "pairedMeanSavedMs": 161.19223509999975,
+          "pairedWins": 19,
+          "medianRatio": 0.5643560592000504,
+          "medianPairedReductionPercent": 43.56439407999496
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "n": 20,
+          "baselineMedianMs": 324.8010204999955,
+          "candidateMedianMs": 175.64708300000348,
+          "baselineMeanMs": 339.4577522500011,
+          "candidateMeanMs": 191.1746063000006,
+          "pairedMedianSavedMs": 153.27808300000106,
+          "pairedMeanSavedMs": 148.28314595000046,
+          "pairedWins": 20,
+          "medianRatio": 0.5208295625842634,
+          "medianPairedReductionPercent": 47.91704374157366
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "n": 20,
+          "baselineMedianMs": 332.8085415000023,
+          "candidateMedianMs": 197.0634785000002,
+          "baselineMeanMs": 356.67842930000154,
+          "candidateMeanMs": 201.1974353999987,
+          "pairedMedianSavedMs": 136.9864785000027,
+          "pairedMeanSavedMs": 155.4809939000028,
+          "pairedWins": 20,
+          "medianRatio": 0.587383098257889,
+          "medianPairedReductionPercent": 41.2616901742111
+        }
+      ],
+      "measuredPairs": [
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 148.25658299999986,
+              "captureMs": 165.70637499999975,
+              "totalMs": 313.9629579999996
+            },
+            "candidate": {
+              "observeMs": 68.03254100000004,
+              "captureMs": 61.39408400000002,
+              "totalMs": 129.42662500000006
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 166.7562079999998,
+              "captureMs": 140.7415000000001,
+              "totalMs": 307.4977079999999
+            },
+            "candidate": {
+              "observeMs": 69.61529199999995,
+              "captureMs": 74.53362500000003,
+              "totalMs": 144.14891699999998
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 194.04999999999927,
+              "captureMs": 161.73400000000038,
+              "totalMs": 355.78399999999965
+            },
+            "candidate": {
+              "observeMs": 93.63129200000003,
+              "captureMs": 73.6493330000003,
+              "totalMs": 167.28062500000033
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 157.18833300000006,
+              "captureMs": 173.4458340000001,
+              "totalMs": 330.63416700000016
+            },
+            "candidate": {
+              "observeMs": 74.96787499999937,
+              "captureMs": 144.83929100000023,
+              "totalMs": 219.8071659999996
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 157.14724999999999,
+              "captureMs": 139.28112499999952,
+              "totalMs": 296.4283749999995
+            },
+            "candidate": {
+              "observeMs": 81.87020799999937,
+              "captureMs": 92.421292,
+              "totalMs": 174.29149999999936
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 201.56958399999985,
+              "captureMs": 152.06974999999966,
+              "totalMs": 353.6393339999995
+            },
+            "candidate": {
+              "observeMs": 103.92999999999938,
+              "captureMs": 94.06729199999972,
+              "totalMs": 197.9972919999991
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 149.17458400000032,
+              "captureMs": 155.44325000000026,
+              "totalMs": 304.6178340000006
+            },
+            "candidate": {
+              "observeMs": 75.00554200000079,
+              "captureMs": 71.74354100000073,
+              "totalMs": 146.74908300000152
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 174.83745799999997,
+              "captureMs": 190.48708299999998,
+              "totalMs": 365.32454099999995
+            },
+            "candidate": {
+              "observeMs": 99.70808399999987,
+              "captureMs": 88.45683300000019,
+              "totalMs": 188.16491700000006
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.36387500000092,
+              "captureMs": 159.11408299999857,
+              "totalMs": 306.4779579999995
+            },
+            "candidate": {
+              "observeMs": 78.97600000000057,
+              "captureMs": 70.13608299999942,
+              "totalMs": 149.11208299999998
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 152.5992499999993,
+              "captureMs": 166.47370899999987,
+              "totalMs": 319.0729589999992
+            },
+            "candidate": {
+              "observeMs": 149.07066699999996,
+              "captureMs": 98.08087499999965,
+              "totalMs": 247.1515419999996
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 133.91162499999882,
+              "captureMs": 142.81495799999902,
+              "totalMs": 276.72658299999785
+            },
+            "candidate": {
+              "observeMs": 68.58112500000061,
+              "captureMs": 79.74424999999974,
+              "totalMs": 148.32537500000035
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 183.78249999999935,
+              "captureMs": 177.56729199999972,
+              "totalMs": 361.34979199999907
+            },
+            "candidate": {
+              "observeMs": 117.57170799999949,
+              "captureMs": 84.93325000000004,
+              "totalMs": 202.50495799999953
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 155.11804200000006,
+              "captureMs": 171.6253340000003,
+              "totalMs": 326.74337600000035
+            },
+            "candidate": {
+              "observeMs": 71.15908300000046,
+              "captureMs": 77.8310419999998,
+              "totalMs": 148.99012500000026
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 170.43758399999933,
+              "captureMs": 140.57133299999987,
+              "totalMs": 311.0089169999992
+            },
+            "candidate": {
+              "observeMs": 100.72087500000089,
+              "captureMs": 67.93845800000054,
+              "totalMs": 168.65933300000142
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 148.55012499999975,
+              "captureMs": 148.71116699999948,
+              "totalMs": 297.26129199999923
+            },
+            "candidate": {
+              "observeMs": 79.44008399999984,
+              "captureMs": 68.42770799999926,
+              "totalMs": 147.8677919999991
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.35783400000037,
+              "captureMs": 143.51795800000036,
+              "totalMs": 290.87579200000073
+            },
+            "candidate": {
+              "observeMs": 71.76858299999913,
+              "captureMs": 73.7572909999999,
+              "totalMs": 145.52587399999902
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 144.43304199999875,
+              "captureMs": 156.14095799999996,
+              "totalMs": 300.5739999999987
+            },
+            "candidate": {
+              "observeMs": 68.65800000000127,
+              "captureMs": 67.82641599999988,
+              "totalMs": 136.48441600000115
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 146.09579099999974,
+              "captureMs": 131.09004099999947,
+              "totalMs": 277.1858319999992
+            },
+            "candidate": {
+              "observeMs": 73.2338749999999,
+              "captureMs": 69.98562499999935,
+              "totalMs": 143.21949999999924
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 164.30441699999938,
+              "captureMs": 131.7270840000001,
+              "totalMs": 296.0315009999995
+            },
+            "candidate": {
+              "observeMs": 78.20600000000013,
+              "captureMs": 77.11074999999983,
+              "totalMs": 155.31674999999996
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 151.4411250000012,
+              "captureMs": 155.45504099999744,
+              "totalMs": 306.89616599999863
+            },
+            "candidate": {
+              "observeMs": 85.53562500000044,
+              "captureMs": 80.17312500000116,
+              "totalMs": 165.7087500000016
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.31950000000143,
+              "captureMs": 178.79504199999792,
+              "totalMs": 315.11454199999935
+            },
+            "candidate": {
+              "observeMs": 71.36999999999898,
+              "captureMs": 118.0903750000034,
+              "totalMs": 189.4603750000024
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.62654100000145,
+              "captureMs": 176.24729099999968,
+              "totalMs": 323.87383200000113
+            },
+            "candidate": {
+              "observeMs": 72.27033300000039,
+              "captureMs": 118.05983399999968,
+              "totalMs": 190.33016700000007
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 260.72508299999754,
+              "captureMs": 188.65441599999758,
+              "totalMs": 449.3794989999951
+            },
+            "candidate": {
+              "observeMs": 80.3326249999991,
+              "captureMs": 120.60566699999981,
+              "totalMs": 200.9382919999989
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 134.16520800000217,
+              "captureMs": 167.25395800000115,
+              "totalMs": 301.4191660000033
+            },
+            "candidate": {
+              "observeMs": 78.93583299999955,
+              "captureMs": 104.61408300000039,
+              "totalMs": 183.54991599999994
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 132.56408300000112,
+              "captureMs": 167.46608399999968,
+              "totalMs": 300.0301670000008
+            },
+            "candidate": {
+              "observeMs": 67.75412499999948,
+              "captureMs": 101.46929199999795,
+              "totalMs": 169.22341699999743
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.5994580000006,
+              "captureMs": 174.74237500000163,
+              "totalMs": 315.3418330000022
+            },
+            "candidate": {
+              "observeMs": 68.50129200000083,
+              "captureMs": 116.37125000000015,
+              "totalMs": 184.87254200000098
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.86962499999936,
+              "captureMs": 177.23354199999812,
+              "totalMs": 318.1031669999975
+            },
+            "candidate": {
+              "observeMs": 79.78879199999938,
+              "captureMs": 141.03966700000092,
+              "totalMs": 220.8284590000003
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.36049999999886,
+              "captureMs": 176.06991600000038,
+              "totalMs": 316.43041599999924
+            },
+            "candidate": {
+              "observeMs": 67.0054170000003,
+              "captureMs": 111.36437500000102,
+              "totalMs": 178.36979200000133
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 144.87441699999908,
+              "captureMs": 187.9320829999997,
+              "totalMs": 332.8064999999988
+            },
+            "candidate": {
+              "observeMs": 75.56124999999884,
+              "captureMs": 112.32320799999798,
+              "totalMs": 187.8844579999968
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 398.95829199999935,
+              "captureMs": 187.50454199999876,
+              "totalMs": 586.4628339999981
+            },
+            "candidate": {
+              "observeMs": 105.08391599999959,
+              "captureMs": 122.88683300000048,
+              "totalMs": 227.97074900000007
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 203.75050000000192,
+              "captureMs": 365.33237499999814,
+              "totalMs": 569.0828750000001
+            },
+            "candidate": {
+              "observeMs": 66.94366599999921,
+              "captureMs": 110.62700000000041,
+              "totalMs": 177.57066599999962
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 151.6519159999989,
+              "captureMs": 186.1877910000003,
+              "totalMs": 337.8397069999992
+            },
+            "candidate": {
+              "observeMs": 75.84504200000083,
+              "captureMs": 151.27270900000076,
+              "totalMs": 227.1177510000016
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.08441700000185,
+              "captureMs": 297.19433299999946,
+              "totalMs": 437.2787500000013
+            },
+            "candidate": {
+              "observeMs": 70.35870900000009,
+              "captureMs": 113.71808299999975,
+              "totalMs": 184.07679199999984
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 125.28495800000019,
+              "captureMs": 178.86604200000147,
+              "totalMs": 304.15100000000166
+            },
+            "candidate": {
+              "observeMs": 60.57650000000285,
+              "captureMs": 109.63241599999674,
+              "totalMs": 170.2089159999996
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 153.70812500000102,
+              "captureMs": 162.61812500000087,
+              "totalMs": 316.3262500000019
+            },
+            "candidate": {
+              "observeMs": 73.3037919999988,
+              "captureMs": 105.15687500000058,
+              "totalMs": 178.46066699999938
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 129.4254579999979,
+              "captureMs": 219.9126249999972,
+              "totalMs": 349.3380829999951
+            },
+            "candidate": {
+              "observeMs": 68.87479200000234,
+              "captureMs": 151.48887499999546,
+              "totalMs": 220.3636669999978
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 178.58441599999787,
+              "captureMs": 180.85179100000096,
+              "totalMs": 359.43620699999883
+            },
+            "candidate": {
+              "observeMs": 186.5317920000016,
+              "captureMs": 178.2590829999972,
+              "totalMs": 364.7908749999988
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 162.4173340000052,
+              "captureMs": 182.9051249999975,
+              "totalMs": 345.3224590000027
+            },
+            "candidate": {
+              "observeMs": 66.60975000000326,
+              "captureMs": 117.58379199999763,
+              "totalMs": 184.1935420000009
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.89529100000073,
+              "captureMs": 182.83987499999785,
+              "totalMs": 319.73516599999857
+            },
+            "candidate": {
+              "observeMs": 69.08162500000617,
+              "captureMs": 132.9784159999981,
+              "totalMs": 202.06004100000428
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 145.16775000000052,
+              "captureMs": 215.3296249999985,
+              "totalMs": 360.497374999999
+            },
+            "candidate": {
+              "observeMs": 69.1934590000019,
+              "captureMs": 122.66058299999713,
+              "totalMs": 191.85404199999903
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 151.59937500000524,
+              "captureMs": 203.32845900000393,
+              "totalMs": 354.92783400000917
+            },
+            "candidate": {
+              "observeMs": 94.10925000000134,
+              "captureMs": 85.33558300000004,
+              "totalMs": 179.44483300000138
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 172.84533399999782,
+              "captureMs": 177.9594999999972,
+              "totalMs": 350.804833999995
+            },
+            "candidate": {
+              "observeMs": 92.77074999999604,
+              "captureMs": 76.20158300000185,
+              "totalMs": 168.9723329999979
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 166.95933299999888,
+              "captureMs": 149.28895900000498,
+              "totalMs": 316.24829200000386
+            },
+            "candidate": {
+              "observeMs": 177.69404199999553,
+              "captureMs": 90.6349579999951,
+              "totalMs": 268.32899999999063
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 157.84537500000442,
+              "captureMs": 156.04062500000146,
+              "totalMs": 313.8860000000059
+            },
+            "candidate": {
+              "observeMs": 82.9239579999994,
+              "captureMs": 107.1194170000017,
+              "totalMs": 190.0433750000011
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 192.00450000000274,
+              "captureMs": 145.59558399999514,
+              "totalMs": 337.6000839999979
+            },
+            "candidate": {
+              "observeMs": 84.01629200000025,
+              "captureMs": 86.85508299999492,
+              "totalMs": 170.87137499999517
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 168.8021249999947,
+              "captureMs": 156.98337499999616,
+              "totalMs": 325.78549999999086
+            },
+            "candidate": {
+              "observeMs": 91.13116699999955,
+              "captureMs": 124.7155419999981,
+              "totalMs": 215.84670899999765
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 292.3675829999993,
+              "captureMs": 186.3203749999957,
+              "totalMs": 478.687957999995
+            },
+            "candidate": {
+              "observeMs": 113.65070800000103,
+              "captureMs": 108.22729199999594,
+              "totalMs": 221.87799999999697
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 138.3993330000012,
+              "captureMs": 137.52245900000707,
+              "totalMs": 275.9217920000083
+            },
+            "candidate": {
+              "observeMs": 73.92962499999703,
+              "captureMs": 88.27108299999963,
+              "totalMs": 162.20070799999667
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 189.87262499999633,
+              "captureMs": 150.37362500000017,
+              "totalMs": 340.2462499999965
+            },
+            "candidate": {
+              "observeMs": 82.7745419999992,
+              "captureMs": 87.76016700000037,
+              "totalMs": 170.53470899999957
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 182.22945900000195,
+              "captureMs": 182.7424170000013,
+              "totalMs": 364.97187600000325
+            },
+            "candidate": {
+              "observeMs": 244.30345800000214,
+              "captureMs": 99.95145900000352,
+              "totalMs": 344.25491700000566
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 176.50712500000373,
+              "captureMs": 144.3337079999983,
+              "totalMs": 320.840833000002
+            },
+            "candidate": {
+              "observeMs": 89.40637499999866,
+              "captureMs": 82.05966700000135,
+              "totalMs": 171.46604200000002
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.3521249999976,
+              "captureMs": 175.33112500000425,
+              "totalMs": 315.68325000000186
+            },
+            "candidate": {
+              "observeMs": 73.29308400000446,
+              "captureMs": 75.94541599999502,
+              "totalMs": 149.23849999999948
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 140.95691700000316,
+              "captureMs": 139.95770800000173,
+              "totalMs": 280.9146250000049
+            },
+            "candidate": {
+              "observeMs": 74.52283300000272,
+              "captureMs": 74.2455420000042,
+              "totalMs": 148.76837500000693
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 159.91708300000028,
+              "captureMs": 149.0390419999967,
+              "totalMs": 308.956124999997
+            },
+            "candidate": {
+              "observeMs": 80.65079100000003,
+              "captureMs": 93.19358300000022,
+              "totalMs": 173.84437400000024
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 143.03920800000196,
+              "captureMs": 180.77733299999818,
+              "totalMs": 323.81654100000014
+            },
+            "candidate": {
+              "observeMs": 103.04541700000118,
+              "captureMs": 96.70254099999875,
+              "totalMs": 199.74795799999993
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 158.69408300000214,
+              "captureMs": 145.45850000000064,
+              "totalMs": 304.1525830000028
+            },
+            "candidate": {
+              "observeMs": 99.9486670000042,
+              "captureMs": 77.5011250000025,
+              "totalMs": 177.4497920000067
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 144.70008300000336,
+              "captureMs": 162.61875000000146,
+              "totalMs": 307.3188330000048
+            },
+            "candidate": {
+              "observeMs": 74.79875000000175,
+              "captureMs": 75.33870800000295,
+              "totalMs": 150.1374580000047
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 172.88237500000105,
+              "captureMs": 163.12562500000058,
+              "totalMs": 336.00800000000163
+            },
+            "candidate": {
+              "observeMs": 88.46750000000611,
+              "captureMs": 83.2469590000037,
+              "totalMs": 171.7144590000098
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 193.06370900000184,
+              "captureMs": 269.26600000000326,
+              "totalMs": 462.3297090000051
+            },
+            "candidate": {
+              "observeMs": 87.02920900000026,
+              "captureMs": 112.2251249999972,
+              "totalMs": 199.25433399999747
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 176.59633400000166,
+              "captureMs": 193.4577919999938,
+              "totalMs": 370.05412599999545
+            },
+            "candidate": {
+              "observeMs": 92.64216699999815,
+              "captureMs": 96.8527080000058,
+              "totalMs": 189.49487500000396
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 151.46583300000202,
+              "captureMs": 209.22400000000198,
+              "totalMs": 360.689833000004
+            },
+            "candidate": {
+              "observeMs": 119.58987499999785,
+              "captureMs": 132.9177920000002,
+              "totalMs": 252.50766699999804
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 148.8227909999987,
+              "captureMs": 237.7958340000041,
+              "totalMs": 386.6186250000028
+            },
+            "candidate": {
+              "observeMs": 81.7581660000069,
+              "captureMs": 163.9706670000014,
+              "totalMs": 245.7288330000083
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 156.66433400000096,
+              "captureMs": 304.219041999997,
+              "totalMs": 460.88337599999795
+            },
+            "candidate": {
+              "observeMs": 75.34991599999921,
+              "captureMs": 129.92833399999654,
+              "totalMs": 205.27824999999575
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.2535829999979,
+              "captureMs": 208.34308299999975,
+              "totalMs": 355.59666599999764
+            },
+            "candidate": {
+              "observeMs": 76.24487499999668,
+              "captureMs": 136.21045800000138,
+              "totalMs": 212.45533299999806
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 149.63529199999903,
+              "captureMs": 213.42124999999942,
+              "totalMs": 363.05654199999844
+            },
+            "candidate": {
+              "observeMs": 76.30629200000112,
+              "captureMs": 129.91404099999636,
+              "totalMs": 206.22033299999748
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 141.66683399999602,
+              "captureMs": 484.0770829999965,
+              "totalMs": 625.7439169999925
+            },
+            "candidate": {
+              "observeMs": 81.11466700000165,
+              "captureMs": 111.06074999999691,
+              "totalMs": 192.17541699999856
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 179.14775000000373,
+              "captureMs": 188.2749579999945,
+              "totalMs": 367.42270799999824
+            },
+            "candidate": {
+              "observeMs": 84.26554199999373,
+              "captureMs": 135.49237500000163,
+              "totalMs": 219.75791699999536
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 155.61941699999443,
+              "captureMs": 175.30112499999814,
+              "totalMs": 330.92054199999257
+            },
+            "candidate": {
+              "observeMs": 93.6704999999929,
+              "captureMs": 113.31795799999963,
+              "totalMs": 206.98845799999253
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 142.0750420000113,
+              "captureMs": 175.61733300000196,
+              "totalMs": 317.69237500001327
+            },
+            "candidate": {
+              "observeMs": 73.11733300000196,
+              "captureMs": 104.7920419999864,
+              "totalMs": 177.90937499998836
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 148.95133300000452,
+              "captureMs": 180.15966599999228,
+              "totalMs": 329.1109989999968
+            },
+            "candidate": {
+              "observeMs": 77.77358399999503,
+              "captureMs": 115.49087500000314,
+              "totalMs": 193.26445899999817
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 154.72141700000793,
+              "captureMs": 161.95591699999932,
+              "totalMs": 316.67733400000725
+            },
+            "candidate": {
+              "observeMs": 84.07995799998753,
+              "captureMs": 112.11345800000709,
+              "totalMs": 196.1934159999946
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 150.5111670000042,
+              "captureMs": 180.35316699999385,
+              "totalMs": 330.86433399999805
+            },
+            "candidate": {
+              "observeMs": 80.93916700000409,
+              "captureMs": 111.7987499999872,
+              "totalMs": 192.73791699999128
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 149.33437500000582,
+              "captureMs": 185.36216600000625,
+              "totalMs": 334.6965410000121
+            },
+            "candidate": {
+              "observeMs": 76.82233300000371,
+              "captureMs": 115.02287499999511,
+              "totalMs": 191.84520799999882
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.16079199999513,
+              "captureMs": 198.30116600000474,
+              "totalMs": 345.46195799999987
+            },
+            "candidate": {
+              "observeMs": 84.17145799999707,
+              "captureMs": 127.31524999999965,
+              "totalMs": 211.48670799999672
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 143.61970900000597,
+              "captureMs": 198.64566700000432,
+              "totalMs": 342.2653760000103
+            },
+            "candidate": {
+              "observeMs": 82.77837500000896,
+              "captureMs": 115.92454100000032,
+              "totalMs": 198.70291600000928
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 150.5678340000013,
+              "captureMs": 178.2060829999973,
+              "totalMs": 328.7739169999986
+            },
+            "candidate": {
+              "observeMs": 84.97704100000556,
+              "captureMs": 112.95650000000023,
+              "totalMs": 197.9335410000058
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 139.39337499999965,
+              "captureMs": 173.78654100000858,
+              "totalMs": 313.17991600000823
+            },
+            "candidate": {
+              "observeMs": 70.6509170000063,
+              "captureMs": 113.35304200000246,
+              "totalMs": 184.00395900000876
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 143.70929199999955,
+              "captureMs": 170.67225000000326,
+              "totalMs": 314.3815420000028
+            },
+            "candidate": {
+              "observeMs": 75.4632500000007,
+              "captureMs": 112.45554199999606,
+              "totalMs": 187.91879199999676
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 138.36445899998944,
+              "captureMs": 170.2035840000026,
+              "totalMs": 308.56804299999203
+            },
+            "candidate": {
+              "observeMs": 69.73912500000733,
+              "captureMs": 107.89999999999418,
+              "totalMs": 177.6391250000015
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 130.19412499999453,
+              "captureMs": 170.76991700001236,
+              "totalMs": 300.9640420000069
+            },
+            "candidate": {
+              "observeMs": 68.04100000001199,
+              "captureMs": 105.16008399998827,
+              "totalMs": 173.20108400000026
+            }
+          },
+          "equalReceipts": true
+        }
+      ]
+    },
+    {
+      "name": "maintained-script-replay",
+      "rawEvidenceSha256": "725697e5c1e60978bf28832de90e7eb782cdf07ba857f26a0d0ac88779c2e07d",
+      "createdAt": "2026-09-13T02:28:05.397Z",
+      "identity": {
+        "changePath": "reference/sdlc/code.playbook/bin/repository-effects.js",
+        "node": "v25.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "scriptSha256": "1bcaa1f51f7486c06a73257ea88c54e195294b8a13ecbb1ec49a1432e3ed7687",
+        "git": "git version 2.50.1 (Apple Git-155)",
+        "packages": {
+          "baseline": {
+            "repositoryEffectsSha256": "ff8955e5203d9719d6c00e5ae9b64921810a07204ea45a58972f214079a85716",
+            "lockSha256": "afc0e810538b1501e9e09887cb6876916d3371b35a09cfc3e6df1f5d7372251b",
+            "packageVersion": "13.2.0",
+            "gitRevision": null,
+            "dependencies": {
+              "typescript": "5.9.3",
+              "xstate": "5.31.1",
+              "vitest": "3.2.4",
+              "@sublang/cligent": "0.26.0",
+              "tmux-play": null
+            }
+          },
+          "candidate": {
+            "repositoryEffectsSha256": "3ba90976a6d23e08448ee63125edbdbfd1074c2c8c8c6d26cc33e1160dc46dc5",
+            "lockSha256": "afc0e810538b1501e9e09887cb6876916d3371b35a09cfc3e6df1f5d7372251b",
+            "packageVersion": "13.2.0",
+            "gitRevision": "677a9ea21f902a256f2b34957512374daae5fd1b",
+            "dependencies": {
+              "typescript": "5.9.3",
+              "xstate": "5.31.1",
+              "vitest": "3.2.4",
+              "@sublang/cligent": "0.26.0",
+              "tmux-play": null
+            }
+          }
+        }
+      },
+      "method": {
+        "freshFixturePerPair": true,
+        "trackedFiles": 100,
+        "dirtyOverlay": {
+          "trackedEdits": 10,
+          "untrackedFiles": 10
+        },
+        "sequentialPairs": true,
+        "alternatingFirstObservation": true,
+        "oppositeCaptureOrder": true,
+        "warmupPerCase": 3,
+        "measuredPairsPerCase": 20,
+        "twoOrderedSamplesPreserved": true
+      },
+      "scope": "Exported public host-capability observeGitRepository plus captureRepositoryReceipt; excludes Git setup, implementation commit execution, claim acquisition, durable ledger/checkpoint writes, provider calls and workflow orchestration.",
+      "summaries": [
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "n": 20,
+          "baselineMedianMs": 229.70818750000058,
+          "candidateMedianMs": 114.47574999999915,
+          "baselineMeanMs": 230.01035830000032,
+          "candidateMeanMs": 113.71112504999988,
+          "pairedMedianSavedMs": 115.97006299999975,
+          "pairedMeanSavedMs": 116.29923325000046,
+          "pairedWins": 20,
+          "medianRatio": 0.49763744195103743,
+          "medianPairedReductionPercent": 50.23625580489626
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "n": 20,
+          "baselineMedianMs": 277.81329249999726,
+          "candidateMedianMs": 160.40491649999967,
+          "baselineMeanMs": 286.6166584500005,
+          "candidateMeanMs": 162.6011771999997,
+          "pairedMedianSavedMs": 118.70704199999818,
+          "pairedMeanSavedMs": 124.01548125000082,
+          "pairedWins": 20,
+          "medianRatio": 0.5671681048566597,
+          "medianPairedReductionPercent": 43.283189514334026
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "n": 20,
+          "baselineMedianMs": 287.45522899999924,
+          "candidateMedianMs": 161.08429199999773,
+          "baselineMeanMs": 309.96387905000046,
+          "candidateMeanMs": 167.10462730000182,
+          "pairedMedianSavedMs": 133.436603999995,
+          "pairedMeanSavedMs": 142.85925174999866,
+          "pairedWins": 19,
+          "medianRatio": 0.525995998467565,
+          "medianPairedReductionPercent": 47.40040015324351
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "n": 20,
+          "baselineMedianMs": 309.48629099999744,
+          "candidateMedianMs": 186.94137500000215,
+          "baselineMeanMs": 319.28077504999857,
+          "candidateMeanMs": 207.40385209999985,
+          "pairedMedianSavedMs": 119.73356350000176,
+          "pairedMeanSavedMs": 111.8769229499987,
+          "pairedWins": 19,
+          "medianRatio": 0.5950612918513077,
+          "medianPairedReductionPercent": 40.493870814869226
+        }
+      ],
+      "measuredPairs": [
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 113.56037500000002,
+              "captureMs": 115.36029199999984,
+              "totalMs": 228.92066699999987
+            },
+            "candidate": {
+              "observeMs": 57.319124999999985,
+              "captureMs": 57.95195899999999,
+              "totalMs": 115.27108399999997
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 114.23324999999977,
+              "captureMs": 114.99108400000023,
+              "totalMs": 229.224334
+            },
+            "candidate": {
+              "observeMs": 57.252084000000195,
+              "captureMs": 56.510957999999846,
+              "totalMs": 113.76304200000004
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 111.34950000000026,
+              "captureMs": 113.91512499999999,
+              "totalMs": 225.26462500000025
+            },
+            "candidate": {
+              "observeMs": 53.642125000000306,
+              "captureMs": 53.263916999999765,
+              "totalMs": 106.90604200000007
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 113.77174999999988,
+              "captureMs": 112.66470799999979,
+              "totalMs": 226.43645799999967
+            },
+            "candidate": {
+              "observeMs": 57.058542000000216,
+              "captureMs": 56.617917000000034,
+              "totalMs": 113.67645900000025
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 113.98466699999972,
+              "captureMs": 112.39858300000014,
+              "totalMs": 226.38324999999986
+            },
+            "candidate": {
+              "observeMs": 54.59687500000018,
+              "captureMs": 54.891082999999526,
+              "totalMs": 109.48795799999971
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 112.57354200000009,
+              "captureMs": 113.82283300000017,
+              "totalMs": 226.39637500000026
+            },
+            "candidate": {
+              "observeMs": 56.66133399999944,
+              "captureMs": 57.65654100000029,
+              "totalMs": 114.31787499999973
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 115.57925000000068,
+              "captureMs": 114.61279100000047,
+              "totalMs": 230.19204100000115
+            },
+            "candidate": {
+              "observeMs": 52.47437499999978,
+              "captureMs": 53.707916999999725,
+              "totalMs": 106.1822919999995
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.27770800000053,
+              "captureMs": 117.01958299999933,
+              "totalMs": 234.29729099999986
+            },
+            "candidate": {
+              "observeMs": 60.88354199999958,
+              "captureMs": 58.05620799999997,
+              "totalMs": 118.93974999999955
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 112.87245900000016,
+              "captureMs": 113.11704199999986,
+              "totalMs": 225.98950100000002
+            },
+            "candidate": {
+              "observeMs": 54.357458000000406,
+              "captureMs": 53.723165999999765,
+              "totalMs": 108.08062400000017
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 120.88708299999962,
+              "captureMs": 115.73441700000058,
+              "totalMs": 236.6215000000002
+            },
+            "candidate": {
+              "observeMs": 56.76495900000009,
+              "captureMs": 56.36370799999986,
+              "totalMs": 113.12866699999995
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 115.63395899999978,
+              "captureMs": 114.84100000000035,
+              "totalMs": 230.47495900000013
+            },
+            "candidate": {
+              "observeMs": 58.001124999999774,
+              "captureMs": 57.5630000000001,
+              "totalMs": 115.56412499999988
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 115.641208,
+              "captureMs": 113.22520900000018,
+              "totalMs": 228.86641700000018
+            },
+            "candidate": {
+              "observeMs": 60.28125,
+              "captureMs": 56.1820830000006,
+              "totalMs": 116.4633330000006
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 116.4307090000002,
+              "captureMs": 112.55249999999978,
+              "totalMs": 228.983209
+            },
+            "candidate": {
+              "observeMs": 59.118624999999156,
+              "captureMs": 55.51499999999942,
+              "totalMs": 114.63362499999857
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 115.22012499999983,
+              "captureMs": 115.90529099999912,
+              "totalMs": 231.12541599999895
+            },
+            "candidate": {
+              "observeMs": 59.954499999999825,
+              "captureMs": 56.270291999999245,
+              "totalMs": 116.22479199999907
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.04041599999982,
+              "captureMs": 117.39804100000038,
+              "totalMs": 234.4384570000002
+            },
+            "candidate": {
+              "observeMs": 58.729167000001326,
+              "captureMs": 57.32462499999929,
+              "totalMs": 116.05379200000061
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 116.26004100000137,
+              "captureMs": 115.05016700000124,
+              "totalMs": 231.3102080000026
+            },
+            "candidate": {
+              "observeMs": 55.81791699999849,
+              "captureMs": 57.301124999999956,
+              "totalMs": 113.11904199999844
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.30212500000016,
+              "captureMs": 113.57500000000073,
+              "totalMs": 230.8771250000009
+            },
+            "candidate": {
+              "observeMs": 57.95995799999946,
+              "captureMs": 56.23112500000025,
+              "totalMs": 114.19108299999971
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 115.00295899999946,
+              "captureMs": 117.48008300000038,
+              "totalMs": 232.48304199999984
+            },
+            "candidate": {
+              "observeMs": 58.461457999999766,
+              "captureMs": 57.542750000000524,
+              "totalMs": 116.00420800000029
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 114.49570800000038,
+              "captureMs": 114.12237500000083,
+              "totalMs": 228.6180830000012
+            },
+            "candidate": {
+              "observeMs": 57.538792000001195,
+              "captureMs": 59.203332999999475,
+              "totalMs": 116.74212500000067
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "unchanged",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.11270800000057,
+              "captureMs": 116.19150000000081,
+              "totalMs": 233.30420800000138
+            },
+            "candidate": {
+              "observeMs": 58.13154200000099,
+              "captureMs": 57.34104099999968,
+              "totalMs": 115.47258300000067
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 116.14141600000039,
+              "captureMs": 151.8665000000001,
+              "totalMs": 268.0079160000005
+            },
+            "candidate": {
+              "observeMs": 57.7448749999985,
+              "captureMs": 90.13999999999942,
+              "totalMs": 147.88487499999792
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 175.52029199999924,
+              "captureMs": 151.16079200000058,
+              "totalMs": 326.6810839999998
+            },
+            "candidate": {
+              "observeMs": 56.20716700000048,
+              "captureMs": 84.863292,
+              "totalMs": 141.07045900000048
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 112.75637500000084,
+              "captureMs": 151.07224999999744,
+              "totalMs": 263.8286249999983
+            },
+            "candidate": {
+              "observeMs": 57.82945800000016,
+              "captureMs": 92.15304199999991,
+              "totalMs": 149.98250000000007
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 113.1553750000021,
+              "captureMs": 177.98070800000278,
+              "totalMs": 291.1360830000049
+            },
+            "candidate": {
+              "observeMs": 57.99487500000032,
+              "captureMs": 105.07904200000121,
+              "totalMs": 163.07391700000153
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 125.45175000000017,
+              "captureMs": 170.82574999999997,
+              "totalMs": 296.27750000000015
+            },
+            "candidate": {
+              "observeMs": 69.3817080000008,
+              "captureMs": 123.23574999999983,
+              "totalMs": 192.61745800000062
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 127.93370800000048,
+              "captureMs": 246.23825000000215,
+              "totalMs": 374.17195800000263
+            },
+            "candidate": {
+              "observeMs": 62.50174999999945,
+              "captureMs": 125.30733400000099,
+              "totalMs": 187.80908400000044
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 122.15224999999919,
+              "captureMs": 169.1220420000027,
+              "totalMs": 291.2742920000019
+            },
+            "candidate": {
+              "observeMs": 63.52587499999936,
+              "captureMs": 90.53154200000063,
+              "totalMs": 154.057417
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 121.03270799999882,
+              "captureMs": 153.40620800000033,
+              "totalMs": 274.43891599999915
+            },
+            "candidate": {
+              "observeMs": 56.90924999999697,
+              "captureMs": 100.74895899999683,
+              "totalMs": 157.6582089999938
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 114.61054200000217,
+              "captureMs": 150.76808299999902,
+              "totalMs": 265.3786250000012
+            },
+            "candidate": {
+              "observeMs": 56.73358299999745,
+              "captureMs": 97.6247919999987,
+              "totalMs": 154.35837499999616
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 116.15650000000096,
+              "captureMs": 143.72883400000137,
+              "totalMs": 259.88533400000233
+            },
+            "candidate": {
+              "observeMs": 58.92462499999965,
+              "captureMs": 101.01674999999886,
+              "totalMs": 159.94137499999852
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 139.48245800000223,
+              "captureMs": 164.34170799999993,
+              "totalMs": 303.82416600000215
+            },
+            "candidate": {
+              "observeMs": 64.81279200000063,
+              "captureMs": 97.65566700000272,
+              "totalMs": 162.46845900000335
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 123.62941699999647,
+              "captureMs": 154.30716699999903,
+              "totalMs": 277.9365839999955
+            },
+            "candidate": {
+              "observeMs": 62.36812500000087,
+              "captureMs": 99.30199999999968,
+              "totalMs": 161.67012500000055
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 132.45658300000287,
+              "captureMs": 149.34037499999977,
+              "totalMs": 281.79695800000263
+            },
+            "candidate": {
+              "observeMs": 71.25029200000063,
+              "captureMs": 93.15279100000043,
+              "totalMs": 164.40308300000106
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.31175000000076,
+              "captureMs": 159.06983400000172,
+              "totalMs": 276.3815840000025
+            },
+            "candidate": {
+              "observeMs": 66.53979199999958,
+              "captureMs": 102.92379200000141,
+              "totalMs": 169.463584000001
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 122.1943339999998,
+              "captureMs": 155.49566699999923,
+              "totalMs": 277.69000099999903
+            },
+            "candidate": {
+              "observeMs": 61.888708999998926,
+              "captureMs": 97.55620899999849,
+              "totalMs": 159.44491799999741
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 118.74341699999786,
+              "captureMs": 147.54225000000224,
+              "totalMs": 266.2856670000001
+            },
+            "candidate": {
+              "observeMs": 58.33233300000211,
+              "captureMs": 88.3045409999977,
+              "totalMs": 146.6368739999998
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 114.54870800000208,
+              "captureMs": 149.40450000000055,
+              "totalMs": 263.95320800000263
+            },
+            "candidate": {
+              "observeMs": 59.98829100000148,
+              "captureMs": 130.77404200000092,
+              "totalMs": 190.7623330000024
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.69824999999764,
+              "captureMs": 156.79087499999878,
+              "totalMs": 274.4891249999964
+            },
+            "candidate": {
+              "observeMs": 59.062708000001294,
+              "captureMs": 96.25741600000038,
+              "totalMs": 155.32012400000167
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 117.5669999999991,
+              "captureMs": 173.7546250000014,
+              "totalMs": 291.3216250000005
+            },
+            "candidate": {
+              "observeMs": 56.04716700000063,
+              "captureMs": 104.8212910000002,
+              "totalMs": 160.86845800000083
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "clean",
+          "scenario": "one-descendant-commit",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 137.38758400000006,
+              "captureMs": 170.18633399999817,
+              "totalMs": 307.57391799999823
+            },
+            "candidate": {
+              "observeMs": 71.88862499999959,
+              "captureMs": 100.64329199999702,
+              "totalMs": 172.5319169999966
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 137.58270899999843,
+              "captureMs": 146.49025000000256,
+              "totalMs": 284.072959000001
+            },
+            "candidate": {
+              "observeMs": 73.62891700000182,
+              "captureMs": 72.25679200000013,
+              "totalMs": 145.88570900000195
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 147.61025000000154,
+              "captureMs": 141.03999999999724,
+              "totalMs": 288.6502499999988
+            },
+            "candidate": {
+              "observeMs": 86.98720899999898,
+              "captureMs": 76.14033299999937,
+              "totalMs": 163.12754199999836
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 217.19337499999892,
+              "captureMs": 134.90520800000377,
+              "totalMs": 352.0985830000027
+            },
+            "candidate": {
+              "observeMs": 97.87858299999789,
+              "captureMs": 73.79333399999814,
+              "totalMs": 171.67191699999603
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 145.95950000000448,
+              "captureMs": 146.62483300000167,
+              "totalMs": 292.58433300000615
+            },
+            "candidate": {
+              "observeMs": 89.75579100000323,
+              "captureMs": 82.82954199999949,
+              "totalMs": 172.58533300000272
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 154.2708330000023,
+              "captureMs": 144.82374999999593,
+              "totalMs": 299.09458299999824
+            },
+            "candidate": {
+              "observeMs": 84.19595800000388,
+              "captureMs": 80.93266700000095,
+              "totalMs": 165.12862500000483
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 131.81620800000383,
+              "captureMs": 142.19437499999913,
+              "totalMs": 274.01058300000295
+            },
+            "candidate": {
+              "observeMs": 68.39824999999837,
+              "captureMs": 67.90499999999884,
+              "totalMs": 136.3032499999972
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 134.4716249999983,
+              "captureMs": 144.98212500000227,
+              "totalMs": 279.4537500000006
+            },
+            "candidate": {
+              "observeMs": 75.37566700000025,
+              "captureMs": 73.71699999999691,
+              "totalMs": 149.09266699999716
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 135.68112499999552,
+              "captureMs": 133.3784580000065,
+              "totalMs": 269.059583000002
+            },
+            "candidate": {
+              "observeMs": 70.27400000000489,
+              "captureMs": 70.7290420000063,
+              "totalMs": 141.0030420000112
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 128.66395799999736,
+              "captureMs": 129.10224999999627,
+              "totalMs": 257.76620799999364
+            },
+            "candidate": {
+              "observeMs": 65.1240420000031,
+              "captureMs": 66.30962500000169,
+              "totalMs": 131.4336670000048
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 131.64824999999837,
+              "captureMs": 132.4320829999997,
+              "totalMs": 264.08033299999806
+            },
+            "candidate": {
+              "observeMs": 68.24033300000156,
+              "captureMs": 101.2270420000059,
+              "totalMs": 169.46737500000745
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 194.11179199999606,
+              "captureMs": 144.02625000000262,
+              "totalMs": 338.1380419999987
+            },
+            "candidate": {
+              "observeMs": 85.28404199999932,
+              "captureMs": 88.8348330000008,
+              "totalMs": 174.11887500000012
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 179.28979100000288,
+              "captureMs": 159.17495800000324,
+              "totalMs": 338.4647490000061
+            },
+            "candidate": {
+              "observeMs": 122.64375000000291,
+              "captureMs": 75.59474999999657,
+              "totalMs": 198.23849999999948
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 302.12695799999346,
+              "captureMs": 148.89220799999748,
+              "totalMs": 451.01916599999095
+            },
+            "candidate": {
+              "observeMs": 94.16695800000161,
+              "captureMs": 97.01470900000277,
+              "totalMs": 191.18166700000438
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 155.67908400000306,
+              "captureMs": 140.47899999999936,
+              "totalMs": 296.1580840000024
+            },
+            "candidate": {
+              "observeMs": 89.01375000000553,
+              "captureMs": 74.23708400000032,
+              "totalMs": 163.25083400000585
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.8760420000035,
+              "captureMs": 149.38416599999618,
+              "totalMs": 286.2602079999997
+            },
+            "candidate": {
+              "observeMs": 71.62704200000007,
+              "captureMs": 71.02633300000161,
+              "totalMs": 142.6533750000017
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 139.94275000000198,
+              "captureMs": 138.6355410000033,
+              "totalMs": 278.57829100000527
+            },
+            "candidate": {
+              "observeMs": 71.49933299999975,
+              "captureMs": 75.79691699999967,
+              "totalMs": 147.29624999999942
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 139.36162499999773,
+              "captureMs": 134.25937500000146,
+              "totalMs": 273.6209999999992
+            },
+            "candidate": {
+              "observeMs": 70.55620900000213,
+              "captureMs": 70.7012920000052,
+              "totalMs": 141.25750100000732
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 145.08374999999796,
+              "captureMs": 137.84695900000224,
+              "totalMs": 282.9307090000002
+            },
+            "candidate": {
+              "observeMs": 258.9406250000029,
+              "captureMs": 77.16783399999986,
+              "totalMs": 336.10845900000277
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 145.1512920000023,
+              "captureMs": 156.10091699999612,
+              "totalMs": 301.2522089999984
+            },
+            "candidate": {
+              "observeMs": 76.51016700000037,
+              "captureMs": 82.53087499999674,
+              "totalMs": 159.0410419999971
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "unchanged",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 173.97612500000105,
+              "captureMs": 318.0078330000033,
+              "totalMs": 491.98395800000435
+            },
+            "candidate": {
+              "observeMs": 67.51187499999651,
+              "captureMs": 75.73504099999991,
+              "totalMs": 143.24691599999642
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 0,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.84616699999606,
+              "captureMs": 169.49500000000262,
+              "totalMs": 306.3411669999987
+            },
+            "candidate": {
+              "observeMs": 77.80308399999922,
+              "captureMs": 112.66687500000262,
+              "totalMs": 190.46995900000184
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 1,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 137.79187500000262,
+              "captureMs": 309.63708300000144,
+              "totalMs": 447.42895800000406
+            },
+            "candidate": {
+              "observeMs": 75.37900000000081,
+              "captureMs": 110.25883299999987,
+              "totalMs": 185.63783300000068
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 2,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.01833400000032,
+              "captureMs": 163.74787500000093,
+              "totalMs": 299.76620900000125
+            },
+            "candidate": {
+              "observeMs": 126.7622080000001,
+              "captureMs": 103.26299999999901,
+              "totalMs": 230.0252079999991
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 3,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 127.04841699999815,
+              "captureMs": 160.7335000000021,
+              "totalMs": 287.78191700000025
+            },
+            "candidate": {
+              "observeMs": 69.36229100000492,
+              "captureMs": 103.5570000000007,
+              "totalMs": 172.91929100000561
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 4,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 127.65154099999927,
+              "captureMs": 207.25212499999907,
+              "totalMs": 334.90366599999834
+            },
+            "candidate": {
+              "observeMs": 72.64379200000258,
+              "captureMs": 115.60112500000105,
+              "totalMs": 188.24491700000362
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 5,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.84887499999604,
+              "captureMs": 206.00125000000116,
+              "totalMs": 342.8501249999972
+            },
+            "candidate": {
+              "observeMs": 76.57325000000128,
+              "captureMs": 130.05287500000122,
+              "totalMs": 206.6261250000025
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 6,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 136.75212499999907,
+              "captureMs": 195.01983299999847,
+              "totalMs": 331.77195799999754
+            },
+            "candidate": {
+              "observeMs": 72.23920799999905,
+              "captureMs": 103.46766699999716,
+              "totalMs": 175.70687499999622
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 7,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 124.34929199999897,
+              "captureMs": 151.09266599999683,
+              "totalMs": 275.4419579999958
+            },
+            "candidate": {
+              "observeMs": 67.99412499999744,
+              "captureMs": 95.6740409999984,
+              "totalMs": 163.66816599999584
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 8,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 122.2107909999977,
+              "captureMs": 156.36466700000165,
+              "totalMs": 278.57545799999934
+            },
+            "candidate": {
+              "observeMs": 64.74141699999745,
+              "captureMs": 97.40845900000568,
+              "totalMs": 162.14987600000313
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 9,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 129.54420799999934,
+              "captureMs": 170.53941699999996,
+              "totalMs": 300.0836249999993
+            },
+            "candidate": {
+              "observeMs": 64.45620799999597,
+              "captureMs": 112.92774999999529,
+              "totalMs": 177.38395799999125
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 10,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 141.25812499999302,
+              "captureMs": 197.4670829999959,
+              "totalMs": 338.7252079999889
+            },
+            "candidate": {
+              "observeMs": 65.79641699999775,
+              "captureMs": 103.73737500000425,
+              "totalMs": 169.533792000002
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 11,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 154.44691699999385,
+              "captureMs": 182.0767080000005,
+              "totalMs": 336.52362499999435
+            },
+            "candidate": {
+              "observeMs": 83.0769169999985,
+              "captureMs": 418.40141700000095,
+              "totalMs": 501.47833399999945
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 12,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 175.4033750000017,
+              "captureMs": 167.87908400000015,
+              "totalMs": 343.28245900000184
+            },
+            "candidate": {
+              "observeMs": 117.39287499999773,
+              "captureMs": 133.41649999999936,
+              "totalMs": 250.8093749999971
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 13,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 144.7479999999996,
+              "captureMs": 159.22962499999994,
+              "totalMs": 303.97762499999953
+            },
+            "candidate": {
+              "observeMs": 71.81341699999757,
+              "captureMs": 99.26400000000285,
+              "totalMs": 171.07741700000042
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 14,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 129.70370900000125,
+              "captureMs": 160.48995899999863,
+              "totalMs": 290.1936679999999
+            },
+            "candidate": {
+              "observeMs": 65.26629200000025,
+              "captureMs": 105.53862499999377,
+              "totalMs": 170.80491699999402
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 15,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 133.73341600000276,
+              "captureMs": 173.53466599999956,
+              "totalMs": 307.2680820000023
+            },
+            "candidate": {
+              "observeMs": 72.34637500000099,
+              "captureMs": 118.80437499999971,
+              "totalMs": 191.1507500000007
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 16,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 138.91558400000213,
+              "captureMs": 191.41741699999693,
+              "totalMs": 330.33300099999906
+            },
+            "candidate": {
+              "observeMs": 73.47924999999668,
+              "captureMs": 136.77537500000471,
+              "totalMs": 210.2546250000014
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 17,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 148.34866599999805,
+              "captureMs": 171.33641699999862,
+              "totalMs": 319.68508299999667
+            },
+            "candidate": {
+              "observeMs": 80.55191700000432,
+              "captureMs": 109.95499999999447,
+              "totalMs": 190.5069169999988
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 18,
+          "order": ["baseline", "candidate"],
+          "timings": {
+            "baseline": {
+              "observeMs": 133.2302920000002,
+              "captureMs": 165.74691700000403,
+              "totalMs": 298.9772090000042
+            },
+            "candidate": {
+              "observeMs": 70.5290410000016,
+              "captureMs": 102.58591600000364,
+              "totalMs": 173.11495700000523
+            }
+          },
+          "equalReceipts": true
+        },
+        {
+          "profile": "dirty-overlay",
+          "scenario": "one-descendant-commit",
+          "iteration": 19,
+          "order": ["candidate", "baseline"],
+          "timings": {
+            "baseline": {
+              "observeMs": 129.90891599999304,
+              "captureMs": 181.7955839999995,
+              "totalMs": 311.70449999999255
+            },
+            "candidate": {
+              "observeMs": 71.1127090000009,
+              "captureMs": 195.40104099999735,
+              "totalMs": 266.51374999999825
+            }
+          },
+          "equalReceipts": true
+        }
+      ]
+    }
+  ],
+  "privateCandidateRegression": {
+    "command": "node node_modules/vitest/vitest.mjs run reference/sdlc/code.playbook/repository-effects.test.ts reference/sdlc/code.playbook/host-capabilities.facade.test.ts --maxWorkers=1 --no-file-parallelism",
+    "cwd": "/private/tmp/slc-git-read-parallelism/candidate",
+    "exitCode": 0,
+    "filesPassed": 2,
+    "testsPassed": 85,
+    "durationSeconds": 40.76,
+    "logSha256": "000d65be015f63ed82f2a52cc80150895f03db131d19f5dcbed77dfec56a6143",
+    "candidateSha256": "3ba90976a6d23e08448ee63125edbdbfd1074c2c8c8c6d26cc33e1160dc46dc5",
+    "coverage": [
+      "mixed observations fail closed",
+      "content/mode/index/untracked projection identities",
+      "same-worktree claim serialization across processes",
+      "stale-owner and release races",
+      "pre-aborted operation starts no work",
+      "durable start/completion and before/after acknowledgement recovery",
+      "declared unchanged cohorts and common-after ambiguity",
+      "deferred checkpoint mismatch, restoration and cumulative receipts"
+    ]
+  },
+  "integrationVerification": {
+    "repositoryEffectAndFacadeFilesPassed": 2,
+    "testsPassed": 85,
+    "durationSeconds": 39.15,
+    "logSha256": "205f20c991eaaf104969ae44099b85400539ca3a25fac6a865b731998c4aef17",
+    "sourceReview": "Two independent reviews found no actionable issue in sample ordering, read-only independence or failure precedence.",
+    "evidenceReview": "Independent recomputation confirmed every summary from the160 sanitized measured pairs.",
+    "spexVersion": "3.0.0",
+    "spexErrors": 0,
+    "spexAdvisoryWarnings": 233,
+    "links": "All relative links resolve."
+  }
+}

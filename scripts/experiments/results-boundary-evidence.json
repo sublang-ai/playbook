@@ -1,0 +1,341 @@
+{
+  "schema": "sublang.playbook.results-boundary-measurement.v1",
+  "decision": "retain",
+  "scope": "One sequential matched DECIDE source-to-GEARS phase pair; no full compilation or generated-runtime acceptance.",
+  "pairProof": {
+    "path": "/private/tmp/slc-results-boundary-pair-v1/pair-proof.json",
+    "bytes": 16795,
+    "sha256": "38d62f564aaaa69115fed561533895afd84c88e14c3b75740dc29e264f686a97"
+  },
+  "records": [
+    {
+      "arm": "baseline",
+      "run": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck",
+      "summary": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck/summary.json",
+        "bytes": 434357,
+        "sha256": "d2349f04a9a4e496e72ccfed6ba224600a171ca9455f4b8f2e50bbaa86079786"
+      },
+      "metrics": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck/metrics.jsonl",
+        "bytes": 4849,
+        "sha256": "94cee132bcf6d839343e4b636b5cf8a9efc41d9ae2d83ab7d5603e546a1d85fe"
+      },
+      "diagnostics": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck/diagnostics.log",
+        "bytes": 1961,
+        "sha256": "da627ada17633be07cb2bc9fc11fdbeab23f7564fca0ad1b2249dc0442a8c7ad"
+      },
+      "source": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck/work/workflow.md",
+        "bytes": 3504,
+        "sha256": "229a6b77889558c20ef1a26a55d2073fea5ca00601ac62e61a08c88c394459cc"
+      },
+      "gears": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-HzK0ck/work/workflow.playbook/workflow.gears.md",
+        "bytes": 4364,
+        "sha256": "18c9cea71940eb889f947306d4ddb5aa33a053d36bb56241f84caf59abd88555"
+      },
+      "trace": {
+        "path": "/Users/basicthinker/.claude/projects/-private-tmp-slc-results-boundary-evidence-phase-HzK0ck-work/5e0070a2-fd1f-40c8-b8f4-fc11204a9155.jsonl",
+        "bytes": 295011,
+        "sha256": "8aae7e3d9cebd692c1f31648e6e0ffb2e61c006fc69f82c57df555d2156c34a8"
+      },
+      "visibleProjection": {
+        "path": "/private/tmp/slc-results-boundary-adjudication/baseline-visible-tools-and-findings.json",
+        "bytes": 12959,
+        "sha256": "8e0db68c615ad4da8ebb10283ad3ae8b066c7af1182708ed544d69efc3cf8161"
+      },
+      "selection": {
+        "agent": "claude-code",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "fastMode": false
+      },
+      "configuration": {
+        "path": "/private/tmp/slc-report-compiler-zaf0zuht-evidence/empty.yaml",
+        "bytes": 3,
+        "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+      },
+      "compiler": {
+        "root": "/private/tmp/slc-report-compiler-zaf0zuht",
+        "node": "v25.5.0",
+        "metadata": {
+          "path": "/private/tmp/slc-report-compiler-zaf0zuht/package.json",
+          "bytes": 2758,
+          "sha256": "c9b39b529b5a257f3a581135dadefed03cd15ddb559da9bb6a6d66b1c36dafe1"
+        }
+      },
+      "lock": {
+        "path": "/private/tmp/slc-report-compiler-zaf0zuht/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      },
+      "harness": {
+        "files": [
+          {
+            "path": "/private/tmp/slc-report-compiler-zaf0zuht/scripts/phase-probe.mjs",
+            "bytes": 24779,
+            "sha256": "c4eb2e33529e2ccb189945ea6e45220cca824761a1d66b775da0952968878549"
+          },
+          {
+            "path": "/private/tmp/slc-report-compiler-zaf0zuht/scripts/benchmark-compile.mjs",
+            "bytes": 28049,
+            "sha256": "b001e2d668384544ea7c4024821a5b0d283ca7c50428a66aff1fbdaaeaedc174"
+          }
+        ]
+      },
+      "definition": {
+        "path": "/private/tmp/slc-results-boundary-pair-v1/baseline/playbook/text2gears.md",
+        "bytes": 21106,
+        "sha256": "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56"
+      },
+      "executionKind": "interpreted",
+      "executionElapsedMs": 129649,
+      "phaseElapsedMs": 129408,
+      "callCount": 3,
+      "toolCalls": 7,
+      "currentFindingCounts": [9, 4],
+      "currentFindingTraceLines": [40, 69],
+      "dispatchWindows": [
+        {
+          "call": 1,
+          "start": "2026-09-13T05:00:28.511Z",
+          "end": "2026-09-13T05:01:23.339Z",
+          "windowMs": 54828,
+          "reportedCallElapsedMs": 55327,
+          "toolCalls": 3,
+          "promptBytes": 24645,
+          "promptSha256": "c29c7f323dc17309dec012b56cc6d1e5c936d51154aab802f34a52a2dd003afa"
+        },
+        {
+          "call": 2,
+          "start": "2026-09-13T05:01:23.339Z",
+          "end": "2026-09-13T05:02:09.013Z",
+          "windowMs": 45674,
+          "reportedCallElapsedMs": 46193,
+          "toolCalls": 3,
+          "promptBytes": 27962,
+          "promptSha256": "1e9d667c943ceae1f2cb0afe6a10e902a53683aa7ff996fb1270c1b717c97d6f"
+        },
+        {
+          "call": 3,
+          "start": "2026-09-13T05:02:09.013Z",
+          "end": "2026-09-13T05:02:37.909Z",
+          "windowMs": 28896,
+          "reportedCallElapsedMs": 29428,
+          "toolCalls": 1,
+          "promptBytes": 31776,
+          "promptSha256": "bb34979a92793f3255bfd21d3c7f378649260bf3f658460199163e0464778c83"
+        }
+      ],
+      "phaseAcceptance": {
+        "basis": "ordinary runSlc single-phase generic and applicable registered checks",
+        "fullArtifactValidation": false,
+        "ok": true
+      },
+      "preservation": {
+        "sourceUnchanged": true,
+        "cohortUnchanged": true,
+        "pipelineClosureComplete": true
+      },
+      "history": {
+        "apiAvailable": true,
+        "published": false
+      },
+      "semanticVerdict": "pass",
+      "fullArtifactAccepted": false
+    },
+    {
+      "arm": "treatment",
+      "run": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV",
+      "summary": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV/summary.json",
+        "bytes": 432449,
+        "sha256": "7e4e65e068ff42ee35a097b03762f5373461d20743e74487c5c66db99ac0d236"
+      },
+      "metrics": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV/metrics.jsonl",
+        "bytes": 3430,
+        "sha256": "98b647f2dcb03ada7f25e5f1a0572f9fa0e367960d53f993d2793a3a15aff567"
+      },
+      "diagnostics": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV/diagnostics.log",
+        "bytes": 1774,
+        "sha256": "0ca650895c25138bd7f6fb7f03d72cdd30b9693a68c282ef26f23d8cd427e5e2"
+      },
+      "source": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV/work/workflow.md",
+        "bytes": 3504,
+        "sha256": "229a6b77889558c20ef1a26a55d2073fea5ca00601ac62e61a08c88c394459cc"
+      },
+      "gears": {
+        "path": "/private/tmp/slc-results-boundary-evidence/phase-bhO9RV/work/workflow.playbook/workflow.gears.md",
+        "bytes": 4511,
+        "sha256": "84f005c3964c928815ba3ac01d7dbe1ce020929025d82ce13e72a4edb7b9d8f8"
+      },
+      "trace": {
+        "path": "/Users/basicthinker/.claude/projects/-private-tmp-slc-results-boundary-evidence-phase-bhO9RV-work/91535afc-f521-4f9f-bf35-7568e05c5204.jsonl",
+        "bytes": 201811,
+        "sha256": "cdd1ba6c68d71c1c157887783585ef8350e36157b0fde647baa8f2f0eef2b273"
+      },
+      "visibleProjection": {
+        "path": "/private/tmp/slc-results-boundary-adjudication/treatment-visible-tools-and-findings.json",
+        "bytes": 11166,
+        "sha256": "c7c1a6ef7085ec8e820a20939c8746fd7b30ca36983cb00973914bbf2ee44e6b"
+      },
+      "selection": {
+        "agent": "claude-code",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "fastMode": false
+      },
+      "configuration": {
+        "path": "/private/tmp/slc-report-compiler-zaf0zuht-evidence/empty.yaml",
+        "bytes": 3,
+        "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+      },
+      "compiler": {
+        "root": "/private/tmp/slc-report-compiler-zaf0zuht",
+        "node": "v25.5.0",
+        "metadata": {
+          "path": "/private/tmp/slc-report-compiler-zaf0zuht/package.json",
+          "bytes": 2758,
+          "sha256": "c9b39b529b5a257f3a581135dadefed03cd15ddb559da9bb6a6d66b1c36dafe1"
+        }
+      },
+      "lock": {
+        "path": "/private/tmp/slc-report-compiler-zaf0zuht/package-lock.json",
+        "bytes": 201787,
+        "sha256": "53f91c2b006475257e7138424a03f5d6cd53b102cb195c3e06fd5832153bbee5"
+      },
+      "harness": {
+        "files": [
+          {
+            "path": "/private/tmp/slc-report-compiler-zaf0zuht/scripts/phase-probe.mjs",
+            "bytes": 24779,
+            "sha256": "c4eb2e33529e2ccb189945ea6e45220cca824761a1d66b775da0952968878549"
+          },
+          {
+            "path": "/private/tmp/slc-report-compiler-zaf0zuht/scripts/benchmark-compile.mjs",
+            "bytes": 28049,
+            "sha256": "b001e2d668384544ea7c4024821a5b0d283ca7c50428a66aff1fbdaaeaedc174"
+          }
+        ]
+      },
+      "definition": {
+        "path": "/private/tmp/slc-results-boundary-pair-v1/treatment/playbook/text2gears.md",
+        "bytes": 21485,
+        "sha256": "6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305"
+      },
+      "executionKind": "interpreted",
+      "executionElapsedMs": 98559,
+      "phaseElapsedMs": 98257,
+      "callCount": 2,
+      "toolCalls": 4,
+      "currentFindingCounts": [9],
+      "currentFindingTraceLines": [35],
+      "dispatchWindows": [
+        {
+          "call": 1,
+          "start": "2026-09-13T05:03:47.995Z",
+          "end": "2026-09-13T05:04:34.225Z",
+          "windowMs": 46230,
+          "reportedCallElapsedMs": 46765,
+          "toolCalls": 2,
+          "promptBytes": 25026,
+          "promptSha256": "86c9a81565ec4a8b17c2dea2a4050d9fee7f37627584a0af952d80caff3e0c96"
+        },
+        {
+          "call": 2,
+          "start": "2026-09-13T05:04:34.225Z",
+          "end": "2026-09-13T05:05:26.241Z",
+          "windowMs": 52016,
+          "reportedCallElapsedMs": 52533,
+          "toolCalls": 2,
+          "promptBytes": 28429,
+          "promptSha256": "5b97c65be0918bdea83b6787df19fe1152d540cce7e887220d373864e034fb4d"
+        }
+      ],
+      "phaseAcceptance": {
+        "basis": "ordinary runSlc single-phase generic and applicable registered checks",
+        "fullArtifactValidation": false,
+        "ok": true
+      },
+      "preservation": {
+        "sourceUnchanged": true,
+        "cohortUnchanged": true,
+        "pipelineClosureComplete": true
+      },
+      "history": {
+        "apiAvailable": true,
+        "published": false
+      },
+      "semanticVerdict": "pass",
+      "fullArtifactAccepted": false
+    }
+  ],
+  "semanticAdjudication": {
+    "sourceRanges": [
+      [14, 31],
+      [33, 54],
+      [55, 64]
+    ],
+    "baselineGearsRanges": [
+      [13, 46],
+      [50, 71],
+      [75, 84]
+    ],
+    "treatmentGearsRanges": [
+      [13, 40],
+      [44, 62],
+      [66, 75]
+    ],
+    "assertions": [
+      "Same complete topic and authored instructions delivered independently to both roles; neither waits for the other proposal.",
+      "Both proposals must be affirmatively complete; neither sees the other before the pair completes; Boss interruption restarts both with the same new topic.",
+      "Synthesis preserves the complete instruction fence and quoted topic/proposal relays, one commit, presentation-independent routing and receipt-owned commit identity.",
+      "Nested REVIEW receives exact authored scope/output relays and must establish scoped success, exact evaluated revision and no unsettled findings; authored and control failures stay distinct.",
+      "Unconsumed Coder first proposal has no Results label lawfully; Reviewer proposal and synthesis declare their consumed outputs."
+    ]
+  },
+  "observedSavingMs": 31090,
+  "observedReductionPercent": 23.980130969000918,
+  "mechanism": "Both first corrections contained quote/source-format and Results-placement findings. Baseline needed another correction containing only four malformed Results entries; treatment did not need a second correction.",
+  "limits": [
+    "One baseline-first pair, not randomized or a universal effect estimate.",
+    "Treatment did not prevent the initial formatting errors; all attempts and visible mutation requests are retained.",
+    "Dispatch windows partition successive calls and include local work; reported call elapsed values overlap adapter cleanup and are not summed.",
+    "No model reasoning blocks or unrelated sessions were inspected or copied. Original exact task traces are identified by hash; private projection preserves visible tool requests, including all writes/edits, and only the final current numbered findings block in each correction prompt.",
+    "No SDK token total is treated as exclusive uncached input or wall-clock compute."
+  ],
+  "captureScript": {
+    "path": "/private/tmp/slc-results-boundary-adjudication/capture.py",
+    "bytes": 6831,
+    "sha256": "20d48381a2217acf39b8fcdeed61feea697770c57420b2d29cb88bfe7089a415"
+  },
+  "supplementalChecks": {
+    "path": "/private/tmp/slc-results-boundary-adjudication/final-artifact-check.json",
+    "bytes": 1899,
+    "sha256": "e353928a20a1c0a70f06df8269e734e5ca3e76e75ff46d72510fd8b9579a0d16"
+  },
+  "activation": {
+    "definition": {
+      "path": "/private/tmp/playbook-complex-performance/slc/text2gears.md",
+      "bytes": 21485,
+      "sha256": "6cf4e2d5a8f72c9cdbadaf1d0d755c697133449216c707f4273cbc5c7ea13305"
+    },
+    "insertedBytes": 379,
+    "inverseRestoresSha256": "c2fb447a4a3a4708ac75d4cba7364748260a32b6a33ef970dee4a5c79233be56",
+    "compiledExecutionUnchanged": true,
+    "tests": {
+      "casesPassed": 6,
+      "filesPassed": 2,
+      "log": {
+        "path": "/private/tmp/slc-results-boundary-adjudication/tests.log",
+        "bytes": 665,
+        "sha256": "15add1d7974986794e9ce470edd74075987a493844df71d903f3833c461a95b6"
+      }
+    }
+  }
+}

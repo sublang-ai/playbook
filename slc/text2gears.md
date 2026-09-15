@@ -76,8 +76,11 @@ text2gears shall not move a shared instruction ahead of behavior-specific contex
 
 Where Source says that a runtime value is relayed in quotes, the leading `>` is prompt content rather than Source-only blockquote syntax.
 If Source supplies a blockquoted template for that relay, text2gears shall keep one literal leading `>` on every quoted line; the target GEARS line therefore uses its outer blockquote marker followed by the literal marker, such as `> > Coder output: <coder-output>`.
-If Source names the relayed value but supplies no template, text2gears shall emit its canonical typed placeholder on a line beginning with literal `> ` and shall not summarize, paraphrase, or invent a value in its place.
+If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file because the first marker encloses the prompt and the second is literal content, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.
 An ordinary Source blockquote that specifies a complete acting prompt without requiring quoted relay retains the existing rule above: its one leading marker is Source syntax and is not prompt content.
+
+Apply each Source-authored relay to every acting behavior it governs, including relays described only in prose.
+Mentioning a value in a condition, result contract, or machine context does not deliver it to the acting role; its complete prompt blockquote shall carry the required quoted placeholder.
 
 An acting prompt whose instructions refer to a runtime value the acting role cannot otherwise observe — for example the Boss input task that triggered the workflow — shall relay that value as a quoted `<placeholder>` line appended to the prompt even when Source states no explicit relay.
 A prompt that references an undelivered value asks its player to act on data it never received; omitting the relay is a compilation defect, not a faithful rendering of Source.
@@ -137,6 +140,10 @@ Results:
 - `delegation`: Captain selected a call. Output shall include `remainingPlan: <JSON-safe array>`, `nextPlaybookId: <stable id>`, and `nextPlaybookInput: <complete request>`.
 ```
 
+A `Results:` block continues until the next item or section heading; after the label, emit only result bullets and blank lines.
+Put other acting-item conditions and invariants before the acting blockquote, never between the blockquote and `Results:` or after its bullets.
+Nested-call items remain without `Results:` and keep their child-continuation prose after the blockquote.
+
 `Results:` shall be a plain label rather than a heading.
 Every result shall occupy one bullet with exactly a backtick-delimited guard
 name, a colon, and a non-empty description.
@@ -145,6 +152,13 @@ The guard name shall match the ASCII identifier pattern
 The bullet order is authoritative, guard names are unique within the item, and
 the description shall name every required output property with its exact
 case-sensitive identifier.
+After `Output shall include`, reserve backticks for output-field declarations.
+Keep each declaration outside plain-text parentheses; explanatory symbols in
+parenthetical guidance use plain text, never separate backticks, because those
+backticks would declare extra required fields. Guidance may instead occur
+inside a field's complete annotation, including any parentheses there.
+For example, use `` `codeCommit` (new code-owned commit) `` or
+`` `codeCommit: <new code-owned commit>` ``, without backticks around code.
 An output property name shall match the same ASCII identifier pattern as a
 guard name: a kebab-case Source placeholder such as `<coder-output>` names the
 property `coderOutput` through the canonical kebab-token-to-camel-field mapping
@@ -187,6 +201,10 @@ contract, so text2gears shall not invent a one-bullet `Results:` block for it.
 When a later item does consume its output, the produced-value rule above
 applies instead.
 
+When Source requires a terminal return to the caller, preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS.
+Merely naming a value in a completion predicate or an acting result does not state that the workflow returns it.
+Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose, an explicit terminal-return clause in the relevant Results description, or existing nested-call continuation; do not create a Captain action solely to restate the return.
+
 ### Boss-reply continuation
 
 Where a direct-Captain or delegated-player behavior may ask Boss a question
@@ -197,6 +215,10 @@ when the answer changes its complete runtime prompt. It shall not emit a
 second item solely for "Boss answers," "after the question," or clearing the
 consumed question/reply. The FSM and linker own the same-leaf suspension,
 continuation blocks, and consumed-context cleanup.
+When such an authored result asks Boss and waits, its `Results:` description
+shall declare `question: <verbatim final text>` as an output property; the
+result name or prose saying that a question is asked is not the field
+declaration.
 
 This rule is an exception to splitting by accumulated prompt content below.
 Split only when Source requires a genuinely different acting behavior after
@@ -247,6 +269,11 @@ text2gears shall emit an item whose behavior uses
 complete JSON-safe input-text template for that call.
 The literal target id shall be a stable configured playbook id, not a slash
 command or module specifier.
+In both literal and dynamic nested-call forms, the behavior's verb phrase shall
+be exact: `Captain shall call playbook ...:`.
+Text2gears shall not insert sequencing words such as `first`, `then`, `next`,
+or `finally` between `shall` and `call`; required sequencing belongs in the
+`When` or `While` clause or in continuation prose around the item.
 A nested-call item shall carry no `Results:` label: the child's terminal result
 is its outcome, so Source's continuation after child success, abort, or failure
 stays as prose after the blockquote for

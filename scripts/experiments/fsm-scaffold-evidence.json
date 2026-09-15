@@ -1,0 +1,149 @@
+{
+  "scope": "Unmeasured optional FSM authoring initializer; not an accepted compilation optimization",
+  "status": "prototype_correctness_verified",
+  "performanceAccepted": false,
+  "motivation": {
+    "run": "compile-VucDX9",
+    "scope": "settled gears2fsm call 4 only",
+    "completeRunAccepted": false,
+    "agent": "claude-code",
+    "model": "claude-opus-5",
+    "effort": "low",
+    "elapsedMs": 363822,
+    "toolCalls": 12,
+    "promptBytes": 54992,
+    "promptSha256": "054ce1ee8520ee4c224c1e5fc51d2988e090b6e99af2eb9c4179cf6af86306dd",
+    "observedToolBoundaryMs": 45357,
+    "outsideObservedToolBoundaryMs": 318465,
+    "firstStrictFailureToCleanCheckMs": 110920,
+    "initialFsmWrite": {
+      "bytes": 37004,
+      "lines": 965,
+      "sha256": "1e57570fe7bcf87fd6e65cb52a05e5172546c66e6a047ba375b6a7b0923c7d60"
+    },
+    "replacementTail": {
+      "bytes": 17104,
+      "lines": 469,
+      "sha256": "0deab82648d1da31ef03f5e53e920aeff41ff487036ef411b52b50e8cf7acd9a"
+    },
+    "linkedTypeReadBytes": 5367,
+    "limits": [
+      "Visible tool boundaries are not shell CPU or provider inference isolation.",
+      "Repeated request input tokens are not unique source size.",
+      "Nested child-text equality findings are excluded from the scaffold semantics."
+    ],
+    "privateReproducer": "/private/tmp/slc-VucDX9-call4-latency/audit.py",
+    "reproducerIdentity": {
+      "bytes": 6327,
+      "sha256": "f767dea5018872025ec185f0d09fc1f9211267a67f1763b7a715ba163bdda4e5"
+    }
+  },
+  "sourceCopyProbe": {
+    "status": "initializer_correctness_only",
+    "performanceAccepted": false,
+    "outcome": {
+      "status": "scaffold",
+      "bytes": 7659,
+      "items": 4
+    },
+    "elapsedMs": 78.34049999999999,
+    "source": {
+      "path": "/private/tmp/slc-complex-full-evidence/compile-VucDX9/work/code.playbook/code.gears.md",
+      "bytes": 8432,
+      "sha256": "23984c2e4461cbcf5ddad2f525b9b8fc962bb6921d33d2949a241e80f87cd5e0",
+      "unchanged": true
+    },
+    "helper": {
+      "path": "/private/tmp/playbook-complex-performance/slc/scaffold-fsm.mjs",
+      "sha256": "92d245fc02830977d005f9c360ffb163c818796f657426faba89c789de7832a4"
+    },
+    "target": {
+      "path": "/private/tmp/slc-fsm-scaffold-source-probe/run-7j8mRY/code.fsm.ts",
+      "bytes": 7659,
+      "sha256": "b118ad643d5bc90db6b1309eade28bb45b21afc1c1c044997c4b1b5f32f9c5e9",
+      "unresolvedAuthoringMarkers": true,
+      "selfContained": true
+    },
+    "graph": {
+      "compiler": "/private/tmp/slc-report-compiler-zaf0zuht",
+      "xstate": "5.33.0",
+      "typescript": "6.0.3"
+    },
+    "comparison": {
+      "suppliedParserPassed": true,
+      "allPromptAndResultConstantsExact": true,
+      "nestedRuntimeTextNotPrescribed": true
+    },
+    "items": [
+      {
+        "id": "CODE-1",
+        "promptBytes": 1653,
+        "promptSha256": "ffffc4c25a387d5c3f382699bfcb95c18a934f99e89e50e0b603c18494da3cf6",
+        "resultSha256": "f55ebc4c022a34e6a0071e7d0ef64c4b185632ddd48cdc084b826521db6a5470"
+      },
+      {
+        "id": "CODE-2",
+        "promptBytes": 829,
+        "promptSha256": "6bcfcfd0b1a1cf732f51146e3069c1d62f50180c88daab45ac4211989b5a2125",
+        "resultSha256": "3a96f56411ebdbf7c734e0cb7f5dc7ea5a31f43369903046a8f4ff480ef8c004"
+      },
+      {
+        "id": "CODE-3",
+        "promptBytes": 164,
+        "promptSha256": "ba0662666bd5ea71243937c59806f0025b5ea0adc71181d05911aca28bf35c92",
+        "resultSha256": null
+      },
+      {
+        "id": "CODE-4",
+        "promptBytes": 193,
+        "promptSha256": "4fcb7f06021fb5e5829acb3a0ff5cca613c02ea5c13e387ee68e506a4faaf2fa",
+        "resultSha256": null
+      }
+    ],
+    "limitations": [
+      "Initializer success is deliberately not a compiled artifact.",
+      "No accepted provider run or compilation speed benefit is proved.",
+      "Routing, child predicates and runtime text composition remain agent authored."
+    ]
+  },
+  "validation": {
+    "command": "PLAYBOOK_EXPERIMENT_COMPILER=<frozen-C2-compiler> node node_modules/vitest/vitest.mjs run src/fsm-scaffolding.test.ts",
+    "passed": 21,
+    "failed": 0,
+    "xstate": "5.33.0",
+    "typescript": "6.0.3",
+    "unfinishedScaffoldRejected": true,
+    "authoredOriginalWorkflowStrictAndRuntimePassed": true,
+    "undefinedInputVoidOutputStrictPassed": true,
+    "incorrectActorInputStrictRejected": true,
+    "sourceConstantsMatchActualCompilerParser": true,
+    "existingTargetAndSourcePreserved": true,
+    "packedHelperAndGuidancePresent": true,
+    "defaultPhaseDoesNotSelectExperiment": true,
+    "testLog": "/private/tmp/slc-fsm-scaffold-source-probe/packaging-tests.log",
+    "strictTestFilePassed": true,
+    "spexErrors": 0,
+    "ordinaryDiscoveredPhases": [
+      "gears2fsm.md",
+      "link.md",
+      "optimize.md",
+      "text2gears.md"
+    ]
+  },
+  "candidate": {
+    "slc/scaffold-fsm.mjs": {
+      "bytes": 10192,
+      "sha256": "92d245fc02830977d005f9c360ffb163c818796f657426faba89c789de7832a4"
+    },
+    "src/fsm-scaffolding.test.ts": {
+      "bytes": 13231,
+      "sha256": "2f3cb154a2ba59618af6c78700693038c5e597553b4b439c4dc98e142a34d18d"
+    },
+    "slc/experiments/fsm-scaffold-guidance.md": {
+      "bytes": 2587,
+      "sha256": "6cb54f4be27a70749424423962c8161bc5069c9ab73c9a96a98745981154a5e9"
+    }
+  },
+  "nextAcceptance": "Sequential matched fixed-GEARS phase runs with identical correctness guidance, dependency graph and unchanged source; only optional scaffold guidance differs. Both runs must fully pass applicable strict/fidelity/source and semantic acceptance. Full cold compilation remains a separate outcome.",
+  "packagingCorrection": "Optional Markdown guidance moved under slc/experiments so ordinary discovery never treats it as an additional phase."
+}

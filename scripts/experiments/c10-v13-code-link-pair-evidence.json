@@ -1,0 +1,550 @@
+{
+  "schema": "sublang.private.c10.v13.code-link-pair-accepted-report.v1",
+  "createdAt": "2026-09-14T08:58:01.186249+00:00",
+  "status": "accepted-private-pair",
+  "acceptanceClaim": true,
+  "pendingDraftPreserved": {
+    "path": "/private/tmp/slc-c10-v13-code-link-pair-report.pending-draft.json",
+    "bytes": 25306,
+    "sha256": "6e73eb88127b00452e1b30ba7020f602054a6d0ef5dcba9c698345984f1a9ac8"
+  },
+  "candidateContractAudit": {
+    "path": "/private/tmp/slc-c10-v13-code-prefer-stage/code-link-contract-audit.json",
+    "sha256": "a7c57e64ced39ae1768e62c391710788780ca6d5c4b3f1f943e711efe5f8a599",
+    "accepted": true
+  },
+  "scope": {
+    "providerCallsDuringReport": 0,
+    "runtimeProviderCalls": 0,
+    "sourcePhase": "resumed phase chain 2E2YFN; not a cold full source-to-entry benchmark",
+    "sampleSize": "one baseline link sample and one prefer-materializer link sample",
+    "overclaimAvoided": [
+      "no cold-full claim",
+      "no shipped/default registry claim",
+      "no reviewer model claim for internal Haiku SDK accounting"
+    ]
+  },
+  "arms": {
+    "baseline": {
+      "label": "c10-v13-code-link-baseline",
+      "wrapperId": "qVAsVR",
+      "linkSummary": {
+        "path": "/private/tmp/slc-c10-v13-code-link-pair-evidence/compile-crYwRj/summary.json",
+        "bytes": 28777,
+        "sha256": "fa4984e8de0dedb6e5e8ae8df028a260b2663054d23ce0f56446da2d256efbb8"
+      },
+      "compileElapsedMs": 636735,
+      "totalElapsedMs": 638219,
+      "providerCallCount": 2,
+      "toolCalls": 40,
+      "toolCallsRootObserved": 40,
+      "agentModel": "claude-opus-5 low for link provider calls; internal model SDK Haiku accounting is not reviewer work",
+      "stage": {
+        "readiness": {
+          "path": "/private/tmp/slc-c10-v13-stage-link-run-HAR0So/readiness.json",
+          "bytes": 15079,
+          "sha256": "10aef72ed482478617a104a0e0d5c24886a6acbf82790747cdfc9c5aa4d3027b"
+        },
+        "validationOk": true,
+        "byteIdentityChecks": {
+          "stagedLinkedMatchesCandidate": true,
+          "stagedTopWorkflowFsmAliasMatchesCandidate": true,
+          "stagedLocalCodeFsmMatchesCandidate": true,
+          "stagedLocalWorkflowFsmAliasMatchesCandidate": true,
+          "candidateFsmMatchesAcceptedFsm": true,
+          "stagedSourceMatchesOriginalCode": true,
+          "stagedGearsMatchesAccepted": true,
+          "c10CompilerUnchanged": true
+        }
+      },
+      "runtime": {
+        "summary": {
+          "path": "/private/tmp/slc-c10-v13-code-baseline-runtime/summary.json",
+          "bytes": 130590,
+          "sha256": "50e40de8ffdab83fc4304905be55f0b55667dba2844d1612cab6684ca626a432"
+        },
+        "scenarioCount": 18,
+        "passedCount": 18,
+        "runtimeAcceptance": true,
+        "providerCalls": 0,
+        "stageReadiness": "/private/tmp/slc-c10-v13-stage-link-run-HAR0So/readiness.json",
+        "allCaseArtifactsUnchanged": true,
+        "protectedCountPerCase": [
+          14
+        ],
+        "cases": [
+          {
+            "id": "code-direct",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 988.3960420000001
+          },
+          {
+            "id": "code-new-ir-two-tasks",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1851.0949999999998
+          },
+          {
+            "id": "code-existing-ir-two-tasks",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1296.0834579999996
+          },
+          {
+            "id": "code-existing-ir-other-identity",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1333.1755830000002
+          },
+          {
+            "id": "code-review-fix",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1000.3287909999999
+          },
+          {
+            "id": "code-review-missing-revision",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 791.9318329999996
+          },
+          {
+            "id": "code-review-ill-typed-revision",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 775.7602499999994
+          },
+          {
+            "id": "code-review-unsettled",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 773.9805830000005
+          },
+          {
+            "id": "code-review-foreign-shape",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 820.6213340000013
+          },
+          {
+            "id": "code-review-authored-failure",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 796.4556250000005
+          },
+          {
+            "id": "code-review-authored-abort",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 760.5359170000011
+          },
+          {
+            "id": "code-child-control-error",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 750.8667079999996
+          },
+          {
+            "id": "code-ambiguous-ir-restored-session",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1263.665583
+          },
+          {
+            "id": "code-ambiguous-ir-restored-fresh",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1254.8965420000004
+          },
+          {
+            "id": "code-effect-unchanged",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 652.9221670000006
+          },
+          {
+            "id": "code-effect-multiple",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 859.7770409999994
+          },
+          {
+            "id": "code-effect-residual",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 766.5117920000012
+          },
+          {
+            "id": "code-effect-rewritten",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 692.7634169999983
+          }
+        ],
+        "elapsedMs": {
+          "min": 652.9221670000006,
+          "max": 1851.0949999999998,
+          "median": 808.5384795000009
+        }
+      },
+      "wrapperInputs": {
+        "proof": {
+          "path": "/private/tmp/slc-c10-v13-code-link-pair-evidence/invocation-qVAsVR/proof.json",
+          "bytes": 2748435,
+          "sha256": "e89faec5d4c7576d93b7ccdedf172e0e1ee4fff770f505997a1f482ce161f9f4"
+        },
+        "inputCount": 11921,
+        "postRuntimeRecheck": {
+          "checked": 11921,
+          "regularFiles": 11903,
+          "symlinks": 18,
+          "missingCount": 0,
+          "missing": [],
+          "changedCount": 0,
+          "changed": [],
+          "otherCount": 0,
+          "other": [],
+          "unchanged": true
+        }
+      }
+    },
+    "preferMaterializer": {
+      "label": "c10-v13-code-link-prefer-materializer",
+      "wrapperId": "LgUXii",
+      "linkSummary": {
+        "path": "/private/tmp/slc-c10-v13-code-link-pair-evidence/compile-aMUkFr/summary.json",
+        "bytes": 27591,
+        "sha256": "a554c936b689f517e442ac2f8502d1c70b79ec39aa452984b12d864556608c9d"
+      },
+      "compileElapsedMs": 205227,
+      "totalElapsedMs": 206865,
+      "providerCallCount": 1,
+      "toolCalls": 13,
+      "agentModel": "claude-opus-5 low for link provider call; internal model SDK Haiku accounting is not reviewer work",
+      "stage": {
+        "readiness": {
+          "path": "/private/tmp/slc-c10-v13-code-prefer-stage/readiness.json",
+          "bytes": 14868,
+          "sha256": "141d4a19c321dbbf4a1756f92ae79cd73a8817287d0bc5baf8b4a14392b9d573"
+        },
+        "validationOk": true,
+        "byteIdentityChecks": {
+          "stagedLinkedMatchesCandidate": true,
+          "stagedTopWorkflowFsmAliasMatchesCandidate": true,
+          "stagedLocalCodeFsmMatchesCandidate": true,
+          "stagedLocalWorkflowFsmAliasMatchesCandidate": true,
+          "candidateFsmMatchesAcceptedFsm": true,
+          "stagedSourceMatchesOriginalCode": true,
+          "stagedGearsMatchesAccepted": true,
+          "c10CompilerUnchanged": true
+        }
+      },
+      "runtime": {
+        "summary": {
+          "path": "/private/tmp/slc-c10-v13-code-prefer-runtime/summary.json",
+          "bytes": 129397,
+          "sha256": "b6a595827edc8dccf521f37d54349792780b05ac503b3a5634ccf1ee5372bbcb"
+        },
+        "scenarioCount": 18,
+        "passedCount": 18,
+        "runtimeAcceptance": true,
+        "providerCalls": 0,
+        "stageReadiness": "/private/tmp/slc-c10-v13-code-prefer-stage/readiness.json",
+        "allCaseArtifactsUnchanged": true,
+        "protectedCountPerCase": [
+          14
+        ],
+        "cases": [
+          {
+            "id": "code-direct",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 943.2769159999999
+          },
+          {
+            "id": "code-new-ir-two-tasks",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1937.2635000000002
+          },
+          {
+            "id": "code-existing-ir-two-tasks",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1389.7037500000001
+          },
+          {
+            "id": "code-existing-ir-other-identity",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1392.608292
+          },
+          {
+            "id": "code-review-fix",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 861.8862920000001
+          },
+          {
+            "id": "code-review-missing-revision",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 800.9239589999997
+          },
+          {
+            "id": "code-review-ill-typed-revision",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 801.8821250000001
+          },
+          {
+            "id": "code-review-unsettled",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 776.1496669999997
+          },
+          {
+            "id": "code-review-foreign-shape",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 773.6288330000007
+          },
+          {
+            "id": "code-review-authored-failure",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 774.9502080000002
+          },
+          {
+            "id": "code-review-authored-abort",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 767.6594999999998
+          },
+          {
+            "id": "code-child-control-error",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 741.4150829999999
+          },
+          {
+            "id": "code-ambiguous-ir-restored-session",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1301.8269580000015
+          },
+          {
+            "id": "code-ambiguous-ir-restored-fresh",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 1219.6298749999987
+          },
+          {
+            "id": "code-effect-unchanged",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 632.2289170000004
+          },
+          {
+            "id": "code-effect-multiple",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 808.7141249999986
+          },
+          {
+            "id": "code-effect-residual",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 774.7104579999977
+          },
+          {
+            "id": "code-effect-rewritten",
+            "status": "passed",
+            "artifactsUnchanged": true,
+            "beforeAfterSame": true,
+            "protectedCount": 14,
+            "elapsedMs": 750.3327079999981
+          }
+        ],
+        "elapsedMs": {
+          "min": 632.2289170000004,
+          "max": 1937.2635000000002,
+          "median": 801.4030419999999
+        }
+      },
+      "wrapperInputs": {
+        "proof": {
+          "path": "/private/tmp/slc-c10-v13-code-link-pair-evidence/invocation-LgUXii/proof.json",
+          "bytes": 2748823,
+          "sha256": "3f952b82f2178b10f80bb69d1919289a7096b382735934d72df3f751d634a6bc"
+        },
+        "inputCount": 11922,
+        "postRuntimeRecheck": {
+          "checked": 11922,
+          "regularFiles": 11904,
+          "symlinks": 18,
+          "missingCount": 0,
+          "missing": [],
+          "changedCount": 0,
+          "changed": [],
+          "otherCount": 0,
+          "other": [],
+          "unchanged": true
+        }
+      }
+    }
+  },
+  "rawRatios": {
+    "compile": {
+      "baselineMs": 636735,
+      "preferMs": 205227,
+      "preferOverBaseline": 0.3223114796579425,
+      "reductionPercent": 67.76885203420575
+    },
+    "total": {
+      "baselineMs": 638219,
+      "preferMs": 206865,
+      "preferOverBaseline": 0.32412855148467845,
+      "reductionPercent": 67.58714485153216
+    }
+  },
+  "sharedIdentities": {
+    "profile": {
+      "path": "/private/tmp/slc-c10-v13-code-runtime-profile/corrected-profile/profile.mjs",
+      "bytes": 3078,
+      "sha256": "6b1ebb4deb239406c5b1591f3f57df051b6957b9c195e12a73fcf7fbe3e97549"
+    },
+    "config": {
+      "path": "/private/tmp/slc-c10-v13-code-runtime-profile/acceptance-config.from-stage.mjs",
+      "bytes": 8595,
+      "sha256": "5d69c506dfdb6056bb3f23b9086cf609216bfba716b635200ab75ebd298ef7b7"
+    },
+    "runner": {
+      "path": "/private/tmp/slc-c10-v13-code-runtime-profile/run-18-from-stage.mjs",
+      "bytes": 1938,
+      "sha256": "5a0cef06d4d3382cf8f41d9a57ca70c8edfd2429c25817428c36f1f37cbf2e68"
+    },
+    "stageScript": {
+      "path": "/private/tmp/slc-c10-v13-stage-link.mjs",
+      "bytes": 15799,
+      "sha256": "d563d9ffd35460a43c08951f80294d135dd62ee223aaace25a28c26a2205cfff"
+    },
+    "sourceAndFsmChecks": {
+      "originalSourceSame": true,
+      "acceptedFsmSame": true,
+      "candidateFsmSame": true,
+      "sourceFsm2E2YFNSame": true,
+      "gearsSame": true
+    },
+    "source": {
+      "path": "/private/tmp/slc-code-dev-acceptance-design/code.md",
+      "bytes": 5687,
+      "sha256": "42987d1a13ee38e0f555c32dec6bb0d32c31153c5d855e56f8fc7ea97333ade5"
+    },
+    "acceptedFsm2E2YFN": {
+      "path": "/private/tmp/slc-c10-v13-resumed-fsm-evidence/phase-2E2YFN/work/workflow.playbook/workflow.fsm.ts",
+      "bytes": 33116,
+      "sha256": "1556aa693c13703898e44bc2284c10b547d882fd37ac94454374900f601dac0d"
+    },
+    "acceptedGears": {
+      "path": "/private/tmp/slc-c10-v13-resumed-fsm-evidence/phase-2E2YFN/work/workflow.gears.md",
+      "bytes": 8788,
+      "sha256": "56f5310b37bae6f40cc132cdccd1cf7ffa5cef4ef22eff7801d25e8d779252ef"
+    },
+    "compilerRuntimeShaSame": true,
+    "verificationHarnessShaSame": true
+  },
+  "pipelineClosures": {
+    "baseline": {
+      "/private/tmp/playbook-13.2-common-v13-baseline/playbook": {
+        "fileCount": 13,
+        "sha256": "7bde5cab387a340c5d9f69ab2e056c79de7edf6ae97fc7e1858df98192e0654c",
+        "status": "complete"
+      }
+    },
+    "preferMaterializer": {
+      "/private/tmp/playbook-13.2-common-v13-prefer-materializer/playbook": {
+        "fileCount": 13,
+        "sha256": "34a36a1b3593603041f57267996867aeee61b8bf0032eca747f1a8967923135a",
+        "status": "complete"
+      }
+    },
+    "note": "13-file pipeline closure summaries are retained, but accepted evidence relies on wrapper proof input inventories of 11921 baseline and 11922 candidate entries rechecked after runtime."
+  },
+  "protectedProof": {
+    "path": "/private/tmp/slc-c10-v13-code-link-pair-accepted-protected-proof.json",
+    "bytes": 342605,
+    "sha256": "b09ddca9293d3056f1bff568f6619eda66bf1bc140092912ae4734f29d4e8c51"
+  }
+}

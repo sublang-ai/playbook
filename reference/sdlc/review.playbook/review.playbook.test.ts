@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertWorkflowTerminal } from '../../../scripts/test-support/workflow-contracts.mjs';
 
 import {
   assertPlaybookEffectLedger,
@@ -337,6 +338,7 @@ describe('linked REVIEW runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('review', result);
     if (result.outcome === 'terminal') {
       expect(result.stateDescription).toBe(
         'The requested review is complete: no unsettled findings remain within the review scope.',
@@ -474,6 +476,7 @@ describe('linked REVIEW runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    assertWorkflowTerminal('review', result);
     if (result.outcome === 'terminal') {
       // No review-fix commit landed, so the closing clean round's unchanged
       // receipt observes the caller-supplied scope revision as HEAD and the
@@ -924,6 +927,7 @@ describe('linked REVIEW runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
+    assertWorkflowTerminal('review', completed);
     if (completed.outcome === 'terminal') {
       // DR-045: the closing clean round's unchanged receipt always observes
       // the evaluated revision — the review-fix commit when one landed, the
@@ -1006,6 +1010,7 @@ describe('linked REVIEW runtime', () => {
     });
 
     expect(completed.outcome).toBe('terminal');
+    assertWorkflowTerminal('review', completed);
     expect(playerCalls[1]?.prompt).toContain(
       '> Original request: Review the replacement commit instead.',
     );
@@ -1049,6 +1054,7 @@ describe('linked REVIEW runtime', () => {
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
+    assertWorkflowTerminal('review', completed);
     expect(playerCalls[1]?.prompt).toContain('> Original request: Review the replacement commit.');
     expect(playerCalls[1]?.prompt).not.toContain('old release commit');
     expect(runtime.describe!().lastError).toBeUndefined();

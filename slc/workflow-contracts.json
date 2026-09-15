@@ -1,0 +1,371 @@
+{
+  "schema": "sublang.playbook.workflow-contracts.v1",
+  "package": "@sublang/playbook",
+  "artifactSchema": 3,
+  "runtimeAbi": 1,
+  "description": "Public output interfaces for the packaged builtin workflows. The selected pipeline declares literalTargetBindings as its default nested-target namespace; explicit Source or compiler-dependency bindings override defaults and require their own interfaces. Hosts must honor the compiled bindings. Child output fields retain child-owned authority, while the shared envelope and terminal kind govern transport and authored failure; a local basename alone establishes no binding.",
+  "$defs": {
+    "compactError": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": ["name", "message"],
+      "additionalProperties": false
+    },
+    "json": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/json"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json"
+          }
+        }
+      ]
+    },
+    "completedCodeResult": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "playbookId": {
+              "const": "code"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "output": {
+              "$ref": "#/$defs/json"
+            }
+          },
+          "required": ["playbookId", "status"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "playbookId": {
+              "const": "code"
+            },
+            "status": {
+              "enum": ["aborted", "error"]
+            },
+            "error": {
+              "$ref": "#/$defs/compactError"
+            }
+          },
+          "required": ["playbookId", "status", "error"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "workflows": {
+    "review": {
+      "callInput": "text",
+      "output": {
+        "type": "object",
+        "properties": {
+          "noUnsettledFindings": {
+            "const": true
+          },
+          "evaluatedRevision": {
+            "type": "string",
+            "description": "Exact receipt-observed repository revision evaluated by the final clean review round; it can include REVIEW-owned fixes after the caller's original commit."
+          }
+        },
+        "required": ["noUnsettledFindings", "evaluatedRevision"],
+        "additionalProperties": false
+      }
+    },
+    "decide": {
+      "callInput": "text",
+      "output": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "decideCommit": {
+                "type": "string",
+                "description": "Exact DECIDE-owned commit."
+              },
+              "evaluatedRevision": {
+                "type": "string",
+                "description": "Exact repository revision evaluated by the final passing review."
+              },
+              "noUnsettledFindings": {
+                "const": true
+              }
+            },
+            "required": [
+              "decideCommit",
+              "evaluatedRevision",
+              "noUnsettledFindings"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "lastDecideCommit": {
+                "type": "string",
+                "description": "Exact last DECIDE-owned commit."
+              },
+              "noUnsettledFindings": {
+                "const": false
+              },
+              "reviewStatus": {
+                "enum": ["aborted", "error"]
+              },
+              "error": {
+                "$ref": "#/$defs/compactError"
+              }
+            },
+            "required": [
+              "lastDecideCommit",
+              "noUnsettledFindings",
+              "reviewStatus"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "code": {
+      "callInput": "text",
+      "output": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "complete"
+              },
+              "lastCodeCommit": {
+                "type": "string",
+                "description": "Exact last CODE-owned commit; excludes REVIEW-owned fix commits."
+              },
+              "finalEvaluatedRevision": {
+                "type": "string",
+                "description": "Exact repository revision evaluated by the final passing review; it may differ from lastCodeCommit."
+              },
+              "allReviewsPassed": {
+                "const": true
+              }
+            },
+            "required": [
+              "status",
+              "lastCodeCommit",
+              "finalEvaluatedRevision",
+              "allReviewsPassed"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "review-failed"
+              },
+              "lastCodeCommit": {
+                "type": "string",
+                "description": "Exact last CODE-owned commit."
+              },
+              "error": {
+                "$ref": "#/$defs/compactError"
+              }
+            },
+            "required": ["status", "lastCodeCommit", "error"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "branch": {
+      "callInput": "text",
+      "output": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "branched"
+              },
+              "branch": {
+                "type": "string",
+                "description": "Exact new branch name."
+              },
+              "baseRevision": {
+                "type": "string",
+                "description": "Exact receipt-observed repository revision the branch was created from."
+              },
+              "issueSummary": {
+                "type": "string",
+                "description": "Concise issue-and-comments or request summary."
+              }
+            },
+            "required": ["status", "branch", "baseRevision", "issueSummary"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "refused"
+              },
+              "coderOutput": {
+                "type": "string",
+                "description": "Complete refusal report."
+              }
+            },
+            "required": ["status", "coderOutput"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "pr": {
+      "callInput": "text",
+      "output": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "merged"
+              },
+              "pullRequest": {
+                "type": "string",
+                "description": "Exact pull request number as reported."
+              },
+              "pullRequestUrl": {
+                "type": "string",
+                "description": "Exact pull request URL as reported."
+              },
+              "localDefaultUpdated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "status",
+              "pullRequest",
+              "pullRequestUrl",
+              "localDefaultUpdated"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not-merged"
+              },
+              "reason": {
+                "const": "not-published"
+              },
+              "coderOutput": {
+                "type": "string",
+                "description": "Complete report explaining why publication did not occur."
+              }
+            },
+            "required": ["status", "reason", "coderOutput"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not-merged"
+              },
+              "reason": {
+                "const": "fix-failed"
+              },
+              "pullRequest": {
+                "type": "string"
+              },
+              "pullRequestUrl": {
+                "type": "string"
+              },
+              "childResult": {
+                "$ref": "#/$defs/completedCodeResult"
+              }
+            },
+            "required": [
+              "status",
+              "reason",
+              "pullRequest",
+              "pullRequestUrl",
+              "childResult"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "not-merged"
+              },
+              "reason": {
+                "enum": ["fix-not-published", "checks-failed"]
+              },
+              "pullRequest": {
+                "type": "string"
+              },
+              "pullRequestUrl": {
+                "type": "string"
+              }
+            },
+            "required": ["status", "reason", "pullRequest", "pullRequestUrl"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "merge-unconfirmed"
+              },
+              "pullRequest": {
+                "type": "string"
+              },
+              "pullRequestUrl": {
+                "type": "string"
+              }
+            },
+            "required": ["status", "pullRequest", "pullRequestUrl"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "literalTargetBindings": {
+    "review": "review",
+    "decide": "decide",
+    "code": "code",
+    "branch": "branch",
+    "pr": "pr"
+  }
+}

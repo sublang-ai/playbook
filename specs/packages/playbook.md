@@ -39,7 +39,12 @@ Where a compiled prompt combines authored instruction blocks and relayed runtime
 
 #### playbook-6
 
-Where a compiled prompt contains a placeholder token, the FSM shall supply its declared field and the composer shall substitute exactly that field, using the canonical kebab-token-to-camel-field mapping unless the compiler contract declares an explicit exception.
+Where a compiled prompt contains a Source-declared runtime-value placeholder token, the compiler shall bind it to its authorized runtime value according to these cases:
+
+| Case | FSM contract | Composer authority |
+| --- | --- | --- |
+| Ordinary Source value placeholder | Typed actor-input field backed by typed machine context, using the canonical kebab-token-to-camel-field mapping unless the compiler contract declares an explicit exception. | Substitute exactly that actor-input field. |
+| Source-declared local-role prompt-identity placeholder | Preserve the literal token in the FSM prompt without an identity-value field in machine input, options, context, or actor input, whether required or optional. | Resolve only through the invocation-scoped `promptIdentity(roleId)` lookup for the declared local role identified by Source under [[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)]. |
 
 #### playbook-16
 
