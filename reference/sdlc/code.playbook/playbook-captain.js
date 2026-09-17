@@ -476,6 +476,70 @@ function unresolvedEffectBossReport(unresolvedEffects) {
         'This evidence does not establish workflow completion or attribute any repository change or commit to this workflow.',
     ].join('\n');
 }
+// DR-062 §5: a settled turn whose accepted commit absorbed or altered the
+// Boss's own uncommitted changes says so, bounded to paths.
+const CARRIED_CHANGE_PATH_LIMIT = 24;
+function boundedPathList(paths) {
+    const printed = paths.slice(0, CARRIED_CHANGE_PATH_LIMIT);
+    const omitted = paths.length - printed.length;
+    return omitted > 0
+        ? `${printed.join(', ')}, … and ${omitted} more`
+        : printed.join(', ');
+}
+/**
+ * The carried pre-existing changes of the boundaries completed after
+ * `boundaryPrefixCount`, one entry per commit OID in boundary sequence order.
+ */
+function carriedPreExistingChanges(ledger, boundaryPrefixCount) {
+    const byCommit = new Map();
+    for (const boundary of ledger.boundaries) {
+        if (boundary.sequence <= boundaryPrefixCount)
+            continue;
+        const receipt = boundary.physicalReceipt;
+        if (receipt?.classification !== 'one-descendant-commit' ||
+            receipt.commitOid === undefined ||
+            receipt.preExisting === undefined) {
+            continue;
+        }
+        const { absorbed, altered } = receipt.preExisting;
+        if (absorbed.length === 0 && altered.length === 0)
+            continue;
+        const carried = byCommit.get(receipt.commitOid) ?? {
+            absorbed: [],
+            altered: [],
+        };
+        carried.absorbed.push(...absorbed);
+        carried.altered.push(...altered);
+        byCommit.set(receipt.commitOid, carried);
+    }
+    return [...byCommit].map(([commitOid, { absorbed, altered }]) => ({
+        commitOid,
+        absorbed: [...new Set(absorbed)].sort(),
+        altered: [...new Set(altered)].sort(),
+    }));
+}
+function carriedPreExistingReport(carried) {
+    if (carried.length === 0)
+        return undefined;
+    return carried
+        .map(({ commitOid, absorbed, altered }) => [
+        `Pre-existing changes carried by commit ${commitOid}:`,
+        ...(absorbed.length === 0
+            ? []
+            : [`- absorbed as found: ${boundedPathList(absorbed)}`]),
+        ...(altered.length === 0
+            ? []
+            : [`- altered before committing: ${boundedPathList(altered)}`]),
+        'These changes were uncommitted before the step.',
+    ].join('\n'))
+        .join('\n\n');
+}
+function carriedPreExistingFacts(carried) {
+    return carried.map(({ commitOid, absorbed, altered }) => {
+        const paths = [...new Set([...absorbed, ...altered])].sort();
+        return `The commit ${commitOid} carries ${paths.length} changes that were uncommitted before the step: ${boundedPathList(paths)}.`;
+    });
+}
 function appendMandatoryPresentationSuffix(turn, suffix) {
     const current = turn.mandatoryPresentationSuffix;
     if (current === undefined) {
@@ -1854,6 +1918,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return unresolvedEffectFromReceipt(receipt, original.head);
         }
         const sameProjection = isDeepStrictEqual(original.projection, after.projection);
+        // DR-062 §3: a pure projection never downgrades a classification the
+        // physical receipt proved. The latest receipt already accounted for every
+        // pre-existing entry of its own baseline, so when that baseline is the
+        // original one its accounting is the operation's accounting, and the
+        // projection may not demand a byte-equal after projection on top of it.
+        const receiptAccountsFromOriginal = isDeepStrictEqual(receipt.baseline.projection, original.projection);
         if (after.head === original.head) {
             if (receipt.classification !== 'unchanged' &&
                 receipt.classification !== 'worktree-only-change') {
@@ -1868,7 +1938,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const preservesOriginal = Object.entries(original.projection).every(([path, entry]) => Object.hasOwn(after.projection, path) &&
                 isDeepStrictEqual(entry, after.projection[path]));
             return {
-                classification: preservesOriginal
+                classification: preservesOriginal ||
+                    (receipt.classification === 'worktree-only-change' &&
+                        receiptAccountsFromOriginal)
                     ? 'worktree-only-change'
                     : 'observation-ambiguous',
                 baselineHead: original.head,
@@ -1876,7 +1948,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             };
         }
         if (receipt.classification === 'one-descendant-commit' &&
-            sameProjection) {
+            (sameProjection || receiptAccountsFromOriginal)) {
             return {
                 classification: 'one-descendant-commit',
                 baselineHead: original.head,
@@ -1988,6 +2060,44 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             turn.unresolvedEffects = frozen;
         settledTurnUnresolvedEffects = frozen;
         return frozen;
+    };
+    /**
+     * DR-062 §5: one deterministic Boss-visible report, once per turn, for the
+     * pre-existing changes the commits completed during this turn carried, and
+     * the same information as settlement facts the closing-reply prompt reads.
+     * It supplements the unresolved-effect report and enters no run result.
+     */
+    const reportCarriedPreExistingChanges = (turn) => {
+        if (turn.carriedPreExistingReported)
+            return;
+        if (turn.effectBoundaryPrefixCount === undefined)
+            return;
+        let carried;
+        try {
+            carried = carriedPreExistingChanges(assertPlaybookEffectLedger(currentEffectLedger()), turn.effectBoundaryPrefixCount);
+        }
+        catch {
+            return;
+        }
+        const report = carriedPreExistingReport(carried);
+        if (report === undefined)
+            return;
+        turn.carriedPreExistingReported = true;
+        appendMandatoryPresentationSuffix(turn, report);
+        const facts = carriedPreExistingFacts(carried);
+        turn.settlementFacts.push(...facts);
+        // The action's own report was assembled from the facts as they stood when
+        // it settled; the result-phase prompt reads this report, so the same facts
+        // join it here rather than only the turn's running list.
+        if (turn.report !== undefined) {
+            turn.report = {
+                ...turn.report,
+                facts: [...turn.report.facts, ...facts],
+                ...(turn.report.bossFacts === undefined
+                    ? {}
+                    : { bossFacts: [...turn.report.bossFacts, ...facts] }),
+            };
+        }
     };
     const normalizeInstalledRetainedGenerations = (value) => {
         const path = 'Captain retained generations';
@@ -4929,6 +5039,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (turn !== undefined && report !== undefined) {
                 appendMandatoryPresentationSuffix(turn, report);
             }
+            if (turn !== undefined)
+                reportCarriedPreExistingChanges(turn);
             return frozenUnresolvedEffects;
         };
         const finalizeSettlement = (settlement) => Object.freeze({
@@ -6407,12 +6519,24 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const hostRuntimeActionId = decided?.kind === 'runtime' ? decided.actionId : undefined;
             const hostGiveUp = decided?.kind === 'give-up' ? true : undefined;
             const parsed = decided === undefined ? resolveCommandTurn(turn.prompt) : undefined;
+            // DR-062 §5: the boundary count this turn starts from. Every boundary
+            // beyond it completed during this turn.
+            let effectBoundaryPrefixCount;
+            try {
+                effectBoundaryPrefixCount = assertPlaybookEffectLedger(currentEffectLedger()).boundaries.length;
+            }
+            catch {
+                effectBoundaryPrefixCount = undefined;
+            }
             activeTurn = {
                 id: ++turnSequence,
                 captainSyncedJournalSeq: journalSeq,
                 bossText: turn.prompt,
                 authoritativeText: parsed?.authoritativeText ?? turn.prompt,
                 ...(parsed ? { resolution: parsed.resolution } : {}),
+                ...(effectBoundaryPrefixCount === undefined
+                    ? {}
+                    : { effectBoundaryPrefixCount }),
                 ...(hostRuntimeActionId === undefined ? {} : { hostRuntimeActionId }),
                 ...(hostGiveUp === undefined ? {} : { hostGiveUp }),
                 settled: false,

@@ -5432,3 +5432,214 @@ describe('portable CLI provider hints', () => {
     },
   );
 });
+
+// DR-062: the Boss's own uncommitted work is context for the call that runs on
+// it. One real repository, the real CODE artifact, and a scripted Coder that
+// commits the Boss's modified file together with its own new one.
+class CarriedChangesAdapter implements AgentAdapter {
+  static repositoryCwd = '';
+  static calls: string[] = [];
+  static commits = 0;
+  readonly agent = 'claude-code';
+
+  async *run(
+    prompt: string,
+    options?: AgentOptions,
+  ): AsyncGenerator<AgentEvent, void, void> {
+    CarriedChangesAdapter.calls.push(prompt);
+    let result: string;
+    if (prompt.includes('This is hidden control work.')) {
+      result = JSON.stringify({ guard: 'directCommit' });
+    } else if (prompt.includes('compose closing reply')) {
+      result = 'The coding phase is committed.';
+    } else if (prompt.includes('compose conversational reply')) {
+      result = 'Captain acknowledged the message.';
+    } else {
+      const cwd = CarriedChangesAdapter.repositoryCwd;
+      await writeFile(join(cwd, 'feature.txt'), 'new work\n', 'utf8');
+      await execFileAsync('git', ['add', '--all'], { cwd });
+      await execFileAsync(
+        'git',
+        [
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '--quiet',
+          '-m',
+          'carry the Boss dirt with the new work',
+        ],
+        { cwd },
+      );
+      CarriedChangesAdapter.commits += 1;
+      result = 'Committed the change, including tracked.txt.';
+    }
+    yield createEvent(
+      'done',
+      this.agent,
+      {
+        status: 'success',
+        result,
+        resumeToken: `token:${CarriedChangesAdapter.calls.length}`,
+        usage: { toolUses: 0 },
+        durationMs: 1,
+      },
+      `transport:${CarriedChangesAdapter.calls.length}`,
+    );
+  }
+
+  async isAvailable() {
+    return true;
+  }
+}
+
+function approvingReviewEntry() {
+  return {
+    id: 'review',
+    command: 'review',
+    intent: 'approve the phase without findings',
+    artifactSchema: 3 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } as const,
+    requiredRoleIds: ['coder', 'reviewer'],
+    concurrentRoleSets: [] as const,
+    validateOptions: (value: unknown) => value,
+    createRuntime(): PlaybookRuntime {
+      let state = activeState();
+      let turns = 0;
+      return {
+        retainedGenerationMetadata: { unfinishedFinalStateIds: [] },
+        async init() {},
+        async restore(_session, snapshot) {
+          state = snapshot.state;
+          turns = snapshot.sequences.turn;
+        },
+        exportSnapshot() {
+          return {
+            schemaVersion: 4,
+            playbookId: 'review',
+            machine: { value: state.value, status: state.status },
+            roleResumeTokens: {},
+            sequences: {
+              trace: 0,
+              turn: turns,
+              judgeCall: 0,
+              playerCall: 0,
+              playbookCall: 0,
+              captainCall: 0,
+            },
+            state,
+            pendingBossQuestions: [],
+            effectLedger: emptyPlaybookEffectLedger(),
+          } as PlaybookRuntimeSnapshot;
+        },
+        async handleBossInput() {
+          turns += 1;
+          state = terminalState();
+          return {
+            outcome: 'terminal' as const,
+            state,
+            output: {
+              noUnsettledFindings: true,
+              evaluatedRevision: 'review-rev',
+            },
+          };
+        },
+        async resumePlaybookCall() {
+          return { outcome: 'no-action' as const, state };
+        },
+        async dispose() {},
+      };
+    },
+  };
+}
+
+describe('pre-existing changes carried by a real commit (DR-062)', () => {
+  it('tells the Coder about the Boss dirt and reports what the commit carried', async () => {
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-carried-pre-existing-',
+    );
+    // The Boss's own uncommitted edit, present before the run begins.
+    await writeFile(
+      join(repositoryCwd, 'tracked.txt'),
+      'baseline\nboss edit\n',
+      'utf8',
+    );
+    CarriedChangesAdapter.repositoryCwd = repositoryCwd;
+    CarriedChangesAdapter.calls = [];
+    CarriedChangesAdapter.commits = 0;
+    const codePlaybookRegistryEntry = (
+      await import(new URL('./code.registry.js', import.meta.url).href)
+    ).default;
+    const reviewEntry = approvingReviewEntry();
+    const inputs: string[] = [];
+
+    const out = await headlessHarness(['run', '/code carry the boss dirt'], {
+      cwd: repositoryCwd,
+      loadModule: async (specifier: string) => {
+        if (specifier === 'mod://code') {
+          return { default: codePlaybookRegistryEntry };
+        }
+        if (specifier === 'mod://review') return { default: reviewEntry };
+        throw new Error(`no module ${specifier}`);
+      },
+      adapterImports: Object.fromEntries(
+        ['claude', 'codex', 'gemini', 'kimi', 'opencode'].map((adapter) => [
+          adapter,
+          async () => CarriedChangesAdapter,
+        ]),
+      ) as any,
+      createCaptainRuntime: scriptedCaptainRuntime(inputs, {
+        action: 'start',
+        playbookId: 'code',
+      }),
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    expect(CarriedChangesAdapter.commits).toBe(1);
+    const commitOid = (
+      await execFileAsync('git', ['rev-parse', 'HEAD'], {
+        cwd: repositoryCwd,
+        encoding: 'utf8',
+      })
+    ).stdout.trim();
+
+    // The call ran on the Boss's tree and settled, with nothing unresolved.
+    const receipts = out.result.record.effectLedger.boundaries.map(
+      (boundary: any) => boundary.physicalReceipt,
+    );
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      classification: 'one-descendant-commit',
+      commitOid,
+      preExisting: { absorbed: ['tracked.txt'], altered: [], lost: [] },
+    });
+    expect(out.result.record.unresolvedEffects).toEqual([]);
+    expect(out.result.snapshot.mode).not.toContain('parked');
+
+    // The Coder was told about the Boss's change before it decided anything.
+    const coderPrompt = CarriedChangesAdapter.calls.find(
+      (prompt) =>
+        !prompt.includes('This is hidden control work.') &&
+        !prompt.includes('compose closing reply') &&
+        !prompt.includes('compose conversational reply'),
+    );
+    expect(coderPrompt).toBeDefined();
+    expect(coderPrompt).toContain(
+      '> Uncommitted changes present before this call, belonging to the Boss:',
+    );
+    expect(coderPrompt).toContain('> - modified: tracked.txt');
+    expect(coderPrompt).not.toContain('feature.txt');
+    expect(coderPrompt!.trimEnd().endsWith(
+      "> Leave them exactly as they are unless the task or the Boss's request requires building on them; never revert or delete them; when you commit any of them, name them in your final report.",
+    )).toBe(true);
+
+    // The Boss reads the provenance from this turn's own reply.
+    expect(out.stdout).toContain(
+      `Pre-existing changes carried by commit ${commitOid}:`,
+    );
+    expect(out.stdout).toContain('- absorbed as found: tracked.txt');
+    expect(out.stdout).toContain(
+      'These changes were uncommitted before the step.',
+    );
+    expect(out.stdout).not.toContain('feature.txt');
+  });
+});

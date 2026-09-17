@@ -878,7 +878,7 @@ describe('effect-ledger schema validation', () => {
         ],
         logicalOperations: [],
       }),
-    ).toThrow('must change HEAD and preserve the projection');
+    ).toThrow('must change HEAD and account for its complete baseline projection');
 
     const dirtyBaseline = effectObservation({
       'dirty.txt': { kind: 'tracked', identity: 'before' },
@@ -905,7 +905,9 @@ describe('effect-ledger schema validation', () => {
         ],
         logicalOperations: [],
       }),
-    ).toThrow('must preserve HEAD and change the projection');
+    ).toThrow(
+      'must preserve HEAD, change the projection, and account for every altered baseline entry',
+    );
 
     const orderedDirtyBaseline = effectObservation({
       'dirty.txt': { kind: 'tracked', mode: '100644' },
@@ -933,7 +935,9 @@ describe('effect-ledger schema validation', () => {
         ],
         logicalOperations: [],
       }),
-    ).toThrow('must preserve HEAD and change the projection');
+    ).toThrow(
+      'must preserve HEAD, change the projection, and account for every altered baseline entry',
+    );
 
     expect(() =>
       assertPlaybookEffectLedger({
@@ -1068,6 +1072,237 @@ describe('effect-ledger schema validation', () => {
         internal: true,
       }),
     ).toThrow('internal is not a declared property');
+  });
+
+  it('admits the pre-existing accounting only where it is lawful (DR-062)', () => {
+    const dirtyBaseline = effectObservation({
+      'boss.txt': { kind: 'untracked' },
+      'kept.txt': { kind: 'untracked' },
+    });
+    const commitAfter = effectObservation(
+      { 'kept.txt': { kind: 'untracked' } },
+      '2'.repeat(40),
+    );
+    const alteredAfter = effectObservation({
+      'boss.txt': { kind: 'untracked', identity: 'later' },
+      'kept.txt': { kind: 'untracked' },
+      'new.txt': { kind: 'untracked' },
+    });
+    const ledger = (physicalReceipt: JsonValue, after: JsonValue) => ({
+      schemaVersion: 1,
+      revision: 1,
+      boundaries: [
+        {
+          ...EFFECT_BOUNDARY,
+          dispositions: ['one-descendant-commit'],
+          baseline: dirtyBaseline,
+          after,
+          physicalReceipt,
+        },
+      ],
+      logicalOperations: [],
+    });
+    const commitReceipt = (preExisting?: JsonValue) => ({
+      classification: 'one-descendant-commit',
+      baseline: dirtyBaseline,
+      after: commitAfter,
+      commitOid: commitAfter.head,
+      ...(preExisting === undefined ? {} : { preExisting }),
+    });
+    const worktreeReceipt = (preExisting?: JsonValue) => ({
+      classification: 'worktree-only-change',
+      baseline: dirtyBaseline,
+      after: alteredAfter,
+      ...(preExisting === undefined ? {} : { preExisting }),
+    });
+
+    // An absorbed baseline entry proves the commit that carried it.
+    expect(
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: ['boss.txt'], altered: [], lost: [] }),
+          commitAfter,
+        ),
+      ).boundaries[0]!.physicalReceipt!.preExisting,
+    ).toEqual({ absorbed: ['boss.txt'], altered: [], lost: [] });
+    expect(
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: [], altered: ['boss.txt'], lost: [] }),
+          commitAfter,
+        ),
+      ).boundaries[0]!.physicalReceipt!.preExisting,
+    ).toEqual({ absorbed: [], altered: ['boss.txt'], lost: [] });
+    expect(
+      assertPlaybookEffectLedger(
+        ledger(
+          worktreeReceipt({ absorbed: [], altered: ['boss.txt'], lost: [] }),
+          alteredAfter,
+        ),
+      ).boundaries[0]!.physicalReceipt!.preExisting,
+    ).toEqual({ absorbed: [], altered: ['boss.txt'], lost: [] });
+    expect(
+      assertPlaybookEffectLedger(
+        ledger(
+          {
+            classification: 'observation-ambiguous',
+            baseline: dirtyBaseline,
+            after: alteredAfter,
+            preExisting: { absorbed: [], altered: [], lost: ['boss.txt'] },
+          },
+          alteredAfter,
+        ),
+      ).boundaries[0]!.physicalReceipt!.preExisting,
+    ).toEqual({ absorbed: [], altered: [], lost: ['boss.txt'] });
+
+    // A receipt stored before DR-062 carries no member and still validates.
+    const legacyAfter = effectObservation(
+      {
+        'boss.txt': { kind: 'untracked' },
+        'kept.txt': { kind: 'untracked' },
+        'new.txt': { kind: 'untracked' },
+      },
+      dirtyBaseline.head,
+    );
+    expect(
+      assertPlaybookEffectLedger(
+        ledger(
+          {
+            classification: 'worktree-only-change',
+            baseline: dirtyBaseline,
+            after: legacyAfter,
+          },
+          legacyAfter,
+        ),
+      ).boundaries[0]!.physicalReceipt,
+    ).not.toHaveProperty('preExisting');
+
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          {
+            classification: 'unchanged',
+            baseline: dirtyBaseline,
+            after: dirtyBaseline,
+            preExisting: { absorbed: [], altered: [], lost: ['boss.txt'] },
+          },
+          dirtyBaseline,
+        ),
+      ),
+    ).toThrow('preExisting is not permitted for unchanged');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: [], altered: [], lost: [] }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('must name at least one baseline path');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(commitReceipt({ absorbed: ['boss.txt'] }), commitAfter),
+      ),
+    ).toThrow('altered must be an array of baseline paths');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({
+            absorbed: ['boss.txt'],
+            altered: [],
+            lost: [],
+            carried: [],
+          }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('carried is not a declared property');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          worktreeReceipt({
+            absorbed: [],
+            altered: ['kept.txt', 'boss.txt'],
+            lost: [],
+          }),
+          alteredAfter,
+        ),
+      ),
+    ).toThrow('altered must be sorted and unique');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          worktreeReceipt({
+            absorbed: [],
+            altered: ['boss.txt', 'boss.txt'],
+            lost: [],
+          }),
+          alteredAfter,
+        ),
+      ),
+    ).toThrow('altered must be sorted and unique');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({
+            absorbed: ['boss.txt'],
+            altered: ['boss.txt'],
+            lost: [],
+          }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('lists "boss.txt" twice');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: ['absent.txt'], altered: [], lost: [] }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('names a path outside the baseline projection');
+
+    // The accounting and the two observations must agree exactly.
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: [], altered: [], lost: ['boss.txt'] }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('must change HEAD and account for its complete baseline projection');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          commitReceipt({ absorbed: ['kept.txt'], altered: [], lost: [] }),
+          commitAfter,
+        ),
+      ),
+    ).toThrow('must change HEAD and account for its complete baseline projection');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(commitReceipt(), commitAfter),
+      ),
+    ).toThrow('must change HEAD and account for its complete baseline projection');
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          worktreeReceipt({ absorbed: ['boss.txt'], altered: [], lost: [] }),
+          alteredAfter,
+        ),
+      ),
+    ).toThrow(
+      'must preserve HEAD, change the projection, and account for every altered baseline entry',
+    );
+    expect(() =>
+      assertPlaybookEffectLedger(
+        ledger(
+          worktreeReceipt({ absorbed: [], altered: ['kept.txt'], lost: [] }),
+          alteredAfter,
+        ),
+      ),
+    ).toThrow(
+      'must preserve HEAD, change the projection, and account for every altered baseline entry',
+    );
   });
 
   it('admits only append-and-evidence monotonic extensions', () => {

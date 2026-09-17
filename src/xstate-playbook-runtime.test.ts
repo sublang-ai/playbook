@@ -8,6 +8,7 @@
 // defaults (entry event, parked-state classifier, prompt composition,
 // adjudication, statuses).
 
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -252,9 +253,10 @@ function governedRuntimeConstruction<TOptions>(
   playbookId: string,
   classifications: readonly CodeEffectClassification[] = [],
   initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+  baselineObservation: PlaybookRepositoryObservation = CODE_EFFECT_OBSERVATION,
 ): XStatePlaybookRuntimeConstruction<TOptions, object> {
   let ledger = assertPlaybookEffectLedger(initialLedger);
-  let observation = ledger.boundaries.at(-1)?.after ?? CODE_EFFECT_OBSERVATION;
+  let observation = ledger.boundaries.at(-1)?.after ?? baselineObservation;
   let callIndex = 0;
   const attemptIdsByTurn = new Map<number, string>();
 
@@ -462,9 +464,15 @@ function governedRuntimeConstruction<TOptions>(
 
 function codeRuntimeConstruction(
   classifications: readonly CodeEffectClassification[] = [],
+  baselineObservation: PlaybookRepositoryObservation = CODE_EFFECT_OBSERVATION,
 ): Parameters<typeof createCodePlaybookRuntime>[0] {
-  return governedRuntimeConstruction({}, 'code', classifications) as unknown as
-    Parameters<typeof createCodePlaybookRuntime>[0];
+  return governedRuntimeConstruction(
+    {},
+    'code',
+    classifications,
+    emptyPlaybookEffectLedger(),
+    baselineObservation,
+  ) as unknown as Parameters<typeof createCodePlaybookRuntime>[0];
 }
 
 function decideRuntimeConstruction(): Parameters<
@@ -776,9 +784,16 @@ const createWorkflowRuntimeFactory = createXStatePlaybookRuntime(
 const createWorkflowRuntime = (
   options: WorkflowOptions,
   initialLedger: PlaybookEffectLedger = emptyPlaybookEffectLedger(),
+  baselineObservation: PlaybookRepositoryObservation = CODE_EFFECT_OBSERVATION,
 ) =>
   createWorkflowRuntimeFactory(
-    governedRuntimeConstruction(options, 'factory-test', [], initialLedger),
+    governedRuntimeConstruction(
+      options,
+      'factory-test',
+      [],
+      initialLedger,
+      baselineObservation,
+    ),
   );
 
 const createLedgerAdoptionWorkflowRuntimeFactory = createXStatePlaybookRuntime(
@@ -9136,5 +9151,166 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     expect(view.actions[0]!.label).not.toContain('plain');
     expect(view.actions[0]!.label).not.toContain('START');
     await runtime.dispose();
+  });
+});
+
+describe('pre-existing changes in an effect-authorized prompt (DR-062)', () => {
+  const PRE_EXISTING_RULE =
+    "> Leave them exactly as they are unless the task or the Boss's request requires building on them; never revert or delete them; when you commit any of them, name them in your final report.";
+
+  const fileIdentity = (content: string) =>
+    Object.freeze({ kind: 'file', mode: '100644', content });
+
+  // The porcelain-v2 record shapes the repository observer projects: `xy`
+  // carries the index state first and the worktree state second.
+  const stagedEntry = () =>
+    Object.freeze({
+      kind: 'ordinary',
+      xy: 'M.',
+      submodule: 'N...',
+      headMode: '100644',
+      indexMode: '100644',
+      worktreeMode: '100644',
+      headOid: '1'.repeat(40),
+      indexOid: '2'.repeat(40),
+    });
+
+  const modifiedEntry = (content: string) =>
+    Object.freeze({
+      kind: 'ordinary',
+      xy: '.M',
+      submodule: 'N...',
+      headMode: '100644',
+      indexMode: '100644',
+      worktreeMode: '100644',
+      headOid: '1'.repeat(40),
+      indexOid: '1'.repeat(40),
+      worktree: fileIdentity(content),
+    });
+
+  const untrackedEntry = (content: string) =>
+    Object.freeze({ kind: 'untracked', worktree: fileIdentity(content) });
+
+  const observationWith = (
+    projection: Readonly<Record<string, unknown>>,
+  ): PlaybookRepositoryObservation =>
+    Object.freeze({
+      ...CODE_EFFECT_OBSERVATION,
+      projection: Object.freeze(projection),
+      projectionDigest: `sha256:${createHash('sha256')
+        .update(JSON.stringify(projection))
+        .digest('hex')}`,
+    }) as unknown as PlaybookRepositoryObservation;
+
+  async function firstCoderPrompt(
+    baselineObservation: PlaybookRepositoryObservation,
+  ): Promise<string> {
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'Implemented and verified.',
+      }),
+      callJudge: async () => '{"guard":"directCommit"}',
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'review-suspended',
+      }),
+    });
+    const runtime = createCodePlaybookRuntime(
+      codeRuntimeConstruction(['one-descendant-commit'], baselineObservation),
+    );
+    await runtime.init(makeCodeSession(ports));
+    await runtime.handleBossInput(turn('Fix it.'));
+    const started = telemetry
+      .map(({ payload }) => payload as PlaybookTraceEvent)
+      .find(({ type }) => type === 'player.call.started');
+    await runtime.dispose();
+    const prompt = (started?.payload as { prompt?: string } | undefined)
+      ?.prompt;
+    if (typeof prompt !== 'string') {
+      throw new Error('expected a recorded player.call.started prompt');
+    }
+    return prompt;
+  }
+
+  it('ends an effect-authorized call prompt with the baseline block', async () => {
+    const prompt = await firstCoderPrompt(
+      observationWith({
+        'src/staged.ts': stagedEntry(),
+        'src/modified.ts': modifiedEntry('work in progress'),
+        'notes/seed.md': untrackedEntry('seed'),
+      }),
+    );
+
+    expect(prompt).toContain('Fix it.');
+    expect(prompt.endsWith(`\n\n${[
+      '> Uncommitted changes present before this call, belonging to the Boss:',
+      '> - staged: src/staged.ts',
+      '> - modified: src/modified.ts',
+      '> - untracked: notes/seed.md',
+      PRE_EXISTING_RULE,
+    ].join('\n')}`)).toBe(true);
+  });
+
+  it('adds nothing for an empty baseline projection', async () => {
+    const prompt = await firstCoderPrompt(CODE_EFFECT_OBSERVATION);
+    expect(prompt).not.toContain('Uncommitted changes present before this call');
+  });
+
+  it('names 40 paths and the remainder count for a larger baseline', async () => {
+    const projection: Record<string, unknown> = {};
+    for (let index = 0; index < 5; index += 1) {
+      projection[`staged/${String(index).padStart(2, '0')}.ts`] = stagedEntry();
+    }
+    for (let index = 0; index < 40; index += 1) {
+      projection[`work/${String(index).padStart(2, '0')}.ts`] =
+        modifiedEntry(`draft ${index}`);
+    }
+    const prompt = await firstCoderPrompt(observationWith(projection));
+
+    const block = prompt.slice(
+      prompt.indexOf('> Uncommitted changes present before this call'),
+    );
+    const lines = block.split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[1]).toBe(
+      `> - staged: ${Array.from({ length: 5 }, (_value, index) =>
+        `staged/${String(index).padStart(2, '0')}.ts`,
+      ).join(', ')}`,
+    );
+    expect(lines[2]).toBe(
+      `> - modified: ${Array.from({ length: 35 }, (_value, index) =>
+        `work/${String(index).padStart(2, '0')}.ts`,
+      ).join(', ')}, … and 5 more`,
+    );
+    expect(lines[3]).toBe(PRE_EXISTING_RULE);
+    expect(block).not.toContain('work/35.ts');
+  });
+
+  it('adds nothing to a call declared exclusively unchanged', async () => {
+    const prompts: string[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_role, prompt) => {
+        prompts.push(prompt);
+        return { status: 'ok', finalText: '{"summary":"done"}' };
+      },
+      callJudge: async () => '{"outcome":"implemented","summary":"done"}',
+    });
+    const runtime = createWorkflowRuntime(
+      {},
+      emptyPlaybookEffectLedger(),
+      observationWith({
+        'src/modified.ts': modifiedEntry('work in progress'),
+        'notes/seed.md': untrackedEntry('seed'),
+      }),
+    );
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('do the thing'));
+    await runtime.dispose();
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain(
+      'Uncommitted changes present before this call',
+    );
   });
 });

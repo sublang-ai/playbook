@@ -32,11 +32,17 @@ export interface PlaybookRepositoryObservation extends RepositoryIdentity {
   readonly projection: Readonly<Record<string, JsonValue>>;
   readonly projectionDigest: string;
 }
+export interface PlaybookRepositoryPreExistingChanges {
+  readonly absorbed: readonly string[];
+  readonly altered: readonly string[];
+  readonly lost: readonly string[];
+}
 export interface PlaybookRepositoryReceipt {
   readonly classification: RepositoryReceiptClassification;
   readonly baseline: PlaybookRepositoryObservation;
   readonly after?: PlaybookRepositoryObservation;
   readonly commitOid?: string;
+  readonly preExisting?: PlaybookRepositoryPreExistingChanges;
 }
 export interface RepositoryReceiptOptions {
   readonly allowedDispositions: readonly PlaybookRepositoryDisposition[];

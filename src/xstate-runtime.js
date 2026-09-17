@@ -629,9 +629,56 @@ function projectionsEqual(left, right) {
     return (left.projectionDigest === right.projectionDigest &&
         projectionText(left.projection) === projectionText(right.projection));
 }
-function projectionPreservesBaseline(baseline, after) {
-    return Object.entries(baseline.projection).every(([path, entry]) => own(after.projection, path) &&
-        JSON.stringify(entry) === JSON.stringify(after.projection[path]));
+function projectionEntriesEqual(left, right, path) {
+    return (own(right.projection, path) &&
+        JSON.stringify(left.projection[path]) ===
+            JSON.stringify(right.projection[path]));
+}
+const EFFECT_PRE_EXISTING_LISTS = ['absorbed', 'altered', 'lost'];
+const EMPTY_PRE_EXISTING = Object.freeze({
+    absorbed: Object.freeze([]),
+    altered: Object.freeze([]),
+    lost: Object.freeze([]),
+});
+/**
+ * The pre-existing accounting a physical or logical receipt records
+ * (DR-062 §3): sorted unique baseline paths, pairwise disjoint, present
+ * exactly when one list is nonempty.
+ */
+function effectPreExisting(value, path, baseline) {
+    if (!isRecord(value))
+        throw new TypeError(`${path} must be an object`);
+    rejectUnknownKeys(value, EFFECT_PRE_EXISTING_LISTS, path);
+    const claimed = new Set();
+    const lists = EFFECT_PRE_EXISTING_LISTS.map((name) => {
+        const entries = value[name];
+        if (!Array.isArray(entries)) {
+            throw new TypeError(`${path}.${name} must be an array of baseline paths`);
+        }
+        let previous;
+        for (const entry of entries) {
+            if (typeof entry !== 'string' || entry.length === 0) {
+                throw new TypeError(`${path}.${name} must hold nonempty baseline paths`);
+            }
+            const member = entry;
+            if (previous !== undefined && member <= previous) {
+                throw new TypeError(`${path}.${name} must be sorted and unique`);
+            }
+            previous = member;
+            if (!own(baseline.projection, member)) {
+                throw new TypeError(`${path}.${name} names a path outside the baseline projection`);
+            }
+            if (claimed.has(member)) {
+                throw new TypeError(`${path} lists ${JSON.stringify(member)} twice`);
+            }
+            claimed.add(member);
+        }
+        return [name, entries];
+    });
+    if (claimed.size === 0) {
+        throw new TypeError(`${path} must name at least one baseline path`);
+    }
+    return Object.fromEntries(lists);
 }
 function effectObservation(value, path) {
     if (!isRecord(value))
@@ -672,7 +719,7 @@ function assertObservationIdentity(observation, identity, path) {
 function effectReceipt(value, path, expectedBaseline, expectedAfter, matchExpectedAfter = false, dispositions) {
     if (!isRecord(value))
         throw new TypeError(`${path} must be an object`);
-    rejectUnknownKeys(value, ['classification', 'baseline', 'after', 'commitOid'], path);
+    rejectUnknownKeys(value, ['classification', 'baseline', 'after', 'commitOid', 'preExisting'], path);
     if (typeof value.classification !== 'string' ||
         !EFFECT_RECEIPT_CLASSIFICATIONS.has(value.classification)) {
         throw new TypeError(`${path}.classification is not supported`);
@@ -718,18 +765,38 @@ function effectReceipt(value, path, expectedBaseline, expectedAfter, matchExpect
         !jsonValuesEqual(baseline, after)) {
         throw new TypeError(`${path} classified unchanged observations that differ`);
     }
+    // DR-062 §3: a receipt records the fate of every baseline entry, so the
+    // accounting and the two observations must agree exactly.
+    if (own(value, 'preExisting') &&
+        classification !== 'one-descendant-commit' &&
+        classification !== 'worktree-only-change' &&
+        classification !== 'observation-ambiguous') {
+        throw new TypeError(`${path}.preExisting is not permitted for ${classification}`);
+    }
+    const preExisting = own(value, 'preExisting')
+        ? effectPreExisting(value.preExisting, `${path}.preExisting`, baseline)
+        : EMPTY_PRE_EXISTING;
+    const consumed = new Set([...preExisting.absorbed, ...preExisting.altered]);
     if (classification === 'one-descendant-commit' &&
         after !== undefined &&
         (baseline.head === after.head ||
-            !projectionsEqual(baseline, after))) {
-        throw new TypeError(`${path} one-descendant-commit must change HEAD and preserve the projection`);
+            preExisting.lost.length > 0 ||
+            !Object.keys(after.projection).every((member) => own(baseline.projection, member) &&
+                projectionEntriesEqual(baseline, after, member)) ||
+            !Object.keys(baseline.projection).every((member) => own(after.projection, member) !== consumed.has(member)) ||
+            (consumed.size === 0) !== projectionsEqual(baseline, after))) {
+        throw new TypeError(`${path} one-descendant-commit must change HEAD and account for its complete baseline projection`);
     }
     if (classification === 'worktree-only-change' &&
         after !== undefined &&
         (baseline.head !== after.head ||
             projectionsEqual(baseline, after) ||
-            !projectionPreservesBaseline(baseline, after))) {
-        throw new TypeError(`${path} worktree-only-change must preserve HEAD and change the projection`);
+            preExisting.absorbed.length > 0 ||
+            preExisting.lost.length > 0 ||
+            !Object.keys(baseline.projection).every((member) => own(after.projection, member) &&
+                projectionEntriesEqual(baseline, after, member) !==
+                    consumed.has(member)))) {
+        throw new TypeError(`${path} worktree-only-change must preserve HEAD, change the projection, and account for every altered baseline entry`);
     }
     if ((classification === 'multiple-commits' ||
         classification === 'rewritten-or-non-descendant') &&

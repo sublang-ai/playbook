@@ -417,6 +417,97 @@ function continuationBlocks(input, resuming = false) {
 export function composePlayerContinuation(input, body, resuming = false) {
     return [...continuationBlocks(input, resuming), body].join('\n\n');
 }
+// DR-062 §4: the Coder is told which uncommitted changes were already in the
+// worktree when its own call started. The block is composed from the call's
+// own baseline observation, names paths only, and is bounded.
+const PRE_EXISTING_CHANGE_GROUPS = [
+    'staged',
+    'modified',
+    'deleted',
+    'untracked',
+    'renamed',
+    'unmerged',
+    'other',
+];
+const PRE_EXISTING_CHANGE_PATH_LIMIT = 40;
+/**
+ * The group one baseline projection entry belongs to. The shapes are the
+ * porcelain-v2 records the repository observer projects: an `untracked`,
+ * `rename-or-copy`, or `unmerged` kind, and otherwise an `ordinary` record
+ * whose two-character `xy` carries the index state first and the worktree
+ * state second.
+ */
+function preExistingChangeGroup(entry) {
+    if (!isPlainObject(entry))
+        return 'other';
+    if (entry.kind === 'untracked')
+        return 'untracked';
+    if (entry.kind === 'rename-or-copy')
+        return 'renamed';
+    if (entry.kind === 'unmerged')
+        return 'unmerged';
+    const xy = entry.xy;
+    if (entry.kind !== 'ordinary' || typeof xy !== 'string' || xy.length !== 2) {
+        return 'other';
+    }
+    if (xy[1] === 'D')
+        return 'deleted';
+    if (xy[1] === '.')
+        return xy[0] === '.' ? 'other' : 'staged';
+    return 'modified';
+}
+/**
+ * The pre-existing-changes block appended to an effect-authorized player
+ * prompt, or `undefined` for an empty baseline projection.
+ */
+function preExistingChangesBlock(baseline) {
+    const projection = baseline?.projection;
+    if (!isPlainObject(projection))
+        return undefined;
+    const grouped = new Map();
+    let total = 0;
+    for (const path of Object.keys(projection)) {
+        const group = preExistingChangeGroup(projection[path]);
+        const paths = grouped.get(group);
+        if (paths === undefined)
+            grouped.set(group, [path]);
+        else
+            paths.push(path);
+        total += 1;
+    }
+    if (total === 0)
+        return undefined;
+    const omitted = Math.max(0, total - PRE_EXISTING_CHANGE_PATH_LIMIT);
+    const lines = [];
+    let budget = PRE_EXISTING_CHANGE_PATH_LIMIT;
+    for (const group of PRE_EXISTING_CHANGE_GROUPS) {
+        const paths = grouped.get(group);
+        if (paths === undefined || budget <= 0)
+            continue;
+        const printed = paths.slice().sort().slice(0, budget);
+        budget -= printed.length;
+        lines.push(`> - ${group}: ${printed.join(', ')}`);
+    }
+    if (omitted > 0 && lines.length > 0) {
+        lines[lines.length - 1] += `, … and ${omitted} more`;
+    }
+    return [
+        '> Uncommitted changes present before this call, belonging to the Boss:',
+        ...lines,
+        "> Leave them exactly as they are unless the task or the Boss's request requires building on them; never revert or delete them; when you commit any of them, name them in your final report.",
+    ].join('\n');
+}
+/**
+ * The block for one governed call, or `undefined` where the call is not
+ * effect-authorized — a call whose declared outcomes carry no
+ * `one-descendant-commit` disposition may commit nothing, so it is told
+ * nothing.
+ */
+function effectAuthorizedPreExistingBlock(effectBoundary, baseline) {
+    return effectBoundary.dispositions.includes('one-descendant-commit')
+        ? preExistingChangesBlock(baseline)
+        : undefined;
+}
 const PLACEHOLDER_PATTERN = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
 function placeholderFieldName(token, fields) {
     const explicit = fields[token];
@@ -3462,9 +3553,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 activePlayerKeys.add(playerKey);
                 try {
-                    const runTracedPlayerCall = async (resume = selectedResume) => {
+                    const runTracedPlayerCall = async (resume = selectedResume, 
+                    // DR-062 §4: composed from this call's own baseline observation,
+                    // so the prompt the trace records is the prompt the player is sent.
+                    preExistingBlock) => {
                         const identity = callIdentity(resume);
-                        const callPrompt = resume === false ? freshPrompt : prompt;
+                        const withPreExisting = (text) => preExistingBlock === undefined
+                            ? text
+                            : `${text}\n\n${preExistingBlock}`;
+                        const callPrompt = withPreExisting(resume === false ? freshPrompt : prompt);
+                        const callFreshPrompt = withPreExisting(freshPrompt);
                         await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt: callPrompt }, position, signal);
                         let rawResult;
                         try {
@@ -3473,7 +3571,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // never start after abort, so settle the already-started pair
                             // as `aborted` through the catch below.
                             signal.throwIfAborted();
-                            rawResult = await requireHostPorts().callPlayer(roleId, callPrompt, signal, { resume, ...(callPrompt === freshPrompt ? {} : { freshPrompt }) });
+                            rawResult = await requireHostPorts().callPlayer(roleId, callPrompt, signal, {
+                                resume,
+                                ...(callPrompt === callFreshPrompt
+                                    ? {}
+                                    : { freshPrompt: callFreshPrompt }),
+                            });
                             // A host promise is not required to honor cancellation. Do not
                             // let a late result mutate continuity or publish a successful
                             // finish.
@@ -3560,7 +3663,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         deferredContinuation.playerId = playerId;
                         deferredContinuation.signal = signal;
                         try {
-                            deferredContinuation.result = await runTracedPlayerCall(selectedResume);
+                            deferredContinuation.result = await runTracedPlayerCall(selectedResume, effectAuthorizedPreExistingBlock(effectBoundary, deferredContinuation.baseline));
                         }
                         catch (error) {
                             deferredContinuation.callError = error;
@@ -3582,7 +3685,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         const exclusive = await repositoryCapability.runExclusive({
                             signal,
                             effectBoundary,
-                            operation: () => runTracedPlayerCall(),
+                            // DR-062 §4: the call's own baseline, supplied by the host that
+                            // captured it under this exclusive claim. A host that supplies
+                            // none states no pre-existing change, exactly as an empty
+                            // baseline projection does.
+                            operation: (context) => runTracedPlayerCall(selectedResume, effectAuthorizedPreExistingBlock(effectBoundary, context?.baseline)),
                             completeEffectBoundary: completionEvidenceFor(input, roleId, playerId, signal, undefined),
                         });
                         return acknowledgeGovernedPlayerResult(exclusive, effectBoundary.boundaryId);
@@ -5050,8 +5157,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     signal,
                     operationId: operation.operationId,
                     effectBoundary,
-                    operation: async ({ playerContinuation }) => {
+                    operation: async (context) => {
+                        const { playerContinuation } = context ?? {};
                         validateBinding(playerContinuation);
+                        // DR-062 §4: the continuation's own baseline, captured before the
+                        // FSM re-enters the bound player state that reads it.
+                        continuation.baseline = context?.baseline;
                         continuation.playerContinuation = selectPlayerResume(effectBoundary.roleId, boundPlayerId);
                         continuationStarted = true;
                         actor.send(event);

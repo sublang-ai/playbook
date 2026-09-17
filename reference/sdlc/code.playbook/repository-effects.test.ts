@@ -630,7 +630,7 @@ describe('repository-relevant Git observations (PBRT-68)', () => {
     }
   });
 
-  it('fails closed on altered or consumed overlays, residual changes, multiple commits, and rewritten history', async () => {
+  it('accounts for altered and consumed overlays and fails closed on residual changes, multiple commits, and rewritten history', async () => {
     const alteredRepo = await initRepository('playbook-effects-altered-');
     await writeFile(join(alteredRepo, 'base.txt'), 'first overlay\n', 'utf8');
     const alteredBaseline = await observeGitRepository(alteredRepo);
@@ -640,7 +640,10 @@ describe('repository-relevant Git observations (PBRT-68)', () => {
       classifyRepositoryReceipt(alteredBaseline, alteredAfter, {
         allowedDispositions: ['unchanged', 'one-descendant-commit'],
       }),
-    ).resolves.toMatchObject({ classification: 'observation-ambiguous' });
+    ).resolves.toMatchObject({
+      classification: 'worktree-only-change',
+      preExisting: { absorbed: [], altered: ['base.txt'], lost: [] },
+    });
 
     const consumedRepo = await initRepository('playbook-effects-consumed-');
     await writeFile(join(consumedRepo, 'base.txt'), 'consume me\n', 'utf8');
@@ -652,7 +655,11 @@ describe('repository-relevant Git observations (PBRT-68)', () => {
       classifyRepositoryReceipt(consumedBaseline, consumedAfter, {
         allowedDispositions: ['unchanged', 'one-descendant-commit'],
       }),
-    ).resolves.toMatchObject({ classification: 'observation-ambiguous' });
+    ).resolves.toMatchObject({
+      classification: 'one-descendant-commit',
+      commitOid: await git(consumedRepo, 'rev-parse', 'HEAD'),
+      preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+    });
 
     const residualRepo = await initRepository('playbook-effects-residual-');
     const residualBaseline = await observeGitRepository(residualRepo);
@@ -692,6 +699,206 @@ describe('repository-relevant Git observations (PBRT-68)', () => {
     ).resolves.toMatchObject({
       classification: 'rewritten-or-non-descendant',
     });
+  });
+
+  it('gives every pre-existing baseline entry its fate on the call that ends it (DR-062)', async () => {
+    const cases: {
+      readonly name: string;
+      readonly dirty: (repo: string) => Promise<unknown>;
+      readonly call: (repo: string) => Promise<unknown>;
+      readonly classification: string;
+      readonly commit: boolean;
+      readonly preExisting: {
+        absorbed: string[];
+        altered: string[];
+        lost: string[];
+      };
+    }[] = [
+      {
+        // The incident's own shape: the task required committing the tree the
+        // Boss handed the call.
+        name: 'modified-absorbed',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: async (repo) => {
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'carry the boss tree');
+        },
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'untracked-absorbed',
+        dirty: (repo) => writeFile(join(repo, 'seed.txt'), 'seed\n', 'utf8'),
+        call: async (repo) => {
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'carry the seed');
+        },
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: ['seed.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'staged-absorbed',
+        dirty: async (repo) => {
+          await writeFile(join(repo, 'staged.txt'), 'staged\n', 'utf8');
+          await git(repo, 'add', '--', 'staged.txt');
+        },
+        call: (repo) =>
+          git(repo, 'commit', '--quiet', '-m', 'sweep the index in'),
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: ['staged.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'deletion-absorbed',
+        dirty: (repo) => rm(join(repo, 'base.txt')),
+        call: async (repo) => {
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'carry the deletion');
+        },
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'built-on-then-committed',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: async (repo) => {
+          await writeFile(join(repo, 'base.txt'), 'boss and coder\n', 'utf8');
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'build on the boss tree');
+        },
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: [], altered: ['base.txt'], lost: [] },
+      },
+      {
+        name: 'absorbs-one-preserves-another',
+        dirty: async (repo) => {
+          await writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8');
+          await writeFile(join(repo, 'other.txt'), 'untouched\n', 'utf8');
+        },
+        call: async (repo) => {
+          await git(repo, 'add', '--', 'base.txt');
+          await git(repo, 'commit', '--quiet', '-m', 'carry only one');
+        },
+        classification: 'one-descendant-commit',
+        commit: true,
+        preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'reverted-by-the-call',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: async (repo) => {
+          await writeFile(join(repo, 'base.txt'), 'base\n', 'utf8');
+          await writeFile(join(repo, 'own.txt'), 'own work\n', 'utf8');
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'own work only');
+        },
+        classification: 'observation-ambiguous',
+        commit: false,
+        preExisting: { absorbed: [], altered: [], lost: ['base.txt'] },
+      },
+      {
+        name: 'untracked-deleted-by-the-call',
+        dirty: (repo) => writeFile(join(repo, 'seed.txt'), 'seed\n', 'utf8'),
+        call: async (repo) => {
+          await rm(join(repo, 'seed.txt'));
+          await writeFile(join(repo, 'own.txt'), 'own work\n', 'utf8');
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'own work only');
+        },
+        classification: 'observation-ambiguous',
+        commit: false,
+        preExisting: { absorbed: [], altered: [], lost: ['seed.txt'] },
+      },
+      {
+        name: 'absorbed-beside-a-stray-file',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: async (repo) => {
+          await git(repo, 'add', '--all');
+          await git(repo, 'commit', '--quiet', '-m', 'carry the boss tree');
+          await writeFile(join(repo, 'stray.txt'), 'stray\n', 'utf8');
+        },
+        classification: 'observation-ambiguous',
+        commit: false,
+        preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+      },
+      {
+        name: 'same-head-revert',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: (repo) => writeFile(join(repo, 'base.txt'), 'base\n', 'utf8'),
+        classification: 'observation-ambiguous',
+        commit: false,
+        preExisting: { absorbed: [], altered: [], lost: ['base.txt'] },
+      },
+      {
+        name: 'same-head-alteration',
+        dirty: (repo) => writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8'),
+        call: async (repo) => {
+          await writeFile(join(repo, 'base.txt'), 'boss and coder\n', 'utf8');
+          await writeFile(join(repo, 'own.txt'), 'own work\n', 'utf8');
+        },
+        classification: 'worktree-only-change',
+        commit: false,
+        preExisting: { absorbed: [], altered: ['base.txt'], lost: [] },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const repo = await initRepository(`playbook-fate-${testCase.name}-`);
+      await testCase.dirty(repo);
+      const baseline = await observeGitRepository(repo);
+      await testCase.call(repo);
+      const after = await observeGitRepository(repo);
+      const effectReceipt = await classifyRepositoryReceipt(baseline, after, {
+        allowedDispositions: ['unchanged', 'one-descendant-commit'],
+      });
+      expect(effectReceipt, testCase.name).toMatchObject({
+        classification: testCase.classification,
+        preExisting: testCase.preExisting,
+      });
+      if (testCase.commit) {
+        expect(effectReceipt, testCase.name).toMatchObject({
+          commitOid: await git(repo, 'rev-parse', 'HEAD'),
+        });
+      } else {
+        expect(effectReceipt, testCase.name).not.toHaveProperty('commitOid');
+      }
+    }
+  });
+
+  it('keeps a declared-zero call ambiguous about pre-existing dirt it touched', async () => {
+    const repo = await initRepository('playbook-fate-declared-zero-');
+    await writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8');
+    const baseline = await observeGitRepository(repo);
+    await git(repo, 'add', '--all');
+    await git(repo, 'commit', '--quiet', '-m', 'carry the boss tree');
+    const after = await observeGitRepository(repo);
+    const effectReceipt = await classifyRepositoryReceipt(baseline, after, {
+      allowedDispositions: ['unchanged'],
+    });
+    expect(effectReceipt).toMatchObject({
+      classification: 'concurrent-or-foreign-change',
+    });
+    expect(effectReceipt).not.toHaveProperty('preExisting');
+  });
+
+  it('omits the accounting entirely when every baseline entry is preserved', async () => {
+    const repo = await initRepository('playbook-fate-preserved-');
+    await writeFile(join(repo, 'untouched.txt'), 'untouched\n', 'utf8');
+    const baseline = await observeGitRepository(repo);
+    await commitFile(repo, 'own.txt', 'own work\n', 'own work');
+    const after = await observeGitRepository(repo);
+    const effectReceipt = await classifyRepositoryReceipt(baseline, after, {
+      allowedDispositions: ['unchanged', 'one-descendant-commit'],
+    });
+    expect(effectReceipt).toMatchObject({
+      classification: 'one-descendant-commit',
+      commitOid: await git(repo, 'rev-parse', 'HEAD'),
+    });
+    expect(effectReceipt).not.toHaveProperty('preExisting');
   });
 
   it('rejects a mixed observation and captures it as ambiguous evidence', async () => {
@@ -3091,8 +3298,16 @@ describe('schema-3 repository host capabilities', () => {
         };
       },
       completeEffectBoundary: ({ operation, outcomeReceipt, receipt }: any) => {
-        expect(receipt.classification).toBe('observation-ambiguous');
+        // The physical receipt accounts from its own baseline, which already
+        // held the draft this boundary committed (DR-062).
+        expect(receipt.classification).toBe('one-descendant-commit');
+        expect(receipt.preExisting).toEqual({
+          absorbed: ['draft.txt'],
+          altered: [],
+          lost: [],
+        });
         expect(outcomeReceipt.classification).toBe('one-descendant-commit');
+        expect(outcomeReceipt).not.toHaveProperty('preExisting');
         return {
           finalText: operation.value.finalText,
           semanticCandidate: { guard: 'committed' },
@@ -3101,7 +3316,7 @@ describe('schema-3 repository host capabilities', () => {
     });
     expect(final).toMatchObject({
       status: 'continued',
-      receipt: { classification: 'observation-ambiguous' },
+      receipt: { classification: 'one-descendant-commit' },
       logicalReceipt: { classification: 'one-descendant-commit' },
     });
     expect(final.effectLedger.logicalOperations[0]).toMatchObject({
@@ -3124,6 +3339,121 @@ describe('schema-3 repository host capabilities', () => {
       final.effectLedger.logicalOperations[0]?.logicalReceipt,
     );
     expect(final.effectLedger.boundaries).toHaveLength(3);
+  });
+
+  it('reconciles a deferred chain that absorbs the original baseline dirt', async () => {
+    const repo = await initRepository('playbook-deferred-absorb-');
+    await writeFile(join(repo, 'base.txt'), 'boss\n', 'utf8');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+    const operationId = '50000000-0000-4000-8000-000000000005';
+    const capability = (
+      await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      })
+    ).code;
+    const effectBoundary = (
+      boundaryId: string,
+      turnId: number,
+      callId: string,
+    ) => ({
+      boundaryId,
+      runtimeSessionId,
+      turnId,
+      callId,
+      roleId: 'coder',
+      sourceStateId: 'code.coder',
+      sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+      dispositions: ['deferred', 'one-descendant-commit'],
+      correctionBudget: { limit: 1, spent: false },
+    });
+
+    const asked = await capability.repository.runExclusive({
+      effectBoundary: effectBoundary(
+        '30000000-0000-4000-8000-000000000003',
+        1,
+        'player-1',
+      ),
+      operation: async () => ({ status: 'ok' }),
+      completeEffectBoundary: () => ({
+        finalText: 'Should I commit what is already here?',
+        semanticCandidate: {
+          guard: 'needsBossReply',
+          question: 'Should I commit what is already here?',
+        },
+        deferred: {
+          operationId,
+          pendingQuestion: {
+            questionId: 'code.coder',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: 'Should I commit what is already here?',
+            sourceItem: 'playbook-1',
+          },
+          playerContinuation: 'thread-1',
+        },
+      }),
+    });
+    expect(asked).toMatchObject({
+      deferredStatus: 'bound',
+      receipt: { classification: 'unchanged' },
+    });
+
+    const answered = await capability.repository.runDeferred({
+      mode: 'continue',
+      operationId,
+      effectBoundary: effectBoundary(
+        '60000000-0000-4000-8000-000000000006',
+        2,
+        'player-2',
+      ),
+      operation: async () => {
+        await git(repo, 'add', '--all');
+        await git(repo, 'commit', '--quiet', '-m', 'carry the boss tree');
+        return { status: 'ok' };
+      },
+      completeEffectBoundary: ({ outcomeReceipt, receipt }: any) => {
+        expect(receipt.preExisting).toEqual({
+          absorbed: ['base.txt'],
+          altered: [],
+          lost: [],
+        });
+        expect(outcomeReceipt.preExisting).toEqual({
+          absorbed: ['base.txt'],
+          altered: [],
+          lost: [],
+        });
+        return { semanticCandidate: { guard: 'committed' } };
+      },
+    });
+    const head = await git(repo, 'rev-parse', 'HEAD');
+    expect(answered).toMatchObject({
+      status: 'continued',
+      receipt: { classification: 'one-descendant-commit', commitOid: head },
+      logicalReceipt: {
+        classification: 'one-descendant-commit',
+        commitOid: head,
+        preExisting: { absorbed: ['base.txt'], altered: [], lost: [] },
+      },
+    });
+    expect(answered.logicalReceipt).toStrictEqual(
+      answered.effectLedger.logicalOperations[0]?.logicalReceipt,
+    );
   });
 
   it('fences mismatched deferred checkpoints and restores or parks without a call', async () => {

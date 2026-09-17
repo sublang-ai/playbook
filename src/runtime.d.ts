@@ -181,12 +181,23 @@ export interface PlaybookRepositoryObservation {
     readonly projection: Readonly<Record<string, JsonValue>>;
     readonly projectionDigest: string;
 }
+/**
+ * The fate of the baseline projection entries a governed call absorbed into
+ * its one commit, altered, or lost (DR-062). Each list holds sorted unique
+ * baseline paths and the three are pairwise disjoint.
+ */
+export interface PlaybookRepositoryPreExistingChanges {
+    readonly absorbed: readonly string[];
+    readonly altered: readonly string[];
+    readonly lost: readonly string[];
+}
 /** The fail-closed classification of one complete physical or logical receipt. */
 export interface PlaybookRepositoryReceipt {
     readonly classification: 'unchanged' | 'one-descendant-commit' | 'multiple-commits' | 'rewritten-or-non-descendant' | 'worktree-only-change' | 'concurrent-or-foreign-change' | 'observation-ambiguous';
     readonly baseline: PlaybookRepositoryObservation;
     readonly after?: PlaybookRepositoryObservation;
     readonly commitOid?: string;
+    readonly preExisting?: PlaybookRepositoryPreExistingChanges;
 }
 /** One durably ordered physical governed-player boundary (DR-040). */
 export interface PlaybookEffectBoundary {

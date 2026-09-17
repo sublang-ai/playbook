@@ -520,12 +520,167 @@ function projectionText(projection) {
   return JSON.stringify(projection);
 }
 
-function projectionPreservesBaseline(baseline, after) {
-  return Object.entries(baseline).every(
-    ([path, entry]) =>
-      Object.prototype.hasOwnProperty.call(after, path) &&
-      JSON.stringify(after[path]) === JSON.stringify(entry),
+const MISSING_CONTENT_IDENTITY = Object.freeze({ kind: 'missing' });
+
+function hasPath(projection, path) {
+  return Object.prototype.hasOwnProperty.call(projection, path);
+}
+
+// DR-062 §1: a rename, an unmerged path, a submodule, or a nested worktree is
+// preserved when byte-equal and otherwise lost, because no content matching is
+// attempted for them.
+function nonComparableBaselineEntry(entry) {
+  return (
+    entry.kind === 'rename-or-copy' ||
+    entry.kind === 'unmerged' ||
+    (entry.submodule !== undefined && entry.submodule !== 'N...') ||
+    entry.worktree?.kind === 'directory'
   );
+}
+
+// The entry the baseline HEAD tree held for a path: an ordinary porcelain-v2
+// record carries its HEAD mode and OID, `000000` means the path did not exist
+// there, an untracked path never did, and an unborn baseline HEAD holds none.
+function baselineHeadEntry(baseline, entry) {
+  if (baseline.head === NULL_GIT_OID) return undefined;
+  if (entry.kind !== 'ordinary') return undefined;
+  if (entry.headMode === undefined || entry.headMode === '000000') {
+    return undefined;
+  }
+  return { mode: entry.headMode, oid: entry.headOid };
+}
+
+function sameTreeEntry(left, right) {
+  if (left === undefined || right === undefined) return left === right;
+  return left.mode === right.mode && left.oid === right.oid;
+}
+
+// The baseline recorded nothing at the path: a deleted worktree entry, or a
+// staged deletion whose index holds no object.
+function baselineEntryIsDeletion(entry) {
+  return entry.worktree === undefined
+    ? entry.indexMode === '000000'
+    : entry.worktree.kind === 'missing';
+}
+
+// The entry one commit's tree holds for an exact path, or undefined when that
+// tree holds none.
+async function afterTreeEntry(worktree, head, path) {
+  const raw = await runGitText(worktree, [
+    'ls-tree',
+    '-z',
+    '--full-tree',
+    head,
+    '--',
+    path,
+  ]);
+  for (const record of raw.split('\0')) {
+    if (record.length === 0) continue;
+    const tab = record.indexOf('\t');
+    const fields = tab < 0 ? [] : record.slice(0, tab).split(' ');
+    if (fields.length !== 3) {
+      throw new RepositoryObservationAmbiguousError(
+        'Git returned a malformed tree record',
+      );
+    }
+    if (record.slice(tab + 1) !== path) continue;
+    return { mode: fields[0], oid: fields[2] };
+  }
+  return undefined;
+}
+
+// A blob addressed exactly as `worktreePathIdentity` addresses the same bytes
+// in the working tree, so a committed object and the Boss's own content are
+// comparable by the projection's content addressing rather than by Git OID.
+async function blobContentIdentity(worktree, mode, oid) {
+  const bytes = await runGit(worktree, ['cat-file', 'blob', oid]);
+  return {
+    kind: mode === '120000' ? 'symlink' : 'file',
+    mode,
+    content: `sha256:${sha256(bytes)}`,
+  };
+}
+
+function baselineContentIdentity(worktree, entry) {
+  return entry.worktree === undefined
+    ? blobContentIdentity(worktree, entry.indexMode, entry.indexOid)
+    : entry.worktree;
+}
+
+function sameContentIdentity(left, right) {
+  return (
+    left.kind === right.kind &&
+    left.mode === right.mode &&
+    left.content === right.content
+  );
+}
+
+// DR-062 §1: the fate of one baseline projection entry at the end of a
+// governed call — `preserved`, `altered-uncommitted`, `altered-committed`,
+// `absorbed`, or `lost`.
+async function baselineEntryFate(baseline, after, path, entry) {
+  if (hasPath(after.projection, path)) {
+    return JSON.stringify(after.projection[path]) === JSON.stringify(entry)
+      ? 'preserved'
+      : 'altered-uncommitted';
+  }
+  // The entry left the working tree, so only a commit this call made can hold
+  // the Boss's content; a call that moved no HEAD made none.
+  if (baseline.head === after.head) return 'lost';
+  if (nonComparableBaselineEntry(entry)) return 'lost';
+  try {
+    const treeEntry = await afterTreeEntry(after.worktree, after.head, path);
+    if (sameTreeEntry(treeEntry, baselineHeadEntry(baseline, entry))) {
+      // The commit left the path exactly as the baseline HEAD held it, so it
+      // carried no change of the Boss's and his content is nowhere.
+      return 'lost';
+    }
+    if (baselineEntryIsDeletion(entry)) {
+      return treeEntry === undefined ? 'absorbed' : 'lost';
+    }
+    if (treeEntry?.mode === '160000') return 'lost';
+    const [baselineIdentity, treeIdentity] = await Promise.all([
+      baselineContentIdentity(after.worktree, entry),
+      treeEntry === undefined
+        ? MISSING_CONTENT_IDENTITY
+        : blobContentIdentity(after.worktree, treeEntry.mode, treeEntry.oid),
+    ]);
+    return sameContentIdentity(baselineIdentity, treeIdentity)
+      ? 'absorbed'
+      : 'altered-committed';
+  } catch {
+    // Content the after HEAD cannot produce leaves the baseline entry
+    // unaccounted for, which fails closed exactly as a lost entry does.
+    return 'lost';
+  }
+}
+
+async function baselineEntryFates(baseline, after) {
+  const fates = [];
+  for (const [path, entry] of Object.entries(baseline.projection)) {
+    fates.push([path, await baselineEntryFate(baseline, after, path, entry)]);
+  }
+  return fates;
+}
+
+// DR-062 §3: the accounting a receipt records, present exactly when one list
+// is nonempty so that an all-preserved call keeps today's receipt shape.
+function preExistingFromFates(fates) {
+  const absorbed = [];
+  const altered = [];
+  const lost = [];
+  for (const [path, fate] of fates) {
+    if (fate === 'absorbed') absorbed.push(path);
+    else if (fate === 'altered-uncommitted' || fate === 'altered-committed') {
+      altered.push(path);
+    } else if (fate === 'lost') lost.push(path);
+  }
+  if (absorbed.length + altered.length + lost.length === 0) return undefined;
+  return {
+    absorbed: absorbed.sort(),
+    altered: altered.sort(),
+    lost: lost.sort(),
+  };
 }
 
 async function rawRepositoryStatus(worktree, env) {
@@ -788,12 +943,13 @@ async function descendantCount(worktree, baselineHead, afterHead) {
   return count;
 }
 
-function receipt(classification, baseline, after, commitOid) {
+function receipt(classification, baseline, after, commitOid, preExisting) {
   return deepFreeze({
     classification,
     baseline,
     ...(after === undefined ? {} : { after }),
     ...(commitOid === undefined ? {} : { commitOid }),
+    ...(preExisting === undefined ? {} : { preExisting }),
   });
 }
 
@@ -821,16 +977,19 @@ export async function classifyRepositoryReceipt(
   if (allowed.every((value) => value === 'unchanged')) {
     return receipt('concurrent-or-foreign-change', baseline, after);
   }
+  // DR-062 §2: a same-HEAD delta admits altered pre-existing entries beside
+  // new ones; only an entry whose change is nowhere keeps it ambiguous.
   if (sameHead) {
-    if (!projectionPreservesBaseline(baseline.projection, after.projection)) {
-      return receipt('observation-ambiguous', baseline, after);
-    }
+    const fates = await baselineEntryFates(baseline, after);
+    const lost = fates.some(([, fate]) => fate === 'lost');
     return receipt(
-      allowed.includes('one-descendant-commit')
+      !lost && allowed.includes('one-descendant-commit')
         ? 'worktree-only-change'
         : 'observation-ambiguous',
       baseline,
       after,
+      undefined,
+      preExistingFromFates(fates),
     );
   }
   // A HEAD that stopped naming a commit lost its history; every commit
@@ -847,10 +1006,24 @@ export async function classifyRepositoryReceipt(
   if (count !== 1) {
     return receipt('rewritten-or-non-descendant', baseline, after);
   }
-  if (!sameProjection) {
-    return receipt('observation-ambiguous', baseline, after);
-  }
-  return receipt('one-descendant-commit', baseline, after, after.head);
+  // DR-062 §2: the one commit proves itself when every baseline entry is
+  // preserved, absorbed, or altered and carried by it, and the after
+  // projection holds nothing else.
+  const fates = await baselineEntryFates(baseline, after);
+  const unattributable =
+    fates.some(
+      ([, fate]) => fate === 'lost' || fate === 'altered-uncommitted',
+    ) ||
+    Object.keys(after.projection).some(
+      (path) => !hasPath(baseline.projection, path),
+    );
+  return receipt(
+    unattributable ? 'observation-ambiguous' : 'one-descendant-commit',
+    baseline,
+    after,
+    unattributable ? undefined : after.head,
+    preExistingFromFates(fates),
+  );
 }
 
 export async function captureRepositoryReceipt(baseline, options = {}) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createEvent } from '@sublang/cligent';
 import type { AgentAdapter, AgentEvent, AgentOptions } from '@sublang/cligent';
@@ -577,6 +578,203 @@ function conservativeOpenLogicalUnresolvedEffectTestLedger(
       { kind: 'logical-operation' as const, operationId: ambiguousOperationId },
     ],
   };
+}
+
+// DR-062: an open chain whose latest physical receipt already accounted for
+// the operation's own original baseline keeps the classification that receipt
+// proved, even though the after projection is no longer byte-equal.
+function absorbedOpenLogicalUnresolvedEffectTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: { 'boss.txt': 'dirty' },
+    projectionDigest:
+      'sha256:eebb7cfc718f0116b0d449fc2e67978f736647e980c647e437f6853765f0d529',
+  };
+  const absorbedAfter = {
+    ...baseline,
+    head: UNRESOLVED_EFFECT_AFTER_HEAD,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  const alteredAfter = {
+    ...baseline,
+    projection: { 'boss.txt': 'changed' },
+    projectionDigest:
+      'sha256:d158b6c5c76dac7f09f5985584df83e8054351e8ebf4d3b420964f51e2cbfc41',
+  };
+  const absorbedOperationId = 'b1000000-0000-4000-8000-000000000001';
+  const askedBoundaryId = 'b2000000-0000-4000-8000-000000000002';
+  const absorbedBoundaryId = 'b3000000-0000-4000-8000-000000000003';
+  const alteredOperationId = 'b4000000-0000-4000-8000-000000000004';
+  const alteredBoundaryId = 'b5000000-0000-4000-8000-000000000005';
+  const boundaryBase = {
+    playbookId,
+    runtimeSessionId,
+    turnId: 1,
+    callId: `${playbookId}:coder:absorbed-logical`,
+    roleId: 'coder',
+    sourceStateId: 'working',
+    sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+    dispositions: ['deferred', 'one-descendant-commit'],
+    canonicalWorktree: {
+      worktree: baseline.worktree,
+      gitDir: baseline.gitDir,
+    },
+    correctionBudget: { limit: 1, spent: false },
+  };
+  return {
+    ledger: assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 5,
+      boundaries: [
+        {
+          ...boundaryBase,
+          sequence: 1,
+          boundaryId: askedBoundaryId,
+          attemptId: 'b6000000-0000-4000-8000-000000000006',
+          attemptNumber: 1,
+          baseline,
+          after: baseline,
+          physicalReceipt: {
+            classification: 'unchanged',
+            baseline,
+            after: baseline,
+          },
+          logicalOperationId: absorbedOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 2,
+          boundaryId: absorbedBoundaryId,
+          attemptId: 'b7000000-0000-4000-8000-000000000007',
+          attemptNumber: 2,
+          baseline,
+          after: absorbedAfter,
+          physicalReceipt: {
+            classification: 'one-descendant-commit',
+            baseline,
+            after: absorbedAfter,
+            commitOid: absorbedAfter.head,
+            preExisting: { absorbed: ['boss.txt'], altered: [], lost: [] },
+          },
+          logicalOperationId: absorbedOperationId,
+        },
+        {
+          ...boundaryBase,
+          sequence: 3,
+          boundaryId: alteredBoundaryId,
+          attemptId: 'b8000000-0000-4000-8000-000000000008',
+          attemptNumber: 1,
+          baseline,
+          after: alteredAfter,
+          physicalReceipt: {
+            classification: 'worktree-only-change',
+            baseline,
+            after: alteredAfter,
+            preExisting: { absorbed: [], altered: ['boss.txt'], lost: [] },
+          },
+          logicalOperationId: alteredOperationId,
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId: absorbedOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [askedBoundaryId, absorbedBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+        {
+          sequence: 2,
+          operationId: alteredOperationId,
+          playbookId,
+          runtimeSessionId,
+          boundaryIds: [alteredBoundaryId],
+          originalBaseline: baseline,
+          checkpointRestorationEligible: false,
+        },
+      ],
+    }),
+    references: [
+      { kind: 'logical-operation' as const, operationId: absorbedOperationId },
+      { kind: 'logical-operation' as const, operationId: alteredOperationId },
+    ],
+  };
+}
+
+const CARRIED_COMMIT_OID = 'd'.repeat(40);
+
+// DR-062 §5: one completed boundary whose accepted commit absorbed one
+// pre-existing path, altered another, and added a fresh one of its own.
+function carriedPreExistingTestLedger(
+  playbookId: string,
+  runtimeSessionId: string,
+) {
+  const baseline = {
+    worktree: '/current/worktree',
+    gitDir: '/current/worktree/.git',
+    head: UNRESOLVED_EFFECT_BASELINE_HEAD,
+    projection: { 'boss.txt': 'dirty', 'notes/draft.md': 'draft' },
+    projectionDigest: `sha256:${createHash('sha256')
+      .update(
+        JSON.stringify({ 'boss.txt': 'dirty', 'notes/draft.md': 'draft' }),
+      )
+      .digest('hex')}`,
+  };
+  const after = {
+    ...baseline,
+    head: CARRIED_COMMIT_OID,
+    projection: {},
+    projectionDigest:
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+  };
+  return assertPlaybookEffectLedger({
+    schemaVersion: 1,
+    revision: 1,
+    boundaries: [
+      {
+        sequence: 1,
+        boundaryId: 'c1000000-0000-4000-8000-000000000001',
+        attemptId: 'c2000000-0000-4000-8000-000000000002',
+        attemptNumber: 1,
+        playbookId,
+        runtimeSessionId,
+        turnId: 1,
+        callId: `${playbookId}:coder:carried`,
+        roleId: 'coder',
+        sourceStateId: 'working',
+        sourceOutcomeSchema: { committed: {} },
+        dispositions: ['one-descendant-commit'],
+        canonicalWorktree: {
+          worktree: baseline.worktree,
+          gitDir: baseline.gitDir,
+        },
+        baseline,
+        after,
+        physicalReceipt: {
+          classification: 'one-descendant-commit',
+          baseline,
+          after,
+          commitOid: after.head,
+          preExisting: {
+            absorbed: ['boss.txt'],
+            altered: ['notes/draft.md'],
+            lost: [],
+          },
+        },
+        correctionBudget: { limit: 1, spent: false },
+      },
+    ],
+    logicalOperations: [],
+  });
 }
 
 function terminalResult(
@@ -3307,6 +3505,210 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
       },
     ]);
+    await shell.dispose?.();
+  });
+
+  it('keeps an open chain at the classification its own baseline proved (DR-062)', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000033';
+    const { ledger, references } =
+      absorbedOpenLogicalUnresolvedEffectTestLedger('code', rootSessionId);
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('effectReconciliationRequired'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('effectReconciliationRequired');
+    });
+    const createRuntime = registry.entry.createRuntime as unknown as
+      PlaybookCaptainRegistryEntryV3['createRuntime'];
+    registry.entry.createRuntime = ((options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      runtime.unresolvedEffectEnvelopes = () => references;
+      return runtime;
+    }) as typeof registry.entry.createRuntime;
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'absorbed-open-logical-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(
+      turn('/code keep the proved classification'),
+      stubContext().context,
+    );
+
+    expect(shell.exportSettlement()?.unresolvedEffects).toEqual([
+      {
+        classification: 'one-descendant-commit',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_AFTER_HEAD,
+        commitOid: UNRESOLVED_EFFECT_AFTER_HEAD,
+      },
+      {
+        classification: 'worktree-only-change',
+        baselineHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+        afterHead: UNRESOLVED_EFFECT_BASELINE_HEAD,
+      },
+    ]);
+    await shell.dispose?.();
+  });
+
+  it('reports the pre-existing changes one accepted commit carried (DR-062)', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000034';
+    const settled = carriedPreExistingTestLedger('code', rootSessionId);
+    let current = emptyPlaybookEffectLedger();
+    const registry = fakeCodeEntry(async (runtime) => {
+      current = settled;
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('editing'),
+        { turn: 1, effectLedger: settled },
+      );
+      return quiescentResult('editing');
+    });
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'carried-pre-existing-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => current),
+        writeAhead: vi.fn(async () => current),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    const context = stubContext();
+    await shell.handleBossTurn(
+      turn('/code build on the boss dirt'),
+      context.context,
+    );
+
+    expect(context.replies).toHaveLength(1);
+    const reply = context.replies[0]!;
+    const report = [
+      `Pre-existing changes carried by commit ${CARRIED_COMMIT_OID}:`,
+      '- absorbed as found: boss.txt',
+      '- altered before committing: notes/draft.md',
+      'These changes were uncommitted before the step.',
+    ].join('\n');
+    expect(reply).toContain(report);
+    expect(reply.split(report)).toHaveLength(2);
+    expect(reply).not.toContain('fresh.txt');
+    // The closing-reply prompt reads the same information as a settlement fact.
+    const fact =
+      `The commit ${CARRIED_COMMIT_OID} carries 2 changes that were uncommitted before the step: boss.txt, notes/draft.md.`;
+    expect(
+      context.captainCalls.some(({ prompt }) => prompt.includes(fact)),
+    ).toBe(true);
+    // The report supplements the unresolved-effect list and never joins it,
+    // and the settlement the runtime published carries neither it nor the
+    // fact — the journaled reply is its one appearance.
+    const settlement = shell.exportSettlement();
+    expect(settlement?.unresolvedEffects).toEqual([]);
+    expect(
+      JSON.stringify(settlement).split('Pre-existing changes carried by commit'),
+    ).toHaveLength(2);
+    expect(JSON.stringify(settlement)).not.toContain(
+      'changes that were uncommitted before the step',
+    );
+    await shell.dispose?.();
+  });
+
+  it('appends no carried-changes report when no receipt carries one (DR-062)', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000035';
+    const ledger = emptyPlaybookEffectLedger();
+    const registry = fakeCodeEntry(async (runtime) => {
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('editing'),
+        { turn: 1, effectLedger: ledger },
+      );
+      return quiescentResult('editing');
+    });
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'no-carried-pre-existing-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => ledger),
+        writeAhead: vi.fn(async () => ledger),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    const context = stubContext();
+    await shell.handleBossTurn(
+      turn('/code leave the tree alone'),
+      context.context,
+    );
+
+    expect(context.replies).toHaveLength(1);
+    expect(context.replies[0]).not.toContain('Pre-existing changes carried');
+    await shell.dispose?.();
+  });
+
+  it('never reports a boundary an earlier turn already reported (DR-062)', async () => {
+    const rootSessionId = '21000000-0000-4000-8000-000000000036';
+    const settled = carriedPreExistingTestLedger('code', rootSessionId);
+    let current = emptyPlaybookEffectLedger();
+    const registry = fakeCodeEntry(async (runtime) => {
+      current = settled;
+      runtime.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('editing'),
+        { turn: 1, effectLedger: settled },
+      );
+      return quiescentResult('editing');
+    });
+    const capabilityBase = fakeHostCapabilities(
+      registry.entry,
+      'repeated-carried-pre-existing-lease',
+    );
+    const capabilities: PlaybookHostConstructionCapabilities = {
+      ...capabilityBase,
+      effectLedger: {
+        snapshot: vi.fn(() => current),
+        writeAhead: vi.fn(async () => current),
+      },
+    };
+    const shell = makeShell(registry, {
+      sessionIds: [rootSessionId],
+      hostCapabilities: { code: capabilities },
+    });
+
+    await shell.init!(stubSession().session);
+    const first = stubContext();
+    await shell.handleBossTurn(turn('/code carry the dirt'), first.context);
+    expect(first.replies[0]).toContain('Pre-existing changes carried by commit');
+
+    const second = stubContext();
+    await shell.handleBossTurn(turn('/code keep going'), second.context);
+    expect(second.replies).toHaveLength(1);
+    expect(second.replies[0]).not.toContain('Pre-existing changes carried');
     await shell.dispose?.();
   });
 
