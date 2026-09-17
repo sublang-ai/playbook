@@ -86,6 +86,7 @@ meta.md       The spec of specs
 | [DR-058](decisions/058-link-materialization-tool.md) | 058-link-materialization-tool.md | Optional thin-module materializer retained for measured flat quoted-relay linking and one accepted labelled CODE comparison |
 | [DR-059](decisions/059-helper-backed-compact-link.md) | 059-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
 | [DR-060](decisions/060-compact-link-definition.md) | 060-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
+| [DR-061](decisions/061-dev-analyst-plans-the-path.md) | 061-dev-analyst-plans-the-path.md | DEV's Analyst plans the path: a bounded planning note, a route-changing Boss question only, and analysis, design, and implementation left to the called playbooks |
 
 ## Packages
 

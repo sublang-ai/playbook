@@ -54,6 +54,11 @@ Every REVIEW prompt that invokes Reviewer shall forbid Reviewer from editing fil
 
 Where a REVIEW prompt asks Reviewer to assess affected specs, the prompt shall require checks for correctness and coherence, appropriate behavioral scope, minimality, organization, `specs/map.md` accuracy, and `specs/meta.md` conformance without naming a retired spec layout.
 
+#### playbook-52
+
+Every DEV prompt that invokes Analyst shall confine Analyst's reply to one chosen development path and a planning note of at most ten lines stating why — the decisions and spec items that settle the work, or the open point a decision must settle — carrying the scope the request implies and any fact from a named issue that the called playbooks need, and shall exclude design, proposals, implementation instructions, and file-level findings as the called playbooks' own work.
+The prompt shall bound Analyst's reading of the specs and the repository to what choosing the path requires, shall permit a question to Boss only where its answer would change which path runs or whether any work is wanted — as one short question naming the alternatives it decides between and nothing else — and shall require a reply that chooses a path to ask nothing and a reply that asks Boss to choose no path.
+
 ### Workflow behavior
 
 #### playbook-20
@@ -345,6 +350,10 @@ When the REVIEW prompt-contract suite runs, it shall fail if a Reviewer prompt p
 #### playbook-19
 
 When the REVIEW prompt-contract suite runs, it shall fail if an affected-spec review omits a required quality check or names the retired `specs/{user,dev,test}` layout (verifying [[playbook-18](#playbook-18)]).
+
+#### playbook-53
+
+When the DEV prompt-contract suite runs, it shall fail if a composed Analyst prompt omits the planning-note bound or its exclusions, permits a question to Boss beyond one whose answer would change which path runs or whether any work is wanted, or lets one reply both choose a path and ask Boss (verifying [[playbook-52](#playbook-52)]).
 
 ### Workflow coverage
 
