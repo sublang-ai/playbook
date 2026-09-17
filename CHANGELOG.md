@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **DEV's Analyst plans the path; the playbooks do the work.** Its replies were multi-page analyses — design proposals, a vocabulary, file-level findings, instructions written for the coder — relayed verbatim into CODE and into DECIDE, whose two independent proposals then shared one design agenda, and two of three runs parked on Boss questions that changed no routing. The Analyst now chooses one path and writes a planning note of at most ten lines saying why, holding no design, proposal, implementation instruction, or file-level finding, and asks Boss only a question whose answer would change which path runs or whether any work is wanted. The six outcomes, the machine, the `unchanged` governance, the Boss-question suspension, and the verbatim relay of the note are unchanged ([DR-061](specs/decisions/061-dev-analyst-plans-the-path.md)).
+
 ## [14.0.0] - 2026-09-15
 
 ### Added

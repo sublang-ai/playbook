@@ -157,7 +157,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       "Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support.",
       "No outcome depends on a fixed presentation format of Analyst's reply.",
       '`dev` shall act on the accepted outcome itself and shall not return to the session Captain for another routing decision.',
-      'Discussion complete is available only after a Boss reply, when any useful analysis has already been presented through needs Boss reply.',
+      'Discussion complete is available only after a Boss reply, when that reply settles that no repository work should follow.',
     ]) {
       expect(source).toContain(clause);
     }
@@ -169,9 +169,10 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       'codeViaPullRequest',
       'decideThenCodeViaPullRequest',
     ]);
-    // DR-050: the one added planning bullet reaches the Analyst verbatim.
+    // DR-050: the pull-request planning choice reaches the Analyst verbatim,
+    // in the DR-061 wording that bounds the reading it asks for.
     expect(item?.prompt).toContain(
-      '- If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.',
+      '- `code via pull request` or `decide then code via pull request`, in place of the two above, when the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery; read the issue and its comments (`gh issue view --comments` with the issue number) while choosing.',
     );
     expect(devRegistry.summaryPolicy.copyPasteGuardNames).toEqual([
       'code',

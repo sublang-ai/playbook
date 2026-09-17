@@ -104,7 +104,7 @@ export const devPlaybookRegistryEntry: DevPlaybookRegistryEntry = {
   id: 'dev',
   command: 'dev',
   intent:
-    'analyze a development request that needs planning before choosing direct implementation or a durable decision first, delivered through a pull request when the request names a GitHub issue or asks for one',
+    'plan the development path for a request: direct implementation, or a durable decision first, delivered through a pull request when the request names a GitHub issue or asks for one',
   artifactSchema: 3,
   runtimeProfile: Object.freeze({
     kind: 'shared-factory',

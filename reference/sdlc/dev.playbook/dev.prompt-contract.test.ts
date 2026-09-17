@@ -16,6 +16,16 @@ const promptIdentity = (roleId: string): string => roleId;
 const composePlayerPrompt = (input: PlayerInput, resuming?: boolean): string =>
   _internal.composePlayerPrompt(input, promptIdentity, resuming);
 
+const PLANNING_NOTE_BOUND = [
+  'It holds only the path and, in at most ten lines, why',
+  'It holds no design, proposal, implementation instruction, or file-level finding: the playbooks own those.',
+] as const;
+
+const BOSS_QUESTION_RULE = [
+  'A question to Boss, only when the answer would change which path runs or whether any work is wanted: one short question naming the alternatives it decides between, and nothing else.',
+  'A reply that chooses a path asks Boss nothing; a reply that asks Boss chooses no path.',
+] as const;
+
 const ACTUAL_CONTEXT: DevContext = {
   runResults: 'tests passed',
   developmentRequest: 'Plan the request.',
@@ -35,7 +45,7 @@ function planInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
       '> Prior discussion: <discussion-context>',
       '> Run results: <run-results>',
       '',
-      'Plan the smallest sound next step.',
+      'Plan which playbooks run for this request.',
     ].join('\n'),
     result: { code: 'done' },
     developmentRequest: 'line one\nline two',
@@ -82,6 +92,26 @@ describe('DEV player prompt composition', () => {
     }
   });
 
+  // DR-061: the planning note is the children's instruction, so the prompt
+  // bounds what it may hold and what it may never hold.
+  it.each(PLANNING_NOTE_BOUND)('bounds the planning note: %s', (sentence) => {
+    for (const state of enumeratePlayerStates(devMachine)) {
+      const input = state.getInput(ACTUAL_CONTEXT);
+      expect(input.prompt).toContain(sentence);
+      expect(composePlayerPrompt(input)).toContain(sentence);
+    }
+  });
+
+  // DR-061: a Boss question is a routing instrument, never a design request,
+  // and never shares a reply with a chosen path.
+  it.each(BOSS_QUESTION_RULE)('confines a Boss question: %s', (sentence) => {
+    for (const state of enumeratePlayerStates(devMachine)) {
+      const input = state.getInput(ACTUAL_CONTEXT);
+      expect(input.prompt).toContain(sentence);
+      expect(composePlayerPrompt(input)).toContain(sentence);
+    }
+  });
+
   it('keeps every line of relayed values inside Markdown quotes', () => {
     expect(composePlayerPrompt(planInput())).toBe(
       [
@@ -92,7 +122,7 @@ describe('DEV player prompt composition', () => {
         '> Run results: test one',
         '> test two',
         '',
-        'Plan the smallest sound next step.',
+        'Plan which playbooks run for this request.',
       ].join('\n'),
     );
   });

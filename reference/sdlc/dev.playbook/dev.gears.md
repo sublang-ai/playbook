@@ -9,6 +9,7 @@ Roles:
 
 `dev` is an optional repository-aware planner for a development request that needs more analysis before choosing a development path.
 It coordinates existing playbooks and owns no repository commit itself.
+Analyst chooses the path and states why in a short planning note; analysis, design, and implementation belong to the playbooks `dev` calls, and a question to Boss serves only the choice of path.
 
 ## Analyst
 
@@ -20,31 +21,37 @@ At the start of `dev` and after each Boss reply, Captain shall relay the develop
 > > Prior discussion: <discussion-context>
 > > Run results: <run-results>
 >
-> Inspect the request and the relevant repository and specs only as needed to determine the smallest sound next step.
+> Plan which playbooks run for this request; the playbooks do the work.
+> Read the request, then the specs and the repository only as far as choosing the path requires.
 > Do not change files or commit while planning or discussing the request.
 >
-> - If useful analysis or clarification should be discussed before any repository work, give Boss the useful response and ask one material question that advances the decision.
-> - If the discussion has concluded after a Boss reply and no repository work should follow, choose `discussion complete`.
-> - If implementation can proceed under the existing decisions, choose `code`.
-> - If implementation first requires a new or amended durable decision that the existing specs do not settle, choose `decide then code`.
-> - If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.
+> Choose exactly one:
 >
+> - `code`: the existing decisions and spec items settle how the work is done.
+> - `decide then code`: the work turns on a rule, concept, term, shape, or trade-off the specs leave open or contradict; name what is open, do not settle it.
+> - `code via pull request` or `decide then code via pull request`, in place of the two above, when the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery; read the issue and its comments (`gh issue view --comments` with the issue number) while choosing.
+> - A question to Boss, only when the answer would change which path runs or whether any work is wanted: one short question naming the alternatives it decides between, and nothing else. When every answer leads to the same path, choose it; the playbook settles the open point.
+> - `discussion complete`, after a Boss reply, when no repository work should follow.
+>
+> Your reply is the planning note the chosen playbook receives. It holds only the path and, in at most ten lines, why — the decisions and spec items that settle the work, or the open point a decision must settle — plus the scope the request implies and any fact from the issue the playbooks need.
+> It holds no design, proposal, implementation instruction, or file-level finding: the playbooks own those.
+> A reply that chooses a path asks Boss nothing; a reply that asks Boss chooses no path.
 > A question or exploratory discussion is not by itself authorization to create a durable decision or implement changes.
-> Do not choose `decide then code` merely because the work is large.
+> Do not choose `decide then code` merely because the work is large, nor `code` merely because it is small.
 > Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 
 Results:
 - `discussionComplete`: Analyst concluded the discussion after a Boss reply, with no repository work to follow.
-- `code`: Analyst determined implementation can proceed under the existing decisions. Output shall include `planningResult: <verbatim final text>`.
-- `decideThenCode`: Analyst determined implementation first requires a new or amended durable decision that the existing specs do not settle. Output shall include `planningResult: <verbatim final text>`.
-- `codeViaPullRequest`: Analyst determined implementation can proceed under the existing decisions and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.
-- `decideThenCodeViaPullRequest`: Analyst determined implementation first requires a new or amended durable decision that the existing specs do not settle and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.
+- `code`: Analyst chose `code`: the existing decisions and spec items settle how the work is done. Output shall include `planningResult: <verbatim final text>`.
+- `decideThenCode`: Analyst chose `decide then code`: the work turns on a point the specs leave open or contradict. Output shall include `planningResult: <verbatim final text>`.
+- `codeViaPullRequest`: Analyst chose `code via pull request`: the existing decisions settle the work, and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.
+- `decideThenCodeViaPullRequest`: Analyst chose `decide then code via pull request`: the work turns on a point the specs leave open or contradict, and the request names a GitHub issue or explicitly asks for pull-request delivery. Output shall include `planningResult: <verbatim final text>`.
 
 Workflow outcomes:
 - The planning result has six semantic outcomes: needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request.
 - Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support, and no outcome depends on a fixed presentation format of Analyst's reply.
 - Needs Boss reply uses the standard Boss-question suspension with Analyst's complete response; after Boss replies, `dev` resumes with the answer in the same Analyst conversation; the previous question is included only when that conversation must start fresh.
-- Discussion complete is available only after a Boss reply, when any useful analysis has already been presented through needs Boss reply; it completes `dev` without a child call or repository change.
+- Discussion complete is available only after a Boss reply, when that reply settles that no repository work should follow; it completes `dev` without a child call or repository change.
 - `dev` acts on the accepted outcome itself and does not return to the session Captain for another routing decision.
 
 ## Nested development paths

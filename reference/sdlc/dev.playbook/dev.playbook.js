@@ -92,7 +92,7 @@ const runtimeSpec = {
     roleStates: {
         planAnalysis: {
             role: 'analyst',
-            label: 'Analyst is analyzing the development request to choose the smallest sound next step.',
+            label: 'Analyst is choosing the development path.',
         },
     },
     // DR-044: DEV owns no repository commit — every Analyst outcome is

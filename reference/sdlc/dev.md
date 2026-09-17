@@ -12,6 +12,7 @@ The caller supplies a development request including any desired outcome, scope, 
 
 `dev` is an optional repository-aware planner for a development request that needs more analysis before choosing a development path.
 It coordinates existing playbooks and owns no repository commit itself.
+Analyst chooses the path and states why in a short planning note; analysis, design, and implementation belong to the playbooks `dev` calls, and a question to Boss serves only the choice of path.
 
 At the start of `dev` and after each Boss reply, Captain shall relay the development request, relevant discussion context, and any relevant run results to Analyst in quotes (`>`), along with the following instruction:
 
@@ -20,17 +21,23 @@ At the start of `dev` and after each Boss reply, Captain shall relay the develop
 > Run results: <run-results>
 
 ```markdown
-Inspect the request and the relevant repository and specs only as needed to determine the smallest sound next step.
+Plan which playbooks run for this request; the playbooks do the work.
+Read the request, then the specs and the repository only as far as choosing the path requires.
 Do not change files or commit while planning or discussing the request.
 
-- If useful analysis or clarification should be discussed before any repository work, give Boss the useful response and ask one material question that advances the decision.
-- If the discussion has concluded after a Boss reply and no repository work should follow, choose `discussion complete`.
-- If implementation can proceed under the existing decisions, choose `code`.
-- If implementation first requires a new or amended durable decision that the existing specs do not settle, choose `decide then code`.
-- If the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery, read the issue and its comments as part of the analysis (`gh issue view --comments` with the issue number) and choose `code via pull request` or `decide then code via pull request` in place of `code` or `decide then code`.
+Choose exactly one:
 
+- `code`: the existing decisions and spec items settle how the work is done.
+- `decide then code`: the work turns on a rule, concept, term, shape, or trade-off the specs leave open or contradict; name what is open, do not settle it.
+- `code via pull request` or `decide then code via pull request`, in place of the two above, when the request names a GitHub issue (number or URL) or explicitly asks for pull-request delivery; read the issue and its comments (`gh issue view --comments` with the issue number) while choosing.
+- A question to Boss, only when the answer would change which path runs or whether any work is wanted: one short question naming the alternatives it decides between, and nothing else. When every answer leads to the same path, choose it; the playbook settles the open point.
+- `discussion complete`, after a Boss reply, when no repository work should follow.
+
+Your reply is the planning note the chosen playbook receives. It holds only the path and, in at most ten lines, why — the decisions and spec items that settle the work, or the open point a decision must settle — plus the scope the request implies and any fact from the issue the playbooks need.
+It holds no design, proposal, implementation instruction, or file-level finding: the playbooks own those.
+A reply that chooses a path asks Boss nothing; a reply that asks Boss chooses no path.
 A question or exploratory discussion is not by itself authorization to create a durable decision or implement changes.
-Do not choose `decide then code` merely because the work is large.
+Do not choose `decide then code` merely because the work is large, nor `code` merely because it is small.
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
@@ -42,7 +49,7 @@ No outcome depends on a fixed presentation format of Analyst's reply.
 For needs Boss reply, `dev` shall use the standard Boss-question suspension with Analyst's complete response.
 The session Captain shall present that response to Boss and, after Boss replies, resume `dev` with the answer in the same Analyst conversation; include the previous question only when that conversation must start fresh.
 
-Discussion complete is available only after a Boss reply, when any useful analysis has already been presented through needs Boss reply.
+Discussion complete is available only after a Boss reply, when that reply settles that no repository work should follow.
 It completes `dev` without a child call or repository change.
 
 For code, `dev` shall directly call playbook `code` with the development request, relevant discussion context, and planning result in quotes (`>`).

@@ -124,20 +124,20 @@ untouched
 The current CODE, REVIEW, DECIDE, DEV, BRANCH, and PR workflows take their
 deterministic initial event from the selecting Boss turn. CODE and DECIDE then
 call REVIEW as a nested playbook, while DEV — the repository-aware planner
-behind `/dev` — analyzes a development request and itself calls CODE, or
-DECIDE and then CODE, as nested playbooks. When the request names a GitHub
-issue or asks for pull-request delivery, DEV reads the issue and its comments
-while planning, calls BRANCH before that path and PR after CODE succeeds, and
-ends with a merged pull request and a closed issue — or with a named failure
-that leaves the pull request open for a later `/pr`. Both are usable on their
-own: `/branch <issue or request>` creates and checks out `issue-N-slug` (or a
-request slug) at the current commit, changing nothing else; `/pr` pushes the
-checked-out branch, opens or reuses its pull request against the default
-branch, waits for the checks, fixes red checks through one nested CODE call,
-merges with a merge commit, and fast-forwards the local default branch. A
-repository without checks merges on CODE's nested review alone. BRANCH, PR,
-and issue-aware DEV planning require the GitHub CLI `gh`, authenticated for
-the repository's GitHub remote
+behind `/dev` — chooses the development path for a request and itself calls
+CODE, or DECIDE and then CODE, as nested playbooks. When the request names a
+GitHub issue or asks for pull-request delivery, DEV reads the issue and its
+comments while planning, calls BRANCH before that path and PR after CODE
+succeeds, and ends with a merged pull request and a closed issue — or with a
+named failure that leaves the pull request open for a later `/pr`. Both are
+usable on their own: `/branch <issue or request>` creates and checks out
+`issue-N-slug` (or a request slug) at the current commit, changing nothing
+else; `/pr` pushes the checked-out branch, opens or reuses its pull request
+against the default branch, waits for the checks, fixes red checks through one
+nested CODE call, merges with a merge commit, and fast-forwards the local
+default branch. A repository without checks merges on CODE's nested review
+alone. BRANCH, PR, and issue-aware DEV planning require the GitHub CLI `gh`,
+authenticated for the repository's GitHub remote
 ([DR-050](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/050-pull-request-delivery.md)).
 Local role names do not imply continuity: each frame
 uses the exact stable player IDs configured under its `roles` map. Equal IDs
