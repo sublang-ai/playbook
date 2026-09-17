@@ -87,6 +87,8 @@ meta.md       The spec of specs
 | [DR-059](decisions/059-helper-backed-compact-link.md) | 059-helper-backed-compact-link.md | Rejected helper-backed compact recipe: no measured speed improvement |
 | [DR-060](decisions/060-compact-link-definition.md) | 060-compact-link-definition.md | Rejected compact link-definition experiment: no demonstrated successful compilation improvement |
 | [DR-061](decisions/061-dev-analyst-plans-the-path.md) | 061-dev-analyst-plans-the-path.md | DEV's Analyst plans the path: a bounded planning note, a route-changing Boss question only, and analysis, design, and implementation left to the called playbooks |
+| [DR-062](decisions/062-pre-existing-changes-are-context.md) | 062-pre-existing-changes-are-context.md | Pre-existing changes are the Boss's context: absorbed or altered entries carried by a call's one commit prove `one-descendant-commit` with `preExisting` receipt evidence, the Coder is told what pre-exists, the Boss is told what was carried; only lost entries stay ambiguous |
+| [DR-063](decisions/063-failures-explain-themselves.md) | 063-failures-explain-themselves.md | Failures explain themselves: a closed `{ code, evidence }` cause attached where each failure is decided, `standing` on every advertised action, and one deterministic Boss-visible failure report for every host |
 
 ## Packages
 

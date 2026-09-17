@@ -7,6 +7,7 @@
 
 Accepted.
 Amends [DR-051](051-host-selected-runtime-recovery.md) in one scope: a host may also decide a give-up turn, whose result phase the shell settles itself instead of through the closing-reply call.
+Amended by [DR-063](063-failures-explain-themselves.md): the shell's give-up control carries `standing` like every advertised action.
 
 ## Context
 

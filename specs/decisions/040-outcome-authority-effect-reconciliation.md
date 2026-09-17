@@ -13,6 +13,8 @@ Refines the artifact compatibility rollout of [DR-022](022-runtime-compatibility
 Preserves [DR-020](020-spec-layout-agnostic-code-prompts.md): no repository layout or informal intent-progress notation becomes a generic effect fact.
 Preserves [DR-035](035-truthful-terminal-meaning.md) and [DR-037](037-terminal-result-meaning.md): unresolved-effect abandonment is not an FSM terminal outcome and publishes no invented final-state meaning.
 Amended by [DR-049](049-portable-session-contract.md): deferred-player identity independent of provider tokens.
+Amended by [DR-062](062-pre-existing-changes-are-context.md): a governed call may absorb or alter the pre-existing changes of its baseline within its one commit, recorded as receipt evidence; only a lost pre-existing change and an unattributable delta remain ambiguity.
+Amended by [DR-063](063-failures-explain-themselves.md): a parked failure carries a structured cause beside the bounded unresolved-effect list, and advertised recovery actions carry a standing.
 
 ## Context
 
