@@ -278,7 +278,7 @@ export declare const prMachine: import("xstate").StateMachine<PrContext, {
 } | {
     type: "resumesOpenPullRequest";
     params: unknown;
-}, never, "failed" | "awaitBossReply" | "ready" | "openPullRequest" | "waitForChecks" | "fixChecks" | "publishFix" | "waitForChecksAfterFix" | "mergePullRequest" | "updateLocalDefault" | "notPublished" | "fixNotPublished" | "checksStillFailing" | "merged" | "mergeRefused" | "mergedLocalBehind" | "fixFailed", string, Readonly<Record<never, never>>, {
+}, never, "failed" | "ready" | "awaitBossReply" | "openPullRequest" | "waitForChecks" | "fixChecks" | "publishFix" | "waitForChecksAfterFix" | "mergePullRequest" | "updateLocalDefault" | "notPublished" | "fixNotPublished" | "checksStillFailing" | "merged" | "mergeRefused" | "mergedLocalBehind" | "fixFailed", string, Readonly<Record<never, never>>, {
     readonly status: "merged";
     /** The pull request number, exactly as Coder reported it. */
     readonly pullRequest: string;

@@ -296,7 +296,7 @@ export declare const devMachine: import("xstate").StateMachine<DevContext, {
 } | {
     type: "resumesPlanAnalysis";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "planAnalysis" | "createBranch" | "callCode" | "callDecide" | "callCodeAfterDecide" | "openPullRequest" | "discussionComplete" | "reportedChildFailure", string, DevInput, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "planAnalysis" | "createBranch" | "callCode" | "callDecide" | "callCodeAfterDecide" | "openPullRequest" | "discussionComplete" | "reportedChildFailure", string, DevInput, {
     readonly status: "discussion-complete";
 } | {
     readonly status: "complete";

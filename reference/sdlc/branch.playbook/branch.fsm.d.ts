@@ -131,7 +131,7 @@ export declare const branchMachine: import("xstate").StateMachine<BranchContext,
 } | {
     type: "resumesCreateBranch";
     params: unknown;
-}, never, "failed" | "awaitBossReply" | "ready" | "refused" | "createBranch" | "branched", string, Readonly<Record<string, never>>, {
+}, never, "failed" | "ready" | "awaitBossReply" | "refused" | "createBranch" | "branched", string, Readonly<Record<string, never>>, {
     readonly status: "branched";
     /** Exact name of the new branch now checked out. */
     readonly branch: string;

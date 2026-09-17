@@ -169,7 +169,7 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
 } | {
     type: "restartInitialReview";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal", string, Readonly<Record<string, never>>, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal", string, Readonly<Record<string, never>>, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "review";
     states: {
         readonly ready: {

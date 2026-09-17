@@ -212,7 +212,7 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
 } | {
     type: "resumesIrTask";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask" | "reportedReviewFailure", string, CodingInput, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask" | "reportedReviewFailure", string, CodingInput, {
     readonly status: "complete";
     /** Exact identity of the last CODE-owned commit. */
     readonly lastCodeCommit: string;
