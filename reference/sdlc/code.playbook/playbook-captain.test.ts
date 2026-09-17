@@ -3046,10 +3046,12 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
           {
             id: 'reconcile:unresolved-effect',
             label: 'Retry unresolved effect reconciliation',
+            standing: 'ready',
           },
           {
             id: 'abandon:unresolved-effect',
             label: 'Abandon unresolved workflow attempt',
+            standing: 'ready',
           },
         ],
       });
@@ -3111,7 +3113,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     // that give-up settles through this same path, carrying the fence's
     // ordered report like every other controller settlement (CAPTAIN-58).
     expect(shell.describeShellActions!()).toEqual([
-      { id: 'give-up', label: 'Stop /code' },
+      { id: 'give-up', label: 'Stop /code', standing: 'ready' },
     ]);
     const abandonment = stubContext([
       captainJson({
@@ -3760,6 +3762,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
             {
               id: 'abandon:unresolved-effect',
               label: 'Abandon unresolved workflow attempt',
+              standing: 'ready',
             },
           ],
         });
@@ -6552,10 +6555,12 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
           {
             id: 'reconcile:unresolved-effect',
             label: 'Retry unresolved effect reconciliation',
+            standing: 'ready',
           },
           {
             id: 'abandon:unresolved-effect',
             label: 'Abandon unresolved workflow attempt',
+            standing: 'ready',
           },
         ],
       });
@@ -11078,10 +11083,12 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
                   {
                     id: 'reconcile:unresolved-effect',
                     label: 'Retry unresolved effect reconciliation',
+                    standing: 'ready',
                   },
                   {
                     id: 'abandon:unresolved-effect',
                     label: 'Abandon unresolved workflow attempt',
+                    standing: 'ready',
                   },
                 ],
         });
@@ -12585,7 +12592,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         state: runtime.snapshot?.state ?? playbookState('retainedEditing'),
         stateDescription: 'Editing is live.',
         pendingQuestions: [],
-        actions: [{ id: 'continue-live', label: 'Continue live editing' }],
+        actions: [{ id: 'continue-live', label: 'Continue live editing', standing: 'ready' }],
       });
       runtime.apply = async (input) => {
         applyInputs.push(input);
@@ -12671,6 +12678,7 @@ describe('host-published runtime actions (CAPTAIN-60, CAPTAIN-7)', () => {
   const RETRY = Object.freeze({
     id: 'retry:step',
     label: 'Retry: run the failing step again',
+    standing: 'ready',
   });
 
   function advertising(
@@ -12738,18 +12746,167 @@ describe('host-published runtime actions (CAPTAIN-60, CAPTAIN-7)', () => {
   });
 
   it('publishes the leaf’s advertised pairs as a detached frozen reading', async () => {
-    const code = advertising([RETRY, { id: 'abandon:step', label: 'Give up' }]);
+    const code = advertising([RETRY, { id: 'abandon:step', label: 'Give up', standing: 'ready' }]);
     const shell = makeShell(code);
     await shell.init!(stubSession().session);
     await shell.handleBossTurn(turn('/code first task'), stubContext().context);
 
     const published = shell.describeRuntimeActions!();
     expect(published).toEqual([
-      { id: 'retry:step', label: 'Retry: run the failing step again' },
-      { id: 'abandon:step', label: 'Give up' },
+      { id: 'retry:step', label: 'Retry: run the failing step again', standing: 'ready' },
+      { id: 'abandon:step', label: 'Give up', standing: 'ready' },
     ]);
     expect(Object.isFrozen(published)).toBe(true);
     expect(Object.isFrozen(published[0])).toBe(true);
+    await shell.dispose?.();
+  });
+
+  // DR-063 §3/§4: the standing the leaf publishes reaches the host, the
+  // Captain's decision digest, and the Boss-visible report, so no surface
+  // offers a control without saying what running it would do.
+  it('carries each advertised standing to the host, the digest, and the Boss', async () => {
+    const code = advertising([
+      {
+        id: 'reconcile:unresolved-effect',
+        label: 'Retry unresolved effect reconciliation',
+        standing: 'no-op',
+        reason: 'receipt-complete',
+      },
+      {
+        id: 'abandon:unresolved-effect',
+        label: 'Abandon unresolved workflow attempt',
+        standing: 'ready',
+      },
+    ]);
+    const createUnresolved = code.entry.createRuntime;
+    code.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createUnresolved(options, hostCapabilities) as FakeRuntime;
+      // A leaf advertising the unresolved-effect controls owes the shell its
+      // envelope identities.
+      runtime.unresolvedEffectEnvelopes = () => [];
+      return runtime;
+    };
+    const shell = makeShell(code);
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), stubContext().context);
+
+    expect(shell.describeRuntimeActions!()).toEqual([
+      {
+        id: 'reconcile:unresolved-effect',
+        label: 'Retry unresolved effect reconciliation',
+        standing: 'no-op',
+        reason: 'receipt-complete',
+      },
+      {
+        id: 'abandon:unresolved-effect',
+        label: 'Abandon unresolved workflow attempt',
+        standing: 'ready',
+      },
+    ]);
+    // The shell's own control is `ready` whatever the leaf offers.
+    expect(shell.describeShellActions!()).toEqual([
+      { id: 'give-up', label: 'Stop /code', standing: 'ready' },
+    ]);
+
+    const asked = stubContext([
+      captainJson({ action: 'respond' }),
+      { status: 'ok', turnId: 2, finalText: 'Here is where it stands.' },
+    ]);
+    await shell.handleBossTurn(turn('what went wrong?', 2), asked.context);
+    const digest =
+      asked.captainCalls.find((call) => isDecisionPrompt(call.prompt))?.prompt ??
+      '';
+    expect(digest).toContain(
+      '- reconcile:unresolved-effect: Retry unresolved effect reconciliation (no-op: receipt-complete)',
+    );
+    expect(digest).toContain(
+      '- abandon:unresolved-effect: Abandon unresolved workflow attempt',
+    );
+    expect(digest).not.toContain(
+      '- abandon:unresolved-effect: Abandon unresolved workflow attempt (',
+    );
+    expect(digest).toContain(
+      'An action marked no-op runs and changes nothing; a blocked action cannot run at all.',
+    );
+    await shell.dispose?.();
+  });
+
+  // DR-063 §3: a leaf that publishes no standing advertises what it always
+  // did, so an older bespoke runtime keeps working and every surface reads it
+  // as `ready`.
+  it('reads an action that publishes no standing as ready', async () => {
+    const code = advertising([
+      { id: 'retry:step', label: 'Retry: run the failing step again' } as never,
+    ]);
+    const shell = makeShell(code);
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code first task'), stubContext().context);
+
+    expect(shell.describeRuntimeActions!()).toEqual([
+      {
+        id: 'retry:step',
+        label: 'Retry: run the failing step again',
+        standing: 'ready',
+      },
+    ]);
+
+    const asked = stubContext([
+      captainJson({ action: 'respond' }),
+      { status: 'ok', turnId: 2, finalText: 'Here is where it stands.' },
+    ]);
+    await shell.handleBossTurn(turn('what went wrong?', 2), asked.context);
+    const digest =
+      asked.captainCalls.find((call) => isDecisionPrompt(call.prompt))?.prompt ??
+      '';
+    expect(digest).toContain(
+      '- retry:step: Retry: run the failing step again',
+    );
+    expect(digest).not.toContain('no-op');
+    await shell.dispose?.();
+  });
+
+  it('reports the parked failure and its controls to the Boss exactly once', async () => {
+    const code = advertising([RETRY]);
+    const createRuntime = code.entry.createRuntime;
+    code.entry.createRuntime = (options, hostCapabilities) => {
+      const runtime = createRuntime(options, hostCapabilities) as FakeRuntime;
+      const describe = runtime.describe!;
+      runtime.describe = () => ({
+        ...describe(),
+        lastError: {
+          name: 'Error',
+          message: 'coder is down',
+          cause: {
+            code: 'player-failed',
+            evidence: {
+              roleId: 'coder',
+              error: { name: 'Error', message: 'coder is down' },
+            },
+          },
+        },
+      });
+      return runtime;
+    };
+    const shell = makeShell(code);
+    await shell.init!(stubSession().session);
+    const started = stubContext();
+    await shell.handleBossTurn(turn('/code first task'), started.context);
+
+    const report = [
+      'Failure: the coder call failed: coder is down.',
+      'Controls:',
+      '- Retry: run the failing step again (ready)',
+      '- Stop /code (ready)',
+    ].join('\n');
+    expect(started.replies.at(-1)).toContain(report);
+    // Appended once: the suffix carries one copy however often the turn
+    // freezes its controller evidence.
+    expect(started.replies.at(-1)!.split('Failure: ')).toHaveLength(2);
+    // The closing-reply prompt sees the same failure as one settlement fact,
+    // so a host without a phrase catalogue still gets the shell's sentence.
+    expect(started.captainCalls.at(-1)?.prompt).toContain(
+      'The workflow failed: the coder call failed: coder is down.',
+    );
     await shell.dispose?.();
   });
 
@@ -12822,7 +12979,7 @@ describe('host-published runtime actions (CAPTAIN-60, CAPTAIN-7)', () => {
   // CAPTAIN-62: the shell's own control, which is not the leaf's and does not
   // depend on anything the leaf publishes — a leaf offering nothing, or one
   // whose control view throws, still leaves the Boss a way out of the run.
-  const GIVE_UP = Object.freeze({ id: 'give-up', label: 'Stop /code' });
+  const GIVE_UP = Object.freeze({ id: 'give-up', label: 'Stop /code', standing: 'ready' });
 
   it('publishes one give-up while a root is engaged, whatever its leaf offers', async () => {
     const idle = makeShell(fakeCodeEntry());

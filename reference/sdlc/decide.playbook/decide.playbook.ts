@@ -3850,6 +3850,35 @@ function createDecidePlaybookRuntime(
   };
   type UnresolvedControlCandidates = readonly UnresolvedControlCandidate[];
 
+  /**
+   * DR-063 §3: reconciliation re-reads the host's ledger, which the control
+   * view has just done. With no eligible checkpoint restoration and a complete
+   * receipt on every unresolved boundary, re-reading resolves nothing.
+   */
+  const reconciliationStanding = (
+    restorationEligible: boolean,
+  ): Pick<PlaybookControlAction, 'standing' | 'reason'> => {
+    if (restorationEligible) return { standing: 'ready' };
+    const envelopes = unresolvedEffectEnvelopeIdentities();
+    if (envelopes.length === 0) return { standing: 'ready' };
+    const boundaryIds = envelopes.flatMap((envelope) =>
+      envelope.kind === 'boundary'
+        ? [envelope.boundaryId]
+        : (effectLedgerMirror.logicalOperations.find(
+            ({ operationId }) => operationId === envelope.operationId,
+          )?.boundaryIds ?? []),
+    );
+    if (boundaryIds.length === 0) return { standing: 'ready' };
+    return boundaryIds.every(
+      (boundaryId) =>
+        effectLedgerMirror.boundaries.find(
+          (candidate) => candidate.boundaryId === boundaryId,
+        )?.physicalReceipt !== undefined,
+    )
+      ? { standing: 'no-op', reason: 'receipt-complete' }
+      : { standing: 'ready' };
+  };
+
   const unresolvedControlCandidates = (): UnresolvedControlCandidates => {
     if (!hasUnresolvedReconciliation()) return [];
     const operation =
@@ -3859,21 +3888,25 @@ function createDecidePlaybookRuntime(
             ({ operationId }) =>
               operationId === hiddenDeferredOperationId,
           );
+    const restorationEligible = operation?.checkpointRestorationEligible === true;
     return [
       {
         action: {
           id: UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID,
           label: 'Retry unresolved effect reconciliation',
+          ...reconciliationStanding(restorationEligible),
         },
         kind: 'reconcile',
-        ...(operation?.checkpointRestorationEligible === true
-          ? { deferredRestoreOperationId: operation.operationId }
+        ...(restorationEligible
+          ? { deferredRestoreOperationId: operation!.operationId }
           : {}),
       },
       {
         action: {
           id: UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
           label: 'Abandon unresolved workflow attempt',
+          // DR-063 §3: abandonment always changes the session's standing.
+          standing: 'ready',
         },
         kind: 'abandon',
       },

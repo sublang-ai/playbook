@@ -1,5 +1,5 @@
 import type { AnyStateMachine, EventObject, PromiseActorLogic } from 'xstate';
-import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, PlaybookPendingBossQuestion, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, NormalizedError, PlaybookPendingBossQuestion, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
@@ -58,6 +58,12 @@ export interface RuntimeBoundaryCalls {
      */
     takeGovernedPlayerOutput?(result: PlayerResult): GovernedPlayerSettlement | undefined;
     recordGovernedPlayerOutput?(result: PlayerResult, output: PlaybookActorOutput): void;
+    /**
+     * DR-063 §2: decorate the failure the bridge builds for a non-`ok` result
+     * with the cause the boundary decided at the call itself, where the role,
+     * the resolved player, and the reported error are known.
+     */
+    markPlayerResultFailure?(error: Error): Error;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
     callCaptain?(input: PlaybookCaptainInput, prompt: string, signal: AbortSignal, callOptions?: XStateCaptainCallOptions): Promise<CaptainResult>;
 }
@@ -377,15 +383,8 @@ export type XStatePlaybookRuntimeSpecV3<TOptions> = XStatePlaybookRuntimeSpec<TO
 export declare function stripCodeFence(text: string): string;
 export declare function extractJsonValue(text: string, start: number, repair: boolean): string | undefined;
 export declare function parseJudgeJson(raw: string): unknown;
-export declare function normalizeErrorCompact(err: unknown): {
-    name: string;
-    message: string;
-} | undefined;
-export declare function normalizeErrorFull(err: unknown): {
-    name: string;
-    message: string;
-    stack?: string;
-} | undefined;
+export declare function normalizeErrorCompact(err: unknown): Omit<NormalizedError, 'stack'> | undefined;
+export declare function normalizeErrorFull(err: unknown): NormalizedError | undefined;
 /** Read the FSM context's single pending Boss question, when well-formed. */
 export declare function pendingBossQuestionFromContext(context: Record<string, unknown>): PlaybookPendingBossQuestionContext | undefined;
 /** Add clarification context without repeating the question in a live conversation. */

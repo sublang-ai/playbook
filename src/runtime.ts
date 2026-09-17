@@ -57,10 +57,342 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
+// DR-063 §1: the closed list of failure codes. There is no unknown code — an
+// unrecognized failure is `runtime-defect` carrying its message as `reason` —
+// so a host catalogue is complete exactly when it covers this list.
+export const PLAYBOOK_FAILURE_CODES = [
+  'commit-missing',
+  'commit-residual',
+  'pre-existing-lost',
+  'commits-more-than-one',
+  'history-rewritten',
+  'foreign-change',
+  'observation-unstable',
+  'attribution-ambiguous',
+  'receipt-missing',
+  'judge-failed',
+  'player-failed',
+  'aborted',
+  'child-failed',
+  'runtime-defect',
+] as const;
+
+export type PlaybookFailureCode = (typeof PLAYBOOK_FAILURE_CODES)[number];
+
+/** The bounded path lists one failure code's evidence may carry (DR-063 §1). */
+export interface PlaybookFailurePaths {
+  /** Paths changed in the worktree that no commit carries. */
+  readonly uncommitted?: readonly string[];
+  /** Pre-existing baseline paths the call changed before committing. */
+  readonly altered?: readonly string[];
+  /** Pre-existing baseline paths whose content is nowhere. */
+  readonly lost?: readonly string[];
+  /** Paths whose entry differs or is missing on either side. */
+  readonly changed?: readonly string[];
+  /** Paths omitted from the lists above by the 32-path bound. */
+  readonly truncated?: number;
+}
+
+/** The bounded error record a failure cause may carry (DR-063 §1). */
+export interface PlaybookFailureErrorEvidence {
+  readonly name: string;
+  readonly message: string;
+}
+
+/** The closed evidence object of one failure cause (DR-063 §1). */
+export interface PlaybookFailureEvidence {
+  readonly required?: PlaybookRepositoryDisposition;
+  readonly observed?: PlaybookRepositoryReceipt['classification'];
+  readonly baselineHead?: string;
+  readonly afterHead?: string;
+  readonly commitOid?: string;
+  readonly paths?: PlaybookFailurePaths;
+  readonly reason?: string;
+  readonly error?: PlaybookFailureErrorEvidence;
+  readonly errorCode?: string;
+  readonly roleId?: string;
+  readonly playerId?: string;
+  readonly playbookId?: string;
+  readonly cause?: PlaybookFailureCause;
+}
+
+/**
+ * Why a parked workflow failed (DR-063 §1): one code from the closed list and
+ * the closed evidence object that code names. Evidence holds repository paths,
+ * dispositions, classifications, and revision identities only — never file
+ * content, player prose, or internal call and session identities.
+ */
+export interface PlaybookFailureCause {
+  readonly code: PlaybookFailureCode;
+  readonly evidence: PlaybookFailureEvidence;
+}
+
+/** Evidence members admitted for each code, in the order a sentence reads them. */
+const FAILURE_EVIDENCE_MEMBERS: Readonly<
+  Record<
+    PlaybookFailureCode,
+    {
+      readonly required: readonly string[];
+      readonly optional: readonly string[];
+      readonly paths: readonly (keyof PlaybookFailurePaths)[];
+    }
+  >
+> = {
+  'commit-missing': {
+    required: ['required', 'observed', 'baselineHead', 'afterHead', 'paths'],
+    optional: [],
+    paths: ['uncommitted'],
+  },
+  'commit-residual': {
+    required: ['required', 'observed', 'baselineHead', 'afterHead', 'paths'],
+    optional: ['commitOid'],
+    paths: ['uncommitted', 'altered'],
+  },
+  'pre-existing-lost': {
+    required: ['required', 'observed', 'baselineHead', 'paths'],
+    optional: ['afterHead'],
+    paths: ['lost'],
+  },
+  'commits-more-than-one': {
+    required: ['required', 'observed', 'baselineHead', 'afterHead'],
+    optional: [],
+    paths: [],
+  },
+  'history-rewritten': {
+    required: ['required', 'observed', 'baselineHead', 'afterHead'],
+    optional: [],
+    paths: [],
+  },
+  'foreign-change': {
+    required: ['required', 'observed', 'baselineHead', 'afterHead', 'paths'],
+    optional: [],
+    paths: ['changed'],
+  },
+  'observation-unstable': {
+    required: ['required', 'observed', 'baselineHead'],
+    optional: [],
+    paths: [],
+  },
+  'attribution-ambiguous': {
+    required: ['required', 'observed', 'baselineHead'],
+    optional: ['afterHead'],
+    paths: [],
+  },
+  'receipt-missing': { required: ['baselineHead'], optional: [], paths: [] },
+  'judge-failed': { required: ['reason'], optional: ['error'], paths: [] },
+  'player-failed': {
+    required: ['roleId', 'error'],
+    optional: ['playerId', 'errorCode'],
+    paths: [],
+  },
+  aborted: { required: [], optional: [], paths: [] },
+  'child-failed': { required: ['playbookId'], optional: ['cause'], paths: [] },
+  'runtime-defect': { required: ['reason'], optional: [], paths: [] },
+};
+
+const FAILURE_PATH_LIMIT = 32;
+const FAILURE_CAUSE_DEPTH_LIMIT = 4;
+
+const REPOSITORY_DISPOSITIONS: readonly PlaybookRepositoryDisposition[] = [
+  'unchanged',
+  'one-descendant-commit',
+  'deferred',
+];
+
+const RECEIPT_CLASSIFICATIONS: readonly PlaybookRepositoryReceipt['classification'][] =
+  [
+    'unchanged',
+    'one-descendant-commit',
+    'multiple-commits',
+    'rewritten-or-non-descendant',
+    'worktree-only-change',
+    'concurrent-or-foreign-change',
+    'observation-ambiguous',
+  ];
+
+function failureCauseRecord(
+  value: unknown,
+  path: string,
+): Record<string, unknown> {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new TypeError(`${path} must be a plain object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function failureCauseString(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`${path} must be a nonempty string`);
+  }
+  return value;
+}
+
+function failureCausePathList(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value)) throw new TypeError(`${path} must be an array`);
+  if (value.length > FAILURE_PATH_LIMIT) {
+    throw new TypeError(`${path} must hold at most ${FAILURE_PATH_LIMIT} paths`);
+  }
+  const paths = value.map((entry, index) =>
+    failureCauseString(entry, `${path}[${index}]`),
+  );
+  for (const [index, entry] of paths.entries()) {
+    if (index > 0 && !(paths[index - 1]! < entry)) {
+      throw new TypeError(`${path} must be sorted and free of duplicates`);
+    }
+  }
+  return Object.freeze(paths);
+}
+
+function failureCausePaths(
+  value: unknown,
+  admitted: readonly (keyof PlaybookFailurePaths)[],
+  path: string,
+): PlaybookFailurePaths {
+  const record = failureCauseRecord(value, path);
+  const allowed = new Set<string>([...admitted, 'truncated']);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      throw new TypeError(`${path} must not carry ${JSON.stringify(key)}`);
+    }
+  }
+  const paths: Record<string, unknown> = {};
+  for (const member of admitted) {
+    if (!Object.hasOwn(record, member)) {
+      throw new TypeError(`${path}.${member} is required`);
+    }
+    paths[member] = failureCausePathList(record[member], `${path}.${member}`);
+  }
+  if (Object.hasOwn(record, 'truncated')) {
+    const truncated = record.truncated;
+    if (
+      typeof truncated !== 'number' ||
+      !Number.isSafeInteger(truncated) ||
+      truncated <= 0
+    ) {
+      throw new TypeError(`${path}.truncated must be a positive integer`);
+    }
+    paths.truncated = truncated;
+  }
+  return Object.freeze(paths) as PlaybookFailurePaths;
+}
+
+function failureCauseErrorEvidence(
+  value: unknown,
+  path: string,
+): PlaybookFailureErrorEvidence {
+  const record = failureCauseRecord(value, path);
+  for (const key of Object.keys(record)) {
+    if (key !== 'name' && key !== 'message') {
+      throw new TypeError(`${path} must not carry ${JSON.stringify(key)}`);
+    }
+  }
+  if (typeof record.message !== 'string') {
+    throw new TypeError(`${path}.message must be a string`);
+  }
+  return Object.freeze({
+    name: failureCauseString(record.name, `${path}.name`),
+    message: record.message,
+  });
+}
+
+function validateFailureCause(
+  value: unknown,
+  path: string,
+  depth: number,
+): PlaybookFailureCause {
+  if (depth > FAILURE_CAUSE_DEPTH_LIMIT) {
+    throw new TypeError(
+      `${path} must nest at most ${FAILURE_CAUSE_DEPTH_LIMIT} causes`,
+    );
+  }
+  const record = failureCauseRecord(value, path);
+  for (const key of Object.keys(record)) {
+    if (key !== 'code' && key !== 'evidence') {
+      throw new TypeError(`${path} must not carry ${JSON.stringify(key)}`);
+    }
+  }
+  const code = record.code;
+  if (
+    typeof code !== 'string' ||
+    !(PLAYBOOK_FAILURE_CODES as readonly string[]).includes(code)
+  ) {
+    throw new TypeError(`${path}.code must be one of the declared codes`);
+  }
+  const spec = FAILURE_EVIDENCE_MEMBERS[code as PlaybookFailureCode];
+  const evidenceRecord = failureCauseRecord(record.evidence, `${path}.evidence`);
+  const allowed = new Set<string>([...spec.required, ...spec.optional]);
+  for (const key of Object.keys(evidenceRecord)) {
+    if (!allowed.has(key)) {
+      throw new TypeError(
+        `${path}.evidence must not carry ${JSON.stringify(key)}`,
+      );
+    }
+  }
+  const evidence: Record<string, unknown> = {};
+  for (const member of [...spec.required, ...spec.optional]) {
+    const required = spec.required.includes(member);
+    if (!Object.hasOwn(evidenceRecord, member)) {
+      if (required) {
+        throw new TypeError(`${path}.evidence.${member} is required`);
+      }
+      continue;
+    }
+    const memberValue = evidenceRecord[member];
+    const memberPath = `${path}.evidence.${member}`;
+    if (member === 'required') {
+      if (!REPOSITORY_DISPOSITIONS.includes(memberValue as never)) {
+        throw new TypeError(`${memberPath} must be a repository disposition`);
+      }
+      evidence[member] = memberValue;
+    } else if (member === 'observed') {
+      if (!RECEIPT_CLASSIFICATIONS.includes(memberValue as never)) {
+        throw new TypeError(`${memberPath} must be a receipt classification`);
+      }
+      evidence[member] = memberValue;
+    } else if (member === 'paths') {
+      evidence[member] = failureCausePaths(memberValue, spec.paths, memberPath);
+    } else if (member === 'error') {
+      evidence[member] = failureCauseErrorEvidence(memberValue, memberPath);
+    } else if (member === 'cause') {
+      evidence[member] = validateFailureCause(
+        memberValue,
+        memberPath,
+        depth + 1,
+      );
+    } else {
+      evidence[member] = failureCauseString(memberValue, memberPath);
+    }
+  }
+  return Object.freeze({
+    code: code as PlaybookFailureCode,
+    evidence: Object.freeze(evidence) as PlaybookFailureEvidence,
+  });
+}
+
+/**
+ * Validate, detach, and freeze one failure cause (DR-063 §1). The check is
+ * closed per code: exactly the evidence members that code names, nothing else,
+ * and a `child-failed` cause nests at most four deep. A value this rejects is
+ * not a cause, so a caller omits it rather than publishing an invented one.
+ */
+export function assertPlaybookFailureCause(
+  value: unknown,
+): PlaybookFailureCause {
+  return validateFailureCause(value, 'playbook failure cause', 1);
+}
+
 export interface NormalizedError {
   name: string;
   message: string;
   stack?: string;
+  /** DR-063 §2: present exactly when the underlying error carried a valid one. */
+  cause?: PlaybookFailureCause;
 }
 
 export type PlaybookStateValue =
@@ -445,12 +777,25 @@ export interface PlaybookRuntimeSnapshot {
   suspendedCall?: PlaybookSuspendedCall;
 }
 
+// DR-063 §3: what running an advertised action would do. `ready` is the only
+// standing that can change anything; `no-op` runs and changes nothing; a
+// `blocked` action cannot run at all. An absent standing reads as `ready`, so
+// a runtime that publishes none advertises exactly what it always did.
+export type PlaybookControlStanding = 'ready' | 'no-op' | 'blocked';
+
+// DR-063 §3: the closed reason list a non-`ready` standing names.
+export type PlaybookControlActionReason = 'receipt-complete';
+
 // DR-029: one currently valid, runtime-advertised control action. The id
 // is stable within the returned view; the label is runtime-written,
-// Boss-appropriate text derived from source state descriptions.
+// Boss-appropriate text derived from source state descriptions. DR-063 §3
+// adds the standing, so a host never draws a control without saying what
+// running it would do; an action that publishes none reads as `ready`.
 export interface PlaybookControlAction {
   id: string;
   label: string;
+  standing?: PlaybookControlStanding;
+  reason?: PlaybookControlActionReason;
 }
 
 // DR-029: the sanitized control view `describe()` returns — current

@@ -36,6 +36,7 @@ import {
   assertPlaybookEffectLedger,
   createXStatePlaybookRuntime,
   createPlayerBridge,
+  normalizeError,
   defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
@@ -1847,7 +1848,16 @@ describe('player + script workflow over the shared factory', () => {
       expect(statuses.at(-1)).toEqual({
         message: '◆ workflow failed; awaiting Boss recovery.',
         data: {
-          lastError: { name: 'Error', message: 'verification failed' },
+          lastError: {
+            name: 'Error',
+            message: 'verification failed',
+            // DR-063 §2: a failure the runtime marks with no more specific
+            // cause is a runtime defect carrying its message.
+            cause: {
+              code: 'runtime-defect',
+              evidence: { reason: 'verification failed' },
+            },
+          },
         },
       });
       await runtime.dispose();
@@ -5829,10 +5839,14 @@ describe('parked-session snapshot over the shared factory', () => {
       {
         id: 'reconcile:unresolved-effect',
         label: 'Retry unresolved effect reconciliation',
+        // DR-063 §3: an eligible checkpoint restoration is work reconciliation
+        // can still do, so the control stands `ready` rather than no-op.
+        standing: 'ready',
       },
       {
         id: 'abandon:unresolved-effect',
         label: 'Abandon unresolved workflow attempt',
+        standing: 'ready',
       },
     ]);
     expect(bound.exportSnapshot?.()).toMatchObject({
@@ -7433,7 +7447,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // Boss-appropriate text.
     expect(atReady.stateDescription).toBe('ready state');
     expect(atReady.actions).toEqual([
-      { id: 'jump:implement', label: 'Resume from: implement state' },
+      { id: 'jump:implement', label: 'Resume from: implement state', standing: 'ready' },
     ]);
     expect(atReady.pendingQuestions).toEqual([]);
     expect(atReady.lastError).toBeUndefined();
@@ -7499,8 +7513,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       message: 'agent crashed',
     });
     expect(view.actions).toEqual([
-      { id: 'retry:START', label: 'Retry: implement state' },
-      { id: 'jump:implement', label: 'Resume from: implement state' },
+      { id: 'retry:START', label: 'Retry: implement state', standing: 'ready' },
+      { id: 'jump:implement', label: 'Resume from: implement state', standing: 'ready' },
     ]);
 
     const judgeCallsBefore = judgePrompts.length;
@@ -7597,8 +7611,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
 
     const live = source.describe!().actions;
     expect(live).toEqual([
-      { id: 'retry:START', label: 'Retry: implement state' },
-      { id: 'jump:implement', label: 'Resume from: implement state' },
+      { id: 'retry:START', label: 'Retry: implement state', standing: 'ready' },
+      { id: 'jump:implement', label: 'Resume from: implement state', standing: 'ready' },
     ]);
 
     // The recovery input rides the machine snapshot the host already
@@ -7693,8 +7707,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       'failed',
     );
     expect(declared.describe!().actions).toEqual([
-      { id: 'retry:START', label: 'Retry: implement state' },
-      { id: 'jump:implement', label: 'Resume from: implement state' },
+      { id: 'retry:START', label: 'Retry: implement state', standing: 'ready' },
+      { id: 'jump:implement', label: 'Resume from: implement state', standing: 'ready' },
     ]);
     const snapshot = declared.exportSnapshot!()!;
     expect(snapshot.pendingBossQuestions).toEqual([]);
@@ -7833,8 +7847,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // included; the recorded entry event is retryable from failed.
     const view = runtime.describe!();
     expect(view.actions).toEqual([
-      { id: 'retry:START', label: 'Retry: implement state' },
-      { id: 'jump:implement', label: 'Resume from: implement state' },
+      { id: 'retry:START', label: 'Retry: implement state', standing: 'ready' },
+      { id: 'jump:implement', label: 'Resume from: implement state', standing: 'ready' },
     ]);
     // Sanitized JSON-safe context: the raw Error entry is normalized, the
     // non-JSON-safe function entry is dropped, and the first-class-surfaced
@@ -8581,6 +8595,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         'Retry: Coder is running the first coding phase: a direct ' +
         'implementation, a new intent record, or an existing intent-record ' +
         'task.',
+      standing: 'ready',
     });
     expect(view.actions.map(({ id }) => id)).toEqual([
       'retry:START_CODE',
@@ -8828,10 +8843,12 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(runtime.describe!().actions).toContainEqual({
       id: 'retry:BOSS_INTERRUPT',
       label: 'Retry: secondRoute state',
+      standing: 'ready',
     });
     expect(runtime.describe!().actions).not.toContainEqual({
       id: 'retry:BOSS_INTERRUPT',
       label: 'Retry: firstRoute state',
+      standing: 'ready',
     });
     await runtime.dispose();
   });
@@ -9106,7 +9123,7 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     );
     const view = runtime.describe!();
     expect(view.actions).toEqual([
-      { id: 'jump:described', label: 'Resume from: described state' },
+      { id: 'jump:described', label: 'Resume from: described state', standing: 'ready' },
     ]);
     await runtime.dispose();
   });
@@ -9146,7 +9163,7 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
     const view = runtime.describe!();
     expect(view.state.stateId).toBe('failed');
     expect(view.actions).toEqual([
-      { id: 'retry:START', label: 'Retry: failed state' },
+      { id: 'retry:START', label: 'Retry: failed state', standing: 'ready' },
     ]);
     expect(view.actions[0]!.label).not.toContain('plain');
     expect(view.actions[0]!.label).not.toContain('START');
@@ -9312,5 +9329,237 @@ describe('pre-existing changes in an effect-authorized prompt (DR-062)', () => {
     expect(prompts[0]).not.toContain(
       'Uncommitted changes present before this call',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DR-063 §1/§2: every parked failure carries a structured cause, decided where
+// the failure was decided and published wherever the error is published — the
+// failed state's status data, the transition and settled-input telemetry, the
+// control view, and the exported snapshot a restart reads.
+// ---------------------------------------------------------------------------
+
+describe('parked failure causes over the shared factory (DR-063)', () => {
+  type Cause = NonNullable<
+    NonNullable<ReturnType<NonNullable<PlaybookRuntime['describe']>>['lastError']>['cause']
+  >;
+
+  const publishedCauses = (
+    runtime: PlaybookRuntime,
+    telemetry: readonly RecordedTelemetry[],
+    statuses: readonly RecordedStatus[],
+    run: PlaybookRunResult,
+  ): {
+    view?: Cause;
+    status?: Cause;
+    transition?: Cause;
+    settled?: Cause;
+  } => {
+    const traces = telemetry
+      .filter(({ topic }) => topic === 'playbook.trace')
+      .map(({ payload }) => payload as PlaybookTraceEvent);
+    const failedTransition = traces
+      .filter(({ type }) => type === 'fsm.transition')
+      .map(({ payload }) => payload as { lastError?: { cause?: Cause } })
+      .findLast(({ lastError }) => lastError !== undefined);
+    const settled = traces
+      .filter(({ type }) => type === 'boss.input.settled')
+      .map(({ payload }) => payload as { error?: { cause?: Cause } })
+      .at(-1);
+    const failedStatus = statuses.findLast(({ message }) =>
+      message.startsWith('◆ workflow failed'),
+    );
+    return {
+      view: runtime.describe?.().lastError?.cause,
+      status: (failedStatus?.data as { lastError?: { cause?: Cause } })
+        ?.lastError?.cause,
+      transition: failedTransition?.lastError?.cause,
+      settled: settled?.error?.cause,
+      ...(run.outcome === 'failed' && run.error?.cause !== undefined
+        ? {}
+        : {}),
+    };
+  };
+
+  it('names a rejected player port, with the code the port reported', async () => {
+    const rejection = Object.assign(new Error('coder is down'), {
+      code: 'ECONNRESET',
+    });
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        throw rejection;
+      },
+    });
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
+    // A thrown port is a control-plane error, so the boundary rejects rather
+    // than settling; the cause travels on the error either way.
+    const failure = await runtime
+      .handleBossInput(turn('add a button'))
+      .catch((error: unknown) => error);
+
+    expect(normalizeError(failure).cause).toEqual({
+      code: 'player-failed',
+      evidence: {
+        roleId: 'coder',
+        error: { name: 'Error', message: 'coder is down' },
+        errorCode: 'ECONNRESET',
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it('names a non-`ok` player result by the role that reported it', async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'coder refused' }),
+    });
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
+    const run = await runtime.handleBossInput(turn('add a button'));
+
+    const cause: Cause = {
+      code: 'player-failed',
+      evidence: {
+        roleId: 'coder',
+        error: { name: 'Error', message: 'coder refused' },
+      },
+    };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toMatchObject({
+      view: cause,
+      status: cause,
+      transition: cause,
+      settled: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it('names a refused adjudication a judge failure, with its transport error', async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: `Commit: ${'2'.repeat(40)}`,
+      }),
+      callJudge: async () => {
+        throw new Error('provider refused the control call');
+      },
+    });
+    const runtime = createCodePlaybookRuntime(
+      codeRuntimeConstruction(['one-descendant-commit']),
+    );
+    await runtime.init(makeCodeSession(ports));
+    const run = await runtime.handleBossInput(turn('add a button'));
+
+    const cause: Cause = {
+      code: 'judge-failed',
+      evidence: {
+        reason: 'judge transport failed',
+        error: {
+          name: 'Error',
+          message: 'provider refused the control call',
+        },
+      },
+    };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toMatchObject({
+      view: cause,
+      transition: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it('reads a governed disposition mismatch from the receipt the host proved', async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'Implemented it.' }),
+      // The arm claims a commit; the host's receipt proves none was made.
+      callJudge: async () => '{"guard":"directCommit"}',
+    });
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
+    const run = await runtime.handleBossInput(turn('add a button'));
+
+    const published = publishedCauses(runtime, telemetry, statuses, run);
+    expect(published.transition).toMatchObject({
+      code: 'commit-missing',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'unchanged',
+        baselineHead: CODE_EFFECT_OBSERVATION.head,
+        afterHead: CODE_EFFECT_OBSERVATION.head,
+        paths: { uncommitted: [] },
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it("carries a nested playbook's failure with the child's own cause", async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled' as const,
+        result: {
+          status: 'error' as const,
+          playbookId: 'child',
+          childSessionId: 'child-session-1',
+          error: {
+            name: 'Error',
+            message: 'the child coder is down',
+            cause: {
+              code: 'player-failed' as const,
+              evidence: {
+                roleId: 'coder',
+                error: { name: 'Error', message: 'the child coder is down' },
+              },
+            },
+          },
+        },
+      }),
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const run = await runtime.handleBossInput(turn('do it'));
+
+    expect(run.outcome).toBe('failed');
+    const cause: Cause = {
+      code: 'child-failed',
+      evidence: {
+        playbookId: 'child',
+        cause: {
+          code: 'player-failed',
+          evidence: {
+            roleId: 'coder',
+            error: { name: 'Error', message: 'the child coder is down' },
+          },
+        },
+      },
+    };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toMatchObject({
+      view: cause,
+      transition: cause,
+      settled: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it('names an aborted turn an abort rather than a defect', async () => {
+    const controller = new AbortController();
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        controller.abort(new Error('Boss stopped the turn'));
+        throw controller.signal.reason;
+      },
+    });
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
+    const run = await runtime.handleBossInput({
+      text: 'add a button',
+      signal: controller.signal,
+    });
+
+    expect(run.outcome).toBe('aborted');
+    // The abort reason itself carries the cause, so a leaf that parks on it
+    // publishes `aborted` instead of an invented defect.
+    expect(runtime.describe!().lastError?.cause).toEqual({
+      code: 'aborted',
+      evidence: {},
+    });
+    await runtime.dispose();
   });
 });

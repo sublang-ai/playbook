@@ -2026,10 +2026,15 @@ describe('DECIDE accepted-outcome consumer', () => {
         {
           id: 'reconcile:unresolved-effect',
           label: 'Retry unresolved effect reconciliation',
+          // DR-063 §3: re-reading the host ledger over a complete
+          // receipt resolves nothing, so the control says so.
+          standing: 'no-op',
+          reason: 'receipt-complete',
         },
         {
           id: 'abandon:unresolved-effect',
           label: 'Abandon unresolved workflow attempt',
+          standing: 'ready',
         },
       ]);
       expect(runtime.unresolvedEffectEnvelopes?.()).toHaveLength(

@@ -31,9 +31,11 @@ import {
   createAcceptedOutcomeConsumer,
   type AcceptedOutcomeReceipt,
 } from './accepted-outcome.js';
+import { assertPlaybookFailureCause } from './runtime.js';
 import {
   assertPlaybookRuntimeSnapshot,
   assertPlaybookEffectLedger,
+  attachPlaybookFailureCause,
   combineAbortSignals,
   createNestedPlaybookBridge,
   detachPersistedMachineSnapshot,
@@ -60,7 +62,9 @@ import type {
   PlaybookEffectBoundaryStart,
   PlaybookEffectLedger,
   PlaybookEffectLedgerCapability,
+  NormalizedError,
   PlaybookEffectLogicalOperation,
+  PlaybookFailureCause,
   PlaybookPendingBossQuestion,
   PlaybookPorts,
   PlaybookRepositoryReceipt,
@@ -149,6 +153,12 @@ export interface RuntimeBoundaryCalls {
     result: PlayerResult,
     output: PlaybookActorOutput,
   ): void;
+  /**
+   * DR-063 §2: decorate the failure the bridge builds for a non-`ok` result
+   * with the cause the boundary decided at the call itself, where the role,
+   * the resolved player, and the reported error are known.
+   */
+  markPlayerResultFailure?(error: Error): Error;
   callJudge(
     purpose: JudgePurpose,
     stateId: string | undefined,
@@ -236,6 +246,18 @@ const fsmResultFailures = new WeakSet<object>();
 
 function markFsmResultFailure(error: Error): Error {
   fsmResultFailures.add(error);
+  // DR-063 §2: there is no failure without a cause. A failure the runtime
+  // marks with nothing more specific is a runtime defect carrying its own
+  // message; a decision site that knows better attaches its cause afterwards.
+  attachPlaybookFailureCause(error, {
+    code: 'runtime-defect',
+    evidence: {
+      reason:
+        typeof error.message === 'string' && error.message.length > 0
+          ? error.message
+          : 'unknown runtime defect',
+    },
+  });
   return error;
 }
 
@@ -246,6 +268,74 @@ function isFsmResultFailure(error: unknown): boolean {
     fsmResultFailures.has(error as object)
   );
 }
+
+// ---------------------------------------------------------------------------
+// DR-063 §1/§2: there is no failure without a cause. Each decision site builds
+// the cause its own evidence states, the runtime attaches it to the error it
+// marks as the FSM failure, and anything else the runtime marks becomes
+// `runtime-defect` carrying its message as `reason`.
+// ---------------------------------------------------------------------------
+
+/** Adjudication reasons this runtime decides itself, and their codes. */
+const GOVERNED_JUDGE_FAILURE_REASONS: readonly string[] = [
+  'judge transport failed',
+  'corrective judge failed',
+  'corrective semantic candidate is invalid',
+  'semantic correction budget is unavailable',
+];
+
+const ABORTED_FAILURE_CAUSE: PlaybookFailureCause = assertPlaybookFailureCause({
+  code: 'aborted',
+  evidence: {},
+});
+
+function runtimeDefectCause(reason: string): PlaybookFailureCause {
+  return assertPlaybookFailureCause({
+    code: 'runtime-defect',
+    evidence: { reason: reason.length === 0 ? 'unknown runtime defect' : reason },
+  });
+}
+
+function failureErrorEvidence(
+  error: unknown,
+): { readonly name: string; readonly message: string } | undefined {
+  if (error === undefined || error === null) return undefined;
+  const { name, message } = normalizeError(error);
+  return { name, message };
+}
+
+/** A string `code` the rejecting port reported, when it reported one. */
+function failureErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  try {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' && code.length > 0 ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function playerFailureCause(input: {
+  readonly roleId: string;
+  readonly playerId?: string;
+  readonly error: unknown;
+}): PlaybookFailureCause {
+  return assertPlaybookFailureCause({
+    code: 'player-failed',
+    evidence: {
+      roleId: input.roleId,
+      ...(input.playerId === undefined ? {} : { playerId: input.playerId }),
+      error: failureErrorEvidence(input.error) ?? {
+        name: 'Error',
+        message: 'Unknown error',
+      },
+      ...(failureErrorCode(input.error) === undefined
+        ? {}
+        : { errorCode: failureErrorCode(input.error)! }),
+    },
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // DR-028: both call boundaries treat an `ok` result whose `finalText` is
@@ -946,15 +1036,21 @@ export function parseJudgeJson(raw: string): unknown {
 
 export function normalizeErrorCompact(
   err: unknown,
-): { name: string; message: string } | undefined {
+): Omit<NormalizedError, 'stack'> | undefined {
   if (err === undefined || err === null) return undefined;
   const normalized = normalizeError(err);
-  return { name: normalized.name, message: normalized.message };
+  return {
+    name: normalized.name,
+    message: normalized.message,
+    // DR-063 §2: on a failure the cause is why the compact form exists, so it
+    // survives where the stack does not.
+    ...(normalized.cause === undefined ? {} : { cause: normalized.cause }),
+  };
 }
 
 export function normalizeErrorFull(
   err: unknown,
-): { name: string; message: string; stack?: string } | undefined {
+): NormalizedError | undefined {
   if (err === undefined || err === null) return undefined;
   return normalizeError(err);
 }
@@ -1784,9 +1880,10 @@ export function createPlayerBridge(
         );
       }
       if (result.status !== 'ok') {
-        throw new Error(
+        const failure = new Error(
           result.error ?? `captainBridge: callPlayer status "${result.status}"`,
         );
+        throw boundary?.markPlayerResultFailure?.(failure) ?? failure;
       }
       const finalText = result.finalText ?? '';
       if (isEmptyFinalText(finalText)) {
@@ -3480,6 +3577,15 @@ export function createXStatePlaybookRuntime<
     let deferInspectionEmissions = false;
     let deferredInspectionEmissions: Array<() => void> = [];
     let controlPlaneError: unknown;
+    // DR-063 §2: the cause decided at the site the failure was decided, kept
+    // for the failures whose Error the compiled artifact builds itself and the
+    // runtime therefore cannot decorate. It is cleared at each Boss turn start
+    // and at each successful player result, so it is never stale, and it is
+    // only ever read as the cause of an error that carries none of its own.
+    let lastFailureCause: PlaybookFailureCause | undefined;
+    const rememberFailureCause = (cause: PlaybookFailureCause): void => {
+      lastFailureCause = cause;
+    };
     // Previous root-machine state for the inspect-driven telemetry /
     // status emitter. undefined before the first inspect firing.
     let priorState: PlaybookState | undefined;
@@ -3975,6 +4081,19 @@ export function createXStatePlaybookRuntime<
       refreshRetainedEffectReconciliation(current);
       syncDeferredReconciliationOverlay();
       refreshUnresolvedSemanticReconciliation(current);
+      return projectUnresolvedEffectEnvelopes(current);
+    }
+
+    /**
+     * The unresolved envelopes of one already-refreshed ledger mirror. Pure:
+     * `describe()` reads it through the control view without moving anything.
+     */
+    function projectUnresolvedEffectEnvelopes(
+      current: PlaybookEffectLedger,
+    ): readonly (
+      | { readonly kind: 'boundary'; readonly boundaryId: string }
+      | { readonly kind: 'logical-operation'; readonly operationId: string }
+    )[] {
       if (!hasUnresolvedReconciliation()) return [];
 
       const boundaryIds = new Set(unresolvedSemanticBoundaryIds);
@@ -4746,13 +4865,47 @@ export function createXStatePlaybookRuntime<
       });
     }
 
+    // DR-063 §1: the cause of an unresolved governed settlement. A reconciled
+    // mismatch supplies its own receipt-read cause; the reasons this function
+    // owns map to adjudication, abort, and runtime-defect codes.
+    function governedSettlementCause(
+      reason: string,
+      error: unknown,
+      aborted: boolean,
+      supplied: PlaybookFailureCause | undefined,
+    ): PlaybookFailureCause {
+      if (supplied !== undefined) return supplied;
+      if (aborted || reason.includes('aborted')) return ABORTED_FAILURE_CAUSE;
+      if (GOVERNED_JUDGE_FAILURE_REASONS.includes(reason)) {
+        const transport = failureErrorEvidence(error);
+        return assertPlaybookFailureCause({
+          code: 'judge-failed',
+          evidence: {
+            reason,
+            ...(transport === undefined ? {} : { error: transport }),
+          },
+        });
+      }
+      return runtimeDefectCause(reason);
+    }
+
     function unresolvedGovernedSettlement(
       reason: string,
       error?: unknown,
       signal: AbortSignal | undefined = activeSignal,
+      cause?: PlaybookFailureCause,
     ): GovernedPlayerSettlement {
-      if (error !== undefined && signal?.aborted && Object.is(error, signal.reason)) {
-        return { status: 'unresolved', error };
+      const aborted =
+        error !== undefined && signal?.aborted === true
+          ? Object.is(error, signal.reason)
+          : false;
+      const decided = governedSettlementCause(reason, error, aborted, cause);
+      rememberFailureCause(decided);
+      if (aborted) {
+        return {
+          status: 'unresolved',
+          error: attachPlaybookFailureCause(error, decided),
+        };
       }
       const failure =
         error instanceof Error
@@ -4760,7 +4913,10 @@ export function createXStatePlaybookRuntime<
           : new Error(`${label} governed outcome remains unresolved: ${reason}`);
       return {
         status: 'unresolved',
-        error: markFsmResultFailure(failure),
+        error: attachPlaybookFailureCause(
+          markFsmResultFailure(failure),
+          decided,
+        ),
       };
     }
 
@@ -5008,7 +5164,12 @@ export function createXStatePlaybookRuntime<
       if (reconciliation.status === 'unresolved') {
         governedSettlementsByBoundaryId.set(
           completion.boundary.boundaryId,
-          unresolvedGovernedSettlement(reconciliation.reason),
+          unresolvedGovernedSettlement(
+            reconciliation.reason,
+            undefined,
+            undefined,
+            reconciliation.cause,
+          ),
         );
         return { finalText, semanticCandidate, unresolved: true };
       }
@@ -5616,7 +5777,7 @@ export function createXStatePlaybookRuntime<
               }
               // A thrown port call carries no authoritative result, so the
               // prior token remains available for a later explicit resume.
-              throw error;
+              throw decidePlayerCallFailure(error, roleId, playerId, signal);
             }
 
             let result: PlayerResult;
@@ -5633,7 +5794,7 @@ export function createXStatePlaybookRuntime<
               } catch {
                 // The malformed host result remains authoritative.
               }
-              throw error;
+              throw decidePlayerCallFailure(error, roleId, playerId, signal);
             }
 
             try {
@@ -5669,6 +5830,25 @@ export function createXStatePlaybookRuntime<
               },
               position,
             );
+            // DR-063 §2: the player bridge builds the failure Error for a
+            // non-`ok` result, so the cause is decided here, where the role,
+            // the player, and the reported error are known, and a successful
+            // result clears it so no later failure inherits it.
+            if (result.status === 'ok') {
+              lastFailureCause = undefined;
+            } else if (result.status === 'aborted') {
+              rememberFailureCause(ABORTED_FAILURE_CAUSE);
+            } else {
+              rememberFailureCause(
+                playerFailureCause({
+                  roleId,
+                  ...(playerId === undefined ? {} : { playerId }),
+                  error:
+                    result.error ??
+                    `callPlayer status ${JSON.stringify(result.status)}`,
+                }),
+              );
+            }
             return result;
           };
 
@@ -5774,6 +5954,12 @@ export function createXStatePlaybookRuntime<
         } finally {
           activePlayerKeys.delete(playerKey);
         }
+      },
+
+      markPlayerResultFailure(error): Error {
+        return lastFailureCause === undefined
+          ? error
+          : attachPlaybookFailureCause(error, lastFailureCause);
       },
 
       takeGovernedPlayerOutput(result): GovernedPlayerSettlement | undefined {
@@ -6416,6 +6602,80 @@ export function createXStatePlaybookRuntime<
       return activeTurnId === undefined ? {} : { turnId: activeTurnId };
     }
 
+    // DR-063 §2: the parked failure's error as every public surface publishes
+    // it — the FSM's own `lastError`, completed with the cause decided where
+    // the failure was decided. An error that already carries a valid cause
+    // keeps it; an artifact-built error takes the runtime's own slot; anything
+    // else is a runtime defect carrying its message. There is no failure
+    // without a cause.
+    function failedStateError(
+      context: Record<string, unknown>,
+    ): NormalizedError | undefined {
+      const normalized: NormalizedError | undefined = normalizeErrorFull(
+        context.lastError,
+      );
+      if (normalized === undefined || normalized.cause !== undefined) {
+        return normalized;
+      }
+      return {
+        ...normalized,
+        cause: lastFailureCause ?? runtimeDefectCause(normalized.message),
+      };
+    }
+
+    // DR-063 §2: a rejected player port or a result the runtime cannot read is
+    // a `player-failed` failure named by role; an abort is `aborted`.
+    function decidePlayerCallFailure(
+      error: unknown,
+      roleId: string,
+      playerId: string | undefined,
+      signal: AbortSignal,
+    ): unknown {
+      const cause = isAbortFailure(error, signal)
+        ? ABORTED_FAILURE_CAUSE
+        : playerFailureCause({
+            roleId,
+            ...(playerId === undefined ? {} : { playerId }),
+            error,
+          });
+      rememberFailureCause(cause);
+      return attachPlaybookFailureCause(error, cause);
+    }
+
+    function completeFailedStatuses(
+      statuses: readonly ScheduledStatus[],
+      state: PlaybookState,
+      context: Record<string, unknown>,
+    ): readonly ScheduledStatus[] {
+      if (state.stateId !== 'failed') return statuses;
+      const lastError = failedStateError(context);
+      if (lastError?.cause === undefined) return statuses;
+      const cause = lastError.cause as unknown as JsonValue;
+      return statuses.map((status) => {
+        const data = status.data;
+        if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+          return status;
+        }
+        const recorded = data as { readonly [key: string]: JsonValue };
+        const recordedError = recorded.lastError;
+        if (
+          recordedError === undefined ||
+          recordedError === null ||
+          typeof recordedError !== 'object' ||
+          Array.isArray(recordedError)
+        ) {
+          return status;
+        }
+        return {
+          ...status,
+          data: snapshotJsonValue(
+            { ...recorded, lastError: { ...recordedError, cause } },
+            'failed status data',
+          ),
+        };
+      });
+    }
+
     function structuredStateTelemetryPayload(
       previousState: PlaybookState | undefined,
       state: PlaybookState,
@@ -6437,7 +6697,7 @@ export function createXStatePlaybookRuntime<
         payload.pendingBossQuestion = pendingBossQuestion;
       }
       if (state.stateId === 'failed') {
-        const lastError = normalizeErrorFull(context.lastError);
+        const lastError = failedStateError(context);
         if (lastError !== undefined) payload.lastError = lastError;
       }
       return snapshotJsonValue(payload, 'FSM telemetry payload');
@@ -6642,10 +6902,10 @@ export function createXStatePlaybookRuntime<
               inspectionEvent.event,
               context,
             );
-            const stateStatuses = statusesForState(
+            const stateStatuses = completeFailedStatuses(
+              statusesForState(state, context, inspectionEvent.event),
               state,
               context,
-              inspectionEvent.event,
             );
             const outcomeStatuses = usesDefaultStatuses
               ? acceptedOutcomes.map(({ acceptedOutcome }) => ({
@@ -6745,10 +7005,17 @@ export function createXStatePlaybookRuntime<
           : outcome === 'aborted'
             ? activeSignal?.reason
             : undefined);
+      if (failure === undefined) return { outcome, state };
+      // DR-063 §2: a `failed` settlement publishes the same cause-completed
+      // error the failed state's status line and telemetry publish.
+      const normalized =
+        outcome === 'failed'
+          ? failedStateError({ lastError: failure })
+          : normalizeError(failure);
       return {
         outcome,
         state,
-        ...(failure !== undefined ? { error: normalizeError(failure) } : {}),
+        ...(normalized === undefined ? {} : { error: normalized }),
       };
     }
 
@@ -6977,9 +7244,44 @@ export function createXStatePlaybookRuntime<
         action: {
           id: `retry:${retryEvent.type}`,
           label: `Retry: ${description}`,
+          // DR-063 §3: retrying a failed call is `ready` — the runtime cannot
+          // see whether the Boss changed the outside world since it failed.
+          standing: 'ready',
         },
         event: retryEvent,
       };
+    }
+
+    /**
+     * DR-063 §3: reconciliation only re-reads the host's ledger, which the
+     * control view has just done. Where no checkpoint restoration is eligible
+     * and every unresolved envelope's boundary already holds a complete
+     * receipt, re-reading can resolve nothing, so the action is a no-op.
+     */
+    function reconciliationStanding(
+      deferredRestoreOperationId: string | undefined,
+    ): Pick<PlaybookControlAction, 'standing' | 'reason'> {
+      if (deferredRestoreOperationId !== undefined) return { standing: 'ready' };
+      const current = effectLedgerMirror;
+      const envelopes = projectUnresolvedEffectEnvelopes(current);
+      if (envelopes.length === 0) return { standing: 'ready' };
+      const boundaryIds = envelopes.flatMap((envelope) =>
+        envelope.kind === 'boundary'
+          ? [envelope.boundaryId]
+          : (current.logicalOperations.find(
+              ({ operationId }) => operationId === envelope.operationId,
+            )?.boundaryIds ?? []),
+      );
+      if (boundaryIds.length === 0) return { standing: 'ready' };
+      const complete = boundaryIds.every(
+        (boundaryId) =>
+          current.boundaries.find(
+            (candidate) => candidate.boundaryId === boundaryId,
+          )?.physicalReceipt !== undefined,
+      );
+      return complete
+        ? { standing: 'no-op', reason: 'receipt-complete' }
+        : { standing: 'ready' };
     }
 
     function deriveControlActions(snapshot: unknown): DerivedControlAction[] {
@@ -7020,6 +7322,7 @@ export function createXStatePlaybookRuntime<
             action: {
               id: UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID,
               label: 'Retry unresolved effect reconciliation',
+              ...reconciliationStanding(deferredRestoreOperationId),
             },
             unresolvedEffectAction: 'reconcile',
             ...(deferredRestoreOperationId === undefined
@@ -7030,6 +7333,8 @@ export function createXStatePlaybookRuntime<
             action: {
               id: UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID,
               label: 'Abandon unresolved workflow attempt',
+              // DR-063 §3: abandonment always changes the session's standing.
+              standing: 'ready',
             },
             unresolvedEffectAction: 'abandon',
           },
@@ -7054,6 +7359,8 @@ export function createXStatePlaybookRuntime<
           action: {
             id: `jump:${targetId}`,
             label: `Resume from: ${description}`,
+            // DR-063 §3: a jump always moves the machine.
+            standing: 'ready',
           },
           event,
         });
@@ -8054,7 +8361,10 @@ export function createXStatePlaybookRuntime<
           !hasUnresolvedReconciliation()
             ? pendingBossQuestionForState(state, context)
             : undefined;
-        const lastError = normalizeErrorFull(context.lastError);
+        const lastError =
+          state.stateId === 'failed'
+            ? failedStateError(context)
+            : normalizeErrorFull(context.lastError);
         const projectedContext = projectControlContext(context);
         const stateDescription =
           !hasUnresolvedReconciliation()
@@ -8453,6 +8763,9 @@ export function createXStatePlaybookRuntime<
         activeAborts = abortReasonClassifier(signal);
         activeAbortEmission = undefined;
         controlPlaneError = undefined;
+        // DR-063 §2: each turn decides its own failures, so the slot never
+        // carries a previous turn's cause into this one.
+        lastFailureCause = undefined;
         let result: PlaybookRunResult | undefined;
         let operationError: unknown;
         // The boundary sentinel releases on every exit: a settlement defect

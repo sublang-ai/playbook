@@ -247,10 +247,36 @@ type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
+// DR-063: the closed failure-cause contract. `code` is one of
+// PLAYBOOK_FAILURE_CODES and `evidence` holds exactly the members that code
+// names — repository paths, dispositions, classifications, and revisions, never
+// content or internal identity.
+type PlaybookFailureCode =
+  | 'commit-missing'
+  | 'commit-residual'
+  | 'pre-existing-lost'
+  | 'commits-more-than-one'
+  | 'history-rewritten'
+  | 'foreign-change'
+  | 'observation-unstable'
+  | 'attribution-ambiguous'
+  | 'receipt-missing'
+  | 'judge-failed'
+  | 'player-failed'
+  | 'aborted'
+  | 'child-failed'
+  | 'runtime-defect';
+
+interface PlaybookFailureCause {
+  readonly code: PlaybookFailureCode;
+  readonly evidence: PlaybookFailureEvidence;
+}
+
 interface NormalizedError {
   name: string;
   message: string;
   stack?: string;
+  cause?: PlaybookFailureCause;   // present when the error carried a valid one
 }
 
 type PlaybookStateValue =
@@ -2045,9 +2071,15 @@ parked-session snapshot capability; the pair changes no runtime ABI and no
 artifact or snapshot schema.
 
 ```typescript
+type PlaybookControlStanding = 'ready' | 'no-op' | 'blocked';
+type PlaybookControlActionReason = 'receipt-complete';
+
 interface PlaybookControlAction {
   id: string;      // stable within the returned view
   label: string;   // runtime-written, Boss-appropriate
+  standing?: PlaybookControlStanding;     // what running it would do (DR-063);
+                                          // absent reads as `ready`
+  reason?: PlaybookControlActionReason;   // why it is not `ready`
 }
 
 interface PlaybookControlView {

@@ -32,10 +32,65 @@ export interface CaptainResult {
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | {
     readonly [key: string]: JsonValue;
 };
+export declare const PLAYBOOK_FAILURE_CODES: readonly ["commit-missing", "commit-residual", "pre-existing-lost", "commits-more-than-one", "history-rewritten", "foreign-change", "observation-unstable", "attribution-ambiguous", "receipt-missing", "judge-failed", "player-failed", "aborted", "child-failed", "runtime-defect"];
+export type PlaybookFailureCode = (typeof PLAYBOOK_FAILURE_CODES)[number];
+/** The bounded path lists one failure code's evidence may carry (DR-063 §1). */
+export interface PlaybookFailurePaths {
+    /** Paths changed in the worktree that no commit carries. */
+    readonly uncommitted?: readonly string[];
+    /** Pre-existing baseline paths the call changed before committing. */
+    readonly altered?: readonly string[];
+    /** Pre-existing baseline paths whose content is nowhere. */
+    readonly lost?: readonly string[];
+    /** Paths whose entry differs or is missing on either side. */
+    readonly changed?: readonly string[];
+    /** Paths omitted from the lists above by the 32-path bound. */
+    readonly truncated?: number;
+}
+/** The bounded error record a failure cause may carry (DR-063 §1). */
+export interface PlaybookFailureErrorEvidence {
+    readonly name: string;
+    readonly message: string;
+}
+/** The closed evidence object of one failure cause (DR-063 §1). */
+export interface PlaybookFailureEvidence {
+    readonly required?: PlaybookRepositoryDisposition;
+    readonly observed?: PlaybookRepositoryReceipt['classification'];
+    readonly baselineHead?: string;
+    readonly afterHead?: string;
+    readonly commitOid?: string;
+    readonly paths?: PlaybookFailurePaths;
+    readonly reason?: string;
+    readonly error?: PlaybookFailureErrorEvidence;
+    readonly errorCode?: string;
+    readonly roleId?: string;
+    readonly playerId?: string;
+    readonly playbookId?: string;
+    readonly cause?: PlaybookFailureCause;
+}
+/**
+ * Why a parked workflow failed (DR-063 §1): one code from the closed list and
+ * the closed evidence object that code names. Evidence holds repository paths,
+ * dispositions, classifications, and revision identities only — never file
+ * content, player prose, or internal call and session identities.
+ */
+export interface PlaybookFailureCause {
+    readonly code: PlaybookFailureCode;
+    readonly evidence: PlaybookFailureEvidence;
+}
+/**
+ * Validate, detach, and freeze one failure cause (DR-063 §1). The check is
+ * closed per code: exactly the evidence members that code names, nothing else,
+ * and a `child-failed` cause nests at most four deep. A value this rejects is
+ * not a cause, so a caller omits it rather than publishing an invented one.
+ */
+export declare function assertPlaybookFailureCause(value: unknown): PlaybookFailureCause;
 export interface NormalizedError {
     name: string;
     message: string;
     stack?: string;
+    /** DR-063 §2: present exactly when the underlying error carried a valid one. */
+    cause?: PlaybookFailureCause;
 }
 export type PlaybookStateValue = string | {
     readonly [key: string]: PlaybookStateValue;
@@ -335,9 +390,13 @@ export interface PlaybookRuntimeSnapshot {
     };
     suspendedCall?: PlaybookSuspendedCall;
 }
+export type PlaybookControlStanding = 'ready' | 'no-op' | 'blocked';
+export type PlaybookControlActionReason = 'receipt-complete';
 export interface PlaybookControlAction {
     id: string;
     label: string;
+    standing?: PlaybookControlStanding;
+    reason?: PlaybookControlActionReason;
 }
 export interface PlaybookControlView {
     state: PlaybookState;

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   fromPromise,
   waitFor,
@@ -10,10 +11,13 @@ import {
   type SnapshotFrom,
 } from 'xstate';
 
+import { assertPlaybookFailureCause } from './runtime.js';
 import type {
   CaptainResult,
   JsonValue,
   NormalizedError,
+  PlaybookFailureCause,
+  PlaybookFailurePaths,
   PlaybookCallRequest,
   PlaybookCallResult,
   PlaybookCallStart,
@@ -634,7 +638,74 @@ export function hiddenControlEnvelope(prompt: string): string {
   ].join('\n\n');
 }
 
+/**
+ * DR-063 §2: the marker property the runtime writes on the error it marks as
+ * the FSM failure. It is non-enumerable, so decorating a host-owned error
+ * changes nothing a host can observe by enumeration or serialization.
+ */
+const PLAYBOOK_FAILURE_CAUSE_PROPERTY = 'playbookCause';
+
+/**
+ * Attach one validated failure cause to an error object, returning it. A cause
+ * the closed validator rejects is dropped rather than published, and an error
+ * that refuses the property keeps its own cause-free identity (DR-063 §1).
+ */
+export function attachPlaybookFailureCause<E>(error: E, cause: unknown): E {
+  if (typeof error !== 'object' || error === null) return error;
+  let validated: PlaybookFailureCause;
+  try {
+    validated = assertPlaybookFailureCause(cause);
+  } catch {
+    return error;
+  }
+  try {
+    Object.defineProperty(error, PLAYBOOK_FAILURE_CAUSE_PROPERTY, {
+      value: validated,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+  } catch {
+    // A frozen or hostile error keeps no cause; the runtime's own slot still
+    // supplies one at the failed state.
+  }
+  return error;
+}
+
+/**
+ * DR-063 §2: a normalized error carries `cause` exactly when the underlying
+ * error carries a valid one. An `Error` carries it on the marker property the
+ * runtime writes; an already-normalized record carries it as `cause`, so the
+ * cause survives every re-normalization along the durable round trip.
+ */
+function playbookFailureCauseOf(
+  error: unknown,
+): PlaybookFailureCause | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  let candidate: unknown;
+  try {
+    if (Object.hasOwn(error, PLAYBOOK_FAILURE_CAUSE_PROPERTY)) {
+      candidate = (error as Record<string, unknown>)[
+        PLAYBOOK_FAILURE_CAUSE_PROPERTY
+      ];
+    } else if (!(error instanceof Error) && Object.hasOwn(error, 'cause')) {
+      candidate = (error as Record<string, unknown>).cause;
+    }
+  } catch {
+    return undefined;
+  }
+  if (candidate === undefined) return undefined;
+  try {
+    return assertPlaybookFailureCause(candidate);
+  } catch {
+    return undefined;
+  }
+}
+
 export function normalizeError(error: unknown): NormalizedError {
+  const cause = playbookFailureCauseOf(error);
+  const withCause = (normalized: NormalizedError): NormalizedError =>
+    cause === undefined ? normalized : { ...normalized, cause };
   if (error instanceof Error) {
     let name = 'Error';
     let message = 'Unknown error';
@@ -656,11 +727,11 @@ export function normalizeError(error: unknown): NormalizedError {
     } catch {
       // A stack is optional at the public boundary.
     }
-    return {
+    return withCause({
       name,
       message,
       ...(stack ? { stack } : {}),
-    };
+    });
   }
   if (typeof error === 'string') {
     return { name: 'Error', message: error };
@@ -668,21 +739,21 @@ export function normalizeError(error: unknown): NormalizedError {
   try {
     assertJsonSafe(error);
     if (isRecord(error) && typeof error.message === 'string') {
-      return {
+      return withCause({
         name:
           typeof error.name === 'string' && error.name.length > 0
             ? error.name
             : 'Error',
         message: error.message,
         ...(typeof error.stack === 'string' ? { stack: error.stack } : {}),
-      };
+      });
     }
-    return { name: 'Error', message: JSON.stringify(error) };
+    return withCause({ name: 'Error', message: JSON.stringify(error) });
   } catch {
     try {
-      return { name: 'Error', message: String(error) };
+      return withCause({ name: 'Error', message: String(error) });
     } catch {
-      return { name: 'Error', message: 'Unknown error' };
+      return withCause({ name: 'Error', message: 'Unknown error' });
     }
   }
 }
@@ -1307,6 +1378,8 @@ export type PlaybookSemanticReconciliation =
   | {
       readonly status: 'unresolved';
       readonly reason: PlaybookSemanticReconciliationReason;
+      /** DR-063 §1: why it stays unresolved, as a closed structured cause. */
+      readonly cause: PlaybookFailureCause;
       readonly evidence: PlaybookRetainedSemanticEvidence;
     };
 
@@ -1394,11 +1467,172 @@ function retainedSemanticEvidence(
   });
 }
 
+// ---------------------------------------------------------------------------
+// DR-063 §1: the evidence builder for a repository-decided failure. Every list
+// is sorted, unique, and bounded; `truncated` carries the count the bound
+// omitted. Nothing but repository paths, dispositions, classifications, and
+// revision identities enters a cause.
+// ---------------------------------------------------------------------------
+
+const FAILURE_PATH_BOUND = 32;
+
+function boundedFailurePaths(
+  lists: Readonly<Record<string, readonly string[]>>,
+): PlaybookFailurePaths {
+  const bounded: Record<string, unknown> = {};
+  let omitted = 0;
+  for (const [member, paths] of Object.entries(lists)) {
+    bounded[member] = paths.slice(0, FAILURE_PATH_BOUND);
+    omitted += Math.max(0, paths.length - FAILURE_PATH_BOUND);
+  }
+  if (omitted > 0) bounded.truncated = omitted;
+  return bounded as PlaybookFailurePaths;
+}
+
+function sortedUniquePaths(paths: Iterable<string>): readonly string[] {
+  return [...new Set(paths)].sort();
+}
+
+/** After-projection entries the baseline did not hold, or holds differently. */
+function newOrChangedProjectionPaths(
+  baseline: PlaybookRepositoryObservation,
+  after: PlaybookRepositoryObservation,
+): readonly string[] {
+  return sortedUniquePaths(
+    Object.keys(after.projection).filter(
+      (path) =>
+        !Object.hasOwn(baseline.projection, path) ||
+        !isDeepStrictEqual(baseline.projection[path], after.projection[path]),
+    ),
+  );
+}
+
+/** Entries that differ or are missing on either side of the two projections. */
+function divergentProjectionPaths(
+  baseline: PlaybookRepositoryObservation,
+  after: PlaybookRepositoryObservation,
+): readonly string[] {
+  return sortedUniquePaths(
+    [
+      ...Object.keys(baseline.projection),
+      ...Object.keys(after.projection),
+    ].filter(
+      (path) =>
+        !Object.hasOwn(baseline.projection, path) ||
+        !Object.hasOwn(after.projection, path) ||
+        !isDeepStrictEqual(baseline.projection[path], after.projection[path]),
+    ),
+  );
+}
+
+/**
+ * DR-063 §1: the cause of an unresolved repository-disposition mismatch, read
+ * from the disposition the accepted arm required and the receipt the host
+ * proved. The receipt states the failure; nothing here infers one.
+ */
+function playbookRepositoryFailureCause(
+  required: PlaybookRepositoryDisposition,
+  receipt: PlaybookRepositoryReceipt,
+): PlaybookFailureCause {
+  const observed = receipt.classification;
+  const baselineHead = receipt.baseline.head;
+  const after = receipt.after;
+  const common = { required, observed, baselineHead };
+  const ambiguous = (): PlaybookFailureCause =>
+    assertPlaybookFailureCause({
+      code: 'attribution-ambiguous',
+      evidence: {
+        ...common,
+        ...(after === undefined ? {} : { afterHead: after.head }),
+      },
+    });
+  const lost = receipt.preExisting?.lost ?? [];
+  if (lost.length > 0) {
+    return assertPlaybookFailureCause({
+      code: 'pre-existing-lost',
+      evidence: {
+        ...common,
+        ...(after === undefined ? {} : { afterHead: after.head }),
+        paths: boundedFailurePaths({ lost: sortedUniquePaths(lost) }),
+      },
+    });
+  }
+  if (observed === 'observation-ambiguous' && after === undefined) {
+    return assertPlaybookFailureCause({
+      code: 'observation-unstable',
+      evidence: common,
+    });
+  }
+  if (after === undefined) return ambiguous();
+  const afterHead = after.head;
+  if (observed === 'multiple-commits') {
+    return assertPlaybookFailureCause({
+      code: 'commits-more-than-one',
+      evidence: { ...common, afterHead },
+    });
+  }
+  if (observed === 'rewritten-or-non-descendant') {
+    return assertPlaybookFailureCause({
+      code: 'history-rewritten',
+      evidence: { ...common, afterHead },
+    });
+  }
+  if (observed === 'concurrent-or-foreign-change') {
+    return assertPlaybookFailureCause({
+      code: 'foreign-change',
+      evidence: {
+        ...common,
+        afterHead,
+        paths: boundedFailurePaths({
+          changed: divergentProjectionPaths(receipt.baseline, after),
+        }),
+      },
+    });
+  }
+  const uncommitted = newOrChangedProjectionPaths(receipt.baseline, after);
+  const altered = sortedUniquePaths(receipt.preExisting?.altered ?? []);
+  if (
+    observed === 'observation-ambiguous' &&
+    afterHead !== baselineHead &&
+    (uncommitted.length > 0 || altered.length > 0)
+  ) {
+    return assertPlaybookFailureCause({
+      code: 'commit-residual',
+      evidence: {
+        ...common,
+        afterHead,
+        ...(receipt.commitOid === undefined
+          ? {}
+          : { commitOid: receipt.commitOid }),
+        paths: boundedFailurePaths({ uncommitted, altered }),
+      },
+    });
+  }
+  if (
+    required === 'one-descendant-commit' &&
+    (observed === 'unchanged' || observed === 'worktree-only-change')
+  ) {
+    return assertPlaybookFailureCause({
+      code: 'commit-missing',
+      evidence: {
+        ...common,
+        afterHead,
+        paths: boundedFailurePaths({ uncommitted }),
+      },
+    });
+  }
+  return ambiguous();
+}
+
 function unresolvedSemanticEvidence(
   reason: PlaybookSemanticReconciliationReason,
   evidence: PlaybookRetainedSemanticEvidence,
+  cause: PlaybookFailureCause = assertPlaybookFailureCause({
+    code: 'runtime-defect',
+    evidence: { reason },
+  }),
 ): PlaybookSemanticReconciliation {
-  return Object.freeze({ status: 'unresolved', reason, evidence });
+  return Object.freeze({ status: 'unresolved', reason, cause, evidence });
 }
 
 /**
@@ -1464,6 +1698,7 @@ export function reconcilePlaybookSemanticEvidence(
     return unresolvedSemanticEvidence(
       'repository-disposition-mismatch',
       evidence,
+      playbookRepositoryFailureCause(disposition, receipt),
     );
   }
 
@@ -2701,6 +2936,17 @@ export class NestedPlaybookCallError extends Error {
     this.name = normalized?.name ?? 'NestedPlaybookCallError';
     if (normalized?.stack) this.stack = normalized.stack;
     this.result = result;
+    // DR-063 §2: the child's failure reaching its parent is `child-failed`,
+    // carrying the child's own cause when its normalized error published one.
+    attachPlaybookFailureCause(this, {
+      code: 'child-failed',
+      evidence: {
+        playbookId: result.playbookId,
+        ...(normalized?.cause === undefined
+          ? {}
+          : { cause: normalized.cause }),
+      },
+    });
   }
 }
 
@@ -2883,7 +3129,7 @@ function validateNormalizedError(error: unknown, path: string): void {
   if (!isRecord(error)) {
     throw new TypeError(`${path} must be a normalized error`);
   }
-  rejectUnknownKeys(error, ['name', 'message', 'stack'], path);
+  rejectUnknownKeys(error, ['name', 'message', 'stack', 'cause'], path);
   requireNonEmptyString(error.name, `${path}.name`);
   if (typeof error.message !== 'string') {
     throw new TypeError(`${path}.message must be a string`);
@@ -2891,6 +3137,9 @@ function validateNormalizedError(error: unknown, path: string): void {
   if (error.stack !== undefined && typeof error.stack !== 'string') {
     throw new TypeError(`${path}.stack must be a string`);
   }
+  // DR-063 §2: a normalized error may carry its structured cause, and an
+  // unrecognized shape is not a cause.
+  if (error.cause !== undefined) assertPlaybookFailureCause(error.cause);
 }
 
 // DR-048: the completed child's compiled terminal record. It is runtime-owned

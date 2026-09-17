@@ -2826,8 +2826,16 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       state: { stateId: 'failed' },
       actions: [],
     });
+    // DR-063 §4: the adopted failure still explains itself — the cause the
+    // source runtime decided travels inside the retained `lastError`.
     expect(target.harness.surfaced.at(-1)).toBe(
-      'No retained work is actionable.',
+      [
+        'No retained work is actionable.',
+        '',
+        'Failure: the coder call failed: coder exploded.',
+        'Controls:',
+        '- Stop /code (ready)',
+      ].join('\n'),
     );
     expect(target.harness.shell.exportSnapshot()).toMatchObject({
       mode: 'engaged.parked',
@@ -3293,7 +3301,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
   it('grounds the result-phase call in a failed receipt and surfaces its validated prose', async () => {
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step', standing: 'ready' }],
         apply: () => ({
           disposition: 'failed',
           error: { name: 'TypeError', message: 'guard lookup exploded' },
@@ -3683,9 +3691,21 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
         'Last error: {"name":"Error","message":"coder exploded"}',
       );
     }
+    // DR-063 §4: the shell appends its own deterministic report once per
+    // turn, beside whatever the closing reply says.
+    const failureReport = [
+      '',
+      '',
+      'Failure: the coder call failed: coder exploded.',
+      'Controls:',
+      '- Retry: Coder is running the first coding phase: a direct ' +
+        'implementation, a new intent record, or an existing intent-record ' +
+        'task. (ready)',
+      '- Stop /code (ready)',
+    ].join('\n');
     expect(harness.surfaced.slice(-2)).toEqual([
-      'The run failed with {"name":"Error","message":"coder exploded"}.',
-      'The run failed with {"name":"Error","message":"coder exploded"}.',
+      `The run failed with {"name":"Error","message":"coder exploded"}.${failureReport}`,
+      `The run failed with {"name":"Error","message":"coder exploded"}.${failureReport}`,
     ]);
     expect(harness.playerCalls.length).toBe(playerCallsBefore);
     expect(JSON.stringify(runtime.describe!())).toBe(before);
@@ -4499,7 +4519,16 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     );
     expect(digest).not.toContain('jump:');
     expect(harness.surfaced.at(-1)).toBe(
-      'Only the advertised retry is available for this run.',
+      [
+        'Only the advertised retry is available for this run.',
+        '',
+        'Failure: the coder call failed: coder exploded.',
+        'Controls:',
+        '- Retry: Coder is running the first coding phase: a direct ' +
+          'implementation, a new intent record, or an existing intent-record ' +
+          'task. (ready)',
+        '- Stop /code (ready)',
+      ].join('\n'),
     );
     expect(JSON.stringify(runtime.describe!())).toBe(snapshotBefore);
     expect(harness.playerCalls).toHaveLength(playerCallsBefore);
@@ -4824,7 +4853,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
   it('reports an unreadable runtime control view through the result phase', async () => {
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step', standing: 'ready' }],
         describeThrows: () => new TypeError('view read exploded'),
       },
     });
@@ -5027,7 +5056,7 @@ describe('CAPTAIN-39 durable continuity', () => {
     const applied: string[] = [];
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step', standing: 'ready' }],
         apply: (actionId, key) => {
           applied.push(`${actionId}:${key}`);
           // A genuine `executed` receipt always carries its run result, so
@@ -5546,7 +5575,7 @@ describe('CAPTAIN-39 durable continuity', () => {
     ];
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step', standing: 'ready' }],
         apply: () => receipts.shift()!,
       },
     });
@@ -5940,7 +5969,7 @@ describe('CAPTAIN-9 ControlView block composition', () => {
     ].join('\n');
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:STEP', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:STEP', label: 'Retry the failed step', standing: 'ready' }],
         context: {
           workflow: 'iteration',
           round: 3,
@@ -5990,7 +6019,7 @@ describe('CAPTAIN-9 ControlView block composition', () => {
   it('states that a readable view publishes no description, never the state id', async () => {
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:STEP', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:STEP', label: 'Retry the failed step', standing: 'ready' }],
       },
       onInput: (_text, runtime) => {
         runtime.stateId = 'awaitBossReply';
@@ -6021,7 +6050,7 @@ describe('CAPTAIN-9 ControlView block composition', () => {
   it('reports a failing describe() as a read failure, never as capability absence', async () => {
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:STEP', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:STEP', label: 'Retry the failed step', standing: 'ready' }],
         describeThrows: () => new Error('control view unavailable'),
       },
     });
@@ -6086,7 +6115,7 @@ describe('CAPTAIN-40 injection and prose validation', () => {
     const applied: string[] = [];
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step', standing: 'ready' }],
         context: { lastPlayerOutput: hostile },
         pendingQuestions: [
           {
@@ -6842,7 +6871,7 @@ describe('CAPTAIN-9 identifiers the shell supplies are guarded wherever it suppl
     const code = shellEntry('code', 'code', {
       control: {
         actions: [
-          { id: 'jump:planAndImplement', label: 'Resume from: planning' },
+          { id: 'jump:planAndImplement', label: 'Resume from: planning', standing: 'ready' },
         ],
       },
     });
@@ -6890,7 +6919,7 @@ describe('CAPTAIN-9 identifiers the shell supplies are guarded wherever it suppl
   it('does not mistake a Boss-facing action label for a control identifier', async () => {
     const code = shellEntry('code', 'code', {
       control: {
-        actions: [{ id: 'retry:BOSS_TURN', label: 'Re-run' }],
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Re-run', standing: 'ready' }],
       },
     });
     const reply = 'Choose Re-run when you want to try the failed step again.';
@@ -7060,7 +7089,7 @@ describe('CAPTAIN-9 no foreign field can forge a labeled block', () => {
 
   it('pins the baseline block counts of a clean decision prompt', async () => {
     const code = shellEntry('code', 'code', {
-      control: { actions: [{ id: 'retry:STEP', label: 'Retry the step' }] },
+      control: { actions: [{ id: 'retry:STEP', label: 'Retry the step', standing: 'ready' }] },
     });
     const harness = makeShellHarness(
       [code],

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
+import { assertPlaybookFailureCause } from '@sublang/playbook/runtime';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, emptyPlaybookEffectLedger, hiddenControlEnvelope, isPlaybookEffectLedgerMonotonicExtension, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
 function retainedEffectLedgerCanRebase(checkpoint, current) {
@@ -539,6 +540,96 @@ function carriedPreExistingFacts(carried) {
         const paths = [...new Set([...absorbed, ...altered])].sort();
         return `The commit ${commitOid} carries ${paths.length} changes that were uncommitted before the step: ${boundedPathList(paths)}.`;
     });
+}
+// DR-063 §4: the Boss-visible failure report. Every host sees the same
+// sentences because the shell composes them from the structured cause instead
+// of asking a model to describe facts it may drop. The report exposes no file
+// content, player prose, or internal identity: paths, revisions, dispositions,
+// and the reported error message are what a cause carries.
+/** The Boss-facing phrase for each closed control-action reason (DR-063 §3). */
+const CONTROL_REASON_PHRASES = {
+    'receipt-complete': 'nothing has changed since it failed',
+};
+function controlReasonPhrase(reason) {
+    if (reason === undefined)
+        return 'no reason was published';
+    return CONTROL_REASON_PHRASES[reason] ?? reason;
+}
+function causePathList(paths, truncated) {
+    const list = paths ?? [];
+    const printed = list.slice(0, CARRIED_CHANGE_PATH_LIMIT);
+    const omitted = list.length - printed.length + (truncated ?? 0);
+    return omitted > 0
+        ? `${printed.join(', ')}, … and ${omitted} more`
+        : printed.join(', ');
+}
+/** One sentence per code, with that code's bounded evidence (DR-063 §4). */
+function failureCauseSentence(cause, describePlaybook) {
+    const evidence = cause.evidence;
+    const paths = evidence.paths;
+    const code = cause.code;
+    switch (code) {
+        case 'commit-missing':
+            return (paths?.uncommitted ?? []).length === 0
+                ? 'the step had to commit its work and committed nothing.'
+                : `the step had to commit its work and committed nothing; these changes are uncommitted: ${causePathList(paths?.uncommitted, paths?.truncated)}.`;
+        case 'commit-residual': {
+            const subject = evidence.commitOid === undefined
+                ? "the step's commit"
+                : `the commit ${evidence.commitOid}`;
+            if ((paths?.uncommitted ?? []).length > 0) {
+                return `${subject} left changes uncommitted: ${causePathList(paths?.uncommitted, paths?.truncated)}.`;
+            }
+            if ((paths?.altered ?? []).length > 0) {
+                return `${subject} left altered changes uncommitted: ${causePathList(paths?.altered, paths?.truncated)}.`;
+            }
+            return `${subject} left changes uncommitted beside it.`;
+        }
+        case 'pre-existing-lost':
+            return `uncommitted changes you had were lost: ${causePathList(paths?.lost, paths?.truncated)}.`;
+        case 'commits-more-than-one':
+            return `the step made more than one commit; HEAD moved from ${evidence.baselineHead} to ${evidence.afterHead}.`;
+        case 'history-rewritten':
+            return `the repository history was rewritten; HEAD moved from ${evidence.baselineHead} to ${evidence.afterHead}.`;
+        case 'foreign-change':
+            return `the repository changed outside this step: ${causePathList(paths?.changed, paths?.truncated)}.`;
+        case 'observation-unstable':
+            return `the repository could not be observed after the step; it stood at ${evidence.baselineHead} before it.`;
+        case 'attribution-ambiguous':
+            return `the repository change could not be attributed to this step; it required ${evidence.required} and observed ${evidence.observed}.`;
+        case 'receipt-missing':
+            return `a step left no complete repository receipt; the repository stood at ${evidence.baselineHead} before it.`;
+        case 'judge-failed':
+            return evidence.error === undefined
+                ? `the hidden adjudication failed: ${evidence.reason}.`
+                : `the hidden adjudication failed: ${evidence.reason} (${evidence.error.name}: ${compactEvidence(evidence.error.message)}).`;
+        case 'player-failed':
+            return `the ${evidence.roleId} call failed: ${compactEvidence(evidence.error?.message ?? 'no detail was reported')}.`;
+        case 'aborted':
+            return 'the turn was aborted before the work settled.';
+        case 'child-failed': {
+            const nested = describePlaybook(evidence.playbookId ?? 'nested playbook');
+            return evidence.cause === undefined
+                ? `the nested ${nested} run failed.`
+                : `the nested ${nested} run failed: ${failureCauseSentence(evidence.cause, describePlaybook)}`;
+        }
+        case 'runtime-defect':
+            return `the runtime could not settle the step: ${compactEvidence(evidence.reason ?? 'no reason was recorded')}.`;
+    }
+}
+function failureControlLine(action) {
+    // DR-063 §3: an action that publishes no standing is `ready`.
+    const standing = action.standing ?? 'ready';
+    return standing === 'ready'
+        ? `- ${action.label} (ready)`
+        : `- ${action.label} (${standing}: ${controlReasonPhrase(action.reason)})`;
+}
+function failureReportText(sentence, controls) {
+    return [
+        `Failure: ${sentence}`,
+        'Controls:',
+        ...(controls.length === 0 ? ['- none'] : controls),
+    ].join('\n');
 }
 function appendMandatoryPresentationSuffix(turn, suffix) {
     const current = turn.mandatoryPresentationSuffix;
@@ -1311,10 +1402,16 @@ export function assertPlaybookCaptainShellSnapshot(value) {
     let normalizedLastError;
     if (snapshot.lastError !== undefined) {
         const error = snapshotRecord(snapshot.lastError, 'Captain shell snapshot.lastError');
-        rejectSnapshotKeys(error, ['name', 'message'], 'Captain shell snapshot.lastError');
+        // DR-063 §2: the cause enters the stored record inside `lastError`, so a
+        // parked failure explains itself after a restart. An unrecognized shape is
+        // not a cause and the closed validator refuses the snapshot.
+        rejectSnapshotKeys(error, ['name', 'message', 'cause'], 'Captain shell snapshot.lastError');
         normalizedLastError = {
             name: snapshotString(error.name, 'Captain shell snapshot.lastError.name', true),
             message: snapshotString(error.message, 'Captain shell snapshot.lastError.message', true),
+            ...(error.cause === undefined
+                ? {}
+                : { cause: assertPlaybookFailureCause(error.cause) }),
         };
     }
     const activePlaybooks = new Set();
@@ -3868,6 +3965,22 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             ...entries.map(([key, value]) => digestLine `- ${key}: ${JSON.stringify(value)}`),
         ];
     };
+    // DR-063 §3: every advertised action names its standing in the digest, so a
+    // model is never invited to select an action that changes nothing.
+    const advertisedActionDigest = (actions) => {
+        if (actions.length === 0)
+            return 'Advertised actions: none.';
+        const lines = [
+            'Advertised actions:',
+            ...actions.map((action) => (action.standing ?? 'ready') === 'ready'
+                ? digestLine `- ${action.id}: ${action.label}`
+                : digestLine `- ${action.id}: ${action.label} (${action.standing}: ${action.reason ?? 'no reason was published'})`),
+        ];
+        if (actions.some(({ standing }) => standing !== undefined && standing !== 'ready')) {
+            lines.push('An action marked no-op runs and changes nothing; a blocked action cannot run at all.');
+        }
+        return lines.join('\n');
+    };
     const retainedResumptionDigest = () => {
         if (rootFrame() !== undefined) {
             return 'Retained resumptions: unavailable while a playbook is engaged.';
@@ -3912,12 +4025,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             lines.push(`Leaf ${frameLabel(leaf)} is parked for repository-effect reconciliation.`);
             lines.push('Pending Boss questions: withheld until reconciliation.');
-            lines.push(reconciliationActions.length === 0
-                ? 'Advertised actions: none.'
-                : [
-                    'Advertised actions:',
-                    ...reconciliationActions.map((action) => digestLine `- ${action.id}: ${action.label}`),
-                ].join('\n'));
+            lines.push(advertisedActionDigest(reconciliationActions));
             lines.push('Ordinary delivery, switching, dismissal, and runtime actions are unavailable while retained effect evidence is unresolved. Only the advertised unresolved-effect controls may run. Conversation is unaffected: `respond` stays valid for any turn.');
             lines.push(retainedResumptionDigest());
             return lines.join('\n');
@@ -4001,12 +4109,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 message: view.lastError.message,
             })}`);
         }
-        lines.push(view.actions.length === 0
-            ? 'Advertised actions: none.'
-            : [
-                'Advertised actions:',
-                ...view.actions.map((action) => digestLine `- ${action.id}: ${action.label}`),
-            ].join('\n'));
+        lines.push(advertisedActionDigest(view.actions));
         lines.push(retainedResumptionDigest());
         return lines.join('\n');
     };
@@ -4046,7 +4149,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             .filter((action) => !fenced ||
             action.id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
             action.id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID)
-            .map((action) => Object.freeze({ id: action.id, label: action.label })));
+            // DR-063 §3: the leaf's own standing is published with the pair, so a
+            // host drawing the control says what running it would do. A leaf that
+            // publishes none advertises `ready`, which is what it always meant.
+            .map((action) => Object.freeze({
+            id: action.id,
+            label: action.label,
+            standing: action.standing ?? 'ready',
+            ...(action.reason === undefined ? {} : { reason: action.reason }),
+        })));
     };
     // CAPTAIN-62: the controls the shell effects itself, published beside the
     // leaf's advertised actions and never mixed with them — these are the
@@ -4073,6 +4184,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 // way the Boss started it rather than the frame that happens to be
                 // parked inside it.
                 label: `Stop ${frameLabel(root)}`,
+                // DR-063 §3: giving up always ends the engagement, whatever the leaf
+                // is parked on.
+                standing: 'ready',
             }),
         ]);
     };
@@ -5029,6 +5143,106 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         return (error instanceof AggregateError &&
             error.errors.some((nested) => containsEffectThrow(turn, nested)));
     };
+    // DR-063 §4: the leaf's failure as the shell reads it — the cause the runtime
+    // decided, or, behind the retained-effect fence where the leaf itself holds
+    // no error, the incomplete receipt the frozen evidence names.
+    const leafFailureCause = (view, fenced, unresolvedEffects) => {
+        const recorded = view?.lastError ?? lastError;
+        if (recorded?.cause !== undefined) {
+            try {
+                return assertPlaybookFailureCause(recorded.cause);
+            }
+            catch {
+                // A cause the closed validator refuses is not a cause.
+            }
+        }
+        if (fenced) {
+            const incomplete = unresolvedEffects.find(({ classification }) => classification === 'incomplete');
+            if (incomplete !== undefined) {
+                return assertPlaybookFailureCause({
+                    code: 'receipt-missing',
+                    evidence: { baselineHead: incomplete.baselineHead },
+                });
+            }
+        }
+        // There is no failure without a cause: a parked failure whose error
+        // carries none is a runtime defect named by that error.
+        if (view?.state.stateId === 'failed' && recorded !== undefined) {
+            return assertPlaybookFailureCause({
+                code: 'runtime-defect',
+                evidence: {
+                    reason: recorded.message.trim().length > 0
+                        ? recorded.message
+                        : recorded.name,
+                },
+            });
+        }
+        return undefined;
+    };
+    const failureControlLines = (view, fenced) => {
+        const runtimeActions = (view?.actions ?? []).filter((action) => !fenced ||
+            action.id === UNRESOLVED_EFFECT_RECONCILIATION_ACTION_ID ||
+            action.id === UNRESOLVED_EFFECT_ABANDONMENT_ACTION_ID);
+        const root = rootFrame();
+        return [
+            ...runtimeActions.map((action) => failureControlLine(action)),
+            // The shell's own control is published beside the leaf's, so the report
+            // names every door out of this failure (CAPTAIN-62).
+            ...(root === undefined
+                ? []
+                : [
+                    failureControlLine({
+                        label: `Stop ${frameLabel(root)}`,
+                        standing: 'ready',
+                    }),
+                ]),
+        ];
+    };
+    const describeNestedPlaybook = (playbookId) => {
+        const enablement = enablementById.get(playbookId);
+        return enablement === undefined ? playbookId : `/${enablement.command}`;
+    };
+    // DR-063 §4: appended once, beside the unresolved-effect and pre-existing
+    // change reports, whenever the turn settles with the leaf parked in its
+    // failure state or behind the retained-effect fence.
+    const reportLeafFailure = (turn, unresolvedEffects) => {
+        if (turn.failureReported)
+            return;
+        const leaf = leafFrame();
+        if (!leaf)
+            return;
+        const fenced = retainedEffectReconciliation !== undefined;
+        let view;
+        if (typeof leaf.runtime.describe === 'function') {
+            try {
+                view = leaf.runtime.describe();
+            }
+            catch {
+                // An unreadable control view leaves the mirrored error as evidence.
+            }
+        }
+        if (!fenced && view?.state.stateId !== 'failed')
+            return;
+        const cause = leafFailureCause(view, fenced, unresolvedEffects);
+        if (cause === undefined)
+            return;
+        turn.failureReported = true;
+        const sentence = failureCauseSentence(cause, describeNestedPlaybook);
+        appendMandatoryPresentationSuffix(turn, failureReportText(sentence, failureControlLines(view, fenced)));
+        // The result-phase prompt reads the turn's report, so the same fact joins
+        // it here rather than only the turn's running list.
+        const fact = `The workflow failed: ${sentence}`;
+        turn.settlementFacts.push(fact);
+        if (turn.report !== undefined) {
+            turn.report = {
+                ...turn.report,
+                facts: [...turn.report.facts, fact],
+                ...(turn.report.bossFacts === undefined
+                    ? {}
+                    : { bossFacts: [...turn.report.bossFacts, fact] }),
+            };
+        }
+    };
     const settleSelection = async (selection, signal) => {
         const turn = activeTurn;
         runFailureFacts = [];
@@ -5041,6 +5255,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             if (turn !== undefined)
                 reportCarriedPreExistingChanges(turn);
+            if (turn !== undefined) {
+                reportLeafFailure(turn, frozenUnresolvedEffects);
+            }
             return frozenUnresolvedEffects;
         };
         const finalizeSettlement = (settlement) => Object.freeze({

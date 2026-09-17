@@ -280,6 +280,9 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       methodSignature(runtimeDts, 'PlaybookPorts', 'callPlaybook'),
     ).toEqual(methodSignature(linkSpec, 'PlaybookPorts', 'callPlaybook'));
     expect(interfaceProperties(runtimeDts, 'NormalizedError')).toEqual([
+      // DR-063 §2: a normalized error carries its structured cause exactly
+      // when the underlying error carried a valid one.
+      'cause?:PlaybookFailureCause',
       'message:string',
       'name:string',
       'stack?:string',
@@ -431,9 +434,12 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       unionMembers(linkSpec, 'PlaybookTraceType'),
     );
     // DR-029 / PBRT-52: the optional control-surface pair and its types.
+    // DR-063 §3: every advertised action carries its standing.
     expect(interfaceProperties(runtimeDts, 'PlaybookControlAction')).toEqual([
       'id:string',
       'label:string',
+      'reason?:PlaybookControlActionReason',
+      'standing?:PlaybookControlStanding',
     ]);
     expect(interfaceProperties(runtimeDts, 'PlaybookControlAction')).toEqual(
       interfaceProperties(linkSpec, 'PlaybookControlAction'),
@@ -710,9 +716,14 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       expect(src).not.toMatch(/\bimport\s*\(/); // dynamic import()
       expect(src).not.toMatch(/\brequire\s*\(/); // require()
     }
-    expect(runtimeSource).not.toMatch(
-      /^\s*(?:export\s+)?(?:const|let|var|function|class)\b/m,
-    );
+    // DR-063 §1: the module's only value exports are the closed failure-code
+    // list and its validator; everything else it publishes is a type.
+    expect(
+      [...runtimeSource.matchAll(/^export\s+(?:const|function)\s+(\w+)/gm)].map(
+        ([, name]) => name,
+      ),
+    ).toEqual(['PLAYBOOK_FAILURE_CODES', 'assertPlaybookFailureCause']);
+    expect(runtimeSource).not.toMatch(/^\s*(?:export\s+)?(?:let|var|class)\b/m);
   });
 
   // RELEASE-15: a downstream consumer's `./runtime` import resolves to
@@ -732,5 +743,303 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
   it('ships a valid, loadable ESM module', async () => {
     const mod = await import(new URL('runtime.js', import.meta.url).href);
     expect(typeof mod).toBe('object');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DR-063 §1: the closed failure-cause contract. The list is the contract a host
+// catalogue is tested against, and the validator is closed per code: exactly
+// the evidence members that code names, nothing else.
+// ---------------------------------------------------------------------------
+
+describe('closed failure-cause contract (DR-063 §1)', () => {
+  const OBSERVATION = '0'.repeat(40);
+  const AFTER = '1'.repeat(40);
+
+  const accepted: Record<string, unknown> = {
+    'commit-missing': {
+      code: 'commit-missing',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'worktree-only-change',
+        baselineHead: OBSERVATION,
+        afterHead: AFTER,
+        paths: { uncommitted: ['a.ts', 'b.ts'] },
+      },
+    },
+    'commit-residual': {
+      code: 'commit-residual',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'observation-ambiguous',
+        baselineHead: OBSERVATION,
+        afterHead: AFTER,
+        commitOid: AFTER,
+        paths: { uncommitted: ['stray.txt'], altered: [], truncated: 3 },
+      },
+    },
+    'pre-existing-lost': {
+      code: 'pre-existing-lost',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'observation-ambiguous',
+        baselineHead: OBSERVATION,
+        paths: { lost: ['notes.md'] },
+      },
+    },
+    'commits-more-than-one': {
+      code: 'commits-more-than-one',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'multiple-commits',
+        baselineHead: OBSERVATION,
+        afterHead: AFTER,
+      },
+    },
+    'history-rewritten': {
+      code: 'history-rewritten',
+      evidence: {
+        required: 'one-descendant-commit',
+        observed: 'rewritten-or-non-descendant',
+        baselineHead: OBSERVATION,
+        afterHead: AFTER,
+      },
+    },
+    'foreign-change': {
+      code: 'foreign-change',
+      evidence: {
+        required: 'unchanged',
+        observed: 'concurrent-or-foreign-change',
+        baselineHead: OBSERVATION,
+        afterHead: AFTER,
+        paths: { changed: ['x.ts'] },
+      },
+    },
+    'observation-unstable': {
+      code: 'observation-unstable',
+      evidence: {
+        required: 'deferred',
+        observed: 'observation-ambiguous',
+        baselineHead: OBSERVATION,
+      },
+    },
+    'attribution-ambiguous': {
+      code: 'attribution-ambiguous',
+      evidence: {
+        required: 'unchanged',
+        observed: 'observation-ambiguous',
+        baselineHead: OBSERVATION,
+      },
+    },
+    'receipt-missing': {
+      code: 'receipt-missing',
+      evidence: { baselineHead: OBSERVATION },
+    },
+    'judge-failed': {
+      code: 'judge-failed',
+      evidence: {
+        reason: 'judge transport failed',
+        error: { name: 'Error', message: 'provider refused' },
+      },
+    },
+    'player-failed': {
+      code: 'player-failed',
+      evidence: {
+        roleId: 'coder',
+        playerId: 'dev.coder',
+        error: { name: 'Error', message: 'coder is down' },
+        errorCode: 'ENOENT',
+      },
+    },
+    aborted: { code: 'aborted', evidence: {} },
+    'child-failed': {
+      code: 'child-failed',
+      evidence: {
+        playbookId: 'code',
+        cause: { code: 'aborted', evidence: {} },
+      },
+    },
+    'runtime-defect': {
+      code: 'runtime-defect',
+      evidence: { reason: 'host omitted governed semantic settlement' },
+    },
+  };
+
+  it('accepts exactly one shape per declared code and detaches it', async () => {
+    const { PLAYBOOK_FAILURE_CODES, assertPlaybookFailureCause } = (await import(
+      new URL('runtime.js', import.meta.url).href
+    )) as typeof import('./runtime.js');
+    expect([...PLAYBOOK_FAILURE_CODES]).toEqual(Object.keys(accepted));
+    for (const code of PLAYBOOK_FAILURE_CODES) {
+      const source = accepted[code] as { evidence: Record<string, unknown> };
+      const validated = assertPlaybookFailureCause(source);
+      expect(validated).toEqual(source);
+      expect(Object.isFrozen(validated)).toBe(true);
+      expect(Object.isFrozen(validated.evidence)).toBe(true);
+      expect(validated).not.toBe(source);
+      expect(validated.evidence).not.toBe(source.evidence);
+    }
+  });
+
+  const rejections: readonly [string, unknown][] = [
+    ['a non-object', 'commit-missing'],
+    ['a class instance', new Error('boom')],
+    ['an unknown code', { code: 'disk-full', evidence: {} }],
+    ['a missing code', { evidence: {} }],
+    ['an extra top-level member', { ...accepted.aborted, extra: 1 }],
+    ['missing required evidence', { code: 'runtime-defect', evidence: {} }],
+    [
+      'an evidence member the code does not name',
+      { code: 'aborted', evidence: { reason: 'why' } },
+    ],
+    [
+      'an undeclared repository disposition',
+      {
+        code: 'commits-more-than-one',
+        evidence: {
+          required: 'two-commits',
+          observed: 'multiple-commits',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+        },
+      },
+    ],
+    [
+      'an undeclared receipt classification',
+      {
+        code: 'commits-more-than-one',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'exploded',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+        },
+      },
+    ],
+    [
+      'an empty reason',
+      { code: 'runtime-defect', evidence: { reason: '' } },
+    ],
+    [
+      'a path list the code does not name',
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+          paths: { changed: ['x.ts'], lost: ['y.ts'] },
+        },
+      },
+    ],
+    [
+      'an unsorted path list',
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+          paths: { changed: ['b.ts', 'a.ts'] },
+        },
+      },
+    ],
+    [
+      'a duplicated path',
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+          paths: { changed: ['a.ts', 'a.ts'] },
+        },
+      },
+    ],
+    [
+      'more than thirty-two paths',
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+          paths: {
+            changed: Array.from({ length: 33 }, (_, index) =>
+              `f${String(index).padStart(3, '0')}.ts`,
+            ),
+          },
+        },
+      },
+    ],
+    [
+      'a non-integer truncated count',
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: OBSERVATION,
+          afterHead: AFTER,
+          paths: { changed: ['a.ts'], truncated: 1.5 },
+        },
+      },
+    ],
+    [
+      'an error evidence carrying a stack',
+      {
+        code: 'judge-failed',
+        evidence: {
+          reason: 'judge transport failed',
+          error: { name: 'Error', message: 'x', stack: 'at …' },
+        },
+      },
+    ],
+    [
+      'a nested cause five deep',
+      {
+        code: 'child-failed',
+        evidence: {
+          playbookId: 'a',
+          cause: {
+            code: 'child-failed',
+            evidence: {
+              playbookId: 'b',
+              cause: {
+                code: 'child-failed',
+                evidence: {
+                  playbookId: 'c',
+                  cause: {
+                    code: 'child-failed',
+                    evidence: {
+                      playbookId: 'd',
+                      cause: { code: 'aborted', evidence: {} },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ],
+    [
+      'a nested cause that is not a cause',
+      {
+        code: 'child-failed',
+        evidence: { playbookId: 'code', cause: { code: 'nope', evidence: {} } },
+      },
+    ],
+  ];
+
+  it.each(rejections)('rejects %s', async (_label, value) => {
+    const { assertPlaybookFailureCause } = (await import(
+      new URL('runtime.js', import.meta.url).href
+    )) as typeof import('./runtime.js');
+    expect(() => assertPlaybookFailureCause(value)).toThrow(TypeError);
   });
 });

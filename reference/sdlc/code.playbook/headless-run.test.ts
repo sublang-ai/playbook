@@ -5643,3 +5643,122 @@ describe('pre-existing changes carried by a real commit (DR-062)', () => {
     expect(out.stdout).not.toContain('feature.txt');
   });
 });
+
+// DR-063: one real repository, the real CODE artifact, and a scripted Coder
+// that commits its work and leaves a stray file beside it. The receipt proves
+// the residue, so the run parks and explains itself without a model composing
+// the explanation.
+class ResidualCommitAdapter implements AgentAdapter {
+  static repositoryCwd = '';
+  static calls: string[] = [];
+  readonly agent = 'claude-code';
+
+  async *run(
+    prompt: string,
+    _options?: AgentOptions,
+  ): AsyncGenerator<AgentEvent, void, void> {
+    ResidualCommitAdapter.calls.push(prompt);
+    let result: string;
+    if (prompt.includes('This is hidden control work.')) {
+      result = JSON.stringify({ guard: 'directCommit' });
+    } else if (prompt.includes('compose closing reply')) {
+      result = 'The coding phase is done.';
+    } else if (prompt.includes('compose conversational reply')) {
+      result = 'Captain acknowledged the message.';
+    } else {
+      const cwd = ResidualCommitAdapter.repositoryCwd;
+      await writeFile(join(cwd, 'feature.txt'), 'new work\n', 'utf8');
+      await execFileAsync('git', ['add', 'feature.txt'], { cwd });
+      await execFileAsync(
+        'git',
+        [
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '--quiet',
+          '-m',
+          'commit the feature',
+        ],
+        { cwd },
+      );
+      // The residue: written after the commit and never carried by it.
+      await writeFile(join(cwd, 'stray.txt'), 'left behind\n', 'utf8');
+      result = 'Committed the change.';
+    }
+    yield createEvent(
+      'done',
+      this.agent,
+      {
+        status: 'success',
+        result,
+        resumeToken: `token:${ResidualCommitAdapter.calls.length}`,
+        usage: { toolUses: 0 },
+        durationMs: 1,
+      },
+      `transport:${ResidualCommitAdapter.calls.length}`,
+    );
+  }
+
+  async isAvailable() {
+    return true;
+  }
+}
+
+describe('a parked failure explains itself (DR-063)', () => {
+  it('names the residual commit and marks reconciliation a no-op', async () => {
+    const repositoryCwd = await initHeadlessTestRepository(
+      'playbook-residual-commit-',
+    );
+    ResidualCommitAdapter.repositoryCwd = repositoryCwd;
+    ResidualCommitAdapter.calls = [];
+    const codePlaybookRegistryEntry = (
+      await import(new URL('./code.registry.js', import.meta.url).href)
+    ).default;
+    const reviewEntry = approvingReviewEntry();
+    const inputs: string[] = [];
+
+    const out = await headlessHarness(['run', '/code leave a stray file'], {
+      cwd: repositoryCwd,
+      loadModule: async (specifier: string) => {
+        if (specifier === 'mod://code') {
+          return { default: codePlaybookRegistryEntry };
+        }
+        if (specifier === 'mod://review') return { default: reviewEntry };
+        throw new Error(`no module ${specifier}`);
+      },
+      adapterImports: Object.fromEntries(
+        ['claude', 'codex', 'gemini', 'kimi', 'opencode'].map((adapter) => [
+          adapter,
+          async () => ResidualCommitAdapter,
+        ]),
+      ) as any,
+      createCaptainRuntime: scriptedCaptainRuntime(inputs, {
+        action: 'start',
+        playbookId: 'code',
+      }),
+    });
+
+    expect(out.result.code, out.stderr).toBe(0);
+    const receipts = out.result.record.effectLedger.boundaries.map(
+      (boundary: any) => boundary.physicalReceipt,
+    );
+    expect(receipts[0]).toMatchObject({
+      classification: 'observation-ambiguous',
+    });
+    expect(out.result.record.unresolvedEffects).not.toEqual([]);
+
+    // The cause names the path the commit left behind, and every advertised
+    // control says what running it would do.
+    expect(out.stdout).toContain(
+      "Failure: the step's commit left changes uncommitted: stray.txt.",
+    );
+    expect(out.stdout).toContain('Controls:');
+    expect(out.stdout).toContain(
+      '- Retry unresolved effect reconciliation (no-op: nothing has changed since it failed)',
+    );
+    expect(out.stdout).toContain(
+      '- Abandon unresolved workflow attempt (ready)',
+    );
+    expect(out.stdout).toContain('- Stop /code (ready)');
+  });
+});

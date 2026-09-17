@@ -1,5 +1,5 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
-import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookEffectLedger, PlaybookRepositoryDisposition, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookFailureCause, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookEffectLedger, PlaybookRepositoryDisposition, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
 export * from './xstate-playbook-runtime.js';
 /**
  * Immutable cancellation provenance for one runtime operation. The captured
@@ -27,6 +27,12 @@ export declare function snapshotJsonValue(value: unknown, path?: string): JsonVa
 /** Validate session causality and detach its immutable identity from the host. */
 export declare function snapshotPlaybookSession(session: PlaybookSession): PlaybookSession;
 export declare function hiddenControlEnvelope(prompt: string): string;
+/**
+ * Attach one validated failure cause to an error object, returning it. A cause
+ * the closed validator rejects is dropped rather than published, and an error
+ * that refuses the property keeps its own cause-free identity (DR-063 §1).
+ */
+export declare function attachPlaybookFailureCause<E>(error: E, cause: unknown): E;
 export declare function normalizeError(error: unknown): NormalizedError;
 export interface PlaybookStateMetadata {
     stateId: string;
@@ -74,6 +80,8 @@ export type PlaybookSemanticReconciliation = {
 } | {
     readonly status: 'unresolved';
     readonly reason: PlaybookSemanticReconciliationReason;
+    /** DR-063 §1: why it stays unresolved, as a closed structured cause. */
+    readonly cause: PlaybookFailureCause;
     readonly evidence: PlaybookRetainedSemanticEvidence;
 };
 /**

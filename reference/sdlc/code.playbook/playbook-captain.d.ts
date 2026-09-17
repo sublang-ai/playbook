@@ -1,6 +1,6 @@
 import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
-import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
+import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookFailureCause, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
 interface SessionAgent {
@@ -176,9 +176,11 @@ type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
     readonly frames: readonly PlaybookCaptainFrameSnapshot[];
     readonly retainedEffectReconciliation?: PlaybookCaptainRetainedEffectReconciliation;
     readonly pendingBossQuestions?: JsonValue;
+    /** DR-063 §2: the parked failure's cause travels with its error. */
     readonly lastError?: {
         readonly name: string;
         readonly message: string;
+        readonly cause?: PlaybookFailureCause;
     };
 });
 export type PlaybookCaptainShellSnapshot = DeepReadonly<PlaybookCaptainShellSnapshotValue>;

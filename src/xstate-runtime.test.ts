@@ -1547,6 +1547,15 @@ describe('semantic outcome reconciliation', () => {
     after: EFFECT_BASELINE,
   } as const;
 
+  // An exclusively `unchanged` boundary: the only shape a
+  // `concurrent-or-foreign-change` receipt is admissible against (DR-040 §2).
+  const unchangedOnlyOutcomes = {
+    reviewed: {
+      fields: { verdict: 'semantic' },
+      repositoryDisposition: 'unchanged',
+    },
+  } as const;
+
   it('assembles exact detached output without interpreting presentation prose', () => {
     const semanticCandidate = { guard: 'complete', irNumber: '048' };
     const runtimeFields = { settledBy: 'runtime-transition' };
@@ -1637,6 +1646,261 @@ describe('semantic outcome reconciliation', () => {
       });
     },
   );
+
+  // DR-063 §1: an unresolved reconciliation carries a structured cause read
+  // from the disposition the accepted arm required and the receipt the host
+  // proved. Nothing here infers a repository fact; the receipt states it.
+  it.each([
+    [
+      'commit-missing',
+      'committed',
+      {
+        classification: 'worktree-only-change',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation({
+          'src/b.ts': { kind: 'modified', identity: 'sha256:b' },
+          'src/a.ts': { kind: 'untracked', identity: 'sha256:a' },
+        }),
+      },
+      {
+        code: 'commit-missing',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'worktree-only-change',
+          baselineHead: '1'.repeat(40),
+          afterHead: '1'.repeat(40),
+          paths: { uncommitted: ['src/a.ts', 'src/b.ts'] },
+        },
+      },
+    ],
+    [
+      'commit-residual',
+      'committed',
+      {
+        classification: 'observation-ambiguous',
+        baseline: effectObservation({
+          'notes.md': { kind: 'modified', identity: 'sha256:notes' },
+        }),
+        after: effectObservation(
+          { 'stray.txt': { kind: 'untracked', identity: 'sha256:stray' } },
+          '2'.repeat(40),
+        ),
+        preExisting: { absorbed: [], altered: ['notes.md'], lost: [] },
+      },
+      {
+        code: 'commit-residual',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'observation-ambiguous',
+          baselineHead: '1'.repeat(40),
+          afterHead: '2'.repeat(40),
+          paths: { uncommitted: ['stray.txt'], altered: ['notes.md'] },
+        },
+      },
+    ],
+    [
+      'pre-existing-lost',
+      'committed',
+      {
+        classification: 'observation-ambiguous',
+        baseline: effectObservation({
+          'notes.md': { kind: 'modified', identity: 'sha256:notes' },
+        }),
+        after: effectObservation({}, '2'.repeat(40)),
+        preExisting: { absorbed: [], altered: [], lost: ['notes.md'] },
+      },
+      {
+        code: 'pre-existing-lost',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'observation-ambiguous',
+          baselineHead: '1'.repeat(40),
+          afterHead: '2'.repeat(40),
+          paths: { lost: ['notes.md'] },
+        },
+      },
+    ],
+    [
+      'commits-more-than-one',
+      'committed',
+      {
+        classification: 'multiple-commits',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation({}, '3'.repeat(40)),
+      },
+      {
+        code: 'commits-more-than-one',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'multiple-commits',
+          baselineHead: '1'.repeat(40),
+          afterHead: '3'.repeat(40),
+        },
+      },
+    ],
+    [
+      'history-rewritten',
+      'committed',
+      {
+        classification: 'rewritten-or-non-descendant',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation({}, '4'.repeat(40)),
+      },
+      {
+        code: 'history-rewritten',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'rewritten-or-non-descendant',
+          baselineHead: '1'.repeat(40),
+          afterHead: '4'.repeat(40),
+        },
+      },
+    ],
+    [
+      'foreign-change',
+      'unchanged-only',
+      {
+        classification: 'concurrent-or-foreign-change',
+        baseline: effectObservation({
+          'kept.ts': { kind: 'modified', identity: 'sha256:kept' },
+          'gone.ts': { kind: 'modified', identity: 'sha256:gone' },
+        }),
+        after: effectObservation({
+          'kept.ts': { kind: 'modified', identity: 'sha256:kept' },
+          'new.ts': { kind: 'untracked', identity: 'sha256:new' },
+        }),
+      },
+      {
+        code: 'foreign-change',
+        evidence: {
+          required: 'unchanged',
+          observed: 'concurrent-or-foreign-change',
+          baselineHead: '1'.repeat(40),
+          afterHead: '1'.repeat(40),
+          paths: { changed: ['gone.ts', 'new.ts'] },
+        },
+      },
+    ],
+    [
+      'observation-unstable',
+      'committed',
+      {
+        classification: 'observation-ambiguous',
+        baseline: EFFECT_BASELINE,
+      },
+      {
+        code: 'observation-unstable',
+        evidence: {
+          required: 'one-descendant-commit',
+          observed: 'observation-ambiguous',
+          baselineHead: '1'.repeat(40),
+        },
+      },
+    ],
+    [
+      'attribution-ambiguous',
+      'complete',
+      {
+        classification: 'observation-ambiguous',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation({}, '5'.repeat(40)),
+      },
+      {
+        code: 'attribution-ambiguous',
+        evidence: {
+          required: 'unchanged',
+          observed: 'observation-ambiguous',
+          baselineHead: '1'.repeat(40),
+          afterHead: '5'.repeat(40),
+        },
+      },
+    ],
+  ] as const)(
+    'reads %s from the required disposition and the proved receipt',
+    (_code, guard, receipt, cause) => {
+      // A `concurrent-or-foreign-change` receipt is only admissible where every
+      // declared arm is `unchanged`, so that row carries its own outcome set.
+      const result = reconcilePlaybookSemanticEvidence({
+        outcomes: guard === 'unchanged-only' ? unchangedOnlyOutcomes : outcomes,
+        semanticCandidate:
+          guard === 'committed'
+            ? { guard: 'committed', irTask: 'task 9' }
+            : guard === 'unchanged-only'
+              ? { guard: 'reviewed', verdict: 'approved' }
+              : { guard: 'complete', irNumber: '048' },
+        finalText: 'Done.',
+        receipt,
+        ...(guard === 'complete'
+          ? { runtimeFields: { settledBy: 'runtime-transition' } }
+          : {}),
+      });
+      expect(result).toMatchObject({
+        status: 'unresolved',
+        reason: 'repository-disposition-mismatch',
+        cause,
+      });
+    },
+  );
+
+  it('bounds every cause path list to thirty-two and counts the rest', () => {
+    const projection = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [
+        `f${String(index).padStart(3, '0')}.ts`,
+        { kind: 'untracked', identity: `sha256:${index}` },
+      ]),
+    );
+    const result = reconcilePlaybookSemanticEvidence({
+      outcomes,
+      semanticCandidate: { guard: 'committed', irTask: 'task 9' },
+      finalText: 'Done.',
+      receipt: {
+        classification: 'worktree-only-change',
+        baseline: EFFECT_BASELINE,
+        after: effectObservation(projection),
+      },
+    });
+    if (result.status !== 'unresolved') throw new Error('expected unresolved');
+    expect(result.cause.code).toBe('commit-missing');
+    expect(result.cause.evidence.paths?.uncommitted).toHaveLength(32);
+    expect(result.cause.evidence.paths?.truncated).toBe(8);
+  });
+
+  // DR-063 §1: every other unresolved reason is a runtime defect carrying that
+  // reason, so a host never reads an unexplained failure.
+  it('names every non-repository reason a runtime defect', () => {
+    const base = {
+      outcomes,
+      semanticCandidate: { guard: 'complete', irNumber: '048' } as const,
+      finalText: 'Complete.',
+      receipt: unchangedReceipt,
+      runtimeFields: { settledBy: 'runtime-transition' },
+    };
+    for (const [input, reason] of [
+      [{ ...base, finalText: undefined }, 'missing-presentation-evidence'],
+      [{ ...base, receipt: undefined }, 'missing-repository-receipt'],
+      [
+        { ...base, receipt: { classification: 'unchanged' } },
+        'invalid-repository-receipt',
+      ],
+      [{ ...base, runtimeFields: undefined }, 'missing-runtime-evidence'],
+      [
+        {
+          ...base,
+          runtimeFields: {
+            settledBy: 'runtime-transition',
+            latestCommit: 'not effect evidence',
+          },
+        },
+        'inconsistent-runtime-evidence',
+      ],
+    ] as const) {
+      expect(reconcilePlaybookSemanticEvidence(input)).toMatchObject({
+        status: 'unresolved',
+        reason,
+        cause: { code: 'runtime-defect', evidence: { reason } },
+      });
+    }
+  });
 
   it('parks missing, malformed, or disposition-inconsistent evidence', () => {
     const candidate = { guard: 'complete', irNumber: '048' };

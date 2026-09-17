@@ -1233,7 +1233,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       .sort();
 
   const PUBLIC_MODULE_EXPORTS: Record<string, readonly string[]> = {
-    './runtime': [],
+    // DR-063 §1: the closed failure-code list and its validator are the
+    // contract module's own value exports.
+    './runtime': ['PLAYBOOK_FAILURE_CODES', 'assertPlaybookFailureCause'],
     './xstate-runtime': [
       'BOSS_REPLY_ERRORS',
       'NestedPlaybookCallError',
@@ -1245,6 +1247,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertJsonSafe',
       'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
+      'attachPlaybookFailureCause',
       'combineAbortSignals',
       'composePlayerContinuation',
       'createNestedPlaybookBridge',
@@ -1397,8 +1400,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCallRequest',
       'PlaybookCallResult',
       'PlaybookCallStart',
+      'PLAYBOOK_FAILURE_CODES',
       'PlaybookControlAction',
+      'PlaybookControlActionReason',
       'PlaybookControlReceipt',
+      'PlaybookControlStanding',
       'PlaybookControlView',
       'PlaybookEffectBoundary',
       'PlaybookEffectBoundaryStart',
@@ -1407,6 +1413,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookEffectLedgerCommand',
       'PlaybookEffectLedgerCommandBatch',
       'PlaybookEffectLogicalOperation',
+      'PlaybookFailureCause',
+      'PlaybookFailureCode',
+      'PlaybookFailureErrorEvidence',
+      'PlaybookFailureEvidence',
+      'PlaybookFailurePaths',
       'PlaybookPendingBossQuestion',
       'PlaybookPendingCall',
       'PlaybookPorts',
@@ -1430,6 +1441,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlayerCallOptions',
       'PlayerResult',
       'PlayerSessionStore',
+      'assertPlaybookFailureCause',
     ],
     // Reached through the one resolved wildcard in the package: this file
     // re-exports the engine module whole, so the engine's declarations are
@@ -1489,6 +1501,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertJsonSafe',
       'assertPlaybookEffectLedger',
       'assertPlaybookRuntimeSnapshot',
+      'attachPlaybookFailureCause',
       'combineAbortSignals',
       'composePlayerContinuation',
       'createNestedPlaybookBridge',

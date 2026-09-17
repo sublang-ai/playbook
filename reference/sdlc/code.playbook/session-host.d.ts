@@ -72,7 +72,9 @@ export interface SessionHostController {
   /**
    * The active leaf's currently advertised runtime actions, read live between
    * turns; empty whenever nothing is advertised, a turn is active, or the
-   * leaf's control view cannot be read.
+   * leaf's control view cannot be read. Each pair carries the leaf's own
+   * `standing` and its `reason`, so a host never draws a control without
+   * saying what running it would do (DR-063).
    */
   listRuntimeActions(): readonly PlaybookControlAction[];
   /**
@@ -83,8 +85,9 @@ export interface SessionHostController {
   submitRuntimeAction(actionId: string): Promise<SessionRecovery>;
   /**
    * The controls the shell offers on its own behalf, read live between turns;
-   * today one give-up while a root is engaged, and empty while idle or while a
-   * turn is active. Disjoint from `listRuntimeActions`, which reads the leaf.
+   * today one `ready` give-up while a root is engaged, and empty while idle or
+   * while a turn is active. Disjoint from `listRuntimeActions`, which reads the
+   * leaf.
    */
   listShellActions(): readonly PlaybookControlAction[];
   /**
