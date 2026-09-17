@@ -451,7 +451,7 @@ registry, or otherwise decide in-playbook FSM events.
 
 #### playbook-captain-60
 
-While no Boss turn is active, when its embedding host asks which runtime actions the active leaf currently advertises, the Playbook Captain shell shall answer with the `{ id, label }` pairs that turn's ControlView digest would name [[playbook-captain-9](#playbook-captain-9)], detached and frozen, taking that digest's own rules for what is advertised ([DR-051](../decisions/051-host-selected-runtime-recovery.md)):
+While no Boss turn is active, when its embedding host asks which runtime actions the active leaf currently advertises, the Playbook Captain shell shall answer with the `{ id, label, standing, reason? }` records that turn's ControlView digest would name [[playbook-captain-9](#playbook-captain-9)], stating each action's standing as the leaf reads it — `ready` where the leaf declares none [[playbook-runtime-97](playbook-runtime.md#playbook-runtime-97)] — detached and frozen, taking that digest's own rules for what is advertised ([DR-051](../decisions/051-host-selected-runtime-recovery.md), [DR-063](../decisions/063-failures-explain-themselves.md)):
 
 | Shell state | Answer |
 | --- | --- |
@@ -465,12 +465,12 @@ While no Boss turn is active, when its embedding host asks which runtime actions
 
 #### playbook-captain-62
 
-While no Boss turn is active, when its embedding host asks which controls the shell itself offers, the Playbook Captain shell shall answer with the `{ id, label }` pairs it effects on its own behalf, disjoint from the leaf's advertised runtime actions [[playbook-captain-60](#playbook-captain-60)], detached and frozen ([DR-052](../decisions/052-host-selected-give-up.md)):
+While no Boss turn is active, when its embedding host asks which controls the shell itself offers, the Playbook Captain shell shall answer with the `{ id, label, standing }` records it effects on its own behalf, disjoint from the leaf's advertised runtime actions [[playbook-captain-60](#playbook-captain-60)], detached and frozen ([DR-052](../decisions/052-host-selected-give-up.md), [DR-063](../decisions/063-failures-explain-themselves.md)):
 
 | Shell state | Answer |
 | --- | --- |
 | idle | nothing |
-| an engaged root, whether or not its leaf stands behind the retained-effect fence of [[playbook-captain-54](#playbook-captain-54)] | exactly one give-up control, its Boss-facing label naming the root's registered command |
+| an engaged root, whether or not its leaf stands behind the retained-effect fence of [[playbook-captain-54](#playbook-captain-54)] | exactly one `ready` give-up control, its Boss-facing label naming the root's registered command |
 
 - while a Boss turn is active the shell shall advertise nothing here, as it advertises no runtime action then [[playbook-captain-60](#playbook-captain-60)];
 - the answer shall enter no shell snapshot or settlement, so nothing durable claims a control the shell no longer offers [[playbook-captain-41](#playbook-captain-41)].
@@ -513,7 +513,10 @@ context members the
 leaf's runtime authored into its ControlView projection
 ([[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)]),
 pending questions verbatim with their question ids, the last error
-as `{ name, message }`, and the advertised actions as id plus label,
+as `{ name, message }`, and each advertised action as its id plus label,
+followed by its standing and reason where the standing that action reads as is
+not `ready` ([[playbook-runtime-97](playbook-runtime.md#playbook-runtime-97)]) plus one sentence
+that a no-op action changes nothing, so a model is never invited to select one,
 composed from the active leaf's `describe()`
 ([[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)]), plus the idle shell's capability-bearing retained resumptions as root playbook id, effective command, and retained root-state description — and the catalog digest —
 each enabled playbook's id, effective command, and intent.
@@ -1233,6 +1236,14 @@ When a Boss turn settles after a physical receipt completed during that turn pro
 - the same commit and paths join that turn's settlement facts, so its result-phase prompt reads them;
 - a turn whose completed receipts carry no such path appends nothing.
 
+#### playbook-captain-67
+
+When a Boss turn settles with the active leaf parked in its failure state or behind the retained-effect fence of [[playbook-captain-54](#playbook-captain-54)], the shell shall append one deterministic Boss-visible report through the presentation seam of [[playbook-captain-58](#playbook-captain-58)], stating the failure's cause as one sentence per code with that code's bounded evidence [[playbook-runtime-96](playbook-runtime.md#playbook-runtime-96)] and then each advertised control by its Boss-facing label with its standing and, where the standing is not `ready`, the Boss-facing phrase for its reason [[playbook-runtime-97](playbook-runtime.md#playbook-runtime-97)] ([DR-063](../decisions/063-failures-explain-themselves.md)):
+
+- the cause is the leaf's published one, or, behind the fence where the leaf publishes none, `receipt-missing` read from the first incomplete entry of that turn's frozen unresolved-effect evidence [[playbook-captain-58](#playbook-captain-58)]; a parked failure whose error publishes no cause is reported as a runtime defect naming that error, so no failure is reported without one;
+- the controls are the leaf's advertised actions under the fence rule of [[playbook-captain-60](#playbook-captain-60)], each read at the standing of [[playbook-runtime-97](playbook-runtime.md#playbook-runtime-97)], followed by the shell's own [[playbook-captain-62](#playbook-captain-62)], and a nested playbook is named by its registered command;
+- the sentence joins that turn's settlement facts once, so its result-phase prompt reads it, and the report supplements the unresolved-effect and carried-changes reports, exposes no content, prose, or internal identity, and enters no run result or unresolved-effect list.
+
 ## Verification
 
 ### Routing Coverage
@@ -1908,3 +1919,8 @@ The root and nested-leaf abandonment rows shall fail unless the same final nonem
 
 When the controller integration suite settles a Boss turn over a real worktree whose governed call commits a pre-existing modified file beside a fresh one, it shall fail unless the closing reply carries exactly one pre-existing-changes report naming that commit's OID and the absorbed path and not the fresh one, a turn whose receipts carry no such path appends none, and the report never enters the run result (verifying [[playbook-captain-65](#playbook-captain-65)]).
 
+
+#### playbook-captain-68
+
+When the controller integration suite settles a Boss turn over a leaf parked in its failure state, and over a real worktree whose governed call commits its work and leaves a stray file, it shall fail unless each closing reply carries exactly one failure report whose first line states that cause as one sentence with its bounded evidence — the residual commit naming the stray path — and whose control lines name each advertised label with its standing, the reconciliation marked a no-op and the shell's own give-up `ready` (verifying [[playbook-captain-67](#playbook-captain-67)], [[playbook-captain-60](#playbook-captain-60)], and [[playbook-captain-62](#playbook-captain-62)]).
+The suite shall fail unless that turn's result-phase prompt reads the same failure as one settlement fact, unless the ControlView digest names every advertised action's standing with the sentence that a no-op action changes nothing, unless an action declaring no standing reads as `ready` on every one of those surfaces, and unless the host's published runtime and shell controls carry the same standings (verifying [[playbook-captain-67](#playbook-captain-67)], [[playbook-captain-9](#playbook-captain-9)], [[playbook-captain-60](#playbook-captain-60)], and [[playbook-captain-62](#playbook-captain-62)]).

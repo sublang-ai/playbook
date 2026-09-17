@@ -32,7 +32,7 @@ Where a factory-backed artifact supplies linker-emitted `roleStates` and no arti
 - Emit exact `→ <acceptedOutcome>` with no payload tally, rider, or leading whitespace only from the confirmed accepted-outcome evidence of [[playbook-runtime-81](#playbook-runtime-81)].
 - On entry to a state named by `roleStates`, emit `⤷ <Role>: <label>` from that metadata with no source-item or context rider.
 - On entry to a Boss-reply wait, emit the untruncated `<asker> asks: <question>` as Captain speech followed by `◆ awaiting Boss reply · <resumeStateId> · <asker> · <sourceItem>` with no question excerpt, rendering the Captain asker as `Captain` and a role asker by its local role id.
-- On entry to failure, emit `◆ workflow failed; awaiting Boss recovery.` with the compact normalized error as status data.
+- On entry to failure, emit `◆ workflow failed; awaiting Boss recovery.` with the compact normalized error, carrying its cause [[playbook-runtime-96](#playbook-runtime-96)], as status data.
 - Emit no canonical status on entry to an idle, terminal, or other unlisted state.
 
 The runtime shall compose only each line's meaningful content, while the host owns speaker chrome, wrapping, and visual nesting and keeps judge calls hidden per [[playbook-runtime-15](#playbook-runtime-15)].
@@ -61,9 +61,14 @@ The registry shall receive configured options and the artifact-bound current-hos
 
 #### playbook-runtime-34
 
-The package shall provide a type-only module resolvable as
-`@sublang/playbook/runtime` that is the single authored source of the
-runtime contract types `PlayerResult`, `PlayerCallOptions`,
+The package shall provide a module resolvable as
+`@sublang/playbook/runtime` whose only values are the closed failure-code list
+`PLAYBOOK_FAILURE_CODES` and its validator `assertPlaybookFailureCause`
+([[playbook-runtime-96](#playbook-runtime-96)]) and which is the single authored source of the
+runtime contract types `PlaybookFailureCode`, `PlaybookFailureCause`,
+`PlaybookFailureEvidence`, `PlaybookFailurePaths`,
+`PlaybookFailureErrorEvidence`, `PlaybookControlStanding`,
+`PlaybookControlActionReason`, `PlayerResult`, `PlayerCallOptions`,
 `PlaybookRoleBinding`, `PlayerSessionStore`, `CaptainResult`, `CaptainCallOptions`,
 `JsonValue`, `NormalizedError`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
@@ -116,7 +121,8 @@ runtime-published `stateDescription` naming what that state means
 ([[playbook-runtime-52](#playbook-runtime-52)]), the optional JSON-safe
 `context` projection its runtime authors ([[playbook-runtime-52](#playbook-runtime-52)]),
 `pendingQuestions`, optional `lastError`, and `actions` of
-`PlaybookControlAction` (`id`, `label`), and `PlaybookControlReceipt`
+`PlaybookControlAction` (`id`, `label`, optional `standing` and `reason`
+[[playbook-runtime-97](#playbook-runtime-97)]), and `PlaybookControlReceipt`
 shall discriminate exactly `rejected` (with `reason`, before any
 effect), `executed` (with the `run` result), and `failed` (with the
 normalized `error`, after effects may exist).
@@ -489,14 +495,15 @@ Where the transition is a failed-transition event carrying an
 normalize that `event.error` to a full `{ name, message, stack }`
 shape; on entry to the failure state it shall additionally
 include the context-level `lastError` in the telemetry payload
-in the same full `{ name, message, stack }` shape, so observers
+in the same full `{ name, message, stack }` shape carrying its cause
+[[playbook-runtime-96](#playbook-runtime-96)], so observers
 can debug fail-stop paths without losing the original stack.
 `context.lastError` itself stays unchanged as the original Error
 instance for downstream FSM consumers; normalization happens only
 at emission boundaries.
 
 Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <acceptedOutcome>` from confirmed evidence, metadata-derived role entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
-The canonical failure status shall carry `lastError` as compact `{ name, message }` data rather than a raw Error.
+The canonical failure status shall carry `lastError` as compact `{ name, message, cause }` data rather than a raw Error.
 The corresponding Boss-wait telemetry shall carry the selected pending question verbatim alongside the other transition fields so a non-tmux host can render it.
 
 All trace, status, and state-telemetry emissions shall use one runtime-owned
@@ -864,7 +871,8 @@ questions with their stable ids — pending on the same Boss-reply-wait
 terms as the exported snapshot ([[playbook-runtime-45](#playbook-runtime-45)]), so a failure
 reached after an answered question describes none — the last recorded
 error in normalized
-`{ name, message, stack? }` form, and the currently valid actions.
+`{ name, message, stack? }` form, carrying its cause at the failure state
+[[playbook-runtime-96](#playbook-runtime-96)], and the currently valid actions.
 The view's `stateDescription` shall be the runtime's own Boss-facing
 statement of what its current state means, written from the same source
 state descriptions the action labels are written from, so a controller
@@ -919,7 +927,8 @@ machine reached after a Boss reply resumed the work; an artifact naming
 no member shall keep the process-local behavior of its recorded event.
 The runtime shall not treat a context member that merely matches the
 entry event's text field as that declaration.
-Each action shall carry a stable id and a label written from the source
+Each action the shared factory advertises shall carry a stable id, its standing
+[[playbook-runtime-97](#playbook-runtime-97)], and a label written from the source
 state descriptions; a retry whose event carries its own
 `targetId` (the explicit-state-jump shape) shall be labeled from that
 recorded target's description — the state its replay re-enters — never
@@ -1018,11 +1027,45 @@ persists neither.
 
 #### playbook-runtime-79
 
-At the safe control-capture point of [[playbook-runtime-52](#playbook-runtime-52)], while a schema-3 runtime has effect-possible outcome evidence unresolved under [[playbook-runtime-73](#playbook-runtime-73)], [[playbook-runtime-75](#playbook-runtime-75)], or [[playbook-runtime-77](#playbook-runtime-77)], its control view shall omit every pending Boss question and state description and shall advertise exactly `reconcile:unresolved-effect` labeled `Retry unresolved effect reconciliation` and `abandon:unresolved-effect` labeled `Abandon unresolved workflow attempt`, with no ordinary retry, jump, or other action ([DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §4).
+At the safe control-capture point of [[playbook-runtime-52](#playbook-runtime-52)], while a schema-3 runtime has effect-possible outcome evidence unresolved under [[playbook-runtime-73](#playbook-runtime-73)], [[playbook-runtime-75](#playbook-runtime-75)], or [[playbook-runtime-77](#playbook-runtime-77)], its control view shall omit every pending Boss question and state description and shall advertise exactly `reconcile:unresolved-effect` labeled `Retry unresolved effect reconciliation` and `abandon:unresolved-effect` labeled `Abandon unresolved workflow attempt`, each with its standing [[playbook-runtime-97](#playbook-runtime-97)], and with no ordinary retry, jump, or other action ([DR-040](../decisions/040-outcome-authority-effect-reconciliation.md) §4).
 Applying `reconcile:unresolved-effect` shall use only the current host's authoritative effect ledger under [[playbook-runtime-69](#playbook-runtime-69)] for any reconciliation refresh and shall start no player; where the unresolved episode is a checkpoint-restoration-eligible open deferred operation, it shall perform the exclusive exact-checkpoint restoration of [[playbook-runtime-73](#playbook-runtime-73)] without a player, judge, or semantic-candidate delivery.
 An exact deferred restoration shall return the operation to its identical bound wait and republish its stable pending question through an ordinary nonterminal run result, while an unequal checkpoint or other still-unresolved evidence shall remain parked and return `no-action` without consuming the unresolved episode.
 Applying `abandon:unresolved-effect` shall move no FSM state, start no player, judge, Captain, script, or child call, and settle the accepted control action with exactly `{ outcome: 'unresolved-effect', state }`, where `state` is the current normalized nonfinal state.
 The `unresolved-effect` arm shall carry no `stateDescription`, output, pending call, error, repository receipt, effect ledger, semantic evidence, or other bounded effect fact, shall not represent an authored final state, and shall claim neither workflow outcome nor completion.
+
+#### playbook-runtime-96
+
+The runtime shall decide one failure cause `{ code, evidence }` where each failure is decided and attach it to the error it marks as the FSM failure, so a parked failure is never unexplained ([DR-063](../decisions/063-failures-explain-themselves.md)):
+
+| Code | Decided when | Evidence |
+| --- | --- | --- |
+| `commit-missing` | a required commit was not made | `required`, `observed`, `baselineHead`, `afterHead`, `paths.uncommitted` |
+| `commit-residual` | a commit left an uncommitted or altered delta beside it | `required`, `observed`, `baselineHead`, `afterHead`, `commitOid?`, `paths.uncommitted`, `paths.altered` |
+| `pre-existing-lost` | the receipt names a lost baseline entry | `required`, `observed`, `baselineHead`, `afterHead?`, `paths.lost` |
+| `commits-more-than-one` | the receipt proves `multiple-commits` | `required`, `observed`, `baselineHead`, `afterHead` |
+| `history-rewritten` | the receipt proves `rewritten-or-non-descendant` | `required`, `observed`, `baselineHead`, `afterHead` |
+| `foreign-change` | the receipt proves `concurrent-or-foreign-change` | `required`, `observed`, `baselineHead`, `afterHead`, `paths.changed` |
+| `observation-unstable` | an ambiguous receipt carries no after observation | `required`, `observed`, `baselineHead` |
+| `attribution-ambiguous` | any other mismatching receipt | `required`, `observed`, `baselineHead`, `afterHead?` |
+| `receipt-missing` | a boundary holds no complete receipt | `baselineHead` |
+| `judge-failed` | adjudication transport failed or its candidate stayed invalid | `reason`, `error?` |
+| `player-failed` | a player call errored or reported a non-`ok` result | `roleId`, `playerId?`, `error`, `errorCode?` |
+| `aborted` | the turn's signal aborted the work | none |
+| `child-failed` | a nested playbook's failed result reaches its caller [[playbook-runtime-42](#playbook-runtime-42)] | `playbookId`, `cause?` |
+| `runtime-defect` | any failure with no more specific cause | `reason` |
+
+- `required` is a declared repository disposition of [[playbook-runtime-50](#playbook-runtime-50)] and `observed` a receipt classification of [[playbook-runtime-67](#playbook-runtime-67)]; a repository code is read from the outcome's required disposition and the host-proved receipt, never inferred from prose.
+- Each `paths` list holds sorted unique repository paths bounded to 32, with `truncated` carrying the omitted count; `error` is `{ name, message }`, `reason` a nonempty string, and a `child-failed` `cause` nests at most four deep.
+- `assertPlaybookFailureCause` shall accept exactly the members its code names and reject every other value, so an unrecognized shape is omitted rather than published.
+- A normalized error shall carry `cause` exactly when its underlying error carries one the validator accepts, so the cause reaches the failed state's status data [[playbook-runtime-3](#playbook-runtime-3)], its transition and settled-input telemetry [[playbook-runtime-14](#playbook-runtime-14)] [[playbook-runtime-37](#playbook-runtime-37)], the run result and control view [[playbook-runtime-52](#playbook-runtime-52)], and the exported snapshot [[playbook-runtime-45](#playbook-runtime-45)] a restart reads.
+
+#### playbook-runtime-97
+
+Each action a control view advertises shall read as one standing — `ready`, `no-op`, or `blocked` — declared by its optional `standing` member and `ready` when that member is absent, with `reason` from a closed list present exactly when the standing is not `ready`, so no host draws a control without saying what running it would do while a runtime declaring none keeps advertising what it always did ([DR-063](../decisions/063-failures-explain-themselves.md)):
+
+- `reconcile:unresolved-effect` [[playbook-runtime-79](#playbook-runtime-79)] shall be `no-op` with reason `receipt-complete` when no checkpoint restoration is eligible and every unresolved envelope's boundary already holds a complete `physicalReceipt` in the ledger mirror the view just refreshed [[playbook-runtime-69](#playbook-runtime-69)], and `ready` otherwise.
+- `abandon:unresolved-effect`, `retry:<EVENT_TYPE>`, and `jump:<stateId>` [[playbook-runtime-52](#playbook-runtime-52)] shall be `ready`, since the runtime cannot see whether the Boss changed the outside world.
+
 
 ## Verification
 
@@ -1359,6 +1402,7 @@ unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession` with optional exact `PlaybookRoleBinding` metadata and the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], unless pending Boss questions use the exact asker union without a player field, and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription` and whose `unresolved-effect` variant is exactly state-only, and unless `PlaybookAdoptionContext` and `adopt` have the exact source, target-child, session, snapshot, and context shapes; its import graph
 includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], [[playbook-runtime-58](#playbook-runtime-58)], and [[playbook-runtime-61](#playbook-runtime-61)]).
+The contract suite shall fail unless the module declares no value beyond the closed failure-code list and its validator, `NormalizedError` exposes the optional `cause`, and `PlaybookControlAction` exposes the optional `standing` and `reason` (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-96](#playbook-runtime-96)], and [[playbook-runtime-97](#playbook-runtime-97)]).
 The contract suite shall fail unless `PlaybookRuntime.unresolvedEffectEnvelopes` is optional and returns only the exact read-only boundary-or-logical-operation identity union, malformed or evidence-bearing identities are rejected at the host boundary, and the state-only `unresolved-effect` run-result arm remains free of that identity list and every bounded repository fact (verifying [[playbook-runtime-34](#playbook-runtime-34)]).
 The test suite shall additionally fail unless the linker contract
 itself still states the clauses the shipped artifacts depend on, since
@@ -1682,3 +1726,13 @@ projected run result and no start-only field, `stateId` appearing on
 
 Where the integration suite constructs a linked artifact against the real shared engine, when its shared-factory declaration is absent, malformed, schema `1`, schema `2`, or disagrees with the loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported value; the real artifact-schema-3 shared-factory and bespoke DECIDE profiles shall each preserve local roles without creating a host binding (verifying [[playbook-runtime-50](#playbook-runtime-50)]).
 The suite shall also fail unless the engine exports the frozen supported set `[3]`; exposes each successfully constructed schema-3 shared factory's exact validated `{ artifactSchema, runtimeAbi }` pair as an immutable own `compat` data property whose frozen value remains identical after later mutation of the supplied spec; accepts valid governed and explicit roleless-empty schema-3 metadata; rejects missing, extra, accessor, unknown, wrongly owned, inconsistent, or FSM-mismatched state, outcome, payload-field, authority, and disposition declarations before a player call; requires an exact accessor-free schema-3 construction object with a live capability object; and proves configured option snapshotting, FSM context, runtime snapshots, launch projections, and continuation identity contain no capability member or nested authority value (verifying [[playbook-runtime-29](#playbook-runtime-29)] and [[playbook-runtime-50](#playbook-runtime-50)]).
+
+#### playbook-runtime-98
+
+When the failure-cause suite drives the closed validator, the shared factory over the real CODE artifact, a nested-call fixture, and the reconciliation entry point, it shall fail unless the validator accepts exactly one detached frozen shape per declared code and rejects a non-object, an unknown or missing code, an extra top-level member, a missing or foreign evidence member, an undeclared disposition or classification, an empty reason, an unsorted, duplicated, or over-32 path list, a fractional truncated count, a stack-bearing error record, and a nested cause five deep or not a cause (verifying [[playbook-runtime-96](#playbook-runtime-96)]).
+The suite shall fail unless a rejected player port, a non-`ok` player result, a refused adjudication, an aborted turn, a nested playbook's failed result, and a failure the runtime marks with nothing more specific each publish their own code with its bounded evidence, unless an unresolved disposition mismatch reads its repository code and paths from the required disposition and the host-proved receipt across each classification, bounding every list to 32 with the omitted count, and unless every other unresolved reason publishes `runtime-defect` carrying that reason (verifying [[playbook-runtime-96](#playbook-runtime-96)] and [[playbook-runtime-77](#playbook-runtime-77)]).
+The suite shall fail unless one such cause reaches the failed state's status data, its transition and settled-input telemetry, the run result, the control view, and the exported machine snapshot alike, and unless an adopted retained generation still publishes the cause its source runtime decided (verifying [[playbook-runtime-96](#playbook-runtime-96)], [[playbook-runtime-3](#playbook-runtime-3)], [[playbook-runtime-14](#playbook-runtime-14)], and [[playbook-runtime-52](#playbook-runtime-52)]).
+
+#### playbook-runtime-99
+
+When the control-standing suite drives live, restored, and retained-adopted schema-3 runtimes at the safe control-capture point of [[playbook-runtime-52](#playbook-runtime-52)], it shall fail unless reconciliation stands `no-op` with reason `receipt-complete` over unresolved envelopes whose boundaries all hold a complete receipt, stands `ready` where a checkpoint restoration is eligible, unless abandonment, every advertised retry, and every advertised jump stand `ready` with no reason, and unless an action declaring no standing reads as `ready` (verifying [[playbook-runtime-97](#playbook-runtime-97)] and [[playbook-runtime-79](#playbook-runtime-79)]).
