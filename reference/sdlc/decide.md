@@ -43,7 +43,7 @@ Do not change code or implement the design.
 Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
 Identify every new commit you make.
-Coder is <coder-llm> and Reviewer is <reviewer-llm>.
+Credit every AI that contributed to this commit: Coder <coder-llm> and Reviewer <reviewer-llm>, whose proposal it carries.
 
 > Original topic: \<caller-topic\>
 > Reviewer's independent proposal: \<reviewer-proposal\>

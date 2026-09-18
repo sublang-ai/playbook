@@ -66,7 +66,7 @@ Do not re-run tests or builds whose inputs have not changed since any previous r
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
 Identify every new commit you make.
-Coder is <coder-llm>.
+Credit every AI that contributed to this commit: Coder <coder-llm>.
 ```
 
 Every new-intent phase has two semantic outcomes: direct implementation and new IR; the new-IR outcome identifies the created IR.
