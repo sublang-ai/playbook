@@ -3520,6 +3520,42 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     }
   });
 
+  it('rejects a frozen unsupported subagent model before prepare or import', async () => {
+    const first = await headlessHarness(['run', 'settled selection'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+
+    for (const where of ['player', 'role'] as const) {
+      const structural = JSON.parse(
+        JSON.stringify(first.result.record.structuralProjection),
+      );
+      const execution = JSON.parse(
+        JSON.stringify(first.result.record.lastAppliedExecutionProjection),
+      );
+      const playerId = execution.catalog.code.roles.coder.playerId;
+      structural.players.find((player: any) => player.id === playerId).adapter =
+        'codex';
+      const player = execution.players.find(
+        (candidate: any) => candidate.id === playerId,
+      );
+      player.adapter = 'codex';
+      if (where === 'player') player.subagentModel = 'frozen-subagents';
+      else execution.catalog.code.roles.coder.subagentModel = 'frozen-subagents';
+
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        validateFrozenExecutionConfig(structural, execution, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+      ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    }
+  });
+
   it('rereads the selected session under its lease before deciding whether to run', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-reread-'));
     tempDirs.push(stateRoot);

@@ -2383,6 +2383,45 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       'fastMode',
     );
 
+    // The subagent model is tuning too (DR-075): optional in the execution
+    // projection, erased from the structure, and free to change on reopen.
+    const subagentExecution: any = structuredClone(execution);
+    subagentExecution.captain.subagentModel = 'captain-subagents';
+    subagentExecution.players[0].subagentModel = 'player-subagents';
+    subagentExecution.catalog.code.roles.coder.subagentModel = 'role-subagents';
+    const validatedSubagent = validateCaptainSessionExecutionProjection(
+      subagentExecution,
+    );
+    expect(validatedSubagent).toMatchObject({
+      captain: { subagentModel: 'captain-subagents' },
+      players: [{ subagentModel: 'player-subagents' }],
+      catalog: {
+        code: { roles: { coder: { subagentModel: 'role-subagents' } } },
+      },
+    });
+    const subagentStructure = projectCaptainSessionStructure(validatedSubagent);
+    expect(JSON.stringify(subagentStructure)).not.toContain('subagentModel');
+    expect(subagentStructure).toEqual(structural);
+    const retunedSubagent: any = structuredClone(subagentExecution);
+    retunedSubagent.captain.subagentModel = 'retuned-subagents';
+    delete retunedSubagent.players[0].subagentModel;
+    delete retunedSubagent.catalog.code.roles.coder.subagentModel;
+    const reopenedSubagent = assertCaptainSessionExecutionCompatible(
+      structural,
+      retunedSubagent,
+    );
+    expect(reopenedSubagent.captain.subagentModel).toBe('retuned-subagents');
+    expect(reopenedSubagent.players[0]).not.toHaveProperty('subagentModel');
+    expect(reopenedSubagent.catalog.code.roles.coder).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(() =>
+      validateCaptainSessionStructuralProjection({
+        ...structural,
+        captain: { ...structural.captain, subagentModel: 'structural' },
+      }),
+    ).toThrow(/unknown field "subagentModel"/);
+
     const zhExecution: any = structuredClone(execution);
     zhExecution.players.push({ ...zhExecution.players[0], id: 'dev.reviewer' });
     zhExecution.catalog.code.requiredRoleIds = ['编码者', '审查者'];
@@ -2478,6 +2517,40 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           },
         },
         /fastMode.*boolean/,
+      ],
+      [
+        'blank Captain subagent model',
+        {
+          ...execution,
+          captain: { ...execution.captain, subagentModel: ' ' },
+        },
+        /captain\.subagentModel must be a nonblank string/,
+      ],
+      [
+        'non-string player subagent model',
+        {
+          ...execution,
+          players: [{ ...execution.players[0], subagentModel: false }],
+        },
+        /subagentModel must be a nonblank string/,
+      ],
+      [
+        'non-string role subagent model',
+        {
+          ...execution,
+          catalog: {
+            code: {
+              ...execution.catalog.code,
+              roles: {
+                coder: {
+                  ...execution.catalog.code.roles.coder,
+                  subagentModel: 7,
+                },
+              },
+            },
+          },
+        },
+        /roles\.coder\.subagentModel must be a nonblank string/,
       ],
       [
         'adapter-incompatible effort',

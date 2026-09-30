@@ -10,9 +10,14 @@ interface SessionAgent {
     /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
      * literal request, so this carries no provider-default sentinel. */
     readonly fastMode?: boolean;
+    /** The model every subagent of this agent runs on (DR-075). Absence is the
+     * provider default. */
+    readonly subagentModel?: string;
     readonly instruction?: string;
     readonly permissions?: PermissionPolicy;
 }
+/** Per-call tuning: erased from every structural envelope and snapshot. */
+type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel';
 interface PlayerLedgerEntry {
     readonly adapter: string;
     readonly instruction?: string;
@@ -32,7 +37,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
     readonly rootPlaybookId: string;
     readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, 'model' | 'effort' | 'fastMode'>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey>>;
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface ProgressChange {
     snapshot?: PlaybookCaptainShellSnapshot | null;

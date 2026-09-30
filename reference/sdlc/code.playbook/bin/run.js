@@ -11,7 +11,10 @@ import { attachSessionHints, validateSessionContext } from "./portable-codec.js"
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { assertFastModeSupported } from "@sublang/cligent";
+import {
+  assertFastModeSupported,
+  assertSubagentModelSupported,
+} from "@sublang/cligent";
 import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
@@ -1307,7 +1310,7 @@ export async function validateFrozenExecutionConfig(
     structuralProjection,
     executionProjection,
   );
-  assertFrozenFastModesSupported(config);
+  assertFrozenTuningSupported(config);
   const catalogItems = Object.entries(config.catalog);
 
   // Preserve the complete-catalog preparation transaction: prepare every
@@ -1364,28 +1367,42 @@ export async function validateFrozenExecutionConfig(
   return config;
 }
 
-function assertFrozenFastModesSupported(config) {
-  if (config.captain.fastMode !== undefined) {
-    assertFastModeSupported(
-      config.captain.adapter,
-      "stored Captain fastMode",
-    );
-  }
+// Fast mode and the subagent model are adapter-scoped tuning (DR-075): a
+// frozen record re-validates each present value against its adapter.
+const FROZEN_ADAPTER_SCOPED_TUNING = [
+  ["fastMode", assertFastModeSupported],
+  ["subagentModel", assertSubagentModelSupported],
+];
+
+function assertFrozenTuningSupported(config) {
+  const assertSupported = (record, adapter, path) => {
+    for (const [field, assertFieldSupported] of FROZEN_ADAPTER_SCOPED_TUNING) {
+      if (record[field] !== undefined) {
+        assertFieldSupported(adapter, `${path} ${field}`);
+      }
+    }
+  };
+  assertSupported(config.captain, config.captain.adapter, "stored Captain");
 
   const playerAdapters = new Map();
   for (const player of config.players) {
     playerAdapters.set(player.id, player.adapter);
-    if (player.fastMode !== undefined) {
-      assertFastModeSupported(
-        player.adapter,
-        `stored player ${JSON.stringify(player.id)} fastMode`,
-      );
-    }
+    assertSupported(
+      player,
+      player.adapter,
+      `stored player ${JSON.stringify(player.id)}`,
+    );
   }
 
   for (const [playbookId, item] of Object.entries(config.catalog)) {
     for (const [roleId, binding] of Object.entries(item.roles)) {
-      if (binding.fastMode === undefined) continue;
+      if (
+        FROZEN_ADAPTER_SCOPED_TUNING.every(
+          ([field]) => binding[field] === undefined,
+        )
+      ) {
+        continue;
+      }
       const adapter = playerAdapters.get(binding.playerId);
       if (adapter === undefined) {
         throw new Error(
@@ -1393,10 +1410,11 @@ function assertFrozenFastModesSupported(config) {
             `${JSON.stringify(roleId)} names an unknown player`,
         );
       }
-      assertFastModeSupported(
+      assertSupported(
+        binding,
         adapter,
         `stored playbook ${JSON.stringify(playbookId)} role ` +
-          `${JSON.stringify(roleId)} fastMode`,
+          `${JSON.stringify(roleId)}`,
       );
     }
   }
@@ -1869,7 +1887,7 @@ function runHelpText(userConfigPath) {
     "working directory and reports when it uses the global newest fallback.",
     "An ordinary continued run restores that stored structure and working",
     "directory, then reads current config and overlays for model, effort,",
-    "and fast mode.",
+    "fast mode, and subagent model.",
     "Uncertain retry only restores and reports; later work uses current settings.",
     "",
     "Options:",

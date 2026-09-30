@@ -353,6 +353,32 @@ export const exact: Exact = true;
 `,
   ),
   typeCapability(
+    'AgentCallSettings.subagentModel',
+    'agent-call-settings-subagent-model.ts',
+    'The subagent model is an optional model string in complete settings (DR-075).',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<
+  {} extends Pick<AgentCallSettings, 'subagentModel'> ? true : false
+>;
+type Exact = Assert<Equal<
+  AgentCallSettings['subagentModel'],
+  string | undefined
+>>;
+export const pinned: AgentCallSettings['subagentModel'] = 'claude-sonnet-5';
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.instruction',
     'agent-call-settings-instruction.ts',
     'A complete replacement carries an explicit instruction selection.',
@@ -452,6 +478,18 @@ import type { AgentType } from '@sublang/cligent';
 declare const adapter: AgentType | 'claude';
 export function use(): void {
   assertFastModeSupported(adapter, 'configured fastMode');
+}
+`,
+  ),
+  typeCapability(
+    'assertSubagentModelSupported',
+    'assert-subagent-model-supported.ts',
+    'Playbook delegates adapter-scoped subagent-model capability to Cligent.',
+    `import { assertSubagentModelSupported } from '@sublang/cligent';
+import type { AgentType } from '@sublang/cligent';
+declare const adapter: AgentType | 'claude';
+export function use(): void {
+  assertSubagentModelSupported(adapter, 'configured subagentModel');
 }
 `,
   ),
@@ -623,6 +661,7 @@ export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'loadTmuxPlayConfig empty player roster',
   'createTmuxPlayRuntime empty player roster',
   'assertFastModeSupported runtime semantics',
+  'assertSubagentModelSupported runtime semantics',
   'launchManagedTmuxPlay runtime export',
   'runManagedTmuxPlaySession runtime export',
 ]);
@@ -935,6 +974,73 @@ if (claudeRejected === claudeSupport.requestSupported) {
     args: [],
   });
 
+  const subagentModelRunner = join(root, 'subagent-model-support-runtime.mjs');
+  writeFileSync(
+    subagentModelRunner,
+    `import {
+  SUBAGENT_MODEL_SUPPORT,
+  assertSubagentModelSupported,
+} from '@sublang/cligent';
+
+if (typeof assertSubagentModelSupported !== 'function') {
+  throw new Error('assertSubagentModelSupported is not a runtime function');
+}
+if (
+  typeof SUBAGENT_MODEL_SUPPORT !== 'object' ||
+  SUBAGENT_MODEL_SUPPORT === null ||
+  Array.isArray(SUBAGENT_MODEL_SUPPORT)
+) {
+  throw new Error('SUBAGENT_MODEL_SUPPORT is not a runtime descriptor');
+}
+const entries = Object.entries(SUBAGENT_MODEL_SUPPORT);
+if (
+  entries.length === 0 ||
+  !entries.some(([, support]) => support?.requestSupported === true) ||
+  !entries.some(([, support]) => support?.requestSupported === false)
+) {
+  throw new Error('SUBAGENT_MODEL_SUPPORT lacks supported and unsupported cases');
+}
+for (const [adapter, support] of entries) {
+  if (typeof support?.requestSupported !== 'boolean') {
+    throw new Error('SUBAGENT_MODEL_SUPPORT carries an invalid requestSupported flag');
+  }
+  let rejected = false;
+  try {
+    assertSubagentModelSupported(adapter, 'configured subagentModel');
+  } catch {
+    rejected = true;
+  }
+  if (rejected === support.requestSupported) {
+    throw new Error(
+      'assertSubagentModelSupported disagrees with SUBAGENT_MODEL_SUPPORT for ' +
+        adapter,
+    );
+  }
+}
+const claudeSupport = SUBAGENT_MODEL_SUPPORT['claude-code'];
+if (typeof claudeSupport?.requestSupported !== 'boolean') {
+  throw new Error('SUBAGENT_MODEL_SUPPORT lacks the claude-code alias target');
+}
+let claudeRejected = false;
+try {
+  assertSubagentModelSupported('claude', 'configured subagentModel');
+} catch {
+  claudeRejected = true;
+}
+if (claudeRejected === claudeSupport.requestSupported) {
+  throw new Error(
+    'the claude alias disagrees with claude-code subagent-model support',
+  );
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[4],
+    why: 'Playbook imports the root runtime assertion and delegates the exact supported-versus-unsupported subagent-model boundary to it (DR-075).',
+    runner: subagentModelRunner,
+    args: [],
+  });
+
   const managedLaunchExportRunner = join(
     root,
     'managed-launch-runtime-export.mjs',
@@ -949,7 +1055,7 @@ if (typeof launchManagedTmuxPlay !== 'function') {
 `,
   );
   probes.push({
-    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[4],
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[5],
     why: 'The installed public tmux-play entry point must expose the managed launch runtime value used by the outer interactive front end.',
     runner: managedLaunchExportRunner,
     args: [],
@@ -969,7 +1075,7 @@ if (typeof runManagedTmuxPlaySession !== 'function') {
 `,
   );
   probes.push({
-    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[5],
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[6],
     why: 'The installed public tmux-play entry point must expose the managed session runtime value used by the pane child.',
     runner: managedSessionExportRunner,
     args: [],

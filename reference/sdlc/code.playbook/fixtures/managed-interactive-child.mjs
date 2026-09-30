@@ -51,6 +51,7 @@ class FixtureAdapter {
       resume: options?.resume,
       model: options?.model,
       effort: options?.effort,
+      subagentModel: options?.subagentModel,
       durableState: durable.state,
     });
     const result =

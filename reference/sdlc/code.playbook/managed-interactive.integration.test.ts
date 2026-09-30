@@ -98,6 +98,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       effort: 'high',
     });
     expect(effect).not.toHaveProperty('resume');
+    expect(effect).not.toHaveProperty('subagentModel');
     const visible = await first.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
     expect(visible.durableSnapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
@@ -139,12 +140,14 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         resume: 'player-token:interactive-a:1',
         model: 'player-model-b',
         effort: 'max',
+        subagentModel: 'player-subagents-b',
       });
     expect(FixtureAdapter.effects.find((item) => item.kind === 'captain'))
       .toMatchObject({
         resume: 'captain-token:interactive-a:1',
         model: 'captain-model-b',
         effort: 'max',
+        subagentModel: 'captain-subagents-b',
       });
     const settled = await fixture.store.read(fixture.sessionId);
     expect(settled.state).toBe('settled');
@@ -233,6 +236,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       resume: 'player-token:headless-a:1',
       model: 'player-model-b',
       effort: 'max',
+      subagentModel: 'player-subagents-b',
     });
     const captainEffect = await selected.waitFor(
       'effect',
@@ -242,6 +246,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       resume: 'captain-token:headless-a:1',
       model: 'captain-model-b',
       effort: 'max',
+      subagentModel: 'captain-subagents-b',
     });
     const visible = await selected.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
@@ -801,24 +806,30 @@ async function expectLeaseOwner(
 }
 
 function configText(tuning: 'a' | 'b') {
+  // Tuning B adds subagent models that A leaves to the provider default, so a
+  // reopen under B proves they are tuning rather than structure.
   const settings =
     tuning === 'a'
       ? {
           captainModel: 'captain-model-a',
           captainEffort: 'high',
+          captainSubagents: '',
           playerModel: 'player-model-a',
           playerEffort: 'high',
+          playerSubagents: '',
         }
       : {
           captainModel: 'captain-model-b',
           captainEffort: 'max',
+          captainSubagents: ', subagentModel: captain-subagents-b',
           playerModel: 'player-model-b',
           playerEffort: 'max',
+          playerSubagents: ', subagentModel: player-subagents-b',
         };
   return [
-    `captain: { adapter: claude, model: ${settings.captainModel}, effort: ${settings.captainEffort} }`,
+    `captain: { adapter: claude, model: ${settings.captainModel}, effort: ${settings.captainEffort}${settings.captainSubagents} }`,
     'players:',
-    `  dev.coder: { adapter: claude, model: ${settings.playerModel}, effort: ${settings.playerEffort} }`,
+    `  dev.coder: { adapter: claude, model: ${settings.playerModel}, effort: ${settings.playerEffort}${settings.playerSubagents} }`,
     'playbooks:',
     '  code:',
     '    from: mod://code',
@@ -872,6 +883,7 @@ class FixtureAdapter {
       resume: options?.resume,
       model: options?.model,
       effort: options?.effort,
+      subagentModel: options?.subagentModel,
       durableState: durable?.state,
     });
     const result =

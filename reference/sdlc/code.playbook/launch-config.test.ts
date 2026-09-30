@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import * as launchConfig from './bin/launch-config.js';
 import * as launcher from './bin/playbook.js';
+import { executionConfigFromPlan } from './bin/run.js';
 
 const tempDirs: string[] = [];
 
@@ -1934,5 +1935,297 @@ describe('adapter-scoped fast mode', () => {
         load,
       ),
     ).rejects.toThrow(/fastMode must be a boolean/);
+  });
+});
+
+describe('adapter-scoped subagent model', () => {
+  const load = {
+    loadModule: moduleLoader({
+      'mod://code': entry('code', ['coder', 'reviewer', 'tester']),
+    }),
+  };
+
+  function subagentConfig(roles: Record<string, unknown>) {
+    return {
+      captain: { adapter: 'claude', subagentModel: 'captain-subagents' },
+      players: {
+        'dev.coder': { adapter: 'claude', subagentModel: 'player-subagents' },
+      },
+      playbooks: { code: { from: 'mod://code', roles } },
+    };
+  }
+
+  it('composes player and role subagent models, and erases them from structure', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(
+      subagentConfig({
+        coder: { player: 'dev.coder', subagentModel: 'role-subagents' },
+        // `false` selects the provider default over the pinned player value.
+        reviewer: { player: 'dev.coder', subagentModel: false },
+        tester: 'dev.coder',
+      }),
+      load,
+    );
+
+    expect(plan.captain.subagentModel).toBe('captain-subagents');
+    expect(plan.players[0].agent.subagentModel).toBe('player-subagents');
+    expect(plan.catalog.code.roles.coder.subagentModel).toBe('role-subagents');
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(plan.catalog.code.roles.tester.subagentModel).toBe(
+      'player-subagents',
+    );
+
+    const tmux: any = launchConfig.projectTmuxConfig(plan);
+    expect(tmux.captain.subagentModel).toBe('captain-subagents');
+    expect(tmux.players[0].subagentModel).toBe('player-subagents');
+    expect(tmux.captain.options.sessionAgents.captain.subagentModel).toBe(
+      'captain-subagents',
+    );
+    expect(launchConfig.projectHostAgent(plan.players[0].agent)).toEqual({
+      adapter: 'claude',
+      subagentModel: 'player-subagents',
+    });
+    await expect(launchConfig.normalizeHostConfig(tmux)).resolves.toMatchObject(
+      { captain: { subagentModel: 'captain-subagents' } },
+    );
+
+    // The headless front end's execution projection carries the same values.
+    const execution: any = executionConfigFromPlan(plan);
+    expect(execution.captain.subagentModel).toBe('captain-subagents');
+    expect(execution.players[0].subagentModel).toBe('player-subagents');
+    expect(execution.catalog.code.roles.coder.subagentModel).toBe(
+      'role-subagents',
+    );
+    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(execution.catalog.code.roles.tester.subagentModel).toBe(
+      'player-subagents',
+    );
+
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain(
+      'subagentModel',
+    );
+  });
+
+  it('reopens against the stored structure when only the subagent model changed', async () => {
+    const initial = await launchConfig.normalizeLaunchPlan(
+      subagentConfig({
+        coder: 'dev.coder',
+        reviewer: 'dev.coder',
+        tester: 'dev.coder',
+      }),
+      load,
+    );
+    const reopened: any = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
+      {
+        captain: 'claude',
+        players: {
+          'dev.coder': { adapter: 'claude', subagentModel: 'retuned' },
+        },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: {
+              coder: { player: 'dev.coder', subagentModel: false },
+              reviewer: { player: 'dev.coder', subagentModel: 'role-pin' },
+              tester: 'dev.coder',
+            },
+          },
+        },
+      },
+      {
+        configPath: '/tmp/playbook.config.yaml',
+        stored: structuralProjection(initial),
+      },
+    );
+
+    expect(reopened.captain).not.toHaveProperty('subagentModel');
+    expect(reopened.players[0].agent.subagentModel).toBe('retuned');
+    expect(reopened.catalog.code.roles.coder).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(reopened.catalog.code.roles.reviewer.subagentModel).toBe(
+      'role-pin',
+    );
+    expect(reopened.catalog.code.roles.tester.subagentModel).toBe('retuned');
+    expect(structuralProjection(reopened)).toEqual(
+      structuralProjection(initial),
+    );
+  });
+
+  it('retunes a role subagent model through a --with overlay', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-subagent-overlay-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const overlayPath = join(root, 'cheap-subagents.yaml');
+    const source = [
+      'captain: claude',
+      'players:',
+      '  dev.coder: { adapter: claude, subagentModel: player-subagents }',
+      'playbooks:',
+      '  code:',
+      '    from: mod://code',
+      '    roles: { coder: dev.coder, reviewer: dev.coder, tester: dev.coder }',
+      '',
+    ].join('\n');
+    const overlay = [
+      'playbooks:',
+      '  code:',
+      '    roles:',
+      '      coder: { player: dev.coder, subagentModel: overlay-subagents }',
+      '',
+    ].join('\n');
+    await writeFile(configPath, source, 'utf8');
+    await writeFile(overlayPath, overlay, 'utf8');
+
+    const plan: any = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      ...load,
+    });
+
+    expect(plan.catalog.code.roles.coder.subagentModel).toBe(
+      'overlay-subagents',
+    );
+    expect(plan.catalog.code.roles.reviewer.subagentModel).toBe(
+      'player-subagents',
+    );
+    expect(await readFile(configPath, 'utf8')).toBe(source);
+    expect(await readFile(overlayPath, 'utf8')).toBe(overlay);
+  });
+
+  it.each([
+    ['blank', '  '],
+    ['non-string', 7],
+    ['true', true],
+  ])('refuses a %s role subagent model before registry work', async (_case, value) => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        subagentConfig({
+          coder: { player: 'dev.coder', subagentModel: value },
+          reviewer: 'dev.coder',
+          tester: 'dev.coder',
+        }),
+        { prepareRegistryModule, loadModule },
+      ),
+    ).rejects.toThrow(
+      'playbooks.code.roles.coder.subagentModel must be a nonblank string or false for provider-default',
+    );
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['blank player', 'player', '  '],
+    ['non-string player', 'player', 7],
+    ['provider-default player', 'player', false],
+    ['blank Captain', 'captain', ''],
+    ['non-string Captain', 'captain', 7],
+  ] as const)(
+    'refuses a %s subagent model before registry work',
+    async (_case, where, value) => {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(
+          {
+            captain:
+              where === 'captain'
+                ? { adapter: 'claude', subagentModel: value }
+                : 'claude',
+            players: {
+              'dev.coder':
+                where === 'player'
+                  ? { adapter: 'claude', subagentModel: value }
+                  : 'claude',
+            },
+            playbooks: {
+              code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+            },
+          },
+          { prepareRegistryModule, loadModule },
+        ),
+      ).rejects.toThrow(
+        where === 'captain'
+          ? /captain\.subagentModel .*must be a non-blank string/
+          : /players\[0\]\.subagentModel .*must be a non-blank string/,
+      );
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'a role binding',
+      {
+        captain: 'claude',
+        players: { 'dev.coder': 'codex' },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: { coder: { player: 'dev.coder', subagentModel: 'sub' } },
+          },
+        },
+      },
+    ],
+    [
+      'a player block',
+      {
+        captain: 'claude',
+        players: { 'dev.coder': { adapter: 'codex', subagentModel: 'sub' } },
+        playbooks: {
+          code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+        },
+      },
+    ],
+  ])(
+    'rejects a subagent model on a codex player in %s before registry work',
+    async (_case, config) => {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(config, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+      ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a codex binding subagent model on a selected reopen', async () => {
+    const config = {
+      captain: 'claude',
+      players: { 'dev.coder': 'codex' },
+      playbooks: {
+        code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+      },
+    };
+    const initial = await launchConfig.normalizeLaunchPlan(config, {
+      loadModule: moduleLoader({ 'mod://code': entry('code', ['coder']) }),
+    });
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(
+        {
+          ...config,
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: { coder: { player: 'dev.coder', subagentModel: 'sub' } },
+            },
+          },
+        },
+        {
+          configPath: '/tmp/playbook.config.yaml',
+          stored: structuralProjection(initial),
+        },
+      ),
+    ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
   });
 });

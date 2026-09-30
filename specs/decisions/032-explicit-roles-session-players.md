@@ -8,6 +8,7 @@
 Accepted.
 Supersedes [DR-030](030-shared-mapped-player-continuity.md).
 Amends the configuration and binding model of [DR-009](009-generic-playbook-cli-and-registry.md), the continuation ownership of [DR-010](010-playbook-session-tracing-and-resume.md), the same-player constraint of [DR-011](011-composable-playbook-execution.md), the continuation tuning rules of [DR-015](015-per-run-agent-tuning.md), the fixed source labels of [DR-018](018-gears-grammar-provenance-from-spex.md), the linker metadata of [DR-019](019-shared-linked-runtime-factory.md), the inline-agent placement of [DR-021](021-inline-agent-settings.md), the compatibility transition of [DR-022](022-runtime-compatibility-contract.md), and the configuration and persistence boundary of [DR-031](031-shared-captain-session-front-ends.md).
+Amended by [DR-075](075-subagent-model-is-tuning.md): a role binding's tuning is four fields — model, subagent model, effort, and fast mode.
 
 ## Context
 
