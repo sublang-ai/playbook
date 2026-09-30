@@ -44,6 +44,7 @@ interface FixtureShape {
   readonly settingsModel?: string;
   readonly settingsEffort?: string;
   readonly settingsFastMode?: string;
+  readonly settingsSubagentModel?: string;
   readonly rootEffort?: string;
   readonly rootPermissionPolicy?: string;
   readonly settingsInstruction?: string;
@@ -58,6 +59,9 @@ interface FixtureShape {
   readonly fastModeAssertion?: string;
   readonly fastModeAssertionRuntime?: boolean;
   readonly fastModeAssertionSemantics?: boolean;
+  readonly subagentModelAssertion?: string;
+  readonly subagentModelAssertionRuntime?: boolean;
+  readonly subagentModelAssertionSemantics?: boolean;
   readonly launchManagedSignature?: string;
   readonly runManagedSignature?: string;
   readonly launchManagedRuntime?: boolean;
@@ -93,6 +97,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsModel = 'readonly model: TuningSelection;',
     settingsEffort = 'readonly effort: TuningSelection<Effort>;',
     settingsFastMode = 'readonly fastMode?: boolean;',
+    settingsSubagentModel = 'readonly subagentModel?: string;',
     rootEffort = `export type Effort =
       | 'off' | 'on'
       | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -121,6 +126,10 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
       "export declare function assertFastModeSupported(agent: AgentType | 'claude', path?: string): void;",
     fastModeAssertionRuntime = true,
     fastModeAssertionSemantics = true,
+    subagentModelAssertion =
+      "export declare function assertSubagentModelSupported(agent: AgentType | 'claude', path?: string): void;",
+    subagentModelAssertionRuntime = true,
+    subagentModelAssertionSemantics = true,
     launchManagedSignature =
       'export declare function launchManagedTmuxPlay(options: LaunchManagedTmuxPlayOptions): Promise<PreparedManagedTmuxPlayLaunch>;',
     runManagedSignature =
@@ -165,8 +174,9 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
   const tmuxPlay = join(packageRoot, 'dist', 'app', 'tmux-play');
   write(
     join(packageRoot, 'dist', 'index.js'),
-    fastModeAssertionRuntime
-      ? `export const FAST_MODE_SUPPORT = Object.freeze({
+    `${
+      fastModeAssertionRuntime
+        ? `export const FAST_MODE_SUPPORT = Object.freeze({
   'claude-code': Object.freeze({ requestSupported: true }),
   codex: Object.freeze({ requestSupported: true }),
   gemini: Object.freeze({ requestSupported: false }),
@@ -182,13 +192,34 @@ export function assertFastModeSupported(agent, path = 'fastMode') {
   }
 }
 `
-      : 'export {};\n',
+        : ''
+    }${
+      subagentModelAssertionRuntime
+        ? `export const SUBAGENT_MODEL_SUPPORT = Object.freeze({
+  'claude-code': Object.freeze({ requestSupported: true }),
+  codex: Object.freeze({ requestSupported: false }),
+});
+export function assertSubagentModelSupported(agent, path = 'subagentModel') {
+  ${
+    subagentModelAssertionSemantics
+      ? `const canonical = agent === 'claude' ? 'claude-code' : agent;
+  if (SUBAGENT_MODEL_SUPPORT[canonical]?.requestSupported !== true) {
+    throw new Error(path + ' is not supported for adapter ' + agent);
+  }`
+      : ''
+  }
+}
+`
+        : ''
+    }export {};
+`,
   );
   write(
     join(packageRoot, 'dist', 'index.d.ts'),
     `export type { Effort, PermissionPolicy } from './app/tmux-play/contract.js';
 export type AgentType = 'claude-code' | 'codex' | 'gemini' | 'kimi' | 'opencode';
 ${fastModeAssertion}
+${subagentModelAssertion}
 `,
   );
   write(
@@ -274,6 +305,7 @@ export interface AgentCallSettings {
   ${settingsModel}
   ${settingsEffort}
   ${settingsFastMode}
+  ${settingsSubagentModel}
   ${settingsInstruction}
   ${settingsPermissions}
 }
@@ -372,6 +404,7 @@ ${runManagedSignature}
   model: unknown;
   effort: unknown;
   fastMode: unknown;
+  subagentModel: unknown;
   instruction: unknown;
   permissions: unknown;
   signal: unknown;
@@ -381,6 +414,7 @@ ${runManagedSignature}
   launchManagedTmuxPlay: unknown;
   runManagedTmuxPlaySession: unknown;
   assertFastModeSupported: unknown;
+  assertSubagentModelSupported: unknown;
 }
 export declare class AgentCallSettingsErrorDecoy {}
 export declare function isAgentCallSettingsErrorDecoy(): void;
@@ -405,11 +439,13 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'model',
   'effort',
   'fastMode',
+  'subagentModel',
   'instruction',
   'permissions',
   'AgentCallSettingsError',
   'isAgentCallSettingsError',
   'assertFastModeSupported',
+  'assertSubagentModelSupported',
   'signal',
   'beforeNativeAttach',
   'attach',
@@ -466,11 +502,13 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.model',
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
+      'AgentCallSettings.subagentModel',
       'AgentCallSettings.instruction',
       'AgentCallSettings.permissions',
       'AgentCallSettingsError',
       'isAgentCallSettingsError',
       'assertFastModeSupported',
+      'assertSubagentModelSupported',
       'launchManagedTmuxPlay signature',
       'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
       'runManagedTmuxPlaySession signature',
@@ -482,6 +520,7 @@ describe('the cligent release-capability guard', () => {
       'loadTmuxPlayConfig empty player roster',
       'createTmuxPlayRuntime empty player roster',
       'assertFastModeSupported runtime semantics',
+      'assertSubagentModelSupported runtime semantics',
       'launchManagedTmuxPlay runtime export',
       'runManagedTmuxPlaySession runtime export',
     ]);
@@ -696,6 +735,21 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.fastMode',
     ],
     [
+      'subagent-model setting',
+      { settingsSubagentModel: '' },
+      'AgentCallSettings.subagentModel',
+    ],
+    [
+      'optional subagent-model setting',
+      { settingsSubagentModel: 'readonly subagentModel: string;' },
+      'AgentCallSettings.subagentModel',
+    ],
+    [
+      'complete subagent-model string domain',
+      { settingsSubagentModel: "readonly subagentModel?: 'haiku';" },
+      'AgentCallSettings.subagentModel',
+    ],
+    [
       'narrowed root permission value domain',
       {
         rootPermissionPolicy:
@@ -786,6 +840,21 @@ describe('the cligent release-capability guard', () => {
       'fast-mode runtime capability semantics',
       { fastModeAssertionSemantics: false },
       'assertFastModeSupported runtime semantics',
+    ],
+    [
+      'subagent-model capability assertion',
+      { subagentModelAssertion: '' },
+      'assertSubagentModelSupported',
+    ],
+    [
+      'subagent-model runtime capability assertion',
+      { subagentModelAssertionRuntime: false },
+      'assertSubagentModelSupported runtime semantics',
+    ],
+    [
+      'subagent-model runtime capability semantics',
+      { subagentModelAssertionSemantics: false },
+      'assertSubagentModelSupported runtime semantics',
     ],
     [
       'managed launch declaration',
