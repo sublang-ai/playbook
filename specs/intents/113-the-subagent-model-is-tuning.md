@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress on `subagent-model` (2026-09-30).
+Completed (2026-09-30): the field is tuning through the launcher, the session store, the headless run and the Captain shell, validated through Cligent 0.29, documented, and released in 17.2.0.
 
 ## Intent
 
@@ -24,7 +24,10 @@ Realize [DR-075](../decisions/075-subagent-model-is-tuning.md): `subagentModel` 
 2. [x] Carry the field through the launcher, the session store, the headless run and the Captain shell, and extend the suites and the capability probes.
 3. [x] Document the field and add the changelog entries.
 4. [x] Once Cligent 0.29.0 is published, require `^0.29.0` with a refreshed lockfile and move release-19's floor check.
-5. [ ] Record the verification.
+5. [x] Record the verification.
 
 ## Verification
-
+- Tasks 1–3 (2026-09-30): `spex lint` reported 0 errors; `pnpm build` passed; `pnpm test` passed 2,577 with 23 skipped and the Cligent release-capability suite 94 of 94 against a local build of Cligent 0.29; `pnpm check:links` resolved all relative links.
+  An adversarial review confirmed ten spec and documentation lags, all amended, and no code defect.
+- Task 4 (2026-09-30): with `@sublang/cligent` 0.29.0 from the public registry, `pnpm test` passed 2,577 with 23 skipped and the capability suite 94 of 94, `pnpm check:links` resolved all 3,833 relative links, and the pull request's Node 20, Node 22, SPDX and global-tarball smoke-install jobs passed.
+- The paid live acceptance gate was not run; Cligent 0.29.0's own live acceptance proved the subagent model against the real Claude runtime.
