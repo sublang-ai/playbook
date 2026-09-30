@@ -397,8 +397,12 @@ describe('shared portable session lifecycle', () => {
   expect((await store.migrate(id)).migrated).toBe(false);expect((await store.validate(id)).resumable).toBe(true);
  });
  it('moves the former default with its complete replay and retained original bytes',async()=>{
-  const f=await legacyDefaultFixture();const report=await f.target.migrateLegacyDefault();
+  const f=await legacyDefaultFixture();
+  // PBCLI-94: the machine identity beside the former sessions location is never a migration input.
+  const identityPath=join(dirname(f.sourceDir),'machine-id');const identityBytes=`machine-id:v1:${randomUUID()}\n`;await writeFile(identityPath,identityBytes,{mode:0o600});
+  const report=await f.target.migrateLegacyDefault();
   expect(report).toEqual({sourceDir:f.sourceDir,migrated:[f.id],skipped:[]});
+  expect(await readFile(identityPath,'utf8')).toBe(identityBytes);expect(await readdir(dirname(f.sourceDir))).toContain('sessions');
   const manifest=await f.target.readManifest(f.id);expect(manifest.schemaVersion).toBe(7);
   expect((await f.target.validate(f.id)).resumable).toBe(true);
   const replay=await readFile(join(f.target.sessionsDir,`${f.id}.records.jsonl`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
@@ -410,7 +414,7 @@ describe('shared portable session lifecycle', () => {
   expect((await f.target.migrate(f.id,{sourcePath:f.sourcePath})).migrated).toBe(false);expect(await readFile(join(f.target.sessionsDir,`${f.id}.json`))).toEqual(targetBytes);
  });
  it('retains old-default inputs when source ownership or the destination blocks migration',async()=>{
-  const f=await legacyDefaultFixture();const source=createSessionStore({sessionsDir:f.sourceDir});const sourceLease=await source.acquireManagement(f.id);
+  const f=await legacyDefaultFixture();const source=createSessionStore({sessionsDir:f.sourceDir,env:f.options.env,homeDir:f.options.homeDir});const sourceLease=await source.acquireManagement(f.id);
   await expect(f.target.migrateLegacyDefault()).rejects.toThrow('ownership is active');await sourceLease.release();
   const destinationLease=await f.target.acquireManagement(f.id);await expect(f.target.migrateLegacyDefault()).rejects.toMatchObject({code:'PLAYBOOK_SESSION_LEASE_ACTIVE'});await destinationLease.release();
   const destination=join(f.target.sessionsDir,`${f.id}.json`);await writeFile(destination,'unrelated destination',{mode:0o600});

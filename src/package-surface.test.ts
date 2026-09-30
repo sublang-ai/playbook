@@ -1179,6 +1179,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./branch/registry');
     expect(manifest.exports).toHaveProperty('./pr/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
+    expect(manifest.exports).toHaveProperty('./machine-identity');
     expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
@@ -1323,6 +1324,13 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createFailClosedHostCapabilities',
       'createWorktreeHostCapabilities',
       'observeGitRepository',
+    ],
+    // DR-075 / playbook-cli-95: the machine-identity facade.
+    './machine-identity': [
+      'MACHINE_IDENTITY_TAG_PREFIX',
+      'isMachineIdentity',
+      'machineIdentityPath',
+      'resolveMachineIdentity',
     ],
     './review/playbook': ['_internal', 'default', 'validateOptions'],
     './review/registry': [
@@ -1697,6 +1705,14 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'validateCaptainSessionStructuralProjection',
       'validateSessionContext',
       'validateSessionManifest',
+    ],
+    // DR-075 / playbook-cli-95: the machine-identity facade.
+    './machine-identity': [
+      'MACHINE_IDENTITY_TAG_PREFIX',
+      'ResolveMachineIdentityOptions',
+      'isMachineIdentity',
+      'machineIdentityPath',
+      'resolveMachineIdentity',
     ],
     // DR-046: the worktree host-capability facade. Its ledger, receipt,
     // observation, and question types are re-declared name for name from
@@ -2861,6 +2877,10 @@ void prCapabilities;
       `${CODE_BASE}session-store.d.ts`,
       `${CODE_BASE}host-capabilities.js`,
       `${CODE_BASE}host-capabilities.d.ts`,
+      `${CODE_BASE}machine-identity.js`,
+      `${CODE_BASE}machine-identity.d.ts`,
+      `${CODE_BASE}bin/machine-identity.js`,
+      `${CODE_BASE}bin/private-paths.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       `${REVIEW_BASE}review.playbook.js`,
