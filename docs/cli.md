@@ -202,8 +202,8 @@ The former positional `<from>`, `resume`, `--player`, `--captain`,
 `--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:`
 config are removed from `playbook run`. Enable a registry under `playbooks`,
 declare provider agents once under top-level `players`, bind every local role
-under `playbooks.<id>.roles`, tune compatible model, effort, and fast mode in a `--with`
-overlay, invoke the effective `/command`, and run from the working directory
+under `playbooks.<id>.roles`, tune compatible model, effort, fast mode, and
+subagent model in a `--with` overlay, invoke the effective `/command`, and run from the working directory
 you want agents to use. Legacy `playbooks.<id>.players` blocks are rejected and
 are not auto-migrated because choosing equal or distinct new player IDs chooses
 conversation sharing or isolation; see [Migrating per-playbook
@@ -280,10 +280,11 @@ competing front end fails closed instead of forking the history.
 An ordinary reopen reads current config and any opening `--with` fragments,
 projects them to the stored catalog and player roster, and requires the stored
 role bindings plus every structural setting to remain exact. Compatible
-current `model`, `effort`, and optional `fastMode` settings apply to the next
-call. Boolean `false` explicitly resets model or effort to the provider
-default, but `fastMode: false` is a literal disabled request; omission selects
-the fast-mode provider default or inherits the player value at a role binding.
+current `model`, `effort`, and optional `fastMode` and `subagentModel` settings
+apply to the next call. Boolean `false` explicitly resets model, effort, or
+subagent model to the provider default, but `fastMode: false` is a literal
+disabled request; omission selects the provider default or inherits the player
+value at a role binding.
 Provider conversations are local hints. Missing hints start fresh from stored
 context; a definite pre-execution rejection permits one fresh attempt.
 Unsupported settings and ambiguous failures do not trigger that fallback

@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An agent's subagents can run on a model of their own.** The Captain, each top-level player, a role binding, and a `--with` overlay accept `subagentModel`: a nonblank model name makes every subagent that agent starts run on it and tells the agent to offload well-defined, fine-grained tasks while keeping the deep thinking, reasoning, and design work itself, and on a role binding `false` selects the provider default over a player's pinned value. It is tuning like `model`, `effort`, and `fastMode`: the installed Cligent validates it against the agent's adapter (Claude only today), every player and Captain call carries it in its complete settings, and the structural projection omits it, so a changed value applies from the next call of an ordinary reopen. Nothing seeds one ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-26](specs/packages/playbook-cli.md#playbook-cli-26)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)], [[playbook-captain-31](specs/packages/playbook-captain.md#playbook-captain-31)], [DR-075](specs/decisions/075-subagent-model-is-tuning.md)). A session record that carries the field cannot be opened by Playbook 17.1 or earlier, so hosts sharing a session store upgrade together; a record without it opens under both.
+
+### Changed
+
+- **Require Cligent 0.29.** `@sublang/cligent` moves from `^0.28.0` to `^0.29.0`, the first release whose Claude adapter serves the subagent model and whose complete call settings carry `subagentModel`; the release-capability guard now also proves `AgentCallSettings.subagentModel` and the root `assertSubagentModelSupported` assertion ([[release-14](specs/packages/release.md#release-14)], [DR-075](specs/decisions/075-subagent-model-is-tuning.md)).
+
 ## [17.1.0] - 2026-09-29
 
 ### Changed

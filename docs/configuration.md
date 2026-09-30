@@ -48,8 +48,8 @@ names, nesting, and ancestry never infer a binding.
 
 Each `captain` or `players.<player-id>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`, `model`,
-`effort`, `fastMode`, `instruction`, and `permissions`. Settings are inline per
-stable agent
+`effort`, `fastMode`, `subagentModel`, `instruction`, and `permissions`.
+Settings are inline per stable agent
 ([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)).
 Dots in a player ID are literal characters, not YAML hierarchy. Other adapter
 IDs pass through to `tmux-play` with a warning because `playbook` cannot
@@ -156,8 +156,8 @@ roles:
   coder: dev.coder
 ```
 
-Use a block to override only that role invocation's model, effort, or fast
-mode:
+Use a block to override only that role invocation's model, effort, fast mode,
+or subagent model:
 
 ```yaml
 roles:
@@ -166,17 +166,27 @@ roles:
     model: claude-sonnet-5-5
     effort: false # explicitly reset to this provider's default
     fastMode: false # literal disabled request, not a default sentinel
+  reviewer:
+    player: dev.reviewer
+    subagentModel: claude-sonnet-5-5 # every subagent of this role runs on it
 ```
 
-Omitting any override inherits that player's top-level default. For `model`
-and `effort`, boolean `false` selects the provider default explicitly, so a
-resumed conversation cannot accidentally retain an earlier selection. For
-`fastMode`, `false` is a literal request to disable fast mode; omitting the
-top-level setting selects the provider default. A present fast-mode boolean is
-accepted only for adapters Cligent reports as supporting it. A role binding
-cannot override adapter, instruction, permissions, workspace, or tool posture;
-those define the stable player envelope, so an overriding model must be one
-that player's adapter serves.
+Omitting any override inherits that player's top-level default. For `model`,
+`effort`, and `subagentModel`, boolean `false` selects the provider default
+explicitly, so a resumed conversation cannot accidentally retain an earlier
+selection. For `fastMode`, `false` is a literal request to disable fast mode;
+omitting the top-level setting selects the provider default. A present
+fast-mode boolean or subagent model is accepted only for adapters Cligent
+reports as supporting it. A role binding cannot override adapter, instruction,
+permissions, workspace, or tool posture; those define the stable player
+envelope, so an overriding model must be one that player's adapter serves.
+
+A subagent model makes every subagent the agent starts run on that model, and
+tells the agent to hand well-defined, fine-grained tasks to its subagents while
+keeping the deep thinking, reasoning, and design work itself, without lowering
+the quality of what it delivers
+([DR-075](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/075-subagent-model-is-tuning.md)).
+Nothing sets one by default.
 
 ## Sharing, isolation, and concurrency
 
@@ -276,9 +286,9 @@ The global file is never modified, and `--with` is not forwarded to
 Overlays apply when creating a fresh session and as current-config input for a
 compatible ordinary reopen. A selected session keeps its stored catalog,
 player roster, role bindings, adapter, instruction, permissions, and working
-directory; only model, effort, and fast mode may change. The next call reapplies
-both complete model and effort selections and the optional effective fast-mode
-boolean. An uncertain retry accepts no tuning overlay and only restores and reports the recorded attempt. Later turns use the current compatible settings.
+directory; only model, effort, fast mode, and subagent model may change. The
+next call reapplies both complete model and effort selections, the optional
+effective fast-mode boolean, and the optional effective subagent model. An uncertain retry accepts no tuning overlay and only restores and reports the recorded attempt. Later turns use the current compatible settings.
 
 ## Session storage
 
@@ -319,8 +329,8 @@ public UUID. Presentation-only fields are inert headlessly.
 An ordinary reopen reads current config and opening overlays, but first
 projects them to the stored playbooks and referenced players. An unrelated new
 entry cannot enter or invalidate the session. Structural drift fails closed;
-compatible model, effort, or fast-mode changes apply on the next provider
-call. Legacy record, shell, runtime-snapshot, and trace schemas are rejected
+compatible model, effort, fast-mode, or subagent-model changes apply on the
+next provider call. Legacy record, shell, runtime-snapshot, and trace schemas are rejected
 rather than having role or player identity guessed.
 
 ## External playbooks
