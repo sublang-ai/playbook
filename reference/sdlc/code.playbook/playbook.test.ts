@@ -2048,7 +2048,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('Agent swap recipe:');
     expect(stdout.text()).toContain('stable players.<id>');
     expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
-    expect(stdout.text()).toContain('false selects provider-default model/effort');
+    expect(stdout.text()).toContain('fastMode?,\n    subagentModel? }');
+    expect(stdout.text()).toContain(
+      'false selects provider-default model/effort/subagentModel',
+    );
     expect(stdout.text()).toContain('fastMode false is a literal disabled request');
     expect(stdout.text()).toContain('distinct ids stay isolated');
     expect(stdout.text()).toContain('Migration warning:');

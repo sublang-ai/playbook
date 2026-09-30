@@ -69,9 +69,15 @@ interface SessionAgent {
   /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
    * literal request, so this carries no provider-default sentinel. */
   readonly fastMode?: boolean;
+  /** The model every subagent of this agent runs on (DR-075). Absence is the
+   * provider default. */
+  readonly subagentModel?: string;
   readonly instruction?: string;
   readonly permissions?: PermissionPolicy;
 }
+
+/** Per-call tuning: erased from every structural envelope and snapshot. */
+type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel';
 
 interface PlayerLedgerEntry {
   readonly adapter: string;
@@ -107,9 +113,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
   readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
-type SnapshotAgentEnvelope = DeepReadonly<
-  Omit<SessionAgent, 'model' | 'effort' | 'fastMode'>
->;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey>>;
 
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 
@@ -447,6 +451,7 @@ interface EffectivePlayerBinding {
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
   readonly fastMode?: boolean;
+  readonly subagentModel?: string;
   readonly agent: SessionAgent;
 }
 
@@ -3722,6 +3727,19 @@ function snapshotFastMode(
   return value;
 }
 
+function snapshotSubagentModel(
+  value: JsonValue | undefined,
+  path: string,
+): string | undefined {
+  if (
+    value !== undefined &&
+    (typeof value !== 'string' || value.trim().length === 0)
+  ) {
+    throw new TypeError(`${path} must be a nonblank string`);
+  }
+  return value;
+}
+
 function snapshotSessionAgent(
   value: JsonValue | undefined,
   path: string,
@@ -3729,14 +3747,25 @@ function snapshotSessionAgent(
   const agent = snapshotRecord(value, path);
   rejectSnapshotKeys(
     agent,
-    ['adapter', 'model', 'effort', 'fastMode', 'instruction', 'permissions'],
+    [
+      'adapter',
+      'model',
+      'effort',
+      'fastMode',
+      'subagentModel',
+      'instruction',
+      'permissions',
+    ],
     path,
   );
   const fixed = snapshotFixedAgent(
     Object.fromEntries(
       Object.entries(agent).filter(
         ([key]) =>
-          key !== 'model' && key !== 'effort' && key !== 'fastMode',
+          key !== 'model' &&
+          key !== 'effort' &&
+          key !== 'fastMode' &&
+          key !== 'subagentModel',
       ),
     ) as JsonValue,
     path,
@@ -3754,12 +3783,18 @@ function snapshotSessionAgent(
     ...(agent.fastMode === undefined
       ? {}
       : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
+    ...(agent.subagentModel === undefined
+      ? {}
+      : {
+          subagentModel: snapshotSubagentModel(
+            agent.subagentModel,
+            `${path}.subagentModel`,
+          ),
+        }),
   };
 }
 
-function fixedAgent(
-  agent: SessionAgent,
-): Omit<SessionAgent, 'model' | 'effort' | 'fastMode'> {
+function fixedAgent(agent: SessionAgent): Omit<SessionAgent, TuningKey> {
   return {
     adapter: agent.adapter,
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
@@ -3769,15 +3804,18 @@ function fixedAgent(
 
 function callSettings(
   agent: SessionAgent,
-  tuning: Pick<SessionAgent, 'model' | 'effort' | 'fastMode'> = agent,
+  tuning: Pick<SessionAgent, TuningKey> = agent,
 ): AgentCallSettings {
   // cligent treats supplied call settings as a complete replacement, so an
-  // omitted fastMode here is a request for the provider default, never an
-  // inheritance of whatever the previous call left behind.
+  // omitted fastMode or subagentModel here is a request for the provider
+  // default, never an inheritance of whatever the previous call left behind.
   return {
     model: tuning.model,
     effort: tuning.effort,
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
+    ...(tuning.subagentModel === undefined
+      ? {}
+      : { subagentModel: tuning.subagentModel }),
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
     ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
   };
@@ -4005,7 +4043,7 @@ async function buildEnablements(
       const rawBinding = snapshotRecord(roleRecord[role], path);
       rejectSnapshotKeys(
         rawBinding,
-        ['playerId', 'model', 'effort', 'fastMode'],
+        ['playerId', 'model', 'effort', 'fastMode', 'subagentModel'],
         path,
       );
       const playerId = snapshotString(rawBinding.playerId, `${path}.playerId`);
@@ -4028,6 +4066,14 @@ async function buildEnablements(
               fastMode: snapshotFastMode(
                 rawBinding.fastMode,
                 `${path}.fastMode`,
+              ),
+            }),
+        ...(rawBinding.subagentModel === undefined
+          ? {}
+          : {
+              subagentModel: snapshotSubagentModel(
+                rawBinding.subagentModel,
+                `${path}.subagentModel`,
               ),
             }),
         agent,

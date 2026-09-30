@@ -5402,7 +5402,7 @@ function validateCaptainSessionProjection(
         : ['id', 'adapter', 'model', 'effort'],
       structural
         ? ['instruction', 'permissions']
-        : ['instruction', 'permissions', 'fastMode'],
+        : ['instruction', 'permissions', 'fastMode', 'subagentModel'],
       playerPath,
     );
     assertPlayerId(player.id, `${playerPath}.id`);
@@ -5503,12 +5503,16 @@ function validateCaptainSessionProjection(
         structural
           ? ['playerId']
           : ['playerId', 'model', 'effort'],
-        structural ? [] : ['fastMode'],
+        structural ? [] : ['fastMode', 'subagentModel'],
         bindingPath,
       );
       assertPlayerId(binding.playerId, `${bindingPath}.playerId`);
       if (!structural) {
         validateProjectedFastMode(binding, `${bindingPath}.fastMode`);
+        validateProjectedSubagentModel(
+          binding,
+          `${bindingPath}.subagentModel`,
+        );
         validateTuningSelection(binding.model, `${bindingPath}.model`);
         const player = projection.players.find(
           (candidate) => candidate.id === binding.playerId,
@@ -5556,16 +5560,26 @@ function validateProjectedFastMode(record, path) {
   }
 }
 
+// Like fast mode, absence is the canonical provider default (DR-075).
+function validateProjectedSubagentModel(record, path) {
+  if (Object.hasOwn(record, 'subagentModel')) {
+    requireNonblank(record.subagentModel, path);
+  }
+}
+
 function validateProjectedAgent(value, path, { structural, hasId = false }) {
   const agent = requireRecord(value, path);
-  if (!structural) validateProjectedFastMode(agent, `${path}.fastMode`);
+  if (!structural) {
+    validateProjectedFastMode(agent, `${path}.fastMode`);
+    validateProjectedSubagentModel(agent, `${path}.subagentModel`);
+  }
   if (!hasId) {
     exactOptionalKeys(
       agent,
       structural ? ['adapter'] : ['adapter', 'model', 'effort'],
       structural
         ? ['instruction', 'permissions']
-        : ['instruction', 'permissions', 'fastMode'],
+        : ['instruction', 'permissions', 'fastMode', 'subagentModel'],
       path,
     );
   }
