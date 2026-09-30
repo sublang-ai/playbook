@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Leases name the machine.** Session leases and repository claims record one machine identity — `machine-id:v1:<UUID>`, published once under `${XDG_STATE_HOME:-~/.local/state}/playbook/machine-id` — in their owner's `hostname` field in place of `os.hostname()`, so a renamed machine still reclaims its own dead leases while a lease from another machine is never broken; `@sublang/playbook/machine-identity` exports `resolveMachineIdentity`, `isMachineIdentity`, `machineIdentityPath` and `MACHINE_IDENTITY_TAG_PREFIX` for hosts that keep leases of their own. An untagged owner is read as a legacy host name under the old same-host, dead-PID rule; a value that begins like the tag but fails its form is refused as unverifiable; an unreadable or malformed identity file is never replaced, and every writer refuses to start until it is repaired. **Upgrade together:** stop every CLI and Spex writer sharing a store before the first new writer runs; an older writer reads a tagged owner as a foreign host and refuses to take it over, and a legacy owner whose host name has since changed still needs its lock directory removed by hand ([DR-075](specs/decisions/075-leases-name-the-machine.md), [[playbook-cli-94](specs/packages/playbook-cli.md#playbook-cli-94)], [[playbook-cli-95](specs/packages/playbook-cli.md#playbook-cli-95)], [[release-37](specs/packages/release.md#release-37)]).
+
 ## [17.5.0] - 2026-10-07
 
 ### Added
