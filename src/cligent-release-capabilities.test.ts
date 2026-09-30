@@ -832,6 +832,14 @@ describe('the cligent release-capability guard', () => {
       'assertFastModeSupported',
     ],
     [
+      'narrowed fast-mode capability assertion',
+      {
+        fastModeAssertion:
+          "export declare function assertFastModeSupported(agent: 'claude-code', path?: string): void;",
+      },
+      'assertFastModeSupported',
+    ],
+    [
       'fast-mode runtime capability assertion',
       { fastModeAssertionRuntime: false },
       'assertFastModeSupported runtime semantics',
@@ -844,6 +852,14 @@ describe('the cligent release-capability guard', () => {
     [
       'subagent-model capability assertion',
       { subagentModelAssertion: '' },
+      'assertSubagentModelSupported',
+    ],
+    [
+      'narrowed subagent-model capability assertion',
+      {
+        subagentModelAssertion:
+          "export declare function assertSubagentModelSupported(agent: 'claude-code', path?: string): void;",
+      },
       'assertSubagentModelSupported',
     ],
     [

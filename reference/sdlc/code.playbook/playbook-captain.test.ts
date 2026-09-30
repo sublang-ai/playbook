@@ -8923,7 +8923,16 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
     });
 
-    const restored = makeShell(fakeCodeEntry());
+    // The catch-up call runs under a current subagent model the snapshot
+    // never carries.
+    const restored = makeShell(fakeCodeEntry(), {
+      captainAgent: {
+        adapter: 'claude',
+        model: { kind: 'provider-default' },
+        effort: { kind: 'provider-default' },
+        subagentModel: 'catch-up-subagents',
+      },
+    });
     await restored.restore(
       stubSession(roster).session,
       JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
@@ -8935,6 +8944,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
 
     expect(recovered.captainCalls).toHaveLength(1);
     expect(recovered.captainCalls[0]?.options?.resume).toBe(false);
+    expect(recovered.captainCalls[0]?.options?.settings).toMatchObject({
+      subagentModel: 'catch-up-subagents',
+    });
+    expect(JSON.stringify(restored.exportSnapshot())).not.toMatch(
+      /subagentModel|catch-up-subagents/,
+    );
     expect(recovered.captainCalls[0]?.prompt).toContain(
       'This retained conversation missed the host journal records below.',
     );
@@ -9826,65 +9841,81 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const snapshot = source.exportSnapshot()!;
     expect(JSON.stringify(snapshot)).not.toMatch(/subagentModel|-subagents-/);
 
-    const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
-      const result = await runtime.ports!.callPlayer(
-        'coder',
-        'resume player under subagent model B',
-        runtimeTurn.signal,
-        { resume: runtime.session!.playerSessions!.select('coder') },
+    // The role either pins its own changed subagent model or selects the
+    // provider default; the player's changed default leaks into neither.
+    for (const roleSubagentModel of ['role-subagents-b', undefined]) {
+      const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          'resume player under subagent model B',
+          runtimeTurn.signal,
+          { resume: runtime.session!.playerSessions!.select('coder') },
+        );
+        runtime.session!.playerSessions!.update('coder', result.resumeToken);
+        return quiescentResult('ready');
+      });
+      const target = makeShell(targetCode, {
+        captainAgent: tunedAgent('captain-subagents-b'),
+        roleTunings: { code: { coder: tuning(roleSubagentModel) } },
+        playerAgents: {
+          'code-coder': tunedAgent('player-subagents-b'),
+          'code-reviewer': reviewerAgent,
+        },
+      });
+      await target.restore(
+        stubSession(roster).session,
+        JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
       );
-      runtime.session!.playerSessions!.update('coder', result.resumeToken);
-      return quiescentResult('ready');
-    });
-    const target = makeShell(targetCode, {
-      captainAgent: tunedAgent('captain-subagents-b'),
-      // The role now selects the provider default; the player's changed
-      // default does not leak into it.
-      roleTunings: { code: { coder: tuning() } },
-      playerAgents: {
-        'code-coder': tunedAgent('player-subagents-b'),
-        'code-reviewer': reviewerAgent,
-      },
-    });
-    await target.restore(stubSession(roster).session, snapshot);
-    expect(target.exportSnapshot()).toEqual(snapshot);
-    const targetContext = stubContext([
-      { status: 'ok', turnId: 2, finalText: 'Continued under B.' },
-    ]);
-    targetContext.context.callPlayer = async (playerId, _prompt, options) => {
-      targetContext.playerCalls.push({ playerId, prompt: 'captured', options });
-      return {
-        status: 'ok',
-        playerId,
-        turnId: 2,
-        finalText: 'player B',
-        resumeToken: 'player-next-token',
+      expect(target.exportSnapshot()).toEqual(snapshot);
+      const targetContext = stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Continued under B.' },
+      ]);
+      targetContext.context.callPlayer = async (playerId, _prompt, options) => {
+        targetContext.playerCalls.push({
+          playerId,
+          prompt: 'captured',
+          options,
+        });
+        return {
+          status: 'ok',
+          playerId,
+          turnId: 2,
+          finalText: 'player B',
+          resumeToken: 'player-next-token',
+        };
       };
-    };
-    await target.handleBossTurn(turn('/code tune B', 2), targetContext.context);
+      await target.handleBossTurn(
+        turn('/code tune B', 2),
+        targetContext.context,
+      );
 
-    expect(targetContext.playerCalls[0]).toEqual({
-      playerId: 'code-coder',
-      prompt: 'captured',
-      options: {
-        resume: 'player-retained-token',
+      expect(targetContext.playerCalls[0]).toEqual({
+        playerId: 'code-coder',
+        prompt: 'captured',
+        options: {
+          resume: 'player-retained-token',
+          settings: {
+            model: { kind: 'value', value: 'stable-model' },
+            effort: { kind: 'value', value: 'high' },
+            ...(roleSubagentModel === undefined
+              ? {}
+              : { subagentModel: roleSubagentModel }),
+          },
+        },
+      });
+      expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
+        resume: 'conversation-1',
         settings: {
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
+          subagentModel: 'captain-subagents-b',
         },
-      },
-    });
-    expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
-      resume: 'conversation-1',
-      settings: {
-        model: { kind: 'value', value: 'stable-model' },
-        effort: { kind: 'value', value: 'high' },
-        subagentModel: 'captain-subagents-b',
-      },
-    });
+      });
+
+      await target.dispose?.();
+    }
 
     await source.dispose?.();
-    await target.dispose?.();
   });
 
   it('restores a nested parked edge with shared tokens and resumes its original parent once', async () => {

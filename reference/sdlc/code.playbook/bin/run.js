@@ -1887,7 +1887,7 @@ function runHelpText(userConfigPath) {
     "working directory and reports when it uses the global newest fallback.",
     "An ordinary continued run restores that stored structure and working",
     "directory, then reads current config and overlays for model, effort,",
-    "and fast mode.",
+    "fast mode, and subagent model.",
     "Uncertain retry only restores and reports; later work uses current settings.",
     "",
     "Options:",

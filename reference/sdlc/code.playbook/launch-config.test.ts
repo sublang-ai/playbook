@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import * as launchConfig from './bin/launch-config.js';
 import * as launcher from './bin/playbook.js';
+import { executionConfigFromPlan } from './bin/run.js';
 
 const tempDirs: string[] = [];
 
@@ -1989,6 +1990,20 @@ describe('adapter-scoped subagent model', () => {
       { captain: { subagentModel: 'captain-subagents' } },
     );
 
+    // The headless front end's execution projection carries the same values.
+    const execution: any = executionConfigFromPlan(plan);
+    expect(execution.captain.subagentModel).toBe('captain-subagents');
+    expect(execution.players[0].subagentModel).toBe('player-subagents');
+    expect(execution.catalog.code.roles.coder.subagentModel).toBe(
+      'role-subagents',
+    );
+    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(execution.catalog.code.roles.tester.subagentModel).toBe(
+      'player-subagents',
+    );
+
     expect(JSON.stringify(structuralProjection(plan))).not.toContain(
       'subagentModel',
     );
@@ -2103,6 +2118,46 @@ describe('adapter-scoped subagent model', () => {
     expect(prepareRegistryModule).not.toHaveBeenCalled();
     expect(loadModule).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['blank player', 'player', '  '],
+    ['non-string player', 'player', 7],
+    ['provider-default player', 'player', false],
+    ['blank Captain', 'captain', ''],
+    ['non-string Captain', 'captain', 7],
+  ] as const)(
+    'refuses a %s subagent model before registry work',
+    async (_case, where, value) => {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(
+          {
+            captain:
+              where === 'captain'
+                ? { adapter: 'claude', subagentModel: value }
+                : 'claude',
+            players: {
+              'dev.coder':
+                where === 'player'
+                  ? { adapter: 'claude', subagentModel: value }
+                  : 'claude',
+            },
+            playbooks: {
+              code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+            },
+          },
+          { prepareRegistryModule, loadModule },
+        ),
+      ).rejects.toThrow(
+        where === 'captain'
+          ? /captain\.subagentModel .*must be a non-blank string/
+          : /players\[0\]\.subagentModel .*must be a non-blank string/,
+      );
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [
