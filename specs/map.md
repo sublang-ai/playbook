@@ -100,6 +100,7 @@ meta.md       The spec of specs
 | [DR-072](decisions/072-host-owned-interrupted-work-settlement.md) | 072-host-owned-interrupted-work-settlement.md | Shared-host settlement when later work has no saved machine position; complete reporting-only points, replaced by DR-073 |
 | [DR-073](decisions/073-durable-step-progress.md) | 073-durable-step-progress.md | Save normal step positions and results; restore and report before Boss chooses further work |
 | [DR-074](decisions/074-seeds-name-the-latest-models.md) | 074-seeds-name-the-latest-models.md | Seeds, defaults, and examples name the latest model of their line, each example runs against the default seed, and the Cligent floor rises to the oldest release whose runtime floors serve the seeded models; amends DR-053 and DR-044 |
+| [DR-075](decisions/075-leases-name-the-machine.md) | 075-leases-name-the-machine.md | Leases name the machine: one machine identity under the XDG state directory, read through `@sublang/playbook/machine-identity`, carried in the owner's `hostname` field by session leases and repository claims, legacy host names reclaimable under the old rule, a coordinated upgrade; extends DR-042 and DR-046 |
 
 ## Packages
 
@@ -125,7 +126,7 @@ meta.md       The spec of specs
 | [link-materialization.md](packages/link-materialization.md) | Optional link materialization, supported labelled/nested CODE profile, compiled parallel shape, strict descriptor, atomic emission, and semantic closure |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
-| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
+| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the machine identity and its facade, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |
 | [recovery.md](packages/recovery.md) | Captain preparation and durable interrupted-step recovery |

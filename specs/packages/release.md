@@ -481,6 +481,13 @@ Before tagging a release, the developer/agent shall verify, in this order:
 Before releasing the recovery extensions that retain existing persisted version numbers, the maintainer shall verify that every supported host sharing a store, including the CLI and Spex SDK, uses the same compatible recovery reader and writer, and that the upgrade instructions require stopping all older writers before any new writer saves recovery data [[session-storage-2](session-storage.md#session-storage-2)] ([DR-071](../decisions/071-interrupted-continuation-settlement.md)).
 A mixed 15.1.x and extended-format store shall not be a supported release configuration.
 
+#### release-37
+
+Before releasing the first version whose leases and claims carry the machine identity [[playbook-cli-94](playbook-cli.md#playbook-cli-94)], the maintainer shall verify that the upgrade instructions require stopping every writer sharing a store — the CLI and every Spex home on the machine — before the first new writer runs, and that they name the manual recovery for a legacy owner whose host name has since changed ([DR-075](../decisions/075-leases-name-the-machine.md)):
+
+- a store written by concurrent old and new writers shall not be a supported release configuration;
+- an old reader refusing a tagged owner as foreign is the expected effect of that configuration, not a defect to release around.
+
 ## Verification
 
 ### Install Closure Coverage
@@ -857,7 +864,7 @@ duplicate the automatic gate.
 
 #### release-36
 
-When the recovery release gate is audited, the audit shall record the exact CLI and embedded SDK versions and their shared-store recovery checks, verify the documented coordinated upgrade, and block publication while any supported writer remains incompatible [[release-35](#release-35)].
+When the recovery release gate is audited, the audit shall record the exact CLI and embedded SDK versions and their shared-store recovery checks, verify the documented coordinated upgrade, and block publication while any supported writer remains incompatible [[release-35](#release-35)]; the first machine-identity release is audited the same way, its instructions naming the stop of every writer sharing a store and the legacy-owner recovery [[release-37](#release-37)].
 
 ### Hosted release workflow
 
