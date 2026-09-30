@@ -8,6 +8,7 @@
 Accepted (2026-09-28).
 Amends [DR-053](053-seeding-picks-a-ready-adapter.md) in one scope: model currency, which that record left out of scope, becomes a maintained property of its fixed per-adapter table; selection, precedence, efforts, and the none-ready notice stand.
 Amends [DR-044](044-dev-planning-workflow.md) in one scope: the seeded `dev.analyst` player takes its adapter's current seeded model rather than `claude-opus-5`; the player, its binding, and everything else of that record stand.
+Amended by [DR-075](075-subagent-model-is-tuning.md) in its Cligent floor alone, now `^0.29.0`.
 
 ## Context
 
