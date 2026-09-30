@@ -32,6 +32,7 @@ The session store shall use these locations and files for each session's canonic
   - only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
   - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening; preparation changes no content, ownership or lease metadata;
   - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
+- the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-94](playbook-cli.md#playbook-cli-94)] stay in place and are never inputs.
 - all hosts record the normalized absolute working directory as `cwd`; the format needs no Spex project ID or registry access.
 
 ### session-storage-2
@@ -182,7 +183,7 @@ The published session API shall offer applications the same create, open, begin-
 - release closes admission and drains earlier work before retiring ownership; an ended runtime does not imply a settled checkpoint;
 - read-only owner checks may overlap each other and record writes, so concurrent players can check the same lease; release rejects new checks and drains admitted checks before retiring ownership;
 - existing summary and replay reads remain available and never expose provider hints;
-- read-only lease inspection reports `active` for a live local owner, `idle` for no lease or a proven-dead local owner, and `unknown` otherwise; this observation never grants mutation authority;
+- read-only lease inspection reports `active` for a live owner on this machine, `idle` for no lease or a proven-dead owner on this machine, and `unknown` otherwise, reading the owner's machine as the lease does [[playbook-cli-23](playbook-cli.md#playbook-cli-23)]; this observation never grants mutation authority;
 - the lifecycle also exposes the shared read-only validator and explicit migration/deletion operations, so management does not require executable playbook modules.
 
 ### session-storage-12

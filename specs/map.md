@@ -110,6 +110,7 @@ meta.md       The spec of specs
 | [DR-082](decisions/082-retain-input-owned-boss-replies.md) | 082-retain-input-owned-boss-replies.md | Retain complete canonical Boss input after semantic acceptance without a Judge-extracted echo |
 | [DR-083](decisions/083-module-locations-supplied-at-launch.md) | 083-module-locations-supplied-at-launch.md | The launch may supply each playbook's module (loader `modules`, CLI `--module <id>=<specifier>`) ahead of `from`, which becomes optional; a reopen without either uses the recorded module |
 | [DR-086](decisions/086-empty-typed-history-shapes.md) | 086-empty-typed-history-shapes.md | Preserve Source-owned empty array history through typed initialization, lifecycle resets and actor inputs |
+| [DR-075](decisions/075-leases-name-the-machine.md) | 075-leases-name-the-machine.md | Leases name the machine: one machine identity under the XDG state directory, read through `@sublang/playbook/machine-identity`, carried in the owner's `hostname` field by session leases and repository claims, legacy host names reclaimable under the old rule, a coordinated upgrade; extends DR-042 and DR-046 |
 
 ## Packages
 
@@ -135,7 +136,7 @@ meta.md       The spec of specs
 | [link-materialization.md](packages/link-materialization.md) | Optional link materialization, supported labelled/nested CODE profile, compiled parallel shape, strict descriptor, atomic emission, and semantic closure |
 | [playbook.md](packages/playbook.md) | CODE, REVIEW, DECIDE, DEV, BRANCH, and PR source, GEARS, FSM, prompt, transition, nesting, script-state, and terminal conformance |
 | [playbook-captain.md](packages/playbook-captain.md) | Registry, routing, explicit role binding, Captain-session player continuity, engagement stack, and host lifecycle |
-| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
+| [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the machine identity and its facade, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [session-assets.md](packages/session-assets.md) | Immutable owner assets and portable attachment/evidence contracts |
 | [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |

@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Extended by [DR-075](075-leases-name-the-machine.md): the repository claim's owner names its machine by the published machine identity carried in the `hostname` field, a legacy host name reclaimable under the old rule.
 
 ## Context
 
