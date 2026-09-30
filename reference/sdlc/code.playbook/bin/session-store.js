@@ -44,6 +44,13 @@ import {
   assertPlaybookCaptainShellSnapshot,
   assertPlaybookCaptainUnresolvedEffects,
 } from '../playbook-captain.js';
+import {
+  classifyOwnerMachine,
+  describeOwnerMachine,
+  isMachineIdentity,
+  resolveMachineIdentity,
+} from './machine-identity.js';
+import { sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
@@ -211,7 +218,7 @@ class CaptainSessionLeaseActiveError extends Error {
 
 function foreignCaptainSessionLeaseActiveError(sessionId, hostname) {
   const error = new Error(
-    `Captain session ${JSON.stringify(sessionId)} lease is owned by foreign host ${JSON.stringify(hostname)}`,
+    `Captain session ${JSON.stringify(sessionId)} lease is owned by ${describeOwnerMachine(hostname)}`,
   );
   error.code = PLAYBOOK_SESSION_LEASE_ACTIVE;
   error[ACTIVE_LEASE_ERROR] = true;
@@ -630,7 +637,25 @@ export function createCaptainSessionStore(options = {}) {
   const now = options.now ?? (() => new Date());
   const createTempId = options.createTempId ?? randomUUID;
   const createLeaseToken = options.createLeaseToken ?? randomUUID;
-  const localHostname = options.hostname ?? systemHostname();
+  // DR-075: the owner's `hostname` carries this machine's identity, read
+  // once at the first lease boundary; an explicit value stands in for it
+  // (tests, migration sub-stores). An untagged owner is a legacy host
+  // name, compared with the current one — or with an explicit untagged
+  // value, which then names this machine both ways.
+  const explicitHostname = options.hostname;
+  const legacyHostname =
+    options.legacyHostname ??
+    (typeof explicitHostname === 'string' && !isMachineIdentity(explicitHostname)
+      ? explicitHostname
+      : systemHostname());
+  let localIdentityPending;
+  const localIdentity = () =>
+    (localIdentityPending ??=
+      explicitHostname !== undefined
+        ? Promise.resolve(explicitHostname)
+        : options.resolveHostname !== undefined
+          ? options.resolveHostname()
+          : resolveMachineIdentity({ env, homeDir: home }));
   const localPid = options.pid ?? process.pid;
   const probeProcess =
     options.probeProcess ?? ((pid) => process.kill(pid, 0));
@@ -649,8 +674,9 @@ export function createCaptainSessionStore(options = {}) {
     throw new Error('Captain session store path must be absolute');
   }
   if (
-    typeof localHostname !== 'string' ||
-    localHostname.trim().length === 0
+    explicitHostname !== undefined &&
+    (typeof explicitHostname !== 'string' ||
+      explicitHostname.trim().length === 0)
   ) {
     throw new Error('Captain session lease hostname must be a non-empty string');
   }
@@ -1242,7 +1268,7 @@ export function createCaptainSessionStore(options = {}) {
     } catch (cause) { return cause?.code === 'ENOENT' ? 'idle' : 'unknown'; }
     try {
       const owner = await readLeaseOwner(sessionId);
-      if (owner.hostname !== localHostname) return 'unknown';
+      if (classifyOwnerMachine(owner.hostname, await localIdentity(), legacyHostname) !== 'local') return 'unknown';
       let state = 'active';
       try { await probeProcess(owner.pid); }
       catch (cause) {
@@ -1255,10 +1281,16 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const activeLeaseErrorFor = async (sessionId, owner) => {
-    if (owner.hostname !== localHostname) {
+    const machine = classifyOwnerMachine(owner.hostname, await localIdentity(), legacyHostname);
+    if (machine === 'foreign') {
       return foreignCaptainSessionLeaseActiveError(
         sessionId,
         owner.hostname,
+      );
+    }
+    if (machine !== 'local') {
+      throw new Error(
+        `Captain session ${JSON.stringify(sessionId)} lease owner machine ${JSON.stringify(owner.hostname)} cannot be verified`,
       );
     }
     try {
@@ -1350,7 +1382,7 @@ export function createCaptainSessionStore(options = {}) {
       sessionId,
       ownerToken,
       pid: localPid,
-      hostname: localHostname,
+      hostname: await localIdentity(),
       acquiredAt: timestampFrom(now(), 'lease timestamp'),
     });
     let handle;
@@ -1596,7 +1628,7 @@ export function createCaptainSessionStore(options = {}) {
     let sourceLease, lease;
     try {
       if (external) {
-        const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env, homeDir: home, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
+        const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env, homeDir: home, fsOps: fs, resolveHostname: localIdentity, legacyHostname, pid: localPid, probeProcess });
         sourceLease = await sourceStore.acquireManagement(sessionId);
       }
       lease = await acquire(sessionId, true);
@@ -1722,7 +1754,7 @@ export function createCaptainSessionStore(options = {}) {
     const sourceDir = join(sourceEnv.XDG_STATE_HOME || join(sourceHome, '.local', 'state'), 'playbook', 'sessions');
     const result = { sourceDir, migrated: [], skipped: [] };
     if (sourceDir === sessionsDir) return result;
-    const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env: sourceEnv, homeDir: sourceHome, fsOps: fs, hostname: localHostname, pid: localPid, probeProcess });
+    const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, env: sourceEnv, homeDir: sourceHome, fsOps: fs, resolveHostname: localIdentity, legacyHostname, pid: localPid, probeProcess });
     await sourceStore.prepare();
     try { await assertPrivateDirectory(sourceDir, fs); }
     catch (cause) { if (cause?.code === 'ENOENT') return result; throw cause; }
@@ -2444,9 +2476,6 @@ function replayFileIdentity(stat) {
   return Object.freeze({ dev: stat.dev, ino: stat.ino });
 }
 
-function sameFileIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
 
 function sameReplayIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
@@ -6676,15 +6705,6 @@ async function assertPathMissing(path, fs, message) {
   throw new Error(message);
 }
 
-async function syncDirectory(path, fs) {
-  let directory;
-  try {
-    directory = await fs.open(path, 'r');
-    await directory.sync();
-  } finally {
-    await directory?.close();
-  }
-}
 
 async function ensurePrivateDirectory(path, fs) {
   try {
@@ -6755,24 +6775,9 @@ async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId, inc
   let initial;
   try { initial = await fs.lstat(sessionsDir); }
   catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
-  const uid = process.getuid?.();
-  const verify = (stat, directory) => {
-    const required = directory ? 0o700 : 0o600;
-    if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) || (uid !== undefined && stat.uid !== uid) || (stat.mode & required) !== required) throw new Error('session permission preparation refuses unsafe ownership, links, type, or owner access');
-  };
-  const tighten = async (path, before, directory) => {
-    verify(before, directory);
-    const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (directory ? constants.O_DIRECTORY ?? 0 : 0));
-    try {
-      const opened = await handle.stat(); verify(opened, directory);
-      if (!sameFileIdentity(before, opened)) throw new Error('session entry changed during permission preparation');
-      const mode = directory ? 0o700 : 0o600;
-      if ((opened.mode & 0o7777) !== mode) await handle.chmod(mode);
-      const after = await handle.stat(); verify(after, directory);
-      const current = await fs.lstat(path); verify(current, directory);
-      if (!sameFileIdentity(after, current) || (after.mode & 0o7777) !== mode || (current.mode & 0o7777) !== mode) throw new Error('session permission tightening could not be verified');
-    } finally { await handle.close(); }
-  };
+  // The one verified tighten-only rule, shared with the machine identity
+  // (session-storage-1, playbook-cli-94).
+  const tighten = (path, before, directory) => tightenPrivateEntry(path, before, directory, fs, 'session permission preparation');
   await tighten(sessionsDir, initial, true);
   for (const name of await fs.readdir(sessionsDir)) {
     const eligible = /^[0-9a-f-]{36}\.(?:json|records\.jsonl|hints\.json)$/.test(name)
