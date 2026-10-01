@@ -16,7 +16,9 @@ Two gaps surfaced on the first use.
 An agent's effort governs its subagents too, since Claude's effort is one session setting and the Agent tool carries none per call; an agent at `ultracode` therefore ran its fine-grained delegations at `ultracode`, which the owner called a loophole.
 And the default did nothing: a block that named no subagent model told its agent nothing about delegating, although delegating well-bounded work is the practice the owner wants every agent to follow.
 
-Cligent 0.30 closes both at the adapter: `subagentModel` admits `inherit`, the agent's own model; `subagentEffort` pins an effort for every subagent, or, omitted, leaves the choice to the agent per task through definitions the Agent tool lists; and the directive's first sentence follows the two settings.
+Cligent 0.30 answers both at the adapter, through subagent definitions the Agent tool lists [[1]]: `subagentModel` admits `inherit`, the agent's own model; `subagentEffort` pins an effort, or, omitted, leaves the choice to the agent per task; and the directive's first sentence follows the two settings.
+A pinned effort governs the `delegate` definition and the `general-purpose` one the adapter replaces; where the agent chooses, `delegate-<effort>` definitions carry its choice, and a call naming no type lands on `general-purpose` at `medium`.
+`Explore` and `Plan` are never replaced and keep the agent's own effort, so an agent at `ultracode` still runs those two at `ultracode`.
 
 ## Decision
 
@@ -28,7 +30,7 @@ Adapters serving none resolve to nothing, as before.
 
 ### 2. `subagentEffort` is a fifth tuning field
 
-A `captain` or `players.<player-id>` block, a `playbooks.<id>.roles.<role>` binding, and a `--with` overlay may carry `subagentEffort`: a value of the adapter's effort vocabulary other than its orchestration value, pinning every subagent's effort; `false` on a binding selects the provider default, and omission inherits.
+A `captain` or `players.<player-id>` block, a `playbooks.<id>.roles.<role>` binding, and a `--with` overlay may carry `subagentEffort`: a value of the adapter's effort vocabulary other than its orchestration value, pinning the effort of the `delegate` and `general-purpose` subagents but not of `Explore` or `Plan`; `false` on a binding selects the provider default, and omission inherits.
 Resolved to absence it means the agent chooses per task.
 It is validated through the installed Cligent against the block's adapter and the resolved subagent model, carried in every complete call setting beside `subagentModel`, erased from the structural projection, and free to differ on an ordinary reopen.
 
@@ -38,7 +40,11 @@ The starter config names neither field; the default of §1 does the work, and th
 
 ## Consequences
 
-- Every Claude agent of an existing config now delegates by default: its runs carry the directive and the definitions, and its subagents run on its own model at efforts the agent chooses — a behavior change this release names in its changelog, with `subagentModel: false` as the way back.
+- Every Claude agent of an existing config now delegates by default: its runs carry the directive and the definitions, and its subagents run on its own model, at efforts the agent chooses except `Explore` and `Plan`, which keep its own — a behavior change this release names in its changelog, with `subagentModel: false` as the way back.
 - Session records written by this release may carry `subagentEffort`; a host on 17.2 that reads one rejects the unknown field, so hosts sharing a session store upgrade together.
 - The Cligent floor rises to `^0.30.0`, an additive release; the release-capability guard probes the new setting, and the literal rides on that floor.
 - This is additive in surface and ships in a MINOR release.
+
+## References
+
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/decisions/029-subagent-effort.md "cligent DR-029 — subagent effort"
