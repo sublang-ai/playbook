@@ -9,6 +9,7 @@ Accepted (2026-09-30).
 Amends [DR-021](021-inline-agent-settings.md) §1 and [DR-032](032-explicit-roles-session-players.md): an agent block and a role binding carry a fourth tuning field, `subagentModel`.
 Amends [DR-074](074-seeds-name-the-latest-models.md) in its Cligent floor alone: `^0.29.0`, the first release whose Claude adapter serves the field.
 Cites [DR-027](027-runtime-compatibility-from-cligent.md): capability validation of the field is delegated to the installed Cligent, and Playbook keeps no adapter support list of its own.
+Amended by [DR-076](076-subagents-delegate-by-default.md): the field admits `inherit` and defaults to it where the adapter serves one, and `subagentEffort` joins it as a fifth tuning field.
 
 ## Context
 
