@@ -98,7 +98,10 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       effort: 'high',
     });
     expect(effect).not.toHaveProperty('resume');
-    expect(effect).not.toHaveProperty('subagentModel');
+    // DR-076: tuning A names no subagent field, so the Claude player
+    // delegates by default and leaves each subagent's effort to itself.
+    expect(effect).toMatchObject({ subagentModel: 'inherit' });
+    expect(effect.subagentEffort).toBeUndefined();
     const visible = await first.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
     expect(visible.durableSnapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');
@@ -141,6 +144,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         model: 'player-model-b',
         effort: 'max',
         subagentModel: 'player-subagents-b',
+        subagentEffort: 'medium',
       });
     expect(FixtureAdapter.effects.find((item) => item.kind === 'captain'))
       .toMatchObject({
@@ -148,6 +152,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         model: 'captain-model-b',
         effort: 'max',
         subagentModel: 'captain-subagents-b',
+        subagentEffort: 'low',
       });
     const settled = await fixture.store.read(fixture.sessionId);
     expect(settled.state).toBe('settled');
@@ -237,6 +242,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       model: 'player-model-b',
       effort: 'max',
       subagentModel: 'player-subagents-b',
+      subagentEffort: 'medium',
     });
     const captainEffect = await selected.waitFor(
       'effect',
@@ -247,6 +253,7 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       model: 'captain-model-b',
       effort: 'max',
       subagentModel: 'captain-subagents-b',
+      subagentEffort: 'low',
     });
     const visible = await selected.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
@@ -806,8 +813,9 @@ async function expectLeaseOwner(
 }
 
 function configText(tuning: 'a' | 'b') {
-  // Tuning B adds subagent models that A leaves to the provider default, so a
-  // reopen under B proves they are tuning rather than structure.
+  // Tuning B pins subagent models and efforts that A leaves to the default
+  // (DR-076: `inherit`, the agent choosing each effort), so a reopen under B
+  // proves they are tuning rather than structure.
   const settings =
     tuning === 'a'
       ? {
@@ -821,10 +829,12 @@ function configText(tuning: 'a' | 'b') {
       : {
           captainModel: 'captain-model-b',
           captainEffort: 'max',
-          captainSubagents: ', subagentModel: captain-subagents-b',
+          captainSubagents:
+            ', subagentModel: captain-subagents-b, subagentEffort: low',
           playerModel: 'player-model-b',
           playerEffort: 'max',
-          playerSubagents: ', subagentModel: player-subagents-b',
+          playerSubagents:
+            ', subagentModel: player-subagents-b, subagentEffort: medium',
         };
   return [
     `captain: { adapter: claude, model: ${settings.captainModel}, effort: ${settings.captainEffort}${settings.captainSubagents} }`,
@@ -884,6 +894,7 @@ class FixtureAdapter {
       model: options?.model,
       effort: options?.effort,
       subagentModel: options?.subagentModel,
+      subagentEffort: options?.subagentEffort,
       durableState: durable?.state,
     });
     const result =

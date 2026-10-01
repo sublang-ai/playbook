@@ -45,6 +45,7 @@ interface FixtureShape {
   readonly settingsEffort?: string;
   readonly settingsFastMode?: string;
   readonly settingsSubagentModel?: string;
+  readonly settingsSubagentEffort?: string;
   readonly rootEffort?: string;
   readonly rootPermissionPolicy?: string;
   readonly settingsInstruction?: string;
@@ -98,6 +99,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsEffort = 'readonly effort: TuningSelection<Effort>;',
     settingsFastMode = 'readonly fastMode?: boolean;',
     settingsSubagentModel = 'readonly subagentModel?: string;',
+    settingsSubagentEffort = 'readonly subagentEffort?: Effort;',
     rootEffort = `export type Effort =
       | 'off' | 'on'
       | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -306,6 +308,7 @@ export interface AgentCallSettings {
   ${settingsEffort}
   ${settingsFastMode}
   ${settingsSubagentModel}
+  ${settingsSubagentEffort}
   ${settingsInstruction}
   ${settingsPermissions}
 }
@@ -405,6 +408,7 @@ ${runManagedSignature}
   effort: unknown;
   fastMode: unknown;
   subagentModel: unknown;
+  subagentEffort: unknown;
   instruction: unknown;
   permissions: unknown;
   signal: unknown;
@@ -440,6 +444,7 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'effort',
   'fastMode',
   'subagentModel',
+  'subagentEffort',
   'instruction',
   'permissions',
   'AgentCallSettingsError',
@@ -503,6 +508,7 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
       'AgentCallSettings.subagentModel',
+      'AgentCallSettings.subagentEffort',
       'AgentCallSettings.instruction',
       'AgentCallSettings.permissions',
       'AgentCallSettingsError',
@@ -748,6 +754,21 @@ describe('the cligent release-capability guard', () => {
       'complete subagent-model string domain',
       { settingsSubagentModel: "readonly subagentModel?: 'haiku';" },
       'AgentCallSettings.subagentModel',
+    ],
+    [
+      'subagent-effort setting',
+      { settingsSubagentEffort: '' },
+      'AgentCallSettings.subagentEffort',
+    ],
+    [
+      'optional subagent-effort setting',
+      { settingsSubagentEffort: 'readonly subagentEffort: Effort;' },
+      'AgentCallSettings.subagentEffort',
+    ],
+    [
+      'complete subagent-effort domain',
+      { settingsSubagentEffort: "readonly subagentEffort?: 'high';" },
+      'AgentCallSettings.subagentEffort',
     ],
     [
       'narrowed root permission value domain',

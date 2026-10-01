@@ -2422,6 +2422,55 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       }),
     ).toThrow(/unknown field "subagentModel"/);
 
+    // DR-076: the subagent effort and the `inherit` literal are tuning as
+    // well; a 17.2 record without either still validates unchanged.
+    expect(validateCaptainSessionExecutionProjection(execution)).toEqual(
+      execution,
+    );
+    const subagentEffortExecution: any = structuredClone(execution);
+    subagentEffortExecution.captain.subagentModel = 'inherit';
+    subagentEffortExecution.captain.subagentEffort = 'low';
+    subagentEffortExecution.players[0].subagentModel = 'inherit';
+    subagentEffortExecution.players[0].subagentEffort = 'medium';
+    subagentEffortExecution.catalog.code.roles.coder.subagentModel = 'inherit';
+    subagentEffortExecution.catalog.code.roles.coder.subagentEffort = 'high';
+    const validatedSubagentEffort = validateCaptainSessionExecutionProjection(
+      subagentEffortExecution,
+    );
+    expect(validatedSubagentEffort).toMatchObject({
+      captain: { subagentModel: 'inherit', subagentEffort: 'low' },
+      players: [{ subagentModel: 'inherit', subagentEffort: 'medium' }],
+      catalog: {
+        code: {
+          roles: {
+            coder: { subagentModel: 'inherit', subagentEffort: 'high' },
+          },
+        },
+      },
+    });
+    const subagentEffortStructure = projectCaptainSessionStructure(validatedSubagentEffort);
+    expect(JSON.stringify(subagentEffortStructure)).not.toContain('subagent');
+    expect(subagentEffortStructure).toEqual(structural);
+    const retunedSubagentEffort: any = structuredClone(subagentEffortExecution);
+    retunedSubagentEffort.captain.subagentEffort = 'max';
+    delete retunedSubagentEffort.players[0].subagentEffort;
+    retunedSubagentEffort.catalog.code.roles.coder.subagentEffort = 'minimal';
+    const reopenedSubagentEffort = assertCaptainSessionExecutionCompatible(
+      structural,
+      retunedSubagentEffort,
+    );
+    expect(reopenedSubagentEffort.captain.subagentEffort).toBe('max');
+    expect(reopenedSubagentEffort.players[0]).not.toHaveProperty('subagentEffort');
+    expect(reopenedSubagentEffort.catalog.code.roles.coder.subagentEffort).toBe(
+      'minimal',
+    );
+    expect(() =>
+      validateCaptainSessionStructuralProjection({
+        ...structural,
+        players: [{ ...structural.players[0], subagentEffort: 'high' }],
+      }),
+    ).toThrow(/unknown field "subagentEffort"/);
+
     const zhExecution: any = structuredClone(execution);
     zhExecution.players.push({ ...zhExecution.players[0], id: 'dev.reviewer' });
     zhExecution.catalog.code.requiredRoleIds = ['编码者', '审查者'];
@@ -2551,6 +2600,32 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           },
         },
         /roles\.coder\.subagentModel must be a nonblank string/,
+      ],
+      [
+        'blank Captain subagent effort',
+        {
+          ...execution,
+          captain: { ...execution.captain, subagentEffort: '' },
+        },
+        /captain\.subagentEffort must be a nonblank string/,
+      ],
+      [
+        'non-string role subagent effort',
+        {
+          ...execution,
+          catalog: {
+            code: {
+              ...execution.catalog.code,
+              roles: {
+                coder: {
+                  ...execution.catalog.code.roles.coder,
+                  subagentEffort: false,
+                },
+              },
+            },
+          },
+        },
+        /roles\.coder\.subagentEffort must be a nonblank string/,
       ],
       [
         'adapter-incompatible effort',

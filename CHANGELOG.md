@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.3.0] - 2026-10-01
+
+### Added
+
+- **An agent's subagents can run at an effort of their own.** The Captain, each top-level player, a role binding, and a `--with` overlay accept `subagentEffort`, the fifth tuning field beside `model`, `effort`, `fastMode`, and `subagentModel`: any effort the agent's adapter accepts other than `ultracode` pins every subagent's effort, so an agent at `ultracode` no longer runs its fine-grained delegations at `ultracode`; left unset, the agent chooses an effort per task, and on a role binding `false` selects that default over a player's pinned value. The installed Cligent validates it against the adapter and the resolved subagent model, every player and Captain call carries it in its complete settings, and the structural projection omits it, so a changed value applies from the next call of an ordinary reopen ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-26](specs/packages/playbook-cli.md#playbook-cli-26)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)], [[playbook-captain-31](specs/packages/playbook-captain.md#playbook-captain-31)], [DR-076](specs/decisions/076-subagents-delegate-by-default.md)).
+- **`subagentModel: inherit` names the agent's own model.** A block or a role binding may set `subagentModel: inherit` so its subagents run on the model the agent itself runs on ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [DR-076](specs/decisions/076-subagents-delegate-by-default.md)).
+
+### Changed
+
+- **Claude agents delegate by default.** A `captain` or `players.<player-id>` block whose adapter serves a subagent model (Claude today) and which leaves `subagentModel` unset now resolves to `inherit`: every Claude agent of an existing config hands well-defined, fine-grained tasks to subagents running on its own model, at efforts it chooses per task, while keeping the deep thinking, reasoning, and design work itself. `subagentModel: false` on the block switches it off — nothing is sent and no delegation directive is composed. The launcher resolves the default on its own copy and never rewrites your config, and the starter config names neither field ([[playbook-cli-8](specs/packages/playbook-cli.md#playbook-cli-8)], [DR-076](specs/decisions/076-subagents-delegate-by-default.md)). A session record carrying `subagentEffort` cannot be opened by Playbook 17.2 or earlier, so hosts sharing a session store upgrade together; a 17.2 record opens unchanged.
+- **Require Cligent 0.30.** `@sublang/cligent` moves from `^0.29.0` to `^0.30.0`, the first release whose Claude adapter serves the `inherit` literal, the subagent effort, and the subagent definitions, and whose complete call settings carry `subagentEffort`; the release-capability guard now also proves `AgentCallSettings.subagentEffort`, and the literal rides on that floor ([[release-14](specs/packages/release.md#release-14)], [DR-076](specs/decisions/076-subagents-delegate-by-default.md)).
+
 ## [17.2.0] - 2026-09-30
 
 ### Added
@@ -784,7 +796,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.2.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.3.0...HEAD
+[17.3.0]: https://github.com/sublang-ai/playbook/compare/v17.2.0...v17.3.0
 [17.2.0]: https://github.com/sublang-ai/playbook/compare/v17.1.0...v17.2.0
 [17.1.0]: https://github.com/sublang-ai/playbook/compare/v17.0.0...v17.1.0
 [17.0.0]: https://github.com/sublang-ai/playbook/compare/v16.0.0...v17.0.0

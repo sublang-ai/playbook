@@ -436,11 +436,14 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       {
         id: 'dev.reviewer',
         adapter: 'claude',
+        // DR-076: a Claude agent delegates by default.
+        subagentModel: 'inherit',
         instruction: 'Review carefully.',
       },
     ]);
     expect(launchConfig.projectHostAgent(plan.players[1].agent)).toEqual({
       adapter: 'claude',
+      subagentModel: 'inherit',
       instruction: 'Review carefully.',
     });
     expect(tmux.layout).not.toHaveProperty('columnWeights');
@@ -2020,7 +2023,7 @@ describe('adapter-scoped subagent model', () => {
     );
     const reopened: any = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
       {
-        captain: 'claude',
+        captain: { adapter: 'claude', subagentModel: false },
         players: {
           'dev.coder': { adapter: 'claude', subagentModel: 'retuned' },
         },
@@ -2122,7 +2125,6 @@ describe('adapter-scoped subagent model', () => {
   it.each([
     ['blank player', 'player', '  '],
     ['non-string player', 'player', 7],
-    ['provider-default player', 'player', false],
     ['blank Captain', 'captain', ''],
     ['non-string Captain', 'captain', 7],
   ] as const)(
@@ -2227,5 +2229,342 @@ describe('adapter-scoped subagent model', () => {
         },
       ),
     ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+  });
+});
+
+describe('subagent effort and the delegation default (DR-076)', () => {
+  const load = {
+    loadModule: moduleLoader({
+      'mod://code': entry('code', ['coder', 'reviewer', 'tester']),
+    }),
+  };
+
+  function effortConfig(roles: Record<string, unknown>) {
+    return {
+      captain: { adapter: 'claude', subagentEffort: 'low' },
+      players: {
+        'dev.coder': { adapter: 'claude', subagentEffort: 'medium' },
+      },
+      playbooks: { code: { from: 'mod://code', roles } },
+    };
+  }
+
+  it('resolves an unset Claude subagent model to inherit, and nothing for codex or false', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-delegation-default-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const source = [
+      'captain: claude',
+      'players:',
+      '  dev.coder: claude',
+      '  dev.reviewer: codex',
+      '  dev.tester: { adapter: claude, subagentModel: false }',
+      'playbooks:',
+      '  code:',
+      '    from: mod://code',
+      '    roles: { coder: dev.coder, reviewer: dev.reviewer, tester: dev.tester }',
+      '',
+    ].join('\n');
+    await writeFile(configPath, source, 'utf8');
+
+    const plan: any = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      ...load,
+    });
+
+    expect(plan.captain.subagentModel).toBe('inherit');
+    const agents = Object.fromEntries(
+      plan.players.map((player: any) => [player.id, player.agent]),
+    );
+    expect(agents['dev.coder'].subagentModel).toBe('inherit');
+    expect(agents['dev.reviewer']).not.toHaveProperty('subagentModel');
+    expect(agents['dev.tester']).not.toHaveProperty('subagentModel');
+    expect(plan.catalog.code.roles.coder.subagentModel).toBe('inherit');
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentModel',
+    );
+    expect(plan.catalog.code.roles.tester).not.toHaveProperty('subagentModel');
+
+    // Both front ends receive the resolved default.
+    const tmux: any = launchConfig.projectTmuxConfig(plan);
+    expect(tmux.captain.subagentModel).toBe('inherit');
+    expect(
+      tmux.players.find((player: any) => player.id === 'dev.coder')
+        .subagentModel,
+    ).toBe('inherit');
+    expect(
+      tmux.players.find((player: any) => player.id === 'dev.tester'),
+    ).not.toHaveProperty('subagentModel');
+    await expect(launchConfig.normalizeHostConfig(tmux)).resolves.toMatchObject(
+      { captain: { subagentModel: 'inherit' } },
+    );
+    const execution: any = executionConfigFromPlan(plan);
+    expect(execution.captain.subagentModel).toBe('inherit');
+    expect(execution.catalog.code.roles.coder.subagentModel).toBe('inherit');
+    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentModel',
+    );
+
+    // The config file is never rewritten, and structure carries no default.
+    expect(await readFile(configPath, 'utf8')).toBe(source);
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain(
+      'subagent',
+    );
+  });
+
+  it('accepts an explicit inherit on a block and a binding', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(
+      {
+        captain: { adapter: 'claude', subagentModel: 'inherit' },
+        players: {
+          'dev.coder': { adapter: 'claude', subagentModel: 'claude-haiku-4-5' },
+        },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: {
+              coder: { player: 'dev.coder', subagentModel: 'inherit' },
+              reviewer: 'dev.coder',
+              tester: 'dev.coder',
+            },
+          },
+        },
+      },
+      load,
+    );
+    expect(plan.captain.subagentModel).toBe('inherit');
+    expect(plan.catalog.code.roles.coder.subagentModel).toBe('inherit');
+    expect(plan.catalog.code.roles.reviewer.subagentModel).toBe(
+      'claude-haiku-4-5',
+    );
+  });
+
+  it('composes block and binding subagent efforts, and erases them from structure', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(
+      effortConfig({
+        coder: { player: 'dev.coder', subagentEffort: 'high' },
+        // `false` selects the provider default — the agent chooses — over
+        // the pinned player value.
+        reviewer: { player: 'dev.coder', subagentEffort: false },
+        tester: 'dev.coder',
+      }),
+      load,
+    );
+
+    expect(plan.captain.subagentEffort).toBe('low');
+    expect(plan.players[0].agent).toMatchObject({
+      subagentModel: 'inherit',
+      subagentEffort: 'medium',
+    });
+    expect(plan.catalog.code.roles.coder).toMatchObject({
+      subagentModel: 'inherit',
+      subagentEffort: 'high',
+    });
+    expect(plan.catalog.code.roles.reviewer.subagentModel).toBe('inherit');
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentEffort',
+    );
+    expect(plan.catalog.code.roles.tester.subagentEffort).toBe('medium');
+
+    const tmux: any = launchConfig.projectTmuxConfig(plan);
+    expect(tmux.captain.subagentEffort).toBe('low');
+    expect(tmux.players[0].subagentEffort).toBe('medium');
+    expect(tmux.captain.options.sessionAgents.captain.subagentEffort).toBe(
+      'low',
+    );
+    expect(launchConfig.projectHostAgent(plan.players[0].agent)).toEqual({
+      adapter: 'claude',
+      subagentModel: 'inherit',
+      subagentEffort: 'medium',
+    });
+    await expect(launchConfig.normalizeHostConfig(tmux)).resolves.toMatchObject(
+      { captain: { subagentEffort: 'low' } },
+    );
+
+    const execution: any = executionConfigFromPlan(plan);
+    expect(execution.captain.subagentEffort).toBe('low');
+    expect(execution.players[0].subagentEffort).toBe('medium');
+    expect(execution.catalog.code.roles.coder.subagentEffort).toBe('high');
+    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
+      'subagentEffort',
+    );
+
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain(
+      'subagentEffort',
+    );
+  });
+
+  it('reopens against the stored structure when only the subagent effort changed', async () => {
+    const initial = await launchConfig.normalizeLaunchPlan(
+      effortConfig({
+        coder: 'dev.coder',
+        reviewer: 'dev.coder',
+        tester: 'dev.coder',
+      }),
+      load,
+    );
+    const reopened: any = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
+      {
+        captain: 'claude',
+        players: { 'dev.coder': { adapter: 'claude', subagentEffort: 'max' } },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: {
+              coder: { player: 'dev.coder', subagentEffort: false },
+              reviewer: { player: 'dev.coder', subagentEffort: 'minimal' },
+              tester: 'dev.coder',
+            },
+          },
+        },
+      },
+      {
+        configPath: '/tmp/playbook.config.yaml',
+        stored: structuralProjection(initial),
+      },
+    );
+
+    expect(reopened.captain).not.toHaveProperty('subagentEffort');
+    expect(reopened.players[0].agent.subagentEffort).toBe('max');
+    expect(reopened.catalog.code.roles.coder).not.toHaveProperty(
+      'subagentEffort',
+    );
+    expect(reopened.catalog.code.roles.reviewer.subagentEffort).toBe(
+      'minimal',
+    );
+    expect(reopened.catalog.code.roles.tester.subagentEffort).toBe('max');
+    expect(structuralProjection(reopened)).toEqual(
+      structuralProjection(initial),
+    );
+  });
+
+  it('retunes a role subagent effort through a --with overlay', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-subagent-effort-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const overlayPath = join(root, 'deep-subagents.yaml');
+    const source = [
+      'captain: claude',
+      'players:',
+      '  dev.coder: { adapter: claude, subagentEffort: low }',
+      'playbooks:',
+      '  code:',
+      '    from: mod://code',
+      '    roles: { coder: dev.coder, reviewer: dev.coder, tester: dev.coder }',
+      '',
+    ].join('\n');
+    const overlay = [
+      'playbooks:',
+      '  code:',
+      '    roles:',
+      '      coder: { player: dev.coder, subagentEffort: xhigh }',
+      '',
+    ].join('\n');
+    await writeFile(configPath, source, 'utf8');
+    await writeFile(overlayPath, overlay, 'utf8');
+
+    const plan: any = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      ...load,
+    });
+
+    expect(plan.catalog.code.roles.coder.subagentEffort).toBe('xhigh');
+    expect(plan.catalog.code.roles.reviewer.subagentEffort).toBe('low');
+    expect(await readFile(configPath, 'utf8')).toBe(source);
+    expect(await readFile(overlayPath, 'utf8')).toBe(overlay);
+  });
+
+  it.each([
+    ['blank', '  '],
+    ['non-string', 7],
+    ['true', true],
+  ])('refuses a %s role subagent effort before registry work', async (_case, value) => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        effortConfig({
+          coder: { player: 'dev.coder', subagentEffort: value },
+          reviewer: 'dev.coder',
+          tester: 'dev.coder',
+        }),
+        { prepareRegistryModule, loadModule },
+      ),
+    ).rejects.toThrow(
+      'playbooks.code.roles.coder.subagentEffort must be a nonblank string or false for provider-default',
+    );
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a role binding',
+      {
+        captain: 'claude',
+        players: { 'dev.coder': 'codex' },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: { coder: { player: 'dev.coder', subagentEffort: 'high' } },
+          },
+        },
+      },
+    ],
+    [
+      'a player block',
+      {
+        captain: 'claude',
+        players: { 'dev.coder': { adapter: 'codex', subagentEffort: 'high' } },
+        playbooks: {
+          code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+        },
+      },
+    ],
+  ])(
+    'rejects a subagent effort on a codex player in %s before registry work',
+    async (_case, config) => {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(config, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+      ).rejects.toThrow(/subagentEffort is not supported for adapter "codex"/);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'beside a block that switched delegation off',
+      { adapter: 'claude', subagentModel: false, subagentEffort: 'high' },
+      /subagentEffort for adapter "claude" requires subagentModel/,
+    ],
+    [
+      'at the orchestration effort',
+      { adapter: 'claude', subagentEffort: 'ultracode' },
+      /subagentEffort for adapter "claude" must be one of/,
+    ],
+  ])('rejects a subagent effort %s before registry work', async (_case, block, message) => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        {
+          captain: 'claude',
+          players: { 'dev.coder': block },
+          playbooks: {
+            code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
+          },
+        },
+        { prepareRegistryModule, loadModule },
+      ),
+    ).rejects.toThrow(message);
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
   });
 });

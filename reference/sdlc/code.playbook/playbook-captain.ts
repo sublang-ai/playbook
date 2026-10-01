@@ -69,15 +69,23 @@ interface SessionAgent {
   /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
    * literal request, so this carries no provider-default sentinel. */
   readonly fastMode?: boolean;
-  /** The model every subagent of this agent runs on (DR-075). Absence is the
-   * provider default. */
+  /** The model every subagent of this agent runs on (DR-075), or `inherit`
+   * for the agent's own model (DR-076). Absence is the provider default. */
   readonly subagentModel?: string;
+  /** The effort every subagent of this agent runs at (DR-076). Absence leaves
+   * each subagent's effort to the agent. */
+  readonly subagentEffort?: string;
   readonly instruction?: string;
   readonly permissions?: PermissionPolicy;
 }
 
 /** Per-call tuning: erased from every structural envelope and snapshot. */
-type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel';
+type TuningKey =
+  | 'model'
+  | 'effort'
+  | 'fastMode'
+  | 'subagentModel'
+  | 'subagentEffort';
 
 interface PlayerLedgerEntry {
   readonly adapter: string;
@@ -452,6 +460,7 @@ interface EffectivePlayerBinding {
   readonly effort: TuningSelection<Effort>;
   readonly fastMode?: boolean;
   readonly subagentModel?: string;
+  readonly subagentEffort?: string;
   readonly agent: SessionAgent;
 }
 
@@ -3727,7 +3736,7 @@ function snapshotFastMode(
   return value;
 }
 
-function snapshotSubagentModel(
+function snapshotNonblankTuning(
   value: JsonValue | undefined,
   path: string,
 ): string | undefined {
@@ -3753,6 +3762,7 @@ function snapshotSessionAgent(
       'effort',
       'fastMode',
       'subagentModel',
+      'subagentEffort',
       'instruction',
       'permissions',
     ],
@@ -3765,7 +3775,8 @@ function snapshotSessionAgent(
           key !== 'model' &&
           key !== 'effort' &&
           key !== 'fastMode' &&
-          key !== 'subagentModel',
+          key !== 'subagentModel' &&
+          key !== 'subagentEffort',
       ),
     ) as JsonValue,
     path,
@@ -3786,9 +3797,17 @@ function snapshotSessionAgent(
     ...(agent.subagentModel === undefined
       ? {}
       : {
-          subagentModel: snapshotSubagentModel(
+          subagentModel: snapshotNonblankTuning(
             agent.subagentModel,
             `${path}.subagentModel`,
+          ),
+        }),
+    ...(agent.subagentEffort === undefined
+      ? {}
+      : {
+          subagentEffort: snapshotNonblankTuning(
+            agent.subagentEffort,
+            `${path}.subagentEffort`,
           ),
         }),
   };
@@ -3808,7 +3827,9 @@ function callSettings(
 ): AgentCallSettings {
   // cligent treats supplied call settings as a complete replacement, so an
   // omitted fastMode or subagentModel here is a request for the provider
-  // default, never an inheritance of whatever the previous call left behind.
+  // default, and an omitted subagentEffort leaves each subagent's effort to
+  // the agent — never an inheritance of whatever the previous call left
+  // behind.
   return {
     model: tuning.model,
     effort: tuning.effort,
@@ -3816,6 +3837,9 @@ function callSettings(
     ...(tuning.subagentModel === undefined
       ? {}
       : { subagentModel: tuning.subagentModel }),
+    ...(tuning.subagentEffort === undefined
+      ? {}
+      : { subagentEffort: tuning.subagentEffort as Effort }),
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
     ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
   };
@@ -4043,7 +4067,14 @@ async function buildEnablements(
       const rawBinding = snapshotRecord(roleRecord[role], path);
       rejectSnapshotKeys(
         rawBinding,
-        ['playerId', 'model', 'effort', 'fastMode', 'subagentModel'],
+        [
+          'playerId',
+          'model',
+          'effort',
+          'fastMode',
+          'subagentModel',
+          'subagentEffort',
+        ],
         path,
       );
       const playerId = snapshotString(rawBinding.playerId, `${path}.playerId`);
@@ -4071,9 +4102,17 @@ async function buildEnablements(
         ...(rawBinding.subagentModel === undefined
           ? {}
           : {
-              subagentModel: snapshotSubagentModel(
+              subagentModel: snapshotNonblankTuning(
                 rawBinding.subagentModel,
                 `${path}.subagentModel`,
+              ),
+            }),
+        ...(rawBinding.subagentEffort === undefined
+          ? {}
+          : {
+              subagentEffort: snapshotNonblankTuning(
+                rawBinding.subagentEffort,
+                `${path}.subagentEffort`,
               ),
             }),
         agent,

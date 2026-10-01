@@ -10,14 +10,17 @@ interface SessionAgent {
     /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
      * literal request, so this carries no provider-default sentinel. */
     readonly fastMode?: boolean;
-    /** The model every subagent of this agent runs on (DR-075). Absence is the
-     * provider default. */
+    /** The model every subagent of this agent runs on (DR-075), or `inherit`
+     * for the agent's own model (DR-076). Absence is the provider default. */
     readonly subagentModel?: string;
+    /** The effort every subagent of this agent runs at (DR-076). Absence leaves
+     * each subagent's effort to the agent. */
+    readonly subagentEffort?: string;
     readonly instruction?: string;
     readonly permissions?: PermissionPolicy;
 }
 /** Per-call tuning: erased from every structural envelope and snapshot. */
-type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel';
+type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel' | 'subagentEffort';
 interface PlayerLedgerEntry {
     readonly adapter: string;
     readonly instruction?: string;

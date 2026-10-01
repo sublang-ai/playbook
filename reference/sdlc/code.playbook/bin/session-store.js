@@ -5402,7 +5402,13 @@ function validateCaptainSessionProjection(
         : ['id', 'adapter', 'model', 'effort'],
       structural
         ? ['instruction', 'permissions']
-        : ['instruction', 'permissions', 'fastMode', 'subagentModel'],
+        : [
+            'instruction',
+            'permissions',
+            'fastMode',
+            'subagentModel',
+            'subagentEffort',
+          ],
       playerPath,
     );
     assertPlayerId(player.id, `${playerPath}.id`);
@@ -5503,16 +5509,13 @@ function validateCaptainSessionProjection(
         structural
           ? ['playerId']
           : ['playerId', 'model', 'effort'],
-        structural ? [] : ['fastMode', 'subagentModel'],
+        structural ? [] : ['fastMode', 'subagentModel', 'subagentEffort'],
         bindingPath,
       );
       assertPlayerId(binding.playerId, `${bindingPath}.playerId`);
       if (!structural) {
         validateProjectedFastMode(binding, `${bindingPath}.fastMode`);
-        validateProjectedSubagentModel(
-          binding,
-          `${bindingPath}.subagentModel`,
-        );
+        validateProjectedSubagentTuning(binding, bindingPath);
         validateTuningSelection(binding.model, `${bindingPath}.model`);
         const player = projection.players.find(
           (candidate) => candidate.id === binding.playerId,
@@ -5560,10 +5563,14 @@ function validateProjectedFastMode(record, path) {
   }
 }
 
-// Like fast mode, absence is the canonical provider default (DR-075).
-function validateProjectedSubagentModel(record, path) {
-  if (Object.hasOwn(record, 'subagentModel')) {
-    requireNonblank(record.subagentModel, path);
+// Like fast mode, absence is the canonical provider default (DR-075); the
+// subagent model may be the literal `inherit`, and an absent subagent effort
+// leaves each subagent's effort to the agent (DR-076).
+function validateProjectedSubagentTuning(record, path) {
+  for (const field of ['subagentModel', 'subagentEffort']) {
+    if (Object.hasOwn(record, field)) {
+      requireNonblank(record[field], `${path}.${field}`);
+    }
   }
 }
 
@@ -5571,7 +5578,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
   const agent = requireRecord(value, path);
   if (!structural) {
     validateProjectedFastMode(agent, `${path}.fastMode`);
-    validateProjectedSubagentModel(agent, `${path}.subagentModel`);
+    validateProjectedSubagentTuning(agent, path);
   }
   if (!hasId) {
     exactOptionalKeys(
@@ -5579,7 +5586,13 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
       structural ? ['adapter'] : ['adapter', 'model', 'effort'],
       structural
         ? ['instruction', 'permissions']
-        : ['instruction', 'permissions', 'fastMode', 'subagentModel'],
+        : [
+            'instruction',
+            'permissions',
+            'fastMode',
+            'subagentModel',
+            'subagentEffort',
+          ],
       path,
     );
   }
