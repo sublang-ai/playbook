@@ -212,9 +212,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 29 ||
-            (declaredFloor[1] === 29 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.29.0 floor serving the seeded models and carrying subagentModel (DR-074, DR-075)`,
+          (declaredFloor[1] > 30 ||
+            (declaredFloor[1] === 30 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.30.0 floor serving the seeded models and carrying subagentModel and subagentEffort (DR-074, DR-075, DR-076)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -237,9 +237,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 29 ||
-              (resolvedFloor[1] === 29 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.29.0 floor serving the seeded models and carrying subagentModel (DR-074, DR-075)`,
+            (resolvedFloor[1] > 30 ||
+              (resolvedFloor[1] === 30 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.30.0 floor serving the seeded models and carrying subagentModel and subagentEffort (DR-074, DR-075, DR-076)`,
       ).toBe(true);
     }
   });
