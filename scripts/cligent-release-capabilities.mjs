@@ -374,6 +374,34 @@ type Exact = Assert<Equal<
   string | undefined
 >>;
 export const pinned: AgentCallSettings['subagentModel'] = 'claude-sonnet-5';
+export const inherit: AgentCallSettings['subagentModel'] = 'inherit';
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'AgentCallSettings.subagentEffort',
+    'agent-call-settings-subagent-effort.ts',
+    'The subagent effort is an optional effort in complete settings, whose absence leaves each subagent effort to the agent (DR-076).',
+    `import type { Effort } from '@sublang/cligent';
+import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<
+  {} extends Pick<AgentCallSettings, 'subagentEffort'> ? true : false
+>;
+type Exact = Assert<Equal<
+  AgentCallSettings['subagentEffort'],
+  Effort | undefined
+>>;
+export const pinned: AgentCallSettings['subagentEffort'] = 'medium';
 export const optional: Optional = true;
 export const exact: Exact = true;
 `,

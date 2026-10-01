@@ -457,6 +457,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.effort',
         'AgentCallSettings.fastMode',
         'AgentCallSettings.subagentModel',
+        'AgentCallSettings.subagentEffort',
         'AgentCallSettings.instruction',
         'AgentCallSettings.permissions',
         'AgentCallSettingsError',
