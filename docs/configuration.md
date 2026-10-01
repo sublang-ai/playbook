@@ -189,9 +189,14 @@ the agent to hand well-defined, fine-grained tasks to its subagents while
 keeping the deep thinking, reasoning, and design work itself, without lowering
 the quality of what it delivers
 ([DR-075](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/075-subagent-model-is-tuning.md)).
-`subagentEffort` pins the effort every subagent runs at, any effort the
-adapter accepts other than `ultracode`; left unset, the agent chooses an effort
-per task, so its own effort never silently governs its subagents.
+`subagentEffort`, any effort the adapter accepts other than `ultracode`, pins
+the effort the agent's delegated work runs at; left unset, the agent chooses an
+effort per task. On Claude, a pinned effort governs Cligent's `delegate`
+subagent and the `general-purpose` one it replaces, while an unpinned agent's
+choice runs through `delegate-<effort>` subagents and a call naming no type
+runs `general-purpose` at `medium`; `Explore` and `Plan` are never replaced and
+keep the agent's own effort
+([Cligent DR-029](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/029-subagent-effort.md)).
 An agent whose adapter serves a subagent model (Claude today) and whose block
 leaves `subagentModel` unset resolves to `inherit`: it delegates by default.
 The launcher resolves this on its own copy and never rewrites your config, and
@@ -290,7 +295,7 @@ playbooks:
       coder:
         player: dev.coder
         effort: low
-        subagentEffort: high # its subagents still run at high effort
+        subagentEffort: high # its delegates still run at high effort
 ```
 
 The global file is never modified, and `--with` is not forwarded to
