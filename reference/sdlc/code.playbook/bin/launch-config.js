@@ -28,6 +28,7 @@ import {
   parseDocument as parseYamlDocument,
   stringify as stringifyYaml,
 } from "yaml";
+import { isSubagentModelSupported } from "@sublang/cligent";
 import { loadTmuxPlayConfig } from "@sublang/cligent/tmux-play";
 import {
   defaultCaptainSessionsDir,
@@ -379,12 +380,14 @@ export async function normalizeSelectedLaunchPlanDataOnly(
   const configuredAgents = new Map();
   for (const playerId of expectedMembers.playerIds) {
     assertPlayerId(playerId, `players.${playerId}`);
-    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, [
-      "id",
-    ]);
+    const agent = resolveDelegationDefault(
+      resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]),
+    );
     configuredAgents.set(playerId, agent);
   }
-  let captain = resolveAgent(top.captain, "captain", ["from", "options"]);
+  let captain = resolveDelegationDefault(
+    resolveAgent(top.captain, "captain", ["from", "options"]),
+  );
 
   const playbooksCfg = requireObject(top.playbooks, "playbooks");
   const tuningChecks = [];
@@ -443,7 +446,8 @@ export async function normalizeSelectedLaunchPlanDataOnly(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
-        binding.subagentModel !== undefined
+        binding.subagentModel !== undefined ||
+        binding.subagentEffort !== undefined
       ) {
         let checkId;
         do {
@@ -559,7 +563,8 @@ export async function normalizeSelectedLaunchPlanDataOnly(
                       ? {}
                       : { fastMode: agent.fastMode }
                     : { fastMode: binding.fastMode }),
-                  ...effectiveSubagentModel(binding, agent),
+                  ...effectiveOptionalTuning(binding, agent, "subagentModel"),
+                  ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
                 },
               ];
             }),
@@ -689,9 +694,9 @@ export async function normalizeLaunchPlan(
   const configuredAgents = new Map();
   for (const playerId of allPlayerIds) {
     assertPlayerId(playerId, `players.${playerId}`);
-    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, [
-      "id",
-    ]);
+    const agent = resolveDelegationDefault(
+      resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]),
+    );
     if (
       typeof agent.adapter !== "string" ||
       agent.adapter.trim().length === 0
@@ -710,7 +715,9 @@ export async function normalizeLaunchPlan(
     throw new Error("playbooks keys must be canonical trimmed nonblank ids");
   }
 
-  let captain = resolveAgent(top.captain, "captain", ["from", "options"]);
+  let captain = resolveDelegationDefault(
+    resolveAgent(top.captain, "captain", ["from", "options"]),
+  );
   if (
     typeof captain.adapter !== "string" ||
     captain.adapter.trim().length === 0
@@ -790,7 +797,8 @@ export async function normalizeLaunchPlan(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
-        binding.subagentModel !== undefined
+        binding.subagentModel !== undefined ||
+        binding.subagentEffort !== undefined
       ) {
         let checkId;
         do {
@@ -1002,7 +1010,8 @@ export async function normalizeLaunchPlan(
                 ? {}
                 : { fastMode: agent.fastMode }
               : { fastMode: binding.fastMode }),
-            ...effectiveSubagentModel(binding, agent),
+            ...effectiveOptionalTuning(binding, agent, "subagentModel"),
+            ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
           },
         ];
       }),
@@ -1488,7 +1497,8 @@ function migrateUserConfigIfRetired(userConfigPath, onNotice) {
     throw new Error(
       `cannot migrate the retired profiles config at ${userConfigPath}: ` +
         `${errorMessage(error)} — edit it by hand: each agent takes its own ` +
-        "adapter, model, effort, fast mode, subagent model, and permissions",
+        "adapter, model, effort, fast mode, subagent model, subagent effort, " +
+        "and permissions",
     );
   }
   if (migrated === undefined) return;
@@ -1624,7 +1634,8 @@ function assertNoRetiredProfiles(top, configPath) {
     throw new Error(
       `top-level "profiles" was removed${where}: write each agent's settings ` +
         "inline under captain and each top-level players.<player-id> " +
-        "(adapter, model, effort, fast mode, subagent model, permissions)",
+        "(adapter, model, effort, fast mode, subagent model, subagent effort, " +
+        "permissions)",
     );
   }
   const legacyPath = findLegacyPlayersPath(top);
@@ -1640,7 +1651,7 @@ function assertNoRetiredProfiles(top, configPath) {
       throw new Error(
         `${path}.profile was removed${where}: write the agent's settings ` +
           "inline in that block (adapter, model, effort, fast mode, " +
-          "subagent model, permissions)",
+          "subagent model, subagent effort, permissions)",
       );
     }
   }
@@ -2040,13 +2051,20 @@ function resolveRoleBinding(value, path) {
   const block = requireObject(value, path);
   const unknown = Object.keys(block).filter(
     (key) =>
-      !["player", "model", "effort", "fastMode", "subagentModel"].includes(key),
+      ![
+        "player",
+        "model",
+        "effort",
+        "fastMode",
+        "subagentModel",
+        "subagentEffort",
+      ].includes(key),
   );
   if (unknown.length > 0) {
     throw new Error(`${path} has unknown ${formatKeyList(unknown)}`);
   }
   assertPlayerId(block.player, `${path}.player`);
-  for (const field of ["model", "effort", "subagentModel"]) {
+  for (const field of ["model", "effort", "subagentModel", "subagentEffort"]) {
     if (
       block[field] !== undefined &&
       block[field] !== false &&
@@ -2071,19 +2089,41 @@ function resolveRoleBinding(value, path) {
     ...(block.subagentModel === undefined
       ? {}
       : { subagentModel: block.subagentModel }),
+    ...(block.subagentEffort === undefined
+      ? {}
+      : { subagentEffort: block.subagentEffort }),
   };
 }
 
-// A binding's subagent model overrides the player's; `false` selects the
-// provider default, which a complete call expresses by omission.
-function effectiveSubagentModel(binding, agent) {
-  if (binding.subagentModel === false) return {};
-  if (binding.subagentModel !== undefined) {
-    return { subagentModel: binding.subagentModel };
+// A binding's subagent model or subagent effort overrides the player's;
+// `false` selects the provider default, which a complete call expresses by
+// omission (for the effort: the agent chooses per task).
+function effectiveOptionalTuning(binding, agent, field) {
+  if (binding[field] === false) return {};
+  if (binding[field] !== undefined) return { [field]: binding[field] };
+  return agent[field] === undefined ? {} : { [field]: agent[field] };
+}
+
+// DR-076: an agent whose adapter serves a subagent model delegates by
+// default. Resolved on the launcher's detached copy of a Captain or player
+// block — never the user's file — before cligent normalization, so cligent
+// validates a subagent effort against the resolved model, and both front
+// ends and the headless run share the result. A block's `false` opts out:
+// nothing is sent and no delegation directive is composed.
+function resolveDelegationDefault(agent) {
+  if (!isObject(agent)) return agent;
+  if (agent.subagentModel === false) {
+    const { subagentModel: _off, ...rest } = agent;
+    return rest;
   }
-  return agent.subagentModel === undefined
-    ? {}
-    : { subagentModel: agent.subagentModel };
+  if (
+    agent.subagentModel === undefined &&
+    typeof agent.adapter === "string" &&
+    isSubagentModelSupported(agent.adapter)
+  ) {
+    return { ...agent, subagentModel: "inherit" };
+  }
+  return agent;
 }
 
 function applyTuningOverrides(agent, binding) {
@@ -2096,9 +2136,9 @@ function applyTuningOverrides(agent, binding) {
     else effective.effort = binding.effort;
   }
   if (binding.fastMode !== undefined) effective.fastMode = binding.fastMode;
-  if (binding.subagentModel === false) delete effective.subagentModel;
-  else if (binding.subagentModel !== undefined) {
-    effective.subagentModel = binding.subagentModel;
+  for (const field of ["subagentModel", "subagentEffort"]) {
+    if (binding[field] === false) delete effective[field];
+    else if (binding[field] !== undefined) effective[field] = binding[field];
   }
   return effective;
 }
@@ -2117,9 +2157,17 @@ function sessionAgentFromHostAgent(agent, path) {
     ...(agent.subagentModel === undefined
       ? {}
       : {
-          subagentModel: subagentModelSelection(
+          subagentModel: nonblankSelection(
             agent.subagentModel,
             `${path}.subagentModel`,
+          ),
+        }),
+    ...(agent.subagentEffort === undefined
+      ? {}
+      : {
+          subagentEffort: nonblankSelection(
+            agent.subagentEffort,
+            `${path}.subagentEffort`,
           ),
         }),
     ...(agent.instruction === undefined
@@ -2150,6 +2198,9 @@ export function projectHostAgent(agent, path = "agent") {
     ...(normalized.subagentModel === undefined
       ? {}
       : { subagentModel: normalized.subagentModel }),
+    ...(normalized.subagentEffort === undefined
+      ? {}
+      : { subagentEffort: normalized.subagentEffort }),
     ...(normalized.instruction === undefined
       ? {}
       : { instruction: normalized.instruction }),
@@ -2166,7 +2217,7 @@ function fastModeSelection(value, path) {
   return value;
 }
 
-function subagentModelSelection(value, path) {
+function nonblankSelection(value, path) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${path} must be a nonblank string`);
   }

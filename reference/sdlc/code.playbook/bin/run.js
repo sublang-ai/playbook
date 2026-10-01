@@ -1367,11 +1367,14 @@ export async function validateFrozenExecutionConfig(
   return config;
 }
 
-// Fast mode and the subagent model are adapter-scoped tuning (DR-075): a
-// frozen record re-validates each present value against its adapter.
+// Fast mode, the subagent model and the subagent effort are adapter-scoped
+// tuning (DR-075, DR-076): a frozen record re-validates each present value
+// against its adapter. Cligent serves the subagent effort exactly where it
+// serves a subagent model, so one capability assertion covers both.
 const FROZEN_ADAPTER_SCOPED_TUNING = [
   ["fastMode", assertFastModeSupported],
   ["subagentModel", assertSubagentModelSupported],
+  ["subagentEffort", assertSubagentModelSupported],
 ];
 
 function assertFrozenTuningSupported(config) {
@@ -1887,7 +1890,7 @@ function runHelpText(userConfigPath) {
     "working directory and reports when it uses the global newest fallback.",
     "An ordinary continued run restores that stored structure and working",
     "directory, then reads current config and overlays for model, effort,",
-    "fast mode, and subagent model.",
+    "fast mode, subagent model, and subagent effort.",
     "Uncertain retry only restores and reports; later work uses current settings.",
     "",
     "Options:",

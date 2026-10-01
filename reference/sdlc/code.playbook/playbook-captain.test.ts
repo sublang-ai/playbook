@@ -1346,6 +1346,7 @@ interface TestSessionAgent {
     | { readonly kind: 'provider-default' };
   readonly fastMode?: boolean;
   readonly subagentModel?: string;
+  readonly subagentEffort?: string;
   readonly instruction?: string;
   readonly permissions?: { readonly fileWrite?: 'allow' | 'ask' | 'deny' };
 }
@@ -1437,7 +1438,11 @@ function makeShell(
             string,
             Pick<
               TestSessionAgent,
-              'model' | 'effort' | 'fastMode' | 'subagentModel'
+              | 'model'
+              | 'effort'
+              | 'fastMode'
+              | 'subagentModel'
+              | 'subagentEffort'
             >
           >
         >
@@ -1490,6 +1495,13 @@ function makeShell(
               : {
                   subagentModel:
                     opts.roleTunings?.[r.entry.id]?.[role]?.subagentModel,
+                }),
+            ...(opts.roleTunings?.[r.entry.id]?.[role]?.subagentEffort ===
+            undefined
+              ? {}
+              : {
+                  subagentEffort:
+                    opts.roleTunings?.[r.entry.id]?.[role]?.subagentEffort,
                 }),
           },
         ];
@@ -4372,6 +4384,87 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
       subagentModel: 'captain-subagents',
+    });
+
+    await shell.dispose?.();
+  });
+
+  it('carries each subagent effort in the complete player and Captain call settings', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      for (const role of ['coder', 'reviewer']) {
+        await runtime.ports!.callPlayer(
+          role,
+          `configured ${role}`,
+          runtimeTurn.signal,
+          { resume: false },
+        );
+      }
+      return quiescentResult();
+    });
+    const playerAgent: TestSessionAgent = {
+      adapter: 'claude',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+      subagentModel: 'inherit',
+      subagentEffort: 'medium',
+    };
+    const shell = makeShell(registry, {
+      captainAgent: {
+        adapter: 'claude',
+        model: { kind: 'value', value: 'captain-model' },
+        effort: { kind: 'provider-default' },
+        subagentModel: 'inherit',
+        subagentEffort: 'low',
+      },
+      rolePlayerIds: { code: { coder: 'dev.coder', reviewer: 'dev.reviewer' } },
+      roleTunings: {
+        // The launcher resolves each binding (DR-076): the coder pins its
+        // own effort, while the reviewer's absent effort leaves each
+        // subagent's effort to the agent even though the player pins one.
+        code: {
+          coder: {
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+            subagentModel: 'inherit',
+            subagentEffort: 'high',
+          },
+          reviewer: {
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+            subagentModel: 'inherit',
+          },
+        },
+      },
+      playerAgents: { 'dev.coder': playerAgent, 'dev.reviewer': playerAgent },
+    });
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Pinned.' },
+    ]);
+
+    await shell.init!(stubSession([
+      { id: 'dev.coder', adapter: 'claude' },
+      { id: 'dev.reviewer', adapter: 'claude' },
+    ]).session);
+    await shell.handleBossTurn(turn('/code implement it'), context.context);
+
+    expect(context.playerCalls.map((call) => call.options?.settings)).toEqual([
+      {
+        model: { kind: 'provider-default' },
+        effort: { kind: 'provider-default' },
+        subagentModel: 'inherit',
+        subagentEffort: 'high',
+      },
+      {
+        model: { kind: 'provider-default' },
+        effort: { kind: 'provider-default' },
+        subagentModel: 'inherit',
+      },
+    ]);
+    expect(context.captainCalls.at(-1)?.options?.settings).toEqual({
+      model: { kind: 'value', value: 'captain-model' },
+      effort: { kind: 'provider-default' },
+      subagentModel: 'inherit',
+      subagentEffort: 'low',
     });
 
     await shell.dispose?.();
@@ -8694,6 +8787,16 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
       () => {
         const value = clone();
+        value.captain.agent.subagentEffort = 'high';
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.playerSessions['code-coder'].subagentEffort = 'high';
+        return value;
+      },
+      () => {
+        const value = clone();
         value.playerSessions['code-coder'].effort = {
           kind: 'value',
           value: 'high',
@@ -9909,6 +10012,146 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'captain-subagents-b',
+        },
+      });
+
+      await target.dispose?.();
+    }
+
+    await source.dispose?.();
+  });
+
+  it('restores when only the subagent effort changed and applies it on the next call', async () => {
+    const tunedAgent = (subagentEffort?: string): TestSessionAgent => ({
+      adapter: 'claude',
+      model: { kind: 'value', value: 'stable-model' },
+      effort: { kind: 'value', value: 'high' },
+      subagentModel: 'inherit',
+      ...(subagentEffort === undefined ? {} : { subagentEffort }),
+    });
+    const tuning = (subagentEffort?: string) => ({
+      model: { kind: 'value', value: 'stable-model' } as const,
+      effort: { kind: 'value', value: 'high' } as const,
+      subagentModel: 'inherit',
+      ...(subagentEffort === undefined ? {} : { subagentEffort }),
+    });
+    const reviewerAgent: TestSessionAgent = {
+      adapter: 'codex',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+    };
+    const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'pin player under subagent effort A',
+        runtimeTurn.signal,
+        false,
+      );
+      return quiescentResult('ready');
+    });
+    const source = makeShell(sourceCode, {
+      sessionIds: [ROOT_ID],
+      captainAgent: tunedAgent('low'),
+      roleTunings: { code: { coder: tuning('medium') } },
+      playerAgents: {
+        'code-coder': tunedAgent('medium'),
+        'code-reviewer': reviewerAgent,
+      },
+    });
+    const sourceContext = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Pinned under A.' },
+    ]);
+    sourceContext.context.callPlayer = async (playerId) => ({
+      status: 'ok',
+      playerId,
+      turnId: 1,
+      finalText: 'player A',
+      resumeToken: 'player-retained-token',
+    });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(turn('/code pin A'), sourceContext.context);
+    sourceCode.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      {
+        turn: 1,
+        roleResumeTokens: { coder: 'player-retained-token' },
+      },
+    );
+    const snapshot = source.exportSnapshot()!;
+    expect(JSON.stringify(snapshot)).not.toMatch(/subagent/);
+
+    // The role either pins its own changed subagent effort or leaves it to
+    // the agent; the player's changed default leaks into neither.
+    for (const roleSubagentEffort of ['max', undefined]) {
+      const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          'resume player under subagent effort B',
+          runtimeTurn.signal,
+          { resume: runtime.session!.playerSessions!.select('coder') },
+        );
+        runtime.session!.playerSessions!.update('coder', result.resumeToken);
+        return quiescentResult('ready');
+      });
+      const target = makeShell(targetCode, {
+        captainAgent: tunedAgent('xhigh'),
+        roleTunings: { code: { coder: tuning(roleSubagentEffort) } },
+        playerAgents: {
+          'code-coder': tunedAgent('minimal'),
+          'code-reviewer': reviewerAgent,
+        },
+      });
+      await target.restore(
+        stubSession(roster).session,
+        JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+      );
+      expect(target.exportSnapshot()).toEqual(snapshot);
+      const targetContext = stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Continued under B.' },
+      ]);
+      targetContext.context.callPlayer = async (playerId, _prompt, options) => {
+        targetContext.playerCalls.push({
+          playerId,
+          prompt: 'captured',
+          options,
+        });
+        return {
+          status: 'ok',
+          playerId,
+          turnId: 2,
+          finalText: 'player B',
+          resumeToken: 'player-next-token',
+        };
+      };
+      await target.handleBossTurn(
+        turn('/code tune B', 2),
+        targetContext.context,
+      );
+
+      expect(targetContext.playerCalls[0]).toEqual({
+        playerId: 'code-coder',
+        prompt: 'captured',
+        options: {
+          resume: 'player-retained-token',
+          settings: {
+            model: { kind: 'value', value: 'stable-model' },
+            effort: { kind: 'value', value: 'high' },
+            subagentModel: 'inherit',
+            ...(roleSubagentEffort === undefined
+              ? {}
+              : { subagentEffort: roleSubagentEffort }),
+          },
+        },
+      });
+      expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
+        resume: 'conversation-1',
+        settings: {
+          model: { kind: 'value', value: 'stable-model' },
+          effort: { kind: 'value', value: 'high' },
+          subagentModel: 'inherit',
+          subagentEffort: 'xhigh',
         },
       });
 

@@ -136,6 +136,8 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
           playerId: 'dev.reviewer',
           model: { kind: 'provider-default' },
           effort: { kind: 'provider-default' },
+          // DR-076: a Claude agent delegates by default; codex serves none.
+          subagentModel: 'inherit',
         },
       },
       options: { committer: 'coder' },
@@ -143,7 +145,7 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
     // Exact stable player ids survive the host roster.
     expect(config.players).toEqual([
       { id: 'dev.coder', adapter: 'codex', model: 'm-agent' },
-      { id: 'dev.reviewer', adapter: 'claude' },
+      { id: 'dev.reviewer', adapter: 'claude', subagentModel: 'inherit' },
     ]);
     // Launcher owns initialVisible (first playbook's generated players);
     // user window field carried through.
@@ -933,12 +935,16 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       // cligent's protected auto mode.
       permissions: { mode: 'auto' },
     });
+    // DR-076: the seed names no subagent field, yet every seeded Claude
+    // agent delegates by default.
+    expect(composed.captain.subagentModel).toBe('inherit');
     expect(composed.players).toEqual([
       {
         id: 'dev.coder',
         adapter: 'claude',
         model: 'claude-opus-5-5',
         effort: 'high',
+        subagentModel: 'inherit',
         permissions: { mode: 'auto' },
       },
       {
@@ -946,6 +952,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         adapter: 'claude',
         model: 'claude-opus-5-5',
         effort: 'xhigh',
+        subagentModel: 'inherit',
         // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
         permissions: { mode: 'auto' },
       },
@@ -954,6 +961,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         adapter: 'claude',
         model: 'claude-opus-5-5',
         effort: 'xhigh',
+        subagentModel: 'inherit',
         permissions: { mode: 'auto' },
       },
     ]);
@@ -972,6 +980,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
             value: 'claude-opus-5-5',
           },
           effort: { kind: 'value', value: 'high' },
+          subagentModel: 'inherit',
         },
       },
       options: {},
@@ -2048,10 +2057,15 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('Agent swap recipe:');
     expect(stdout.text()).toContain('stable players.<id>');
     expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
-    expect(stdout.text()).toContain('fastMode?,\n    subagentModel? }');
     expect(stdout.text()).toContain(
-      'false selects provider-default model/effort/subagentModel',
+      'fastMode?,\n    subagentModel?, subagentEffort? }',
     );
+    expect(stdout.text()).toContain(
+      'false selects provider-default model/effort/subagentModel/\n' +
+        '    subagentEffort',
+    );
+    expect(stdout.text()).toContain('a Claude agent delegates by default');
+    expect(stdout.text()).toContain('inherit (its own model)');
     expect(stdout.text()).toContain('fastMode false is a literal disabled request');
     expect(stdout.text()).toContain('distinct ids stay isolated');
     expect(stdout.text()).toContain('Migration warning:');

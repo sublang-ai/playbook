@@ -8,11 +8,15 @@
 
 # The Captain and each stable session player carries its own defaults inline:
 # an adapter shorthand (claude, codex) or a block with
-# adapter/model/effort/fastMode/subagentModel/permissions. A role may override
-# only model, effort, fastMode, or subagentModel.
-# Omit an override to inherit the player default. For model, effort, and
-# subagentModel, false selects the provider default; fastMode false is a
-# literal disabled request.
+# adapter/model/effort/fastMode/subagentModel/subagentEffort/permissions. A
+# role may override only model, effort, fastMode, subagentModel, or
+# subagentEffort.
+# Omit an override to inherit the player default. For model, effort,
+# subagentModel, and subagentEffort, false selects the provider default;
+# fastMode false is a literal disabled request.
+# A Claude agent delegates by default: its subagents run on its own model
+# (subagentModel: inherit) at efforts it chooses per task; subagentModel: false
+# on its block switches delegation off.
 
 # Each adapter needs its vendor SDK installed as its own top-level
 # install root — they are optional peer dependencies, so you pay only

@@ -3503,8 +3503,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       const playerId = execution.catalog.code.roles.coder.playerId;
       structural.players.find((player: any) => player.id === playerId).adapter =
         'gemini';
-      execution.players.find((player: any) => player.id === playerId).adapter =
-        'gemini';
+      const player = execution.players.find(
+        (candidate: any) => candidate.id === playerId,
+      );
+      player.adapter = 'gemini';
+      // Drop the Claude delegation default (DR-076) so only fast mode speaks.
+      clearSubagentTuning(player, execution.catalog.code.roles.coder);
       execution.catalog.code.roles.coder.fastMode = fastMode;
 
       const prepareRegistryModule = vi.fn();
@@ -3540,6 +3544,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         (candidate: any) => candidate.id === playerId,
       );
       player.adapter = 'codex';
+      clearSubagentTuning(player, execution.catalog.code.roles.coder);
       if (where === 'player') player.subagentModel = 'frozen-subagents';
       else execution.catalog.code.roles.coder.subagentModel = 'frozen-subagents';
 
@@ -3551,6 +3556,63 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           loadModule,
         }),
       ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+      expect(prepareRegistryModule).not.toHaveBeenCalled();
+      expect(loadModule).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects a frozen unsupported subagent effort before prepare or import', async () => {
+    const first = await headlessHarness(['run', 'settled selection'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    // DR-076: the recorded Claude player delegates by default.
+    expect(
+      first.result.record.lastAppliedExecutionProjection.catalog.code.roles
+        .coder.subagentModel,
+    ).toBe('inherit');
+
+    for (const where of ['captain', 'player', 'role'] as const) {
+      const structural = JSON.parse(
+        JSON.stringify(first.result.record.structuralProjection),
+      );
+      const execution = JSON.parse(
+        JSON.stringify(first.result.record.lastAppliedExecutionProjection),
+      );
+      const playerId = execution.catalog.code.roles.coder.playerId;
+      const player = execution.players.find(
+        (candidate: any) => candidate.id === playerId,
+      );
+      const target =
+        where === 'captain'
+          ? execution.captain
+          : where === 'player'
+            ? player
+            : execution.catalog.code.roles.coder;
+      if (where === 'captain') {
+        structural.captain.adapter = 'codex';
+        execution.captain.adapter = 'codex';
+        clearSubagentTuning(execution.captain);
+        execution.captain.effort = { kind: 'provider-default' };
+      } else {
+        structural.players.find(
+          (candidate: any) => candidate.id === playerId,
+        ).adapter = 'codex';
+        player.adapter = 'codex';
+        player.effort = { kind: 'provider-default' };
+        execution.catalog.code.roles.coder.effort = { kind: 'provider-default' };
+        clearSubagentTuning(player, execution.catalog.code.roles.coder);
+      }
+      target.subagentEffort = 'high';
+
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        validateFrozenExecutionConfig(structural, execution, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+      ).rejects.toThrow(/subagentEffort is not supported for adapter "codex"/);
       expect(prepareRegistryModule).not.toHaveBeenCalled();
       expect(loadModule).not.toHaveBeenCalled();
     }
@@ -5842,3 +5904,10 @@ describe('a parked failure explains itself (DR-063)', () => {
     expect(out.stdout).toContain('- Stop /code (ready)');
   });
 });
+
+function clearSubagentTuning(...records: any[]): void {
+  for (const record of records) {
+    delete record.subagentModel;
+    delete record.subagentEffort;
+  }
+}
