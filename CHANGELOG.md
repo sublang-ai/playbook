@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.3.0] - 2026-10-01
+
 ### Added
 
 - **An agent's subagents can run at an effort of their own.** The Captain, each top-level player, a role binding, and a `--with` overlay accept `subagentEffort`, the fifth tuning field beside `model`, `effort`, `fastMode`, and `subagentModel`: any effort the agent's adapter accepts other than `ultracode` pins every subagent's effort, so an agent at `ultracode` no longer runs its fine-grained delegations at `ultracode`; left unset, the agent chooses an effort per task, and on a role binding `false` selects that default over a player's pinned value. The installed Cligent validates it against the adapter and the resolved subagent model, every player and Captain call carries it in its complete settings, and the structural projection omits it, so a changed value applies from the next call of an ordinary reopen ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-26](specs/packages/playbook-cli.md#playbook-cli-26)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)], [[playbook-captain-31](specs/packages/playbook-captain.md#playbook-captain-31)], [DR-076](specs/decisions/076-subagents-delegate-by-default.md)).
@@ -794,7 +796,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.2.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.3.0...HEAD
+[17.3.0]: https://github.com/sublang-ai/playbook/compare/v17.2.0...v17.3.0
 [17.2.0]: https://github.com/sublang-ai/playbook/compare/v17.1.0...v17.2.0
 [17.1.0]: https://github.com/sublang-ai/playbook/compare/v17.0.0...v17.1.0
 [17.0.0]: https://github.com/sublang-ai/playbook/compare/v16.0.0...v17.0.0

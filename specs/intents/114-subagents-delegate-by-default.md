@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress on `subagent-effort` (2026-10-01).
+Completed (2026-10-01): the subagent model admits `inherit` and defaults to it where the adapter serves one, the subagent effort is a fifth tuning field through the launcher, the session store, the headless run and the Captain shell on Cligent 0.30, documented, and released in 17.3.0.
 
 ## Intent
 
@@ -21,11 +21,14 @@ Realize [DR-076](../decisions/076-subagents-delegate-by-default.md): `subagentMo
 
 ## Tasks
 
-1. Record the decision.
-2. Amend the spec items.
-3. Carry the field and the default through the code, and extend the suites and probes.
-4. Document and add the changelog entries.
-5. Once Cligent 0.30.0 is published, require `^0.30.0` with a refreshed lockfile, move release-19's floor check, and release.
+1. [x] Record the decision.
+2. [x] Amend the spec items.
+3. [x] Carry the field and the default through the code, and extend the suites and probes.
+4. [x] Document and add the changelog entries.
+5. [x] Once Cligent 0.30.0 is published, require `^0.30.0` with a refreshed lockfile, move release-19's floor check, and release.
 
 ## Verification
-
+- Tasks 1–4 (2026-10-01): `spex lint` reported 0 errors; `pnpm build` passed; `pnpm test` passed 2,591 with 23 skipped and the Cligent release-capability suite 97 of 97 against a local build of Cligent 0.30; `pnpm check:links` resolved all relative links.
+  An adversarial review confirmed three record and test lags, all amended, and no code defect.
+- Task 5 (2026-10-01): with `@sublang/cligent` 0.30.0 from the public registry, `pnpm test` passed with the capability suite whole, `pnpm check:links` resolved every relative link, and the pull request's CI passed; `pnpm smoke:release` passed before tagging.
+- The paid live acceptance gate was not run; Cligent 0.30.0's own live acceptance proved the subagent definitions, the inherit literal and the effort against the real Claude runtime.
