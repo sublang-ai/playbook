@@ -40,5 +40,5 @@ The starter config names neither field; the default of §1 does the work, and th
 
 - Every Claude agent of an existing config now delegates by default: its runs carry the directive and the definitions, and its subagents run on its own model at efforts the agent chooses — a behavior change this release names in its changelog, with `subagentModel: false` as the way back.
 - Session records written by this release may carry `subagentEffort`; a host on 17.2 that reads one rejects the unknown field, so hosts sharing a session store upgrade together.
-- The Cligent floor rises to `^0.30.0`, an additive release; the release-capability guard probes the new setting and the literal.
+- The Cligent floor rises to `^0.30.0`, an additive release; the release-capability guard probes the new setting, and the literal rides on that floor.
 - This is additive in surface and ships in a MINOR release.

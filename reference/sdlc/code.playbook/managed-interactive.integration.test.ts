@@ -144,7 +144,6 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         model: 'player-model-b',
         effort: 'max',
         subagentModel: 'player-subagents-b',
-      subagentEffort: 'medium',
         subagentEffort: 'medium',
       });
     expect(FixtureAdapter.effects.find((item) => item.kind === 'captain'))
@@ -153,7 +152,6 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         model: 'captain-model-b',
         effort: 'max',
         subagentModel: 'captain-subagents-b',
-      subagentEffort: 'low',
         subagentEffort: 'low',
       });
     const settled = await fixture.store.read(fixture.sessionId);

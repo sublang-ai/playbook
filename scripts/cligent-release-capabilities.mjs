@@ -374,7 +374,6 @@ type Exact = Assert<Equal<
   string | undefined
 >>;
 export const pinned: AgentCallSettings['subagentModel'] = 'claude-sonnet-5';
-export const inherit: AgentCallSettings['subagentModel'] = 'inherit';
 export const optional: Optional = true;
 export const exact: Exact = true;
 `,
