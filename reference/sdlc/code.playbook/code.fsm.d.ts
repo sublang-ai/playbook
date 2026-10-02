@@ -51,6 +51,8 @@ export interface IrTaskPhasePlayerInput extends PlayerInputBase {
     readonly sourceItem: 'CODE-3';
     /** `<ir-number>`: the IR whose next unfinished task this phase implements. */
     readonly irNumber?: string;
+    /** Source-owned relay; historical canonical evidence, not present approval. */
+    readonly previousPhaseReview: string;
 }
 export type PlayerInput = FirstPhasePlayerInput | IrTaskPhasePlayerInput;
 export type PlayerOutput = {
@@ -125,6 +127,14 @@ export interface CodeInput {
     /** Optional seed for `<run-results>`; `START_CODE` may supply its own. */
     readonly runResults?: string;
 }
+export interface PreviousPhaseReview {
+    readonly phaseKind: 'direct' | 'new-intent' | 'ir-task';
+    readonly phaseOutcome: PhaseOutcome;
+    readonly scopeCommit: string;
+    readonly evaluatedRevision: string;
+    readonly irNumber?: string;
+    readonly irTask?: string;
+}
 export interface CodeContext {
     /** `<run-results>`: relevant run results relayed to every phase. */
     readonly runResults: string;
@@ -142,6 +152,8 @@ export interface CodeContext {
     readonly phaseOutcome?: PhaseOutcome;
     /** Revision evaluated by the latest passing review. */
     readonly evaluatedRevision?: string;
+    /** Frozen only by an accepted canonical clean child REVIEW. */
+    readonly previousPhaseReview?: PreviousPhaseReview;
     /** Compact failure CODE reports when review did not pass a phase. */
     readonly reviewError?: CompactError;
     /** Sanitized evidence of the review result that ended CODE. */

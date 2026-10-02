@@ -61,6 +61,16 @@ The prompt shall bound Analyst's reading of the specs and the repository to what
 
 ### Workflow behavior
 
+#### playbook-60
+
+When CODE prepares a later IR-task invocation, CODE shall deliver its prior-phase canonical review context according to these lifecycle cases ([DR-081](../decisions/081-code-prior-review-relay.md)):
+
+| Case | Required context |
+| --- | --- |
+| Accepted canonical clean REVIEW | Freeze the exact direct, new-intent or IR-task kind, IR/task when present, receipt-owned CODE scope commit and REVIEW evaluated revision as distinct identities, using no player prose or caller override. |
+| Later IR task, including permitted restoration and Boss-answer continuation | Relay the frozen record as quoted evidence and instruct Coder to verify clean current HEAD equals its evaluated revision before treating it as current; the record authorizes neither this task's independent review nor a new owner or release decision. |
+| Fresh start or explicit interruption | Clear the previous record; a later invocation explicitly reports its absence. |
+
 #### playbook-20
 
 When CODE receives a coding request, CODE shall run its first phase as a direct implementation, a new-IR phase, or an existing IR's next unfinished task, obtain and retain from the qualifying repository receipt the exact Coder commit for each phase under [[playbook-32](#playbook-32)], call REVIEW at the end of every phase with the original intent, the review scope naming that exact commit, and the Coder output, start no later phase until REVIEW establishes that scope evaluated with no unsettled findings, and after the direct phase or the final IR task so passes terminate successfully reporting the exact last CODE-owned commit, the exact final evaluated repository revision, and the fact that every phase's review passed.
@@ -332,6 +342,10 @@ It shall suspend for a complete Boss question, continue the same Inspector conve
 The report shall preserve the complete Inspector explanation, and the authored prompts shall prohibit repository changes, invented observation, and invented file or asset identities.
 
 ## Verification
+
+#### playbook-61
+
+When model-free integration drives real linked CODE and REVIEW factories with actual Git commits through the shared host, it shall verify a frozen scope/task record with distinct CODE and review-fix descendant revisions reaches the next IR task, stale pending-review document text does not hide the canonical evidence, permitted restore and Boss answer retain it, failed or malformed review starts no later task, and the prompt restricts current reliance to matching clean evaluated HEAD without granting a new owner or release decision [[playbook-60](#playbook-60)].
 
 #### playbook-59
 

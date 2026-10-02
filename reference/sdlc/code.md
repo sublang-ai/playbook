@@ -45,17 +45,26 @@ If the IR will be finished after this phase, double-check that all acceptance cr
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
 ```
 
-At the start of every later IR-task phase, Captain shall relay to Coder the original caller input, the IR identity, and any relevant run results in quotes (`>`), along with the following instruction:
+On each successful nested REVIEW, Captain shall freeze the previous phase review as one record from the canonical child result and the phase's accepted receipt-owned scope: exact phase kind (direct, new intent or IR task), phase outcome, CODE scope commit, REVIEW evaluated revision, and IR/task identity when present.
+CODE scope commit and evaluated revision remain distinct because REVIEW may create fix commits.
+No caller option, player prose or repository status text supplies this record.
+The record survives permitted restoration and the current task's Boss-answer continuation, and a fresh run or explicit Boss interruption clears it.
+
+At the start of every later IR-task phase, Captain shall relay to Coder the original caller input, the IR identity, any relevant run results, and that previous phase review as quoted evidence in quotes (`>`), along with the following instruction; when absent, the record reads "No accepted prior-phase review is available.":
 
 > Original request: <caller-input>
 > IR number: <ir-number>
 > Run results: <run-results>
+> Previous phase review: <previous-phase-review>
 
 ```markdown
 Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 Do not implement a later task in this phase.
 Mark the IR's progress and deliverables when relevant.
 If the IR will be finished after this phase, double-check that all acceptance criteria are met.
+Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.
+Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.
+It does not replace independent review of this task or any new owner or release decision.
 ```
 
 At the start of *every* phase, Captain shall append the following instruction:

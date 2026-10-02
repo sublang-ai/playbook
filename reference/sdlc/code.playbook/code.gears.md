@@ -59,12 +59,18 @@ When a direct implementation or new-IR phase ends with its one new `code`-owned 
 > > Coder output: <coder-output>
 
 A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.
+On each successful nested REVIEW, Captain shall freeze the previous phase review as one record from the canonical child result and the phase's accepted receipt-owned scope: exact phase kind (direct, new intent or IR task), phase outcome, CODE scope commit, REVIEW evaluated revision, and IR/task identity when present.
+CODE scope commit and evaluated revision remain distinct because REVIEW may create fix commits.
+No caller option, player prose or repository status text supplies this record.
+The record survives permitted restoration and the current task's Boss-answer continuation, and a fresh run or explicit Boss interruption clears it.
 When `review` passes a direct implementation phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase's review passed with no unsettled findings.
 When `review` passes a new-IR phase, Captain continues with the next unfinished IR-task phase.
 When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.
 When the nested `review` call fails outside that authored result contract, `code` parks as failed and retains the control-plane error instead of reporting an authored review outcome.
 
 ### CODE-3
+
+When absent, the previous phase review reads "No accepted prior-phase review is available.".
 
 Each phase ends with exactly one new Coder commit owned by `code`, and no existing commit is rewritten.
 Captain uses the repository-effect receipt as the authoritative identity of the phase's new commit.
@@ -75,6 +81,9 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 > Do not implement a later task in this phase.
 > Mark the IR's progress and deliverables when relevant.
 > If the IR will be finished after this phase, double-check that all acceptance criteria are met.
+> Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.
+> Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.
+> It does not replace independent review of this task or any new owner or release decision.
 >
 > Keep to the original intent and follow what it asks.
 > Do not re-run tests or builds whose inputs have not changed since any previous reported run.
@@ -86,6 +95,7 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 > > Original request: <caller-input>
 > > IR number: <ir-number>
 > > Run results: <run-results>
+> > Previous phase review: <previous-phase-review>
 
 Results:
 - `moreTasks`: Coder implemented exactly the IR's next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask` naming the implemented task.
@@ -104,6 +114,10 @@ When an IR-task phase, including the first phase for an existing IR, ends with i
 > > Current IR task: <ir-task>
 
 A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.
+On each successful nested REVIEW, Captain shall freeze the previous phase review as one record from the canonical child result and the phase's accepted receipt-owned scope: exact phase kind (direct, new intent or IR task), phase outcome, CODE scope commit, REVIEW evaluated revision, and IR/task identity when present.
+CODE scope commit and evaluated revision remain distinct because REVIEW may create fix commits.
+No caller option, player prose or repository status text supplies this record.
+The record survives permitted restoration and the current task's Boss-answer continuation, and a fresh run or explicit Boss interruption clears it.
 When `review` passes a nonfinal IR-task phase, Captain continues with the next unfinished IR-task phase.
 When `review` passes the final IR-task phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase's review passed with no unsettled findings.
 When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.

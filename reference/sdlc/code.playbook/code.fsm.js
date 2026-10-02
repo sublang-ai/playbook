@@ -44,6 +44,9 @@ const IR_TASK_PHASE_PROMPT = [
     'Do not implement a later task in this phase.',
     "Mark the IR's progress and deliverables when relevant.",
     'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
+    'Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.',
+    'Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.',
+    'It does not replace independent review of this task or any new owner or release decision.',
     '',
     'Keep to the original intent and follow what it asks.',
     'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
@@ -55,6 +58,7 @@ const IR_TASK_PHASE_PROMPT = [
     '> Original request: <caller-input>',
     '> IR number: <ir-number>',
     '> Run results: <run-results>',
+    '> Previous phase review: <previous-phase-review>',
 ].join('\n');
 const REVIEW_NEW_INTENT_PHASE_TEMPLATE = [
     '> Original intent: <caller-input>',
@@ -467,6 +471,7 @@ export const codeMachine = setup({
                 irTask: undefined,
                 phaseOutcome: undefined,
                 evaluatedRevision: undefined,
+                previousPhaseReview: undefined,
                 reviewError: undefined,
                 reviewEvidence: undefined,
                 lastError: undefined,
@@ -477,6 +482,7 @@ export const codeMachine = setup({
         resetForInterrupt: assign({
             phaseOutcome: undefined,
             evaluatedRevision: undefined,
+            previousPhaseReview: undefined,
             reviewError: undefined,
             reviewEvidence: undefined,
             lastError: undefined,
@@ -516,11 +522,24 @@ export const codeMachine = setup({
             pendingBossQuestion: undefined,
             bossReply: undefined,
         }),
-        rememberReviewPass: assign(({ event }) => {
+        rememberReviewPass: assign(({ context, event }) => {
             const pass = reviewPassOf(event);
-            return pass === undefined
+            return pass === undefined || context.codeCommit === undefined || context.phaseOutcome === undefined
                 ? {}
-                : { evaluatedRevision: pass.evaluatedRevision, lastError: undefined };
+                : {
+                    evaluatedRevision: pass.evaluatedRevision,
+                    previousPhaseReview: {
+                        phaseKind: context.phaseOutcome === 'directCommit'
+                            ? 'direct' : context.phaseOutcome === 'irCommit'
+                            ? 'new-intent' : 'ir-task',
+                        phaseOutcome: context.phaseOutcome,
+                        scopeCommit: context.codeCommit,
+                        evaluatedRevision: pass.evaluatedRevision,
+                        ...(context.irNumber === undefined ? {} : { irNumber: context.irNumber }),
+                        ...(context.irTask === undefined ? {} : { irTask: context.irTask }),
+                    },
+                    lastError: undefined,
+                };
         }),
         rememberReviewNotPassed: assign(({ event }) => {
             const output = doneOutputOf(event);
@@ -703,6 +722,9 @@ export const codeMachine = setup({
                         ? { irNumber: context.irNumber }
                         : {}),
                     runResults: context.runResults,
+                    previousPhaseReview: context.previousPhaseReview === undefined
+                        ? 'No accepted prior-phase review is available.'
+                        : JSON.stringify(context.previousPhaseReview),
                     ...bossReplyFields(context),
                 }),
                 onDone: [
