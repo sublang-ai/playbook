@@ -151,8 +151,16 @@ async function fixture(scenario: Scenario, run: (f: {
       return controller;
     } });
   } finally {
-    await writeFile(`/private/tmp/playbook-canonical-prior-review-${scenario}-evidence.json`, JSON.stringify(evidence, null, 2));
-    await controller.dispose(); await rm(dir, { recursive: true, force: true });
+    try {
+      const evidenceDir = process.env.PLAYBOOK_PRIOR_REVIEW_EVIDENCE_DIR;
+      if (evidenceDir) {
+        await mkdir(evidenceDir, { recursive: true });
+        await writeFile(join(evidenceDir, `${scenario}.json`), JSON.stringify(evidence, null, 2));
+      }
+    } finally {
+      try { await controller.dispose(); }
+      finally { await rm(dir, { recursive: true, force: true }); }
+    }
   }
 }
 
