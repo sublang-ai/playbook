@@ -13,6 +13,7 @@ import { openSessionHost } from '../reference/sdlc/code.playbook/session-host.js
 import { loadLaunchPlan } from '../reference/sdlc/code.playbook/bin/launch-config.js';
 import { executionConfigFromPlan } from '../reference/sdlc/code.playbook/bin/run.js';
 import { runPlaybookCli } from '../reference/sdlc/code.playbook/bin/playbook.js';
+import { liveModels } from './live-config.js';
 
 class LocalClaude extends ClaudeCodeAdapter {
   constructor() {
@@ -31,16 +32,17 @@ it.each(['SDK', 'CLI'])('Boss clarifies, reopens, and answers using only Captain
   execFileSync('git', ['init', '-q'], { cwd });
   execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture'], { cwd });
   const configPath = join(root, 'config.yaml');
+  const { claude, codex } = liveModels();
   await writeFile(configPath, `captain:
   adapter: claude
-  model: claude-opus-5-5
+  model: ${JSON.stringify(claude)}
   effort: low
   permissions: { mode: auto }
 notifications: { player_finished: off, turn_finished: off, turn_aborted: off }
 players:
   worker:
     adapter: codex
-    model: gpt-6-sol
+    model: ${JSON.stringify(codex)}
     effort: low
     permissions: { mode: auto }
 playbooks:
