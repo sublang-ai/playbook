@@ -561,3 +561,20 @@ Captured native media also becomes evidence for still-active parent workflows in
 Before adopting asset-bearing sessions, upgrade every Playbook CLI and embedded SDK that shares the store and stop all older writers. Older readers tolerating unknown replay records does not make older writers compatible: they may discard additive asset metadata on save.
 
 Accepted visible worker prose also reaches Captain as attributed, quoted observations, separately from effect and completion facts. Reports keep up to 8192 rendered characters each and 24576 across the latest accepted observations, labeling truncated or omitted content; full text stays in the durable ledger. Interrupted reporting uses an exact producing-boundary reference saved with the player result. Older progress without that reference contributes no inferred report, and recovery never reruns a worker merely to recreate its prose.
+
+## Live tool approvals
+
+`openSessionHost` and `createCaptainSessionHost` accept an ephemeral
+`approvalHandler(envelope, { signal })` callback. Its exported
+`TmuxPlayApprovalRequest` envelope contains the original native `request`, the
+persisted `turnId`, the concrete `actorId`, and a fresh `invocationId` for that
+working call. Return `allow_once` or `deny`; an application should bind its own
+session or draft identity in the callback closure and stop showing a request
+when its signal aborts. Hidden control and tool-free calls receive no callback.
+
+The callback is never configuration or model input. Native request/response
+events remain historical actor records, and reopening does not make an old
+request actionable. Native provider limits and OS dialogs still apply; a tool
+approval cannot grant an operating-system permission. Controller disposal denies
+pending requests before draining work and releasing the session lease. Without a
+handler, adapters retain their native fail-closed behavior.

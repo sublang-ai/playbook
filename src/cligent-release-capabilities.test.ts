@@ -34,6 +34,11 @@ function write(path: string, contents: string): void {
 }
 
 interface FixtureShape {
+  readonly runtimeApprovalHandler?: string;
+  readonly rootApprovalDecision?: string;
+  readonly rootApprovalRequest?: string;
+  readonly approvalEnvelope?: string;
+  readonly approvalHandler?: string;
   readonly emitReply?: string;
   readonly resumeToken?: string;
   readonly captainErrorCode?: string;
@@ -91,6 +96,19 @@ interface FixtureShape {
 // is what made the substring scan unfalsifiable.
 function fixtureCligent(root: string, shape: FixtureShape = {}): string {
   const {
+    runtimeApprovalHandler = 'readonly approvalHandler?: TmuxPlayApprovalHandler;',
+    rootApprovalDecision = "export type ApprovalDecision = 'allow_once' | 'deny';",
+    rootApprovalRequest = `export interface ApprovalRequest {
+      readonly id: string; readonly kind: 'tool';
+      readonly agent: import('../../index.js').AgentType;
+      readonly sessionId: string; readonly toolUseId: string; readonly toolName: string;
+      readonly input: Readonly<Record<string, unknown>>;
+      readonly reason?: string; readonly details?: Readonly<Record<string, unknown>>;
+      readonly choices: readonly ApprovalDecision[];
+      readonly createdAt: number; readonly expiresAt: number;
+    }`,
+    approvalEnvelope = 'export interface TmuxPlayApprovalRequest { readonly request: ApprovalRequest; readonly turnId: number; readonly actorId: string; readonly invocationId: string; }',
+    approvalHandler = 'export type TmuxPlayApprovalHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal: AbortSignal }) => Promise<ApprovalDecision>;',
     emitReply = 'emitReply(text: string): Promise<void>;',
     resumeToken = 'readonly resumeToken?: string;',
     captainErrorCode = "readonly errorCode?: 'SESSION_RESUME_REJECTED';",
@@ -242,7 +260,7 @@ export function assertSubagentModelSupported(agent, path = 'subagentModel') {
   );
   write(
     join(packageRoot, 'dist', 'index.d.ts'),
-    `export type { Effort, PermissionPolicy, Attachment, McpServerConfig, McpServers } from './app/tmux-play/contract.js';
+    `export type { Effort, PermissionPolicy, Attachment, McpServerConfig, McpServers, ApprovalDecision, ApprovalRequest } from './app/tmux-play/contract.js';
 export type AgentType = 'claude-code' | 'codex' | 'gemini' | 'kimi' | 'opencode';
 ${fastModeAssertion}
 ${subagentModelAssertion}
@@ -330,6 +348,11 @@ ${tuningSelection}
 ${rootAttachment}
 ${rootMcpServerConfig}
 ${rootMcpServers}
+${rootApprovalDecision}
+${rootApprovalRequest}
+${approvalEnvelope}
+${approvalHandler}
+export interface RunTmuxPlayOptions { ${runtimeApprovalHandler} }
 export interface AgentCallSettings {
   ${settingsModel}
   ${settingsEffort}
@@ -543,6 +566,9 @@ describe('the cligent release-capability guard', () => {
       'CallCaptainOptions.settings',
       'CallPlayerOptions.attachments',
       'CallCaptainOptions.attachments',
+      'RunTmuxPlayOptions.approvalHandler',
+      'TmuxPlayApprovalRequest',
+      'TmuxPlayApprovalHandler',
       'AgentCallSettings.model',
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
@@ -584,6 +610,30 @@ describe('the cligent release-capability guard', () => {
   });
 
   it.each([
+    ...[
+      ['absent', ''],
+      ['required', 'readonly approvalHandler: TmuxPlayApprovalHandler;'],
+      ['widened', 'readonly approvalHandler?: TmuxPlayApprovalHandler | string;'],
+    ].map(([kind, declaration]) => [
+      `${kind} runtime approval callback`, { runtimeApprovalHandler: declaration }, 'RunTmuxPlayOptions.approvalHandler',
+    ]),
+    ...[
+      ['missing invocation', 'export interface TmuxPlayApprovalRequest { readonly request: ApprovalRequest; readonly turnId: number; readonly actorId: string; }'],
+      ['string turn', 'export interface TmuxPlayApprovalRequest { readonly request: ApprovalRequest; readonly turnId: string; readonly actorId: string; readonly invocationId: string; }'],
+      ['optional actor', 'export interface TmuxPlayApprovalRequest { readonly request: ApprovalRequest; readonly turnId: number; readonly actorId?: string; readonly invocationId: string; }'],
+    ].map(([kind, declaration]) => [
+      `${kind} approval identity`, { approvalEnvelope: declaration }, 'TmuxPlayApprovalRequest',
+    ]),
+    ...[
+      ['missing signal', 'export type TmuxPlayApprovalHandler = (request: TmuxPlayApprovalRequest) => Promise<ApprovalDecision>;'],
+      ['optional signal', 'export type TmuxPlayApprovalHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal?: AbortSignal }) => Promise<ApprovalDecision>;'],
+      ['synchronous answer', 'export type TmuxPlayApprovalHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal: AbortSignal }) => ApprovalDecision;'],
+      ['narrowed answer', "export type TmuxPlayApprovalHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal: AbortSignal }) => Promise<'deny'>;"],
+    ].map(([kind, declaration]) => [
+      `${kind} approval handler`, { approvalHandler: declaration }, 'TmuxPlayApprovalHandler',
+    ]),
+    ['persistent approval answer', { rootApprovalDecision: "export type ApprovalDecision = 'allow_once' | 'deny' | 'allow_always';" }, 'TmuxPlayApprovalHandler'],
+    ['missing native approval expiry', { rootApprovalRequest: "export interface ApprovalRequest { readonly id: string; readonly kind: 'tool'; readonly agent: import('../../index.js').AgentType; readonly sessionId: string; readonly toolUseId: string; readonly toolName: string; readonly input: Readonly<Record<string, unknown>>; readonly reason?: string; readonly details?: Readonly<Record<string, unknown>>; readonly choices: readonly ApprovalDecision[]; readonly createdAt: number; }" }, 'TmuxPlayApprovalRequest'],
     ...(['CallPlayerOptions', 'CallCaptainOptions'] as const).flatMap((owner) =>
       [
         ['absent', ''],

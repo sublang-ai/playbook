@@ -213,9 +213,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 32 ||
-            (declaredFloor[1] === 32 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.32.0 floor carrying native attachments and complete browser/MCP settings alongside model tuning (DR-077)`,
+          (declaredFloor[1] > 33 ||
+            (declaredFloor[1] === 33 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.33.0 floor carrying live host approvals alongside native attachments, complete browser/MCP settings and model tuning (DR-077, DR-078)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -238,9 +238,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 32 ||
-              (resolvedFloor[1] === 32 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.32.0 floor carrying native attachments and complete browser/MCP settings alongside model tuning (DR-077)`,
+            (resolvedFloor[1] > 33 ||
+              (resolvedFloor[1] === 33 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.33.0 floor carrying live host approvals alongside native attachments, complete browser/MCP settings and model tuning (DR-077, DR-078)`,
       ).toBe(true);
     }
   });
@@ -456,6 +456,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'CallCaptainOptions.settings',
         'CallPlayerOptions.attachments',
         'CallCaptainOptions.attachments',
+        'RunTmuxPlayOptions.approvalHandler',
+        'TmuxPlayApprovalRequest',
+        'TmuxPlayApprovalHandler',
         'AgentCallSettings.model',
         'AgentCallSettings.effort',
         'AgentCallSettings.fastMode',
@@ -2013,6 +2016,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     './session-assets': ['AssetId', 'SessionAssetRef', 'AssetImport', 'AssetFile', 'AssetReader', 'OwnerAssetStore', 'DEFAULT_MAX_ASSET_BYTES', 'createAssetStore', 'validateAssetRef', 'validateAssetRefs', 'normalizeSessionTurnInput', 'assetUri', 'parseAssetUri', 'externalizeAgentEvent', 'SessionTurnInput', 'SessionTurnStartedRecord', 'PlaybookEvidenceRecord', 'SessionRecord'],
     './session-host': [
       'SessionTurnInput', 'SessionAssetRef', 'SessionRecord', 'PlaybookEvidenceRecord',
+      'TmuxPlayApprovalHandler', 'TmuxPlayApprovalRequest',
       'OpenSessionHostOptions',
       'SessionHost',
       'SessionHostController',

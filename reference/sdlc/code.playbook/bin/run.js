@@ -1077,6 +1077,7 @@ export async function createCaptainSessionHost({
   signal,
   graphs = [],
   initialVisible = [],
+  approvalHandler,
 }) {
   if (restoreSnapshot !== undefined) await sessionLease.assertContinuable({ cwd, executionProjection: config });
   const hostCapabilities = await createRepositoryEffectCapabilities({
@@ -1129,6 +1130,7 @@ export async function createCaptainSessionHost({
   const bufferedRecords = [];
   let presentationReady = false;
   const presentationTurnOffset = restoreSnapshot?.sequences.turn ?? 0;
+  const approvals = createHostApprovalScope(approvalHandler, presentationTurnOffset);
   const forwardRecord = async (record) => {
     if (record.type === 'turn_started' && presentationAttachments.length) record = { ...record, turn: { ...record.turn, attachments: presentationAttachments } };
     const projected = presentationTurnOffset > 0 && typeof record.turnId === "number"
@@ -1181,6 +1183,7 @@ export async function createCaptainSessionHost({
       })),
       cwd,
       observers: bufferedObservers,
+      ...(approvals.handler ? { approvalHandler: approvals.handler } : {}),
       ...(signal ? { signal } : {}),
       ...(adapterImports ? { adapterImports } : {}),
     });
@@ -1212,8 +1215,9 @@ export async function createCaptainSessionHost({
       shell.setTurnAttachments(interrupted.uncertain.attachments ?? []);
       shell.selectInterruptedReport(interrupted.uncertain.input, interruptedReport);
     }
-    return { shell, host, snapshot, reconcileRepositoryEffects, getInterruptedSettlement: (attemptId) => attemptId !== undefined && interruptedSettlement?.attemptId === attemptId ? interruptedSettlement.record : undefined };
+    return { shell, host, snapshot, reconcileRepositoryEffects, cancelPendingApprovals: approvals.close, getInterruptedSettlement: (attemptId) => attemptId !== undefined && interruptedSettlement?.attemptId === attemptId ? interruptedSettlement.record : undefined };
   } catch (error) {
+    approvals.close();
     let cleanupError;
     try {
       if (host !== undefined) await host.dispose();
@@ -1229,6 +1233,48 @@ export async function createCaptainSessionHost({
     }
     throw error;
   }
+}
+
+// Callback liveness belongs to the host, independently of durable turn state.
+// Closing this scope denies waits without cancelling ordinary graceful work.
+function createHostApprovalScope(handler, turnOffset) {
+  const lifetime = new AbortController();
+  return {
+    close: () => lifetime.abort('session host closing'),
+    handler: typeof handler !== 'function' ? undefined : (envelope, { signal }) => {
+      if (lifetime.signal.aborted || signal.aborted) return Promise.resolve('deny');
+      const controller = new AbortController();
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (decision) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', cancel);
+          lifetime.signal.removeEventListener('abort', cancel);
+          if (!envelope.request.choices.includes(decision)) controller.abort('Invalid approval decision');
+          resolve(decision);
+        };
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', cancel);
+          lifetime.signal.removeEventListener('abort', cancel);
+          controller.abort(error);
+          reject(error);
+        };
+        const cancel = () => {
+          controller.abort(signal.aborted ? signal.reason : lifetime.signal.reason);
+          finish('deny');
+        };
+        signal.addEventListener('abort', cancel, { once: true });
+        lifetime.signal.addEventListener('abort', cancel, { once: true });
+        Promise.resolve().then(() => {
+          if (settled) return 'deny';
+          return handler({ ...envelope, turnId: envelope.turnId + turnOffset }, { signal: controller.signal });
+        }).then(finish, fail);
+      });
+    },
+  };
 }
 
 // PBCLI-55: both presentations install one authoritative retention map at the

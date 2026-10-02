@@ -118,6 +118,7 @@ export async function openSessionHost(options) {
     const dispose = () => {
       if (closed) return Promise.resolve();
       if (closing) return closing;
+      created.cancelPendingApprovals();
       closing = (async () => {
         try { await active; } catch { /* Preserve the durable uncertain marker. */ }
         await created.host.dispose();

@@ -103,6 +103,7 @@ meta.md       The spec of specs
 | [DR-075](decisions/075-subagent-model-is-tuning.md) | 075-subagent-model-is-tuning.md | The subagent model is tuning: a fourth field on agent blocks and role bindings, erased from the structural projection, carried in every complete call setting, validated through Cligent; Cligent floor `^0.29.0`; amends DR-021, DR-032 and DR-074; `inherit` default and a fifth field by DR-076 |
 | [DR-076](decisions/076-subagents-delegate-by-default.md) | 076-subagents-delegate-by-default.md | Subagents delegate by default, at an effort of their own: `subagentModel` admits `inherit` and defaults to it where the adapter serves one, `subagentEffort` is a fifth tuning field, `false` switches delegation off; Cligent floor `^0.30.0`; amends DR-075 and DR-074 |
 | [DR-077](decisions/077-portable-assets-and-inspection.md) | 077-portable-assets-and-inspection.md | Owner-scoped immutable assets, attachment turns, worker evidence and browser-enabled inspection with tool-free control |
+| [DR-078](decisions/078-live-tool-approval-forwarding.md) | 078-live-tool-approval-forwarding.md | Ephemeral host approval callbacks, durable turn attribution and cancellation without workflow semantics |
 
 ## Packages
 

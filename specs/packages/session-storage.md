@@ -211,6 +211,12 @@ Before session presentation or replay, the host shall use the shared native-even
 The host shall promote saved media to one visible `playbook_evidence` record per content digest per genuine player call or explicitly scoped recovery-preparation call [[session-assets-5](session-assets.md#session-assets-5)], preserve its originating call and turn, and supply its reference to the active engagement.
 Hidden decision, report and judge traffic shall produce no visible evidence promotion.
 
+### session-storage-23
+
+Where an embedding host supplies `approvalHandler` to the public create/open session-host facade, the host shall forward the typed tmux-play approval envelope and cancellable context only for working calls, preserving the native request, concrete actor and unique invocation while adding the persisted Captain turn offset.
+The callback shall remain an ephemeral dependency, absent from execution/structural configuration, snapshots and model prompts; native approval events shall pass through ordinary replay recording [[session-storage-3](#session-storage-3)], with no pending request restored from history; handler rejections and invalid decisions shall preserve the adapter's error classification rather than become ordinary host denials.
+When the controller is disposed, its approval scope shall abort pending callback signals and resolve their waits to denial before draining active work and releasing its lease [[session-storage-11](#session-storage-11)], ignoring late answers and denying later requests in the closed scope, per [DR-078](../decisions/078-live-tool-approval-forwarding.md).
+
 ## Internal Behavior
 
 ### session-storage-13
@@ -218,6 +224,10 @@ Hidden decision, report and judge traffic shall produce no visible evidence prom
 The shared lifecycle shall use one version-aware codec for validation, projection, migration and hint attachment across all hosts, preserving unknown versions unchanged and rejecting mismatched recovery mirrors before external effects.
 
 ## Verification
+
+### session-storage-24
+
+When provider fixtures request approval through the real shared session host and store, integration verification shall assert exact allow/deny delivery, restored-turn attribution, independent invocation identity, hidden-control exclusion, archival without callback serialization, handler errors or invalid choices classified as errors without execution, and disposal cancellation before lease release with late answers unable to authorize work [[session-storage-23](#session-storage-23)].
 
 ### session-storage-22
 

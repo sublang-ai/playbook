@@ -300,6 +300,68 @@ export const exact: Exact = true;
     ),
   ),
   typeCapability(
+    'RunTmuxPlayOptions.approvalHandler',
+    'runtime-approval-handler.ts',
+    'The host supplies a live callback outside serializable configuration.',
+    `import type { RunTmuxPlayOptions, TmuxPlayApprovalHandler } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<RunTmuxPlayOptions, 'approvalHandler'> ? true : false>;
+type Exact = Assert<Equal<RunTmuxPlayOptions['approvalHandler'], TmuxPlayApprovalHandler | undefined>>;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'TmuxPlayApprovalRequest',
+    'runtime-approval-request.ts',
+    'Authentic approval metadata carries the exact actor, turn and invocation identity.',
+    `import type { AgentType, ApprovalRequest } from '@sublang/cligent';
+import type { TmuxPlayApprovalRequest } from '${CLIGENT_RELEASE_SPECIFIER}';
+interface ShellApprovalRequest {
+  readonly id: string;
+  readonly kind: 'tool';
+  readonly agent: AgentType;
+  readonly sessionId: string;
+  readonly toolUseId: string;
+  readonly toolName: string;
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly reason?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly choices: readonly ('allow_once' | 'deny')[];
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+interface ShellEnvelope {
+  readonly request: ShellApprovalRequest;
+  readonly turnId: number;
+  readonly actorId: string;
+  readonly invocationId: string;
+}
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type NativeExact = Assert<Equal<ApprovalRequest, ShellApprovalRequest>>;
+type Exact = Assert<Equal<TmuxPlayApprovalRequest, ShellEnvelope>>;
+export const nativeExact: NativeExact = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'TmuxPlayApprovalHandler',
+    'runtime-approval-decision.ts',
+    'Only cancellable asynchronous one-time allow or deny decisions are admitted.',
+    `import type { ApprovalDecision } from '@sublang/cligent';
+import type { TmuxPlayApprovalRequest, TmuxPlayApprovalHandler } from '${CLIGENT_RELEASE_SPECIFIER}';
+type ShellHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal: AbortSignal }) => Promise<'allow_once' | 'deny'>;
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type DecisionExact = Assert<Equal<ApprovalDecision, 'allow_once' | 'deny'>>;
+type Exact = Assert<Equal<TmuxPlayApprovalHandler, ShellHandler>>;
+export const decisionExact: DecisionExact = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.model',
     'agent-call-settings-model.ts',
     'Model is required and distinguishes a concrete value from provider default.',

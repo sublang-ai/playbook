@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@sublang/cligent':
-        specifier: ^0.32.0
-        version: 0.32.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)
+        specifier: ^0.33.0
+        version: 0.33.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)
       '@sublang/spex':
         specifier: ^3.0.0
         version: 3.0.0
@@ -478,8 +478,8 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@sublang/cligent@0.32.0':
-    resolution: {integrity: sha512-0jHr2Frv5hGL0zXrQJ0nMeTwrPLa8bxS/Ku7K38f3Du7b010l7sOrbYjnu5qyi8HMETsPLctX1MjmpSkf6kzDg==}
+  '@sublang/cligent@0.33.0':
+    resolution: {integrity: sha512-F4oe/M7t+++y4D8LEXjVYn277bB+zXMsfJU8GJd/Tn9gaZz4ZjyaeN3lCp4ycOIviFQgRDIRH22H40raVoAx4g==}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:
@@ -1631,7 +1631,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@sublang/cligent@0.32.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)':
+  '@sublang/cligent@0.33.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)':
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
       '@playwright/mcp': 0.0.77
