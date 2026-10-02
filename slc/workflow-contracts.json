@@ -359,6 +359,47 @@
           }
         ]
       }
+    },
+    "inspect": {
+      "callInput": "text",
+      "output": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "complete"
+              },
+              "report": {
+                "type": "string",
+                "description": "Inspector's complete explanation; presentation evidence, not independent effect authority."
+              }
+            },
+            "required": [
+              "status",
+              "report"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "unavailable"
+              },
+              "report": {
+                "type": "string",
+                "description": "Inspector's complete explanation; presentation evidence, not independent effect authority."
+              }
+            },
+            "required": [
+              "status",
+              "report"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
     }
   },
   "literalTargetBindings": {
@@ -366,6 +407,7 @@
     "decide": "decide",
     "code": "code",
     "branch": "branch",
-    "pr": "pr"
+    "pr": "pr",
+    "inspect": "inspect"
   }
 }

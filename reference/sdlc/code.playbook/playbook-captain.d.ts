@@ -3,7 +3,11 @@ import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookFailureCause, PlaybookRuntime, PlaybookRuntimeSnapshot, PlaybookStepRecord } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
+import type { Attachment } from '@sublang/cligent';
+import type { SessionAssetRef } from './session-assets.js';
 interface SessionAgent {
+    /** Mutable next-turn execution capability; never structural identity. */
+    readonly browser?: boolean;
     readonly adapter: string;
     readonly model: TuningSelection;
     readonly effort: TuningSelection<Effort>;
@@ -40,7 +44,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
     readonly rootPlaybookId: string;
     readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser'>>;
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface ProgressChange {
     snapshot?: PlaybookCaptainShellSnapshot | null;
@@ -48,6 +52,10 @@ export interface ProgressChange {
         kind: PlaybookStepRecord['kind'] | 'preparation' | 'completion' | 'answer';
         runtimeSessionId: string;
         playbookId: string;
+        workerEvidence?: {
+            boundaryId: string;
+            playerId: string;
+        };
     };
 }
 export interface InterruptedReport {
@@ -57,6 +65,9 @@ export interface InterruptedReport {
     unresolvedEffects?: readonly PlaybookCaptainUnresolvedEffect[];
 }
 export interface PlaybookCaptainDeps {
+    onTurnAttachments?: (references: readonly SessionAssetRef[]) => void;
+    beginPreparationMedia?: (runtimeSessionId: string) => () => void;
+    resolveAttachments?: (references: readonly SessionAssetRef[], signal: AbortSignal) => Promise<readonly Attachment[]>;
     /** Stop the host's active turn, including admitted tool calls, on preparation expiry or a required save failure. */
     abortPreparation?: (reason?: string) => void;
     recordProgress?: (change: ProgressChange) => Promise<void>;
@@ -164,6 +175,7 @@ export interface PlaybookCaptainFrameSnapshot {
     readonly parentCallId?: string;
     readonly request?: string;
     readonly inputs?: readonly string[];
+    readonly attachments?: readonly SessionAssetRef[];
     readonly options: JsonValue;
     readonly roleBindings: Readonly<Record<string, string>>;
     readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
@@ -186,6 +198,7 @@ interface PlaybookCaptainShellSnapshotFields {
         readonly journal: number;
     };
     readonly journal: readonly PlaybookCaptainJournalRecord[];
+    readonly pendingAttachments?: readonly SessionAssetRef[];
     readonly lastAction?: 'respond' | 'start' | 'switch' | 'resume' | 'dismiss' | 'deliver' | 'runtime' | 'recover';
     readonly lastSettlementStatus?: 'ok' | 'rejected' | 'failed';
 }
@@ -241,6 +254,9 @@ export interface PlaybookCaptainSettlement {
 }
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
+    /** Bind already-owned evidence to the next visible Boss turn without changing its text. */
+    setTurnAttachments(references: readonly SessionAssetRef[]): void;
+    recordMediaEvidence(reference: SessionAssetRef, runtimeSessionId?: string): void;
     installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>;
     exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
     exportSettlement(): PlaybookCaptainSettlement | undefined;

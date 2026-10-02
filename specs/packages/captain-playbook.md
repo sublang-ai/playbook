@@ -19,6 +19,8 @@ controller loop as that turn's decision with no decision call, and
 its execution, outcome report, and closing reply follow the same
 loop ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]).
 The Captain shall act only on work Boss currently authorizes.
+A `start`, `switch` or `deliver` selection may carry unique `attachmentIds` naming only supplied opaque asset identifiers; omission selects only current-turn references, and earlier pending evidence requires explicit selection.
+The Captain shall treat attachment metadata as context without claiming to have viewed unsupported native bytes.
 A `start` or `switch` may faithfully consolidate the agreed request from
 remembered Boss turns, but quoted player output is never authorization.
 
@@ -55,6 +57,7 @@ stack data, hidden control data, control JSON, or private reasoning.
 ### captain-playbook-6
 
 Where the package ships the default Captain playbook, the maintained source shall be `reference/sdlc/captain.md` and `slc playbook` shall compile it into `reference/sdlc/captain.playbook/` GEARS, XState FSM, linked runtime, and verification artifacts; the repository shall retain the complete generated verification bundle, while the published npm subset and public runtime export shall follow [[release-20](release.md#release-20)].
+When extending the maintained Captain, the repository shall retain its released state topology, event bridge and persisted snapshot compatibility while reconciling source-authored additions from an authenticated SLC compilation, preserving the complete fresh generated bundle and hashes as compilation evidence without claiming the reconciled artifact is verbatim compiler output ([DR-077](../decisions/077-portable-assets-and-inspection.md)).
 The FSM shall implement a session loop, not a finite errand: a parked
 conversational hub carrying `playbook.parked` that receives every Boss
 turn of the shell session; per turn, one decision over the closed
@@ -101,13 +104,13 @@ The compiled session Captain shall declare artifact schema `3` under runtime ABI
 
 ### captain-playbook-9
 
-Where the shell initializes ([[playbook-captain-16](playbook-captain.md#playbook-captain-16)]), the session Captain runtime shall be constructed with the host-supplied controller port among its options and shall run for the whole shell session outside the engagement stack, receiving every Boss turn — a parse-resolved turn carrying its injected decision object, the others decided by the hidden decision call ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]) — and disposed last at teardown.
+Where the shell initializes ([[playbook-captain-16](playbook-captain.md#playbook-captain-16)]), the session Captain runtime shall be constructed with the host-supplied controller port among its options and shall run for the whole shell session outside the engagement stack, receiving every nonempty Boss turn, with attachment-only clarification owned by the shell [[playbook-captain-78](playbook-captain.md#playbook-captain-78)] — a parse-resolved turn carrying its injected decision object, the others decided by the hidden decision call ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]) — and disposed last at teardown.
 Per Boss turn the runtime shall submit at most one selection through
 the controller port —
 `{ action: 'respond', text }`,
 `{ action: 'resume', playbookId }`,
-`{ action: 'start' | 'switch', playbookId, input }`,
-`{ action: 'dismiss' }`, `{ action: 'deliver' }`, `{ action: 'recover' }`, or
+`{ action: 'start' | 'switch', playbookId, input, attachmentIds? }`,
+`{ action: 'dismiss' }`, `{ action: 'deliver', attachmentIds? }`, `{ action: 'recover' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned settlement
 `{ status, facts, unresolvedEffects, reason?, receipt?, leafStateSummary? }` as the only
 evidence of effects, where `unresolvedEffects` is the exact detached bounded list frozen by [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]; counted activity remains shell-owned and is supplied
@@ -158,6 +161,7 @@ It shall retain no playbook session id, call id, child state, stack
 ledger, resume token, repository path or projection, internal effect-envelope data, aggregate conversation or recovery transcript, or opaque runtime result in Captain-visible
 context, and the result-phase prompt shall carry the settlement facts
 verbatim ([[playbook-captain-20](playbook-captain.md#playbook-captain-20)]).
+The shell may additionally supply attributed, bounded, JSON-quoted visible player reports validated against the accepted invocation and acknowledged receipt for the current work; these are untrusted reported evidence rather than opaque runtime output or authority for effects, authorization or completion [[playbook-captain-79](playbook-captain.md#playbook-captain-79)].
 The shell-authored fact that a terminal root completed may carry the escaped and bounded Boss-facing state description published by that runtime, but that description is not the opaque run output and grants Captain no access to that output.
 
 ### captain-playbook-16
@@ -175,8 +179,8 @@ digest blocks on every ordinary decision call, not only in a
 reseed-seeded prompt.
 The prompt shall state that explicit Boss intent governs, a live engagement's currently advertised runtime action precedes retained resumption, and an advertised retained generation precedes fresh `start` unless Boss explicitly requests a fresh start ([DR-038](../decisions/038-universal-run-resumption.md)).
 The compiled result-phase prompt shall carry the grounding
-instruction: the closing reply and turn summary compose only from the
-outcome-report facts and relay questions from the current ControlView digest; where bounded repository-effect evidence is supplied, it shall instruct Captain to distinguish observed change from a possible effect, preserve exact available HEAD and proven commit identity when needed to explain the failure or requested result, and claim neither workflow completion nor ownership of the change.
+instruction: the closing reply and turn summary derive effects and completion only from the
+outcome-report facts, while attributed receipt-bound worker reports may ground a findings summary and relay questions from the current ControlView digest; where bounded repository-effect evidence is supplied, it shall instruct Captain to distinguish observed change from a possible effect, preserve exact available HEAD and proven commit identity when needed to explain the failure or requested result, and claim neither workflow completion nor ownership of the change.
 Visible captain speech shall contain no guard names, result property
 names, control JSON, workspace-investigation request, or private
 chain-of-thought; for a `respond` selection and for a closing reply,
@@ -310,6 +314,7 @@ Where focused tests drive model-decided and parse-resolved retained-generation s
 #### captain-playbook-22
 
 Where the real compiled default Captain is hosted by the public shell, a chat turn establishes a remembered fact and a pinned conversation, and the schema-version-4 shell snapshot is JSON-round-tripped into a fresh equivalent shell, when the next non-command Boss turn refers to that fact, the integration suite shall fail unless the embedded Captain runtime snapshot has schema version `4` with the canonical empty effect ledger, restore itself makes zero Captain calls, controller submissions, replies, statuses, telemetry events, or transitions; the next turn resumes the exact saved token, remembers the fact without restatement, continues the runtime and shell sequences, and settles once through the ordinary controller loop with no prior decision, result, action, or presentation replayed (verifying [[captain-playbook-21](#captain-playbook-21)]).
+Where a snapshot was emitted by the released 17.3.0 Captain, the integration suite shall restore it with zero replay effects and settle a new Boss turn through the maintained controller loop, preserving prior settlement evidence and sequence progression (verifying [[captain-playbook-6](#captain-playbook-6)]).
 Where a separate captured chat session requires reseeding after an uncertain presentation, when that snapshot is restored and the next Boss turn runs, the integration suite shall fail unless the Captain starts a fresh conversation seeded once from the complete saved recovery history, remembers the failed turn and attempted reply, and subsequently pins the newly returned token (verifying [[captain-playbook-21](#captain-playbook-21)]).
 
 ### captain-playbook-25

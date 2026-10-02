@@ -18,6 +18,7 @@ const types = {
   code: "CodeOutput",
   branch: "BranchPlaybookOutput",
   pr: "PrPlaybookOutput",
+  inspect: "MachineOutput",
 };
 
 type Schema = {

@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 const exec = promisify(execFile);
 const fixture = fileURLToPath(new URL('./fixtures/durable-progress-loss.mjs', import.meta.url));
-it.each(['completed-clear', 'completed-unfinished', 'validation-matrix', 'consumed-result', 'completed-exact', 'player-before-change', 'exact-answer', 'command-override', 'give-up', 'later-step', 'player-result', 'player-before-receipt', 'script-result', 'script-before-result', 'nested-player', 'nested-script', 'preparation', 'completed', 'completed-terminal-only', 'automatic-answer', 'script-before-rename', 'script-after-rename', 'carried', 'accepted-answer', 'waiting-question', 'reserved-question', 'before-first-step', 'retention-switch', 'retention-lost-switch', 'retention-lost-same-root'])(
+it.each(['completed-report-budget', 'repeated-player-boundary', 'completed-clear', 'completed-unfinished', 'validation-matrix', 'consumed-result', 'completed-exact', 'player-before-change', 'exact-answer', 'command-override', 'give-up', 'later-step', 'player-result', 'player-before-receipt', 'script-result', 'script-before-result', 'nested-player', 'nested-script', 'preparation', 'completed', 'completed-terminal-only', 'automatic-answer', 'script-before-rename', 'script-after-rename', 'carried', 'accepted-answer', 'waiting-question', 'reserved-question', 'before-first-step', 'retention-switch', 'retention-lost-switch', 'retention-lost-same-root'])(
   'restores %s after SIGKILL without repeating work', async (scenario) => {
     const dir = await mkdtemp(join(tmpdir(), 'durable-progress-'));
     try {

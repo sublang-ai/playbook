@@ -270,6 +270,97 @@ export const optional: Optional = true;
 export const exact: Exact = true;
 `,
   ),
+  ...['CallPlayerOptions', 'CallCaptainOptions'].map((owner) =>
+    typeCapability(
+      `${owner}.attachments`,
+      `${owner.toLowerCase()}-attachments.ts`,
+      'Each invocation transports ordered local attachments outside the prompt.',
+      `import type { Attachment } from '@sublang/cligent';
+import type { ${owner} } from '${CLIGENT_RELEASE_SPECIFIER}';
+interface ShellAttachment {
+  readonly path: string;
+  readonly mimeType?: string;
+}
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<${owner}, 'attachments'> ? true : false>;
+type RootExact = Assert<Equal<Attachment, ShellAttachment>>;
+type Exact = Assert<Equal<${owner}['attachments'], readonly ShellAttachment[] | undefined>>;
+export const optional: Optional = true;
+export const rootExact: RootExact = true;
+export const exact: Exact = true;
+`,
+    ),
+  ),
+  typeCapability(
+    'RunTmuxPlayOptions.approvalHandler',
+    'runtime-approval-handler.ts',
+    'The host supplies a live callback outside serializable configuration.',
+    `import type { RunTmuxPlayOptions, TmuxPlayApprovalHandler } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<RunTmuxPlayOptions, 'approvalHandler'> ? true : false>;
+type Exact = Assert<Equal<RunTmuxPlayOptions['approvalHandler'], TmuxPlayApprovalHandler | undefined>>;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'TmuxPlayApprovalRequest',
+    'runtime-approval-request.ts',
+    'Authentic approval metadata carries the exact actor, turn and invocation identity.',
+    `import type { AgentType, ApprovalRequest } from '@sublang/cligent';
+import type { TmuxPlayApprovalRequest } from '${CLIGENT_RELEASE_SPECIFIER}';
+interface ShellApprovalRequest {
+  readonly id: string;
+  readonly kind: 'tool';
+  readonly agent: AgentType;
+  readonly sessionId: string;
+  readonly toolUseId: string;
+  readonly toolName: string;
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly reason?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly choices: readonly ('allow_once' | 'deny')[];
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+interface ShellEnvelope {
+  readonly request: ShellApprovalRequest;
+  readonly turnId: number;
+  readonly actorId: string;
+  readonly invocationId: string;
+}
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type NativeExact = Assert<Equal<ApprovalRequest, ShellApprovalRequest>>;
+type Exact = Assert<Equal<TmuxPlayApprovalRequest, ShellEnvelope>>;
+export const nativeExact: NativeExact = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'TmuxPlayApprovalHandler',
+    'runtime-approval-decision.ts',
+    'Only cancellable asynchronous one-time allow or deny decisions are admitted.',
+    `import type { ApprovalDecision } from '@sublang/cligent';
+import type { TmuxPlayApprovalRequest, TmuxPlayApprovalHandler } from '${CLIGENT_RELEASE_SPECIFIER}';
+type ShellHandler = (request: TmuxPlayApprovalRequest, context: { readonly signal: AbortSignal }) => Promise<'allow_once' | 'deny'>;
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? ((<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2) ? true : false) : false;
+type Assert<T extends true> = T;
+type DecisionExact = Assert<Equal<ApprovalDecision, 'allow_once' | 'deny'>>;
+type Exact = Assert<Equal<TmuxPlayApprovalHandler, ShellHandler>>;
+export const decisionExact: DecisionExact = true;
+export const exact: Exact = true;
+`,
+  ),
   typeCapability(
     'AgentCallSettings.model',
     'agent-call-settings-model.ts',
@@ -475,6 +566,64 @@ export const complete: AgentCallSettings = {
   effort: { kind: 'provider-default' },
   permissions,
 };
+`,
+  ),
+  typeCapability(
+    'AgentCallSettings.browser',
+    'agent-call-settings-browser.ts',
+    'Complete settings explicitly enable or disable managed browser tools.',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'browser'> ? true : false>;
+type Exact = Assert<Equal<AgentCallSettings['browser'], boolean | undefined>>;
+export const enabled: AgentCallSettings['browser'] = true;
+export const disabled: AgentCallSettings['browser'] = false;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'AgentCallSettings.mcpServers',
+    'agent-call-settings-mcp-servers.ts',
+    'Complete settings admit explicit stdio and HTTP MCP servers with immutable configuration.',
+    `import type { McpServerConfig, McpServers } from '@sublang/cligent';
+import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type ShellMcpServer = {
+  readonly type: 'stdio';
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+} | {
+  readonly type: 'http';
+  readonly url: string;
+  readonly headers?: Readonly<Record<string, string>>;
+};
+type ShellMcpServers = Readonly<Record<string, ShellMcpServer>>;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'mcpServers'> ? true : false>;
+type RootConfigExact = Assert<Equal<McpServerConfig, ShellMcpServer>>;
+type RootExact = Assert<Equal<McpServers, ShellMcpServers>>;
+type Exact = Assert<Equal<AgentCallSettings['mcpServers'], ShellMcpServers | undefined>>;
+export const optional: Optional = true;
+export const rootConfigExact: RootConfigExact = true;
+export const rootExact: RootExact = true;
+export const exact: Exact = true;
 `,
   ),
   typeCapability(

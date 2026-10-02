@@ -22,8 +22,10 @@ export type ParsedActingDecision = {
     readonly action: 'start' | 'switch';
     readonly playbookId: string;
     readonly input: string;
+    readonly attachmentIds?: readonly string[];
 } | {
     readonly action: 'deliver';
+    readonly attachmentIds?: readonly string[];
 };
 /** Compact `{ name, message }` error evidence (never a raw Error). */
 export type CompactError = {
@@ -96,17 +98,20 @@ export type CaptainOutput = {
     readonly guard: 'start';
     readonly playbookId: string;
     readonly input: string;
+    readonly attachmentIds?: readonly string[];
     readonly settlement: SettlementEvidence;
 } | {
     readonly guard: 'switch';
     readonly playbookId: string;
     readonly input: string;
+    readonly attachmentIds?: readonly string[];
     readonly settlement: SettlementEvidence;
 } | {
     readonly guard: 'dismiss' | 'recover';
     readonly settlement: SettlementEvidence;
 } | {
     readonly guard: 'deliver';
+    readonly attachmentIds?: readonly string[];
     readonly settlement: SettlementEvidence;
 } | {
     readonly guard: 'runtime';

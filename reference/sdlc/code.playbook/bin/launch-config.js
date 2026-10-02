@@ -2149,6 +2149,7 @@ function sessionAgentFromHostAgent(agent, path) {
   }
   return {
     adapter: agent.adapter,
+    ...(agent.browser === undefined ? {} : { browser: fastModeSelection(agent.browser, `${path}.browser`) }),
     model: tuningSelection(agent.model, `${path}.model`),
     effort: tuningSelection(agent.effort, `${path}.effort`),
     ...(agent.fastMode === undefined
@@ -2186,6 +2187,7 @@ export function projectHostAgent(agent, path = "agent") {
   const normalized = cloneJson(agent, path);
   return {
     adapter: normalized.adapter,
+    ...(normalized.browser === undefined ? {} : { browser: fastModeSelection(normalized.browser, `${path}.browser`) }),
     ...(normalized.model?.kind === "value"
       ? { model: normalized.model.value }
       : {}),

@@ -17,10 +17,12 @@ export type CaptainControllerSelection = {
     readonly playbookId: string;
     /** Complete standalone request synthesized from the remembered Boss conversation. */
     readonly input: CaptainControllerInput;
+    readonly attachmentIds?: readonly string[];
 } | {
     readonly action: 'dismiss' | 'recover';
 } | {
     readonly action: 'deliver';
+    readonly attachmentIds?: readonly string[];
 } | {
     readonly action: 'runtime';
     readonly actionId: string;

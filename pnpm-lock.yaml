@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@sublang/cligent':
-        specifier: ^0.30.0
-        version: 0.30.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)
+        specifier: ^0.33.1
+        version: 0.33.1(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)
       '@sublang/spex':
         specifier: ^3.0.0
         version: 3.0.0
@@ -332,6 +332,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@playwright/mcp@0.0.77':
+    resolution: {integrity: sha512-vf3PmCdOWVvEc3Vmh8DVWvsbz6/rIGi+OG0cyC/2YTn10U8tZMHEiRG62LHdPTTf0qCjoS7/1mbyS5F0RHoTzQ==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   '@rollup/rollup-android-arm-eabi@4.60.3':
     resolution: {integrity: sha512-x35CNW/ANXG3hE/EZpRU8MXX1JDN86hBb2wMGAtltkz7pc6cxgjpy1OMMfDosOQ+2hWqIkag/fGok1Yady9nGw==}
     cpu: [arm]
@@ -473,8 +478,8 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@sublang/cligent@0.30.0':
-    resolution: {integrity: sha512-ZavZ7dZLdaoAiHM0/qhXImfZtyUq3GEe7F4XHhsyIXEYemf56jCzs8Ts7YDlhg04m/IRXOPl1jog8Bu5RbYVkw==}
+  '@sublang/cligent@0.33.1':
+    resolution: {integrity: sha512-K9BmqafIQY8NupwpLlzY41OJGyPzfZi16jgjBs2xlitCJ2xQYphogMD4oCWIq1ScyPjGlwXM2/sUx6HxYQvIbg==}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:
@@ -763,6 +768,11 @@ packages:
   fresh@2.0.0:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
     engines: {node: '>= 0.8'}
+
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -1056,6 +1066,16 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.62.0-alpha-2026-06-29:
+    resolution: {integrity: sha512-/13EvW8l9Bmvt9nKHey+OcvZ8nob2FM8BCKBsUNwbXgmT4Hc0XX2b6mOErU0RBYNedOCa9q15USI7SY9K17v4w==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  playwright@1.62.0-alpha-2026-06-29:
+    resolution: {integrity: sha512-ugaMuh6rAOqmbaxrM7+XQSs7M6yPXykq5gVugJPClHcJ4Cqxmky5rDHhrCt4wmaILUeMdI7kPBCx3zMx2Qu+bg==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   postcss@8.5.14:
     resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
@@ -1529,6 +1549,11 @@ snapshots:
   '@openai/codex@0.159.0-win32-x64':
     optional: true
 
+  '@playwright/mcp@0.0.77':
+    dependencies:
+      playwright: 1.62.0-alpha-2026-06-29
+      playwright-core: 1.62.0-alpha-2026-06-29
+
   '@rollup/rollup-android-arm-eabi@4.60.3':
     optional: true
 
@@ -1606,9 +1631,10 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@sublang/cligent@0.30.0(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)':
+  '@sublang/cligent@0.33.1(@anthropic-ai/claude-agent-sdk@0.3.284(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.159.0)':
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
+      '@playwright/mcp': 0.0.77
       yaml: 2.9.0
       zod: 4.4.3
     optionalDependencies:
@@ -1927,6 +1953,9 @@ snapshots:
   forwarded@0.2.0: {}
 
   fresh@2.0.0: {}
+
+  fsevents@2.3.2:
+    optional: true
 
   fsevents@2.3.3:
     optional: true
@@ -2355,6 +2384,14 @@ snapshots:
   picomatch@4.0.4: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.62.0-alpha-2026-06-29: {}
+
+  playwright@1.62.0-alpha-2026-06-29:
+    dependencies:
+      playwright-core: 1.62.0-alpha-2026-06-29
+    optionalDependencies:
+      fsevents: 2.3.2
 
   postcss@8.5.14:
     dependencies:

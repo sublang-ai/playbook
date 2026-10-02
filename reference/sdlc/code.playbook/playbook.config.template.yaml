@@ -8,7 +8,7 @@
 
 # The Captain and each stable session player carries its own defaults inline:
 # an adapter shorthand (claude, codex) or a block with
-# adapter/model/effort/fastMode/subagentModel/subagentEffort/permissions. A
+# adapter/model/effort/fastMode/subagentModel/subagentEffort/browser/permissions. A
 # role may override only model, effort, fastMode, subagentModel, or
 # subagentEffort.
 # Omit an override to inherit the player default. For model, effort,
@@ -77,6 +77,14 @@ players:
     permissions:
       mode: auto
 
+  # Inspection has its own conversation. Browser tools stay off until enabled.
+  inspect.inspector:
+    adapter: claude
+    model: claude-opus-5-5
+    effort: high
+    permissions:
+      mode: auto
+
 # Enabled playbooks. Each is loaded from its explicit `from` module; the
 # `<id>` key must equal that module's manifest id. `from`, `command`, and
 # `roles` are launcher-owned; every other key is that playbook's option
@@ -121,3 +129,8 @@ playbooks:
     from: "@sublang/playbook/pr/registry"
     roles:
       coder: dev.coder
+
+  inspect:
+    from: "@sublang/playbook/inspect/registry"
+    roles:
+      inspector: inspect.inspector

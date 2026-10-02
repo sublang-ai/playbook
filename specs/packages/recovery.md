@@ -119,7 +119,7 @@ Before external work, a durable host shall atomically save the uncertain attempt
 - `snapshot` is the runtime-owned full working stack, or `null` when a frame cannot represent its position; the shell joins parent/child identities without interpreting machine context;
 - the snapshot retains the preceding settled Captain, journal and sequences, the current ledger, player ledger, issued identities, and accepted runtime input;
 - `positionStepId` names the new unfinished step saved with a non-null snapshot, or is null for every other snapshot write; result-only writes preserve it; older omission means null, and a non-null value must name an existing step;
-- `steps` contains unique UUID starts with exactly `id`, `kind:'player'|'captain'|'script'|'preparation'|'completion'|'answer'`, `stateId`, `runtimeSessionId`, `playbookId`, and optional JSON `result`; external work requires a start before its result, identities never change, and an acknowledged result is immutable;
+- `steps` contains unique UUID starts with exactly `id`, `kind:'player'|'captain'|'script'|'preparation'|'completion'|'answer'`, `stateId`, `runtimeSessionId`, `playbookId`, and optional JSON `result` and host-owned `workerEvidence:{boundaryId,playerId}`; the evidence reference may appear only with an accepted player result, shall name that step’s exact acknowledged producing boundary and configured player, and shall become immutable with the result; external work requires a start before its result, identities never change, and an acknowledged result is immutable;
 - `completion` stores the final root state, optional authored description and terminal outcome, and the runtime's retention decision (`clear` or `keep`, with older omission meaning `clear`); `answer` stores the pending asker/question objects and exact selected instruction; these known facts are written once with their results;
 - preparation saves its parked position before tools; custom runtime calls without a supplied position record starts and returned status with an unavailable position;
 - a result save does not move the saved position; after work drains, an optional save advances to the actual stopped stack or completed root without changing the action result on failure;
@@ -187,7 +187,7 @@ When loss instead occurs in the sequential step after the join, they shall verif
 
 ### recovery-25
 
-When integration tests validate progress, they shall isolate controller, journal, identity, current-ledger, monotonic extension, step kind, playbook id, completion and answer shape, position-step identity and immutable-result checks with otherwise-valid snapshots and verify that failed optional stopped-position saves preserve the action result [[recovery-18](#recovery-18)].
+When integration tests validate progress, they shall isolate controller, journal, identity, current-ledger, monotonic extension, step kind, playbook id, completion and answer shape, position-step identity, exact current-turn worker-evidence references, duplicate-reference rejection and immutable-result checks with otherwise-valid snapshots and verify that failed optional stopped-position saves preserve the action result [[recovery-18](#recovery-18)].
 
 ### recovery-26
 

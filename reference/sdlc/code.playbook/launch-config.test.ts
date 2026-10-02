@@ -1782,6 +1782,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       'dev.coder',
       'dev.reviewer',
       'dev.analyst',
+      'inspect.inspector',
     ]);
     expect(template.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.review.roles).toEqual({
@@ -1805,6 +1806,8 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     // pull request; no player is added.
     expect(template.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
+    expect(template.playbooks.inspect.roles).toEqual({ inspector: 'inspect.inspector' });
+    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-opus-5-5', effort: 'high', permissions: { mode: 'auto' } });
     expect(Object.keys(template.playbooks)).toEqual([
       'code',
       'review',
@@ -1812,6 +1815,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       'dev',
       'branch',
       'pr',
+      'inspect',
     ]);
     for (const block of Object.values(template.playbooks)) {
       expect(block).not.toHaveProperty('players');
@@ -1832,12 +1836,14 @@ describe('shared launch-config plan (PBCLI-47)', () => {
         '@sublang/playbook/dev/registry': entry('dev', ['analyst']),
         '@sublang/playbook/branch/registry': entry('branch', ['coder']),
         '@sublang/playbook/pr/registry': entry('pr', ['coder']),
+        '@sublang/playbook/inspect/registry': entry('inspect', ['inspector']),
       }),
     });
     expect(plan.players.map((player: { id: string }) => player.id)).toEqual([
       'dev.coder',
       'dev.reviewer',
       'dev.analyst',
+      'inspect.inspector',
     ]);
   });
 });

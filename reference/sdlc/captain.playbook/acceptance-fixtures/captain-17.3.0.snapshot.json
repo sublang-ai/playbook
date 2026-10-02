@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 4,
+  "playbookId": "captain",
+  "machine": {
+    "status": "active",
+    "value": "hub",
+    "historyValue": {},
+    "context": {
+      "enabledPlaybooks": [
+        {
+          "id": "code",
+          "command": "code",
+          "intent": "Implement and review a software change."
+        },
+        {
+          "id": "discuss",
+          "command": "discuss",
+          "intent": "Develop independent proposals and synthesize them."
+        }
+      ],
+      "bossText": "Remember the marker amber.",
+      "selectedAction": "respond",
+      "settlementStatus": "ok",
+      "settlementFacts": [
+        "The released Captain recorded the marker amber."
+      ],
+      "leafStateSummary": "No work is engaged.",
+      "settlementUnresolvedEffects": []
+    },
+    "children": {}
+  },
+  "roleResumeTokens": {},
+  "sequences": {
+    "trace": 9,
+    "turn": 1,
+    "judgeCall": 0,
+    "playerCall": 0,
+    "playbookCall": 0,
+    "captainCall": 1
+  },
+  "state": {
+    "value": "hub",
+    "activeStateIds": [
+      "hub"
+    ],
+    "tags": [
+      "playbook.parked"
+    ],
+    "status": "active",
+    "quiescent": true,
+    "stateId": "hub"
+  },
+  "pendingBossQuestions": [],
+  "effectLedger": {
+    "schemaVersion": 1,
+    "revision": 0,
+    "boundaries": [],
+    "logicalOperations": []
+  }
+}

@@ -492,3 +492,97 @@ contracts. Their JavaScript module exports are internal implementation details
 and carry no SemVer compatibility guarantee.
 The initializer requires further semantic compilation and verification
 before its output is runnable.
+
+## Attachments and captured evidence
+
+The shared host accepts `handleBossTurn({ text, attachments })` as well as a plain
+string. Keep the user's text exact. Import uploads through the controller's
+existing lease before submitting the turn; portable references contain a content
+hash, MIME type, byte count and optional display name, never a machine path.
+
+```ts
+const reference = await controller.lease.importAsset({
+  path: stagedUploadPath,
+  mimeType: 'image/png',
+  name: 'Reference screen.png',
+});
+await controller.handleBossTurn({
+  text: 'Compare the running interface with this reference.',
+  attachments: [reference],
+});
+```
+
+An empty text with attachments is accepted, recorded and answered with a host-owned
+clarification. It makes no model call and fabricates no instruction. Captain can
+then explicitly select the pending attachment IDs for the clarified request.
+Omitted selection means only uploads from the current turn. Working engagements
+retain selected references, and nested calls inherit their parent's snapshot;
+finishing, dismissing or starting unrelated work does not implicitly reuse them.
+Captain decisions, judges and closing replies see metadata only. A capable worker
+receives the actual selected files; unavailable required evidence fails that call
+explicitly, without requiring the controller's provider to support the same media.
+
+Observe the `SessionRecord` union from `@sublang/playbook/session-assets` or
+`@sublang/playbook/session-host`. `turn_started.turn.attachments` preserves input
+references. A `playbook_evidence` record carries a saved output asset with its turn,
+call and player or preparation origin; present it in the main conversation.
+Duplicate content is promoted once per call. Native worker `media` events remain
+in the worker lane, using `playbook-asset:<assetId>` URIs after persistence. Hidden
+controller traffic is never promoted as visible evidence. URI-only native media
+is preserved without fetching remote URLs or reading arbitrary local files.
+
+Tool-result output JSON larger than 4096 UTF-8 bytes becomes
+`{ type: 'asset_reference', asset }`; retrieve and decode the original JSON when a
+user opens its details. Base64 media is stored outside replay lines. An unavailable
+or oversized output is reported explicitly instead of being replayed inline.
+These host projections do not alter the native agent's own tool-result reasoning.
+
+Use `shared.openAsset(sessionId, reference)` for verified bounded reads and close
+the returned reader in `finally`. `shared.readAsset()` reads a whole asset, and
+`describeAsset()` looks up a descriptor by ID. The default per-asset maximum is
+100 MiB; hosts may impose smaller upload or turn limits. `exportBundle()` returns
+exact manifest bytes, the checkpoint's exact replay prefix and verified relative
+asset entries. Copy all of them together. Session deletion removes only that
+session's asset owner; copies in other owners remain independent. All hosts sharing
+the store must support the optional asset inventory before writing it.
+
+For uploads awaiting a session, draft work or direct authoring calls, use
+`createAssetStore({ directory })` from `@sublang/playbook/session-assets` under your
+own owner lifetime and writer coordination. Its `prepare()` validates ownership
+and tightens Git-restored permissions without changing bytes. `copyAsset()` imports
+verified content into another owner. `externalizeAgentEvent(store, event)` shares
+the same native-media and large-tool-result ingestion boundary with authoring;
+it returns the projected event and, for native media, its asset reference. Handle
+persistence failures explicitly, and never save the original large payload as a
+fallback.
+
+Captured native media also becomes evidence for still-active parent workflows in the same engagement, so a parent can continue reasoning about a child's figure. Newly submitted Boss attachments stay scoped to the addressed worker; neither kind is implicitly inherited by unrelated later work.
+
+Before adopting asset-bearing sessions, upgrade every Playbook CLI and embedded SDK that shares the store and stop all older writers. Older readers tolerating unknown replay records does not make older writers compatible: they may discard additive asset metadata on save.
+
+Accepted visible worker prose also reaches Captain as attributed, quoted observations, separately from effect and completion facts. Reports keep up to 8192 rendered characters each and 24576 across the latest accepted observations, labeling truncated or omitted content; full text stays in the durable ledger. Interrupted reporting uses an exact producing-boundary reference saved with the player result. Older progress without that reference contributes no inferred report, and recovery never reruns a worker merely to recreate its prose.
+
+## Live tool approvals
+
+`openSessionHost` and `createCaptainSessionHost` accept an ephemeral
+`approvalHandler(envelope, { signal })` callback. Its exported
+`TmuxPlayApprovalRequest` envelope contains the original native `request`, the
+persisted `turnId`, the concrete `actorId`, and a fresh `invocationId` for that
+working call. Return `allow_once` or `deny`; an application should bind its own
+session or draft identity in the callback closure and stop showing a request
+when its signal aborts. Hidden control and tool-free calls receive no callback.
+
+The callback is never configuration or model input. Native request/response
+events remain historical actor records, and reopening does not make an old
+request actionable. Native provider limits and OS dialogs still apply; a tool
+approval cannot grant an operating-system permission. Controller disposal denies
+pending requests before draining work and releasing the session lease. Without a
+handler, adapters retain their native fail-closed behavior.
+
+This callback handles tool consent independently of tool or application names.
+Native questions, forms, and URL authentication require separate typed response
+transports; a later Boss reply cannot answer a native callback still waiting
+inside the current call. A workflow can instead return its declared Boss-question
+outcome and resume after a reply, including a request to perform an external
+prerequisite. The reply is an acknowledgement; the working agent must check the
+prerequisite before claiming that it is satisfied.

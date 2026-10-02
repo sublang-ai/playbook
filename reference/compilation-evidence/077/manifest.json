@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "compiler": {
+    "package": "@sublang/slc",
+    "version": "0.15.0",
+    "gitHead": "02712046cc6d2ba443f1570a41d49465b128e142",
+    "agent": "claude-code",
+    "model": "claude-opus-4-8",
+    "effort": "high"
+  },
+  "linkTarget": {
+    "path": "src/runtime.ts",
+    "sha256": "3cbb151bbf774d084b63f8e3b182b82b089c5cb431bc6c6032e320383baedcca"
+  },
+  "verification": {
+    "emitter": "SLC emitVerifierSupport + emitGearsFsmConformanceTest + emitFsmIntrospectionTest + emitPromptContractTest + emitFsmCoverageTest",
+    "schema": 3,
+    "captain": {
+      "generatedTestsPassed": 8,
+      "linkDuration": "27m57s"
+    },
+    "inspect": {
+      "generatedTestsPassed": 8,
+      "linkDuration": "39m47s"
+    }
+  },
+  "sha256": {
+    "captain/captain.md": "e637e60fe471ed4dbd193efea49b8843a3aaa924d2bca52adf2158f70d893cea",
+    "captain/captain.playbook/.slc-verify/hash.d.ts": "bc0a8ba0f9f256c2e19b84a6814e68a7322691d0b9acc001259d021be654de0f",
+    "captain/captain.playbook/.slc-verify/hash.js": "9546165b310e9863bd029747ba99dbd94006f8cd8c97e9d40e50531ca05273d3",
+    "captain/captain.playbook/.slc-verify/verify-coverage.d.ts": "0b83a19cf1ca0953b7d4683fb93050648df9c90c1d50a17d2ff9992aa29fd42a",
+    "captain/captain.playbook/.slc-verify/verify-coverage.js": "c34568b33feecb1c045df18ca59702427c0c0c4857b296b72a28466211c17f74",
+    "captain/captain.playbook/.slc-verify/verify.d.ts": "cb1b1ec5676f6d45d911b3b8bffb9f77b408191f6c4bfca36d7f8a15e4d91eb4",
+    "captain/captain.playbook/.slc-verify/verify.js": "ffcf1516aba81df774a7511d61b555b0c7f1fe86998b10bd608cc698ae952fec",
+    "captain/captain.playbook/captain.fsm.coverage.test.ts": "5b7b2b4de06e6f911cac5621661560660a2de8ecd7fc1a4aa9b42b587ba1fde1",
+    "captain/captain.playbook/captain.fsm.introspect.test.ts": "026af8fcb0b4890a5d615611c1e89959661afc9b20b97796b99b3231c907e76d",
+    "captain/captain.playbook/captain.fsm.ts": "80df3545f07efec13adbda4045dfffc0ee6372f98bc2e60336b02ca992af4eb6",
+    "captain/captain.playbook/captain.gears-fsm.test.ts": "d9e2bb4b7b9275d4d0154dc8cf26f36112c9f89679667f803906e1d666912e4a",
+    "captain/captain.playbook/captain.gears.md": "43d2d1a8b240d13c1c66d19a6b08af863ee7600b9406d52df16679c822534185",
+    "captain/captain.playbook/captain.gears.opt1.md": "43d2d1a8b240d13c1c66d19a6b08af863ee7600b9406d52df16679c822534185",
+    "captain/captain.playbook/captain.gears.raw.md": "43d2d1a8b240d13c1c66d19a6b08af863ee7600b9406d52df16679c822534185",
+    "captain/captain.playbook/captain.playbook.ts": "9d42cc9aae921547016107be1c063b3139a1b3e02cf19260c4088b27534f2b57",
+    "captain/captain.playbook/captain.prompt-contract.test.ts": "52296a25c1f1b921d1ba6f0c2c5b63bd487f3b06e6ba6ab10ec4faa872c78593",
+    "inspect/inspect.md": "9c14c800df323eb86438b44c5be6422d7fc558b49530bc6376bb0e89f90036e5",
+    "inspect/inspect.playbook/.slc-verify/hash.d.ts": "bc0a8ba0f9f256c2e19b84a6814e68a7322691d0b9acc001259d021be654de0f",
+    "inspect/inspect.playbook/.slc-verify/hash.js": "9546165b310e9863bd029747ba99dbd94006f8cd8c97e9d40e50531ca05273d3",
+    "inspect/inspect.playbook/.slc-verify/verify-coverage.d.ts": "0b83a19cf1ca0953b7d4683fb93050648df9c90c1d50a17d2ff9992aa29fd42a",
+    "inspect/inspect.playbook/.slc-verify/verify-coverage.js": "c34568b33feecb1c045df18ca59702427c0c0c4857b296b72a28466211c17f74",
+    "inspect/inspect.playbook/.slc-verify/verify.d.ts": "cb1b1ec5676f6d45d911b3b8bffb9f77b408191f6c4bfca36d7f8a15e4d91eb4",
+    "inspect/inspect.playbook/.slc-verify/verify.js": "ffcf1516aba81df774a7511d61b555b0c7f1fe86998b10bd608cc698ae952fec",
+    "inspect/inspect.playbook/inspect.fsm.coverage.test.ts": "78a4aa49309a9628aac86590842607b7c1e950497a252e537fbbddfd579b3b49",
+    "inspect/inspect.playbook/inspect.fsm.introspect.test.ts": "091bce46d69265ebeb0e1ed63165a4aacaa1a2e0012166da74b880c5c6dddc1f",
+    "inspect/inspect.playbook/inspect.fsm.ts": "c3b8d371484d71058f4719e8555fb69585f6c26dfefb1dc874eccfcfba5e59cc",
+    "inspect/inspect.playbook/inspect.gears-fsm.test.ts": "d5e52b994c0d23b28598c69bc4d6e796cf7af06ca949abacc20f854d090ef3f2",
+    "inspect/inspect.playbook/inspect.gears.md": "829ff4080d8051362763ce9402983c8f7208a6fcbd49c75c180f34f832e8802a",
+    "inspect/inspect.playbook/inspect.gears.opt1.md": "ed340f2268a668c11fb16acf654cf55e1a80c02e956bfd6a259ffce504e71296",
+    "inspect/inspect.playbook/inspect.gears.raw.md": "ed340f2268a668c11fb16acf654cf55e1a80c02e956bfd6a259ffce504e71296",
+    "inspect/inspect.playbook/inspect.playbook.ts": "5e2675b6ba5e077ef3f5cec970e4109a9b597fb6ce972f1a1ef19454a320ec85",
+    "inspect/inspect.playbook/inspect.prompt-contract.test.ts": "d855c989a9ca06d071e33dc3c46d3848d4eb9c65853aad3cd78307ed8e1a02a8"
+  }
+}

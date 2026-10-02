@@ -55,6 +55,7 @@ export default defineConfig({
       'reference/sdlc/dev.playbook/*.test.ts',
       'reference/sdlc/branch.playbook/*.test.ts',
       'reference/sdlc/pr.playbook/*.test.ts',
+      'reference/sdlc/inspect.playbook/*.test.ts',
     ],
   },
 });

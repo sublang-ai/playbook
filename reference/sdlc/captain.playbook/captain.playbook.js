@@ -226,6 +226,9 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
     const nonEmpty = (key) => typeof parsed[key] === 'string' && parsed[key].trim().length > 0
         ? undefined
         : `the ${action} selection's \`${key}\` must be a non-empty string`;
+    const attachments = parsed.attachmentIds;
+    if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some((id) => typeof id !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(id)) || new Set(attachments).size !== attachments.length))
+        return { reason: 'attachmentIds must be unique supplied asset identifiers' };
     switch (action) {
         case 'respond': {
             const shape = requireKeys(['text']) ?? nonEmpty('text');
@@ -252,7 +255,7 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
         }
         case 'start':
         case 'switch': {
-            const shape = requireKeys(['playbookId', 'input']) ??
+            const shape = requireKeys(['playbookId', 'input'], ['attachmentIds']) ??
                 nonEmpty('playbookId') ??
                 nonEmpty('input');
             if (shape !== undefined)
@@ -273,6 +276,7 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
                     action,
                     playbookId,
                     input: parsed.input,
+                    ...(attachments === undefined ? {} : { attachmentIds: attachments }),
                 },
             };
         }
@@ -287,10 +291,10 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
             // A deliver selection carries no text payload: the host is
             // authoritative for the delivered text, so a carried `text` is
             // ignored and never delivered (CAPPLAY-9).
-            const shape = requireKeys([], ['text']);
+            const shape = requireKeys([], ['text', 'attachmentIds']);
             if (shape !== undefined)
                 return { reason: shape };
-            return { selection: { action } };
+            return { selection: { action, ...(attachments === undefined ? {} : { attachmentIds: attachments }) } };
         }
         case 'runtime': {
             const shape = requireKeys(['actionId']) ?? nonEmpty('actionId');

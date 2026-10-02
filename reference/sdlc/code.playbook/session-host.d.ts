@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import type { TmuxPlayApprovalHandler } from '@sublang/cligent/tmux-play';
+export type { TmuxPlayApprovalHandler, TmuxPlayApprovalRequest } from '@sublang/cligent/tmux-play';
+import type { SessionTurnInput } from './session-assets.js';
+export type { SessionTurnInput, SessionAssetRef, SessionRecord, PlaybookEvidenceRecord } from './session-assets.js';
 import type { PlaybookControlAction } from '@sublang/playbook/runtime';
 import type { PlaybookCaptainShell, PlaybookCaptainShellSnapshot } from './playbook-captain.js';
 import type { PlaybookEffectLedger } from './host-capabilities.js';
@@ -13,6 +17,8 @@ export interface SessionHost {
   reconcileRepositoryEffects(): Promise<PlaybookEffectLedger>;
 }
 export interface SessionHostOptions {
+  /** Ephemeral host callback; persisted turn IDs, no hidden control calls. */
+  readonly approvalHandler?: TmuxPlayApprovalHandler;
   readonly config: SessionExecutionProjection;
   readonly sessionId?: string;
   readonly cwd: string;
@@ -45,6 +51,8 @@ export declare function resolveLaunchSessionsDir(options: any): string;
 
 import type { SharedSessionStore, ReplayStreamStatus, ReplayStreamEntry, SessionGraph } from './session-store.js';
 export interface OpenSessionHostOptions {
+  /** Live tool approval only; never serialized or restored from replay. */
+  readonly approvalHandler?: TmuxPlayApprovalHandler;
   readonly store?: SharedSessionStore;
   readonly sessionsDir?: string;
   readonly sessionId?: string;
@@ -68,7 +76,7 @@ export interface SessionHostController {
   readonly shell: PlaybookCaptainShell;
   readonly lease: PlaybookSessionLifecycle;
   read(): Promise<SessionRecovery | undefined>;
-  handleBossTurn(input: string): Promise<SessionRecovery>;
+  handleBossTurn(input: string | SessionTurnInput): Promise<SessionRecovery>;
   /**
    * The active leaf's currently advertised runtime actions, read live between
    * turns; empty whenever nothing is advertised, a turn is active, or the

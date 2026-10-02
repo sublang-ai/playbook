@@ -30,6 +30,7 @@ const DECISION_PROMPT = [
     "`{ \"action\": \"runtime\", \"actionId\": … }` — apply the runtime action `actionId` names, only when the ControlView digest currently advertises it and only on Boss's explicit recovery or resume request.",
     '`{ "action": "recover" }` — prepare the interrupted leaf and continue it when recovery preparation is advertised and the task should continue. Task authorization includes necessary cleanup and preparation. Ask Boss only for missing decisions, authority, or an incomplete or contradictory playbook. Ordinary answers use `deliver`; a retry requiring no preparation uses `runtime`.',
     'Honor explicit Boss intent first. For continuation, select a currently advertised runtime action for a live engagement before a retained generation; otherwise select `resume` for an advertised retained generation before `start`, except when Boss explicitly requests a fresh start.',
+    "For `start`, `switch`, or `deliver`, optionally include `attachmentIds: [...]` selecting only supplied opaque asset identifiers relevant to the agreed request. Omission selects only attachments submitted in the current Boss turn. Select earlier pending attachments explicitly when Boss clarifies or says to proceed; never include unrelated prior material. Attachment metadata is not evidence that you viewed its bytes.",
     "Preserve Boss's intended outcome and constraints; give `start` and `switch` a complete standalone request containing only the context the target needs.",
     'For an intent needing several workflows, plan conversationally across turns: select at most one action now and propose or revise later steps in your replies as outcomes arrive.',
     'Keep the reply to 60 words unless extra words are essential to preserve choices, constraints, or result evidence.',
@@ -65,10 +66,10 @@ const CLOSING_REPLY_PROMPT = [
 const DECISION_RESULTS = {
     respond: "Captain settled the turn in this decision call; the validated text is the turn's captain speech. Output shall include `text: <the complete captain reply>`.",
     resume: 'Captain selected resuming an advertised retained generation. Output shall include `playbookId: <stable catalog id>`.',
-    start: 'Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.',
-    switch: 'Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.',
+    start: "Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`, and may include `attachmentIds: <unique array of supplied opaque asset identifiers>`.",
+    switch: "Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`, and may include `attachmentIds: <unique array of supplied opaque asset identifiers>`.",
     dismiss: 'Captain selected stopping the active engagement; the selection carries no payload field.',
-    deliver: 'Captain selected handing the turn to the working playbook; the host is authoritative for the delivered text, so the selection carries no payload field.',
+    deliver: "Captain selected handing the turn to the working playbook; the host is authoritative for the delivered text, so the selection carries no text field and may include only `attachmentIds: <unique array of supplied opaque asset identifiers>`.",
     runtime: 'Captain selected one advertised runtime action. Output shall include `actionId: <advertised action id>`.',
     recover: 'Captain selected preparing the interrupted leaf and continuing it; the selection carries no payload field.',
 };

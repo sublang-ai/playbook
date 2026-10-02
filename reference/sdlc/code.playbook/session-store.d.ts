@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import type { AssetAbortSignal, AssetId, AssetImport, AssetFile, AssetReader, SessionAssetRef } from './asset-types.js';
+export type { AssetId, AssetImport, AssetFile, AssetReader, SessionAssetRef, SessionTurnInput } from './asset-types.js';
+
+export interface SessionBundle {
+  readonly sessionId: string;
+  readonly manifest: Uint8Array;
+  readonly replay: Uint8Array;
+  readonly assets: readonly AssetFile[];
+}
+
 export declare const RECORDS_STREAM_VERSION: 1;
 export declare function defaultSessionsDir(): string;
 export declare function openSessionStore(
@@ -114,6 +124,8 @@ export interface SessionStructuralProjection {
   readonly catalog: Readonly<Record<string, any>>;
 }
 export interface SessionStep {
+  /** Host-owned exact producing boundary, saved with the accepted result. */
+  readonly workerEvidence?: { readonly boundaryId: string; readonly playerId: string };
   readonly id: string;
   readonly kind: 'player' | 'captain' | 'script' | 'preparation' | 'completion' | 'answer';
   readonly stateId: string;
@@ -141,6 +153,7 @@ export interface SessionRecovery {
   readonly retainedGenerations?: Readonly<Record<string, any>>;
   readonly uncertain?: {
     readonly input: string;
+    readonly attachments?: readonly SessionAssetRef[];
     readonly attemptId: string;
     readonly attemptNumber: number;
     readonly baseUpdatedAt: string | null;
@@ -157,10 +170,12 @@ export interface SessionReplayCheckpoint {
 }
 export type SessionManifest = Omit<SessionRecovery, 'schemaVersion'> & {
   readonly schemaVersion: 7;
+  readonly assets?: { readonly version: 1; readonly entries: readonly SessionAssetRef[] };
   readonly replay: SessionReplayCheckpoint;
   readonly contextSeq: number;
 } | {
   readonly schemaVersion: 7;
+  readonly assets?: { readonly version: 1; readonly entries: readonly SessionAssetRef[] };
   readonly kind: 'captain-session';
   readonly state: 'history-only';
   readonly sessionId: string;
@@ -222,11 +237,16 @@ export interface SessionFreshBoundary {
   readonly onInvalidRecord?: (record: any) => void | Promise<void>;
 }
 export interface PlaybookSessionLifecycle extends PlaybookSessionLease {
+  importAsset(input: AssetImport): Promise<SessionAssetRef>;
+  resolveAttachments(references: readonly SessionAssetRef[], options?: { readonly signal?: AssetAbortSignal }): Promise<readonly { readonly path: string; readonly mimeType?: string }[]>;
+  readAsset(reference: SessionAssetRef | AssetId, options?: { readonly signal?: AssetAbortSignal }): Promise<Uint8Array>;
+  openAsset(reference: SessionAssetRef | AssetId, options?: { readonly signal?: AssetAbortSignal }): Promise<AssetReader>;
+  describeAsset(assetId: AssetId): Promise<SessionAssetRef>;
   read(): Promise<SessionRecovery | undefined>;
   readManifest(): Promise<StoredSessionManifest>;
   initializeSettledWithPredecessor(options: SessionFreshBoundary): Promise<SessionRecovery>;
   abandonFreshSettled(options: { expected: SessionRecovery }): Promise<boolean>;
-  beginTurn(options: { input: string; attemptId: string; attemptedExecutionProjection: SessionExecutionProjection }): Promise<SessionRecovery>;
+  beginTurn(options: { input: string; attachments?: readonly SessionAssetRef[]; attemptId: string; attemptedExecutionProjection: SessionExecutionProjection }): Promise<SessionRecovery>;
   beginRetry(options: { expectedAttemptId: string; nextAttemptId: string }): Promise<SessionRecovery>;
   recordProgress(change: SessionProgressChange): Promise<void>;
   settle(options: { attemptId: string; snapshot: SessionSnapshot; unresolvedEffects: readonly SessionUnresolvedEffect[]; retentionUpdates?: readonly SessionRetentionUpdate[] }): Promise<SessionRecovery>;
@@ -243,6 +263,10 @@ export interface PlaybookSessionLifecycle extends PlaybookSessionLease {
   clearHint(participantId: string): void;
 }
 export interface SharedSessionStore {
+  readAsset(sessionId: string, reference: SessionAssetRef | AssetId, options?: { readonly signal?: AssetAbortSignal }): Promise<Uint8Array>;
+  openAsset(sessionId: string, reference: SessionAssetRef | AssetId, options?: { readonly signal?: AssetAbortSignal }): Promise<AssetReader>;
+  describeAsset(sessionId: string, assetId: AssetId): Promise<SessionAssetRef>;
+  exportBundle(sessionId: string): Promise<SessionBundle>;
   readonly sessionsDir: string;
   prepare(): Promise<void>;
   read(sessionId: string): Promise<SessionRecovery>;
@@ -261,7 +285,7 @@ export interface SharedSessionStore {
   migrateLegacyDefault(options?: { env?: Readonly<Record<string, string | undefined>>; homeDir?: string }): Promise<{ sourceDir: string; migrated: readonly string[]; skipped: readonly { sessionId: string; reason: string }[] }>;
   migrate(sessionId: string, options?: { sourcePath?: string; cwd?: string; backupDir?: string }): Promise<{ manifest: SessionManifest; migrated: boolean; reasons: readonly string[] }>;
 }
-export declare function createSessionStore(options?: { sessionsDir?: string; env?: Readonly<Record<string, string | undefined>>; homeDir?: string; [key: string]: any }): SharedSessionStore;
+export declare function createSessionStore(options?: { maxAssetBytes?: number; sessionsDir?: string; env?: Readonly<Record<string, string | undefined>>; homeDir?: string; [key: string]: any }): SharedSessionStore;
 export declare function validateSessionManifest(value: unknown): SessionManifest;
 export declare function validateSessionContext(value: unknown): SessionContext;
 export declare function projectCaptainSessionStructure(value: SessionExecutionProjection): SessionStructuralProjection;

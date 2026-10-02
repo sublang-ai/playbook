@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash } from 'node:crypto';
+import { validateAssetRef } from '../session-assets.js';
 import { posix, win32 } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -16,7 +17,7 @@ export const EMPTY_REPLAY_SHA256 = createHash('sha256').digest('hex');
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const COMMON = ['schemaVersion', 'kind', 'sessionId', 'cwd', 'createdAt', 'updatedAt', 'state', 'replay', 'contextSeq'];
 const RECOVERY = ['structuralProjection', 'lastAppliedExecutionProjection', 'snapshot', 'effectLedger', 'unresolvedEffects'];
-const OPTIONAL = ['retainedGenerations', 'settledAbandonment'];
+const OPTIONAL = ['retainedGenerations', 'settledAbandonment', 'assets'];
 const HEX = /^[0-9a-f]{64}$/;
 const clone = (value) => structuredClone(value);
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -44,11 +45,17 @@ export function validateReplayCheckpoint(value) {
 export function validateSessionManifest(value) {
   if (!object(value) || value.schemaVersion !== 7) throw new Error(`unsupported session manifest schema ${value?.schemaVersion}`);
   const history = value.state === 'history-only';
-  exact(value, [...COMMON, ...(history ? ['reason'] : RECOVERY), ...(value.state === 'uncertain' ? ['uncertain'] : [])], history ? [] : OPTIONAL);
+  exact(value, [...COMMON, ...(history ? ['reason'] : RECOVERY), ...(value.state === 'uncertain' ? ['uncertain'] : [])], history ? ['assets'] : OPTIONAL);
   if (value.kind !== 'captain-session' || !SESSION_ID_PATTERN.test(value.sessionId) || !isRecordedAbsolutePath(value.cwd)) throw new Error('invalid session manifest identity');
   iso(value.createdAt); iso(value.updatedAt);
   if (Date.parse(value.updatedAt) < Date.parse(value.createdAt)) throw new Error('session update precedes creation');
   validateReplayCheckpoint(value.replay);
+  if (value.assets !== undefined) {
+    exact(value.assets, ['version', 'entries']);
+    if (value.assets.version !== 1 || !Array.isArray(value.assets.entries)) throw new Error('unsupported session asset manifest');
+    const ids = new Set();
+    for (const item of value.assets.entries) { const reference = validateAssetRef(item); if (ids.has(reference.assetId)) throw new Error('duplicate session asset reference'); ids.add(reference.assetId); }
+  }
   if (!(history && value.contextSeq === null) && (!Number.isSafeInteger(value.contextSeq) || value.contextSeq <= 0 || value.contextSeq > value.replay.seq)) throw new Error('invalid session context reference');
   if (history) {
     if (!nonempty(value.reason)) throw new Error('history-only session needs a reason');
@@ -60,7 +67,7 @@ export function validateSessionManifest(value) {
   return clone(value);
 }
 function recoveryFromManifestUnchecked(value) {
-  const { replay, contextSeq, ...recovery } = value;
+  const { replay, contextSeq, assets, ...recovery } = value;
   return { ...recovery, schemaVersion: 6 };
 }
 export function recoveryFromManifest(value) {
@@ -68,9 +75,9 @@ export function recoveryFromManifest(value) {
   if (manifest.state === 'history-only') throw new Error(manifest.reason);
   return validateCaptainSessionRecord(recoveryFromManifestUnchecked(manifest));
 }
-export function manifestFromRecovery(value, replay, contextSeq) {
+export function manifestFromRecovery(value, replay, contextSeq, assets) {
   const recovery = projectRecovery(validateCaptainSessionRecord(value));
-  return validateSessionManifest({ ...recovery, schemaVersion: 7, replay, contextSeq });
+  return validateSessionManifest({ ...recovery, schemaVersion: 7, replay, contextSeq, ...(assets === undefined ? {} : { assets }) });
 }
 export function projectRecovery(value) {
   const source = clone(value);

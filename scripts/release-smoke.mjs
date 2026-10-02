@@ -1334,6 +1334,7 @@ import decideFactory from '@sublang/playbook/decide/playbook';
 import devFactory from '@sublang/playbook/dev/playbook';
 import branchFactory from '@sublang/playbook/branch/playbook';
 import prFactory from '@sublang/playbook/pr/playbook';
+import inspectFactory from '@sublang/playbook/inspect/playbook';
 import { emptyPlaybookEffectLedger } from '@sublang/playbook/xstate-runtime';
 
 const enabledPlaybooks = [
@@ -1343,6 +1344,7 @@ const enabledPlaybooks = [
   { id: 'dev', command: 'dev', intent: 'plan a development request' },
   { id: 'branch', command: 'branch', intent: 'branch for a GitHub issue' },
   { id: 'pr', command: 'pr', intent: 'deliver the branch as a pull request' },
+  { id: 'inspect', command: 'inspect', intent: 'inspect evidence without changing the repository' },
 ];
 const controller = {
   async submit() {
@@ -1434,6 +1436,11 @@ const cases = [
   {
     id: 'pr',
     runtime: prFactory(construction('pr', ['coder'], [])),
+    members: [...coreMembers, ...controlMembers, ...adoptionMembers],
+  },
+  {
+    id: 'inspect',
+    runtime: inspectFactory(construction('inspect', ['inspector'], [])),
     members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
 ];
@@ -1649,6 +1656,7 @@ function stepInstalledCli(root, state) {
       '  release.coder: { adapter: claude }',
       '  release.reviewer: { adapter: codex }',
       '  release.analyst: { adapter: claude }',
+      '  release.inspector: { adapter: claude }',
       'playbooks:',
       '  code:',
       '    from: "@sublang/playbook/code/registry"',
@@ -1668,6 +1676,9 @@ function stepInstalledCli(root, state) {
       '  pr:',
       '    from: "@sublang/playbook/pr/registry"',
       '    roles: { coder: release.coder }',
+      '  inspect:',
+      '    from: "@sublang/playbook/inspect/registry"',
+      '    roles: { inspector: release.inspector }',
       '',
     ].join('\n'),
   );
@@ -1695,6 +1706,7 @@ function stepInstalledCli(root, state) {
     '/dev  dev  —',
     '/branch  branch  —',
     '/pr  pr  —',
+    '/inspect  inspect  —',
   ]) {
     expectContains(list.stdout, expected, '--list output');
   }
@@ -2749,7 +2761,7 @@ function stepCompiledFidelity(state) {
     state.packedPackage,
   ]);
 
-  const workflows = ['code', 'review', 'decide', 'dev', 'branch', 'pr'];
+  const workflows = ['code', 'review', 'decide', 'dev', 'branch', 'pr', 'inspect'];
   for (const id of workflows) {
     run(process.execPath, [
       join(repoRoot, 'scripts', 'check-slc-source-gears.mjs'),
@@ -2809,6 +2821,11 @@ function stepCompiledFidelity(state) {
     'branch.playbook/branch.playbook.test.ts',
     'pr.playbook/pr.gears-fsm.test.ts',
     'pr.playbook/pr.playbook.test.ts',
+    'inspect.playbook/inspect.gears-fsm.test.ts',
+    'inspect.playbook/inspect.fsm.coverage.test.ts',
+    'inspect.playbook/inspect.fsm.introspect.test.ts',
+    'inspect.playbook/inspect.prompt-contract.test.ts',
+    'inspect.playbook/inspect.playbook.test.ts',
   ];
   const absent = requiredSuites.filter((suite) => !output.includes(suite));
   if (absent.length > 0) {
@@ -3074,6 +3091,9 @@ function stepPackedSessionStore(root, state) {
     artifacts: [
       'reference/sdlc/code.playbook/session-store.js',
       'reference/sdlc/code.playbook/session-store.d.ts',
+      'reference/sdlc/code.playbook/session-assets.js',
+      'reference/sdlc/code.playbook/session-assets.d.ts',
+      'reference/sdlc/code.playbook/asset-types.d.ts',
     ],
   });
   compileAndRunPackedConsumer(
@@ -3081,6 +3101,16 @@ function stepPackedSessionStore(root, state) {
     sessionStoreConsumerSource(fixture),
     sessionStoreConsumerTsconfig(),
   );
+  // The narrow facade above must still compile without ambient Node or
+  // Cligent declarations. Exercise the richer media facade at runtime in
+  // this same installed package; its strict types are pinned separately.
+  const assetsConsumer = join(consumerRoot, 'assets-consumer.mjs');
+  writeFileSync(assetsConsumer, sessionAssetsConsumerSource({
+    sessionsDir: fixture.sessionsDir,
+    sessionId: fixture.sessionId,
+    assetRoot: join(consumerRoot, 'owned-assets'),
+  }));
+  run(process.execPath, [assetsConsumer], { cwd: consumerRoot });
   if (readFileSync(fixture.oldSessionPath, 'utf8') !== oldSchemaBytes) {
     fail('the external consumer migrated or rewrote the old-schema manifest');
   }
@@ -3091,7 +3121,96 @@ function stepPackedSessionStore(root, state) {
     'exact token-free summary listed and read from the CLI manifest',
     'independent follower saw readable advancement without durability claims',
     'release equalized replay durability; schema 5 stayed byte-identical',
+    'public assets facade preserved bytes, metadata, stable URIs and independent ownership',
+    'session lease materialized the asset and exported its validated bundle inventory',
   ];
+}
+
+function sessionAssetsConsumerSource(fixture) {
+  return `import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createAssetStore, assetUri, parseAssetUri, normalizeSessionTurnInput } from '@sublang/playbook/session-assets';
+import { createSessionStore } from '@sublang/playbook/session-store';
+
+const sessionsDir = ${JSON.stringify(fixture.sessionsDir)};
+const sessionId = ${JSON.stringify(fixture.sessionId)};
+const assetRoot = ${JSON.stringify(fixture.assetRoot)};
+const bytes = new Uint8Array([80, 111, 114, 116, 97, 98, 108, 101, 32, 97, 115, 115, 101, 116, 10]);
+const original = Uint8Array.from(bytes);
+const source = createAssetStore({ directory: join(assetRoot, 'source'), maxAssetBytes: 1024 });
+const copied = createAssetStore({ directory: join(assetRoot, 'copy'), maxAssetBytes: 1024 });
+await source.prepare();
+const admitted = source.importAsset({ bytes, mimeType: 'text/plain', name: 'Fixture.txt' });
+bytes.fill(0);
+const reference = await admitted;
+assert.ok(Object.isFrozen(reference), 'asset descriptor is immutable');
+assert.deepEqual(Object.keys(reference).sort(), ['assetId', 'byteLength', 'mimeType', 'name']);
+assert.match(reference.assetId, /^sha256:[0-9a-f]{64}$/);
+assert.equal(reference.byteLength, original.length);
+assert.equal(reference.mimeType, 'text/plain');
+assert.equal(assetUri(reference), 'playbook-asset:' + reference.assetId);
+assert.equal(parseAssetUri(assetUri(reference)), reference.assetId);
+assert.equal(parseAssetUri('https://example.invalid/image.png'), undefined);
+assert.deepEqual(new Uint8Array(await source.readAsset(reference)), original, 'byte input is captured at admission');
+assert.deepEqual(await source.describeAsset(reference.assetId), reference);
+const attachment = await source.resolveAttachment(reference);
+assert.equal(attachment.mimeType, 'text/plain');
+assert.deepEqual(new Uint8Array(await readFile(attachment.path)), original);
+const sourceStat = await stat(attachment.path);
+assert.equal(sourceStat.nlink, 1);
+if (process.platform !== 'win32') assert.equal(sourceStat.mode & 0o777, 0o600);
+const alias = await copied.importAsset({ path: attachment.path, mimeType: 'text/plain', name: 'Copied.txt' });
+assert.equal(alias.assetId, reference.assetId);
+assert.equal(alias.name, 'Copied.txt');
+const copiedReference = await copied.copyAsset(source, reference);
+assert.deepEqual(copiedReference, reference);
+await copied.prepare();
+assert.equal((await copied.listAssets()).length, 1, 'identical content stores one file');
+const reader = await copied.openAsset(copiedReference);
+try {
+  assert.ok(Object.isFrozen(reader.reference));
+  assert.deepEqual(new Uint8Array(await reader.read({ offset: 2, length: 7 })), original.slice(2, 9));
+} finally { await reader.close(); }
+await assert.rejects(reader.read({ offset: 0, length: 1 }), /closed/i);
+const copyAttachment = await copied.resolveAttachment(copiedReference);
+const copyStat = await stat(copyAttachment.path);
+assert.equal(copyStat.nlink, 1);
+assert.ok(sourceStat.dev !== copyStat.dev || sourceStat.ino !== copyStat.ino, 'owners have independent files');
+await rm(source.directory, { recursive: true, force: true });
+assert.deepEqual(new Uint8Array(await copied.readAsset(reference)), original, 'source-owner deletion preserves the copy');
+
+const store = createSessionStore({ sessionsDir });
+const lease = await store.acquire(sessionId);
+let sessionAsset;
+try {
+  sessionAsset = await lease.importAsset({ bytes: await copied.readAsset(reference), mimeType: 'text/plain', name: 'Session.txt' });
+  const prior = await lease.read();
+  assert.equal(prior.state, 'settled');
+  const attemptId = randomUUID();
+  const turn = normalizeSessionTurnInput(JSON.parse(JSON.stringify({ text: '', attachments: [sessionAsset] })));
+  assert.equal(turn.text, '');
+  assert.deepEqual(turn.attachments, [sessionAsset]);
+  assert.ok(Object.isFrozen(turn.attachments));
+  const [materialized] = await lease.resolveAttachments(turn.attachments);
+  assert.deepEqual(new Uint8Array(await readFile(materialized.path)), original);
+  await lease.beginTurn({ input: turn.text, attachments: turn.attachments, attemptId, attemptedExecutionProjection: prior.lastAppliedExecutionProjection });
+  await lease.append({ type: 'playbook_evidence', timestamp: 1, turnId: 1, callId: 'packed-assets', origin: { kind: 'player', actorId: 'release.inspector' }, asset: sessionAsset });
+  // Asset inventory becomes portable at the same canonical checkpoint as
+  // the host's settlement; publishing bytes alone does not change history.
+  await lease.settle({ attemptId, snapshot: prior.snapshot, unresolvedEffects: prior.unresolvedEffects });
+} finally { await lease.release(); }
+await rm(copied.directory, { recursive: true, force: true });
+assert.deepEqual(new Uint8Array(await store.readAsset(sessionId, sessionAsset)), original, 'session owns an independent copy');
+const bundle = await store.exportBundle(sessionId);
+const manifest = JSON.parse(Buffer.from(bundle.manifest).toString('utf8'));
+assert.ok(manifest.assets.entries.some((entry) => entry.assetId === sessionAsset.assetId));
+assert.ok(bundle.assets.some((entry) => entry.assetId === sessionAsset.assetId && entry.byteLength === original.length && entry.path === sessionAsset.assetId.slice(7)));
+assert.ok(Buffer.from(bundle.replay).toString('utf8').includes(sessionAsset.assetId));
+const reopened = createSessionStore({ sessionsDir });
+assert.deepEqual(new Uint8Array(await reopened.readAsset(sessionId, sessionAsset)), original);
+`;
 }
 
 function sessionStoreConsumerTsconfig() {
@@ -3723,6 +3842,7 @@ export const _testing = Object.freeze({
   compiledRuntimeImportProbeSource,
   cligentMessageBoundaryProbeSource,
   sessionStoreConsumerSource,
+  sessionAssetsConsumerSource,
   sessionStoreConsumerTsconfig,
   hostCapabilitiesConsumerSource,
   hostCapabilitiesConsumerTsconfig,
