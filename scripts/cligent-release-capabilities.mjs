@@ -270,6 +270,35 @@ export const optional: Optional = true;
 export const exact: Exact = true;
 `,
   ),
+  ...['CallPlayerOptions', 'CallCaptainOptions'].map((owner) =>
+    typeCapability(
+      `${owner}.attachments`,
+      `${owner.toLowerCase()}-attachments.ts`,
+      'Each invocation transports ordered local attachments outside the prompt.',
+      `import type { Attachment } from '@sublang/cligent';
+import type { ${owner} } from '${CLIGENT_RELEASE_SPECIFIER}';
+interface ShellAttachment {
+  readonly path: string;
+  readonly mimeType?: string;
+}
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<${owner}, 'attachments'> ? true : false>;
+type RootExact = Assert<Equal<Attachment, ShellAttachment>>;
+type Exact = Assert<Equal<${owner}['attachments'], readonly ShellAttachment[] | undefined>>;
+export const optional: Optional = true;
+export const rootExact: RootExact = true;
+export const exact: Exact = true;
+`,
+    ),
+  ),
   typeCapability(
     'AgentCallSettings.model',
     'agent-call-settings-model.ts',
@@ -475,6 +504,64 @@ export const complete: AgentCallSettings = {
   effort: { kind: 'provider-default' },
   permissions,
 };
+`,
+  ),
+  typeCapability(
+    'AgentCallSettings.browser',
+    'agent-call-settings-browser.ts',
+    'Complete settings explicitly enable or disable managed browser tools.',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'browser'> ? true : false>;
+type Exact = Assert<Equal<AgentCallSettings['browser'], boolean | undefined>>;
+export const enabled: AgentCallSettings['browser'] = true;
+export const disabled: AgentCallSettings['browser'] = false;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'AgentCallSettings.mcpServers',
+    'agent-call-settings-mcp-servers.ts',
+    'Complete settings admit explicit stdio and HTTP MCP servers with immutable configuration.',
+    `import type { McpServerConfig, McpServers } from '@sublang/cligent';
+import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type ShellMcpServer = {
+  readonly type: 'stdio';
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+} | {
+  readonly type: 'http';
+  readonly url: string;
+  readonly headers?: Readonly<Record<string, string>>;
+};
+type ShellMcpServers = Readonly<Record<string, ShellMcpServer>>;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'mcpServers'> ? true : false>;
+type RootConfigExact = Assert<Equal<McpServerConfig, ShellMcpServer>>;
+type RootExact = Assert<Equal<McpServers, ShellMcpServers>>;
+type Exact = Assert<Equal<AgentCallSettings['mcpServers'], ShellMcpServers | undefined>>;
+export const optional: Optional = true;
+export const rootConfigExact: RootConfigExact = true;
+export const rootExact: RootExact = true;
+export const exact: Exact = true;
 `,
   ),
   typeCapability(

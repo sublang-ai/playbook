@@ -7340,3 +7340,54 @@ describe('CAPTAIN-9 no foreign field can forge a labeled block', () => {
     },
   );
 });
+
+describe('Captain attachment selection contract (captain-playbook-1, captain-playbook-9)', () => {
+  const assetId = `sha256:${'a'.repeat(64)}`;
+  it.each(['start', 'switch', 'deliver'] as const)('preserves validated optional opaque IDs for %s', async action => {
+    const selection = { action, ...(action === 'deliver' ? {} : { playbookId: 'code', input: 'Inspect this evidence.' }), attachmentIds: [assetId] };
+    const harness = makeHarness({ captains: [json(selection), ok('The request was handled.')] });
+    await harness.init(); await harness.turn('Use that image.');
+    expect(harness.submissions).toEqual([selection]);
+    await harness.runtime.dispose();
+  });
+  it.each([null, 'id', ['wrong'], [assetId, assetId], [assetId.toUpperCase()]])('rejects malformed or duplicate IDs before controller submission: %j', async attachmentIds => {
+    const harness = makeHarness({ captains: [json({ action: 'start', playbookId: 'code', input: 'Inspect.', attachmentIds }), json(RESPOND_REPLY)] });
+    await harness.init(); await harness.turn('Use that image.');
+    expect(harness.captainCalls).toHaveLength(2); expect(harness.submissions).toEqual([RESPOND_REPLY]);
+    await harness.runtime.dispose();
+  });
+});
+
+// Generated once using the unmodified v17.3.0 artifact at
+// 7acae7180151297aa35a57be4018d94386a14260; do not regenerate with this runtime.
+describe('released Captain snapshot compatibility (CAPPLAY-22)', () => {
+  it('restores 17.3.0 settlement without replay and advances a new attachment-aware turn', async () => {
+    const snapshot = JSON.parse(readFileSync(new URL(
+      './acceptance-fixtures/captain-17.3.0.snapshot.json', import.meta.url,
+    ), 'utf8'));
+    const assetId = `sha256:${'a'.repeat(64)}`;
+    const harness = makeHarness({ captains: [
+      json({ action: 'start', playbookId: 'code', input: 'Compare the supplied image.', attachmentIds: [assetId] }),
+      ok('The comparison has started.'),
+    ] });
+    await harness.runtime.restore!(harness.session, snapshot);
+    expect(harness.captainCalls).toEqual([]);
+    expect(harness.submissions).toEqual([]);
+    expect(harness.statuses).toEqual([]);
+    expect(harness.traces).toEqual([]);
+    expect(harness.runtime.exportSnapshot!()).toEqual(snapshot);
+    expect(contextOf(harness.runtime).settlementFacts).toEqual([
+      'The released Captain recorded the marker amber.',
+    ]);
+    await harness.turn('Compare the supplied image.');
+    expect(harness.submissions).toEqual([{
+      action: 'start', playbookId: 'code', input: 'Compare the supplied image.', attachmentIds: [assetId],
+    }]);
+    expect(harness.captainCalls[0]!.prompt).toContain('Omission selects only attachments submitted in the current Boss turn');
+    const continued = harness.runtime.exportSnapshot!()!;
+    expect(continued.sequences.turn).toBe(snapshot.sequences.turn + 1);
+    expect(continued.sequences.captainCall).toBe(snapshot.sequences.captainCall + 2);
+    expect(continued.state.stateId).toBe('hub');
+    await harness.runtime.dispose();
+  });
+});

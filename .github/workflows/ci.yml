@@ -62,6 +62,8 @@ jobs:
             'reference/sdlc/code.playbook/code.*.d.ts' \
             'reference/sdlc/code.playbook/playbook-captain.js' \
             'reference/sdlc/code.playbook/playbook-captain.d.ts' \
+            'reference/sdlc/code.playbook/worker-evidence.js' \
+            'reference/sdlc/code.playbook/worker-evidence.d.ts' \
             'reference/sdlc/review.playbook/review.*.js' \
             'reference/sdlc/review.playbook/review.*.d.ts' \
             'reference/sdlc/decide.playbook/decide.*.js' \
@@ -72,6 +74,8 @@ jobs:
             'reference/sdlc/branch.playbook/branch.*.d.ts' \
             'reference/sdlc/pr.playbook/pr.*.js' \
             'reference/sdlc/pr.playbook/pr.*.d.ts' \
+            'reference/sdlc/inspect.playbook/inspect.*.js' \
+            'reference/sdlc/inspect.playbook/inspect.*.d.ts' \
             'src/accepted-outcome.js' \
             'src/accepted-outcome.d.ts' \
             'src/runtime.js' \
@@ -85,6 +89,10 @@ jobs:
             'reference/sdlc/code.playbook' \
             'reference/sdlc/review.playbook' \
             'reference/sdlc/decide.playbook' \
+            'reference/sdlc/dev.playbook' \
+            'reference/sdlc/branch.playbook' \
+            'reference/sdlc/pr.playbook' \
+            'reference/sdlc/inspect.playbook' \
             'src/accepted-outcome.js' \
             'src/accepted-outcome.d.ts' \
             'src/runtime.js' \
@@ -98,6 +106,10 @@ jobs:
               'reference/sdlc/code.playbook' \
               'reference/sdlc/review.playbook' \
               'reference/sdlc/decide.playbook' \
+              'reference/sdlc/dev.playbook' \
+              'reference/sdlc/branch.playbook' \
+              'reference/sdlc/pr.playbook' \
+              'reference/sdlc/inspect.playbook' \
               'src/accepted-outcome.js' \
               'src/accepted-outcome.d.ts' \
               'src/runtime.js' \

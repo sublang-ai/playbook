@@ -69,6 +69,7 @@ const BUNDLED_WORKFLOW_IDS = [
   'dev',
   'branch',
   'pr',
+  'inspect',
 ] as const;
 const REQUIRED_WORKFLOW_ARTIFACT_SUFFIXES = [
   'gears.md',
@@ -212,9 +213,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 30 ||
-            (declaredFloor[1] === 30 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.30.0 floor serving the seeded models and carrying subagentModel and subagentEffort (DR-074, DR-075, DR-076)`,
+          (declaredFloor[1] > 32 ||
+            (declaredFloor[1] === 32 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.32.0 floor carrying native attachments and complete browser/MCP settings alongside model tuning (DR-077)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -237,9 +238,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 30 ||
-              (resolvedFloor[1] === 30 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.30.0 floor serving the seeded models and carrying subagentModel and subagentEffort (DR-074, DR-075, DR-076)`,
+            (resolvedFloor[1] > 32 ||
+              (resolvedFloor[1] === 32 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.32.0 floor carrying native attachments and complete browser/MCP settings alongside model tuning (DR-077)`,
       ).toBe(true);
     }
   });
@@ -453,6 +454,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'CallCaptainOptions.resume',
         'CallCaptainOptions.allowedTools',
         'CallCaptainOptions.settings',
+        'CallPlayerOptions.attachments',
+        'CallCaptainOptions.attachments',
         'AgentCallSettings.model',
         'AgentCallSettings.effort',
         'AgentCallSettings.fastMode',
@@ -460,6 +463,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.subagentEffort',
         'AgentCallSettings.instruction',
         'AgentCallSettings.permissions',
+        'AgentCallSettings.browser',
+        'AgentCallSettings.mcpServers',
         'AgentCallSettingsError',
         'isAgentCallSettingsError',
         'assertFastModeSupported',
@@ -1169,6 +1174,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   const DEV_BASE = 'reference/sdlc/dev.playbook/';
   const BRANCH_BASE = 'reference/sdlc/branch.playbook/';
   const PR_BASE = 'reference/sdlc/pr.playbook/';
+  const INSPECT_BASE = 'reference/sdlc/inspect.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toEqual({
@@ -1182,6 +1188,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./dev/registry');
     expect(manifest.exports).toHaveProperty('./branch/registry');
     expect(manifest.exports).toHaveProperty('./pr/registry');
+    expect(manifest.exports).toHaveProperty('./inspect/playbook');
+    expect(manifest.exports).toHaveProperty('./inspect/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
@@ -1378,6 +1386,17 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'prSummaryPolicy',
       'validatePrOptions',
     ],
+    './inspect/playbook': ['_internal', 'default', 'validateOptions'],
+    './inspect/registry': [
+      'default',
+      'inspectCopyPasteGuardNames',
+      'inspectPlaybookRegistryEntry',
+      'inspectSavedCountsLine',
+      'inspectStateCountLabels',
+      'inspectSummaryPolicy',
+      'validateInspectOptions',
+    ],
+    './session-assets': ['DEFAULT_MAX_ASSET_BYTES', 'assetUri', 'createAssetStore', 'externalizeAgentEvent', 'normalizeSessionTurnInput', 'parseAssetUri', 'validateAssetRef', 'validateAssetRefs'],
     './session-host': [
       'composeGenericConfig',
       'createCaptainSessionHost',
@@ -1657,6 +1676,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'default',
     ],
     './session-store': [
+      'AssetId', 'AssetImport', 'AssetFile', 'AssetReader', 'SessionAssetRef', 'SessionTurnInput', 'SessionBundle',
       'LeaseReplayStreamReadResult',
       'PlaybookSessionLease',
       'PlaybookSessionLifecycle',
@@ -1948,7 +1968,51 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'prSummaryPolicy',
       'validatePrOptions',
     ],
+    './inspect/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookHostCapabilities',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeOptions',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'PlayerSessionStore',
+      '_internal',
+      'default',
+      'validateOptions',
+    ],
+    './inspect/registry': [
+      'PlaybookSummaryPolicy',
+      'InspectOptions',
+      'InspectPlaybookRegistryEntry',
+      'default',
+      'inspectCopyPasteGuardNames',
+      'inspectPlaybookRegistryEntry',
+      'inspectSavedCountsLine',
+      'inspectStateCountLabels',
+      'inspectSummaryPolicy',
+      'validateInspectOptions',
+    ],
+    './session-assets': ['AssetId', 'SessionAssetRef', 'AssetImport', 'AssetFile', 'AssetReader', 'OwnerAssetStore', 'DEFAULT_MAX_ASSET_BYTES', 'createAssetStore', 'validateAssetRef', 'validateAssetRefs', 'normalizeSessionTurnInput', 'assetUri', 'parseAssetUri', 'externalizeAgentEvent', 'SessionTurnInput', 'SessionTurnStartedRecord', 'PlaybookEvidenceRecord', 'SessionRecord'],
     './session-host': [
+      'SessionTurnInput', 'SessionAssetRef', 'SessionRecord', 'PlaybookEvidenceRecord',
       'OpenSessionHostOptions',
       'SessionHost',
       'SessionHostController',
@@ -2097,10 +2161,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     },
   );
 
-  it('publishes a self-contained strict session-store declaration', () => {
+  it('publishes strict session-store and asset declarations through public dependencies', () => {
     const declaration = declarationSourceOf('./session-store');
-    expect(declaration).not.toMatch(/^\s*import\b/m);
-    expect(declaration).not.toMatch(/\bfrom\s+['"]/);
+    expect(declaration).not.toContain("from './bin/");
 
     const scratch = mkdtempSync(join(tmpdir(), 'playbook-session-types-'));
     try {
@@ -2126,6 +2189,11 @@ import sessionStoreDefault, {
   type ReplayStreamStatus,
 } from '@sublang/playbook/session-store';
 
+import { createAssetStore, externalizeAgentEvent, type SessionTurnInput, type SessionRecord } from '@sublang/playbook/session-assets';
+const assets = createAssetStore({ directory: '/temporary/owner.assets' });
+declare const event: Parameters<typeof externalizeAgentEvent>[1];
+async function ingest() { const projected = await externalizeAgentEvent(assets, event); if (projected.asset) { const input: SessionTurnInput = { text: '', attachments: [projected.asset] }; const record: SessionRecord = { type: 'playbook_evidence', timestamp: 1, turnId: 1, callId: 'call', origin: { kind: 'player', actorId: 'inspector' }, asset: projected.asset }; return { input, record }; } }
+void ingest;
 void sessionStoreDefault;
 interface ObservedRecord {
   readonly type: 'player_event';
@@ -2472,6 +2540,8 @@ import { branchPlaybookRegistryEntry } from '@sublang/playbook/branch/registry';
 import type { PlaybookHostCapabilities as BranchPlaybookHostCapabilities } from '@sublang/playbook/branch/playbook';
 import { prPlaybookRegistryEntry } from '@sublang/playbook/pr/registry';
 import type { PlaybookHostCapabilities as PrPlaybookHostCapabilities } from '@sublang/playbook/pr/playbook';
+import { inspectPlaybookRegistryEntry } from '@sublang/playbook/inspect/registry';
+import type { PlaybookHostCapabilities as InspectPlaybookHostCapabilities } from '@sublang/playbook/inspect/playbook';
 import type {
   HostCapabilities as FacadeHostCapabilities,
   WorktreeHostCapabilities,
@@ -2557,6 +2627,8 @@ declare const branchHostCapabilities: PlaybookHostConstructionCapabilities &
   BranchPlaybookHostCapabilities;
 declare const prHostCapabilities: PlaybookHostConstructionCapabilities &
   PrPlaybookHostCapabilities;
+declare const inspectHostCapabilities: PlaybookHostConstructionCapabilities &
+  InspectPlaybookHostCapabilities;
 declare const ports: PlaybookPorts;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
 // @ts-expect-error live construction capabilities are not runtime ports
@@ -2607,6 +2679,13 @@ const prCapabilities: PlaybookHostConstructionCapabilities = prHostCapabilities;
 prPlaybookRegistryEntry.createRuntime({}, prHostCapabilities);
 // @ts-expect-error PR is schema 3 and requires current-host capabilities
 prPlaybookRegistryEntry.createRuntime({});
+const inspectSchema: 3 = inspectPlaybookRegistryEntry.artifactSchema;
+const inspectProfile: PlaybookCaptainRuntimeProfile = inspectPlaybookRegistryEntry.runtimeProfile;
+const inspectEntry: PlaybookCaptainRegistryEntryV3 = inspectPlaybookRegistryEntry;
+const inspectCapabilities: PlaybookHostConstructionCapabilities = inspectHostCapabilities;
+inspectPlaybookRegistryEntry.createRuntime({}, inspectHostCapabilities);
+// @ts-expect-error PR is schema 3 and requires current-host capabilities
+inspectPlaybookRegistryEntry.createRuntime({});
 void canonicalFactorySchema;
 void v3FactorySchema;
 void v3Profile;
@@ -2634,6 +2713,10 @@ void prSchema;
 void prProfile;
 void prEntry;
 void prCapabilities;
+void inspectSchema;
+void inspectProfile;
+void inspectEntry;
+void inspectCapabilities;
 `,
       );
       const program = ts.createProgram([fixture], {
@@ -2863,6 +2946,12 @@ void prCapabilities;
       `${CODE_BASE}bin/repository-effects.js`,
       `${CODE_BASE}session-store.js`,
       `${CODE_BASE}session-store.d.ts`,
+      `${CODE_BASE}session-assets.js`,
+      `${CODE_BASE}session-assets.d.ts`,
+      `${CODE_BASE}asset-types.d.ts`,
+      `${CODE_BASE}worker-evidence.js`,
+      `${CODE_BASE}worker-evidence.d.ts`,
+      `${CODE_BASE}bin/session-media.js`,
       `${CODE_BASE}host-capabilities.js`,
       `${CODE_BASE}host-capabilities.d.ts`,
       `${CODE_BASE}code.registry.js`,
@@ -2887,6 +2976,10 @@ void prCapabilities;
       `${PR_BASE}pr.playbook.d.ts`,
       `${PR_BASE}pr.registry.js`,
       `${PR_BASE}pr.registry.d.ts`,
+      `${INSPECT_BASE}inspect.playbook.js`,
+      `${INSPECT_BASE}inspect.playbook.d.ts`,
+      `${INSPECT_BASE}inspect.registry.js`,
+      `${INSPECT_BASE}inspect.registry.d.ts`,
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }

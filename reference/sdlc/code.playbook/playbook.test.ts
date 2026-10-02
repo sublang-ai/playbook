@@ -906,6 +906,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         effort: 'xhigh',
         permissions: { mode: 'auto' },
       },
+      'inspect.inspector': { adapter: 'claude', model: 'claude-opus-5-5', effort: 'high', permissions: { mode: 'auto' } },
     });
     // The comments still document codex as an option; no seeded value names it.
     expect(JSON.stringify(seededParsed)).not.toContain('codex');
@@ -923,6 +924,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     // DR-050: BRANCH and PR reuse dev.coder; the seed adds no player.
     expect(seededParsed.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
     expect(seededParsed.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
+    expect(seededParsed.playbooks.inspect.roles).toEqual({ inspector: 'inspect.inspector' });
 
     expect(spawn.calls).toHaveLength(1);
     const composed = parseYaml(spawn.configs[0].content);
@@ -964,6 +966,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         subagentModel: 'inherit',
         permissions: { mode: 'auto' },
       },
+      { id: 'inspect.inspector', adapter: 'claude', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'inherit', permissions: { mode: 'auto' } },
     ]);
     expect(composed.layout.initialVisible).toEqual(['dev.coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
@@ -993,6 +996,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       'dev.coder',
       'dev.reviewer',
       'dev.analyst',
+      'inspect.inspector',
     ]);
   });
 

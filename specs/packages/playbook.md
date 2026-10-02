@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies agreement among the maintained CODE, REVIEW, DECIDE, DEV, BRANCH, and PR sources, their local roles, GEARS and FSM artifacts, and compiled workflow behavior.
+This package specifies agreement among the maintained CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT sources, their local roles, GEARS and FSM artifacts, and compiled workflow behavior.
 
 ## External Behavior
 
@@ -13,10 +13,10 @@ This package specifies agreement among the maintained CODE, REVIEW, DECIDE, DEV,
 
 #### playbook-1
 
-Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, `DEV-1` through `DEV-6`, `BRANCH-1`, or `PR-1` through `PR-7`, while the compiled FSM and runtime shall implement every preserved outcome.
+Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, `DEV-1` through `DEV-6`, `BRANCH-1`, `PR-1` through `PR-7`, or `INSPECT-1`, while the compiled FSM and runtime shall implement every preserved outcome.
 Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
 The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
-The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE, REVIEW, DEV, BRANCH, and PR shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
+The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE, REVIEW, DEV, BRANCH, PR, and INSPECT shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
 Each maintained artifact, registry, and authored or generated runtime sibling shall declare artifact schema `3` and keep its compatibility declaration, delegated-player state/result topology, and authority metadata mutually exact by declaring every delegated-player state, outcome payload field, and repository disposition under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
 
 #### playbook-2
@@ -25,7 +25,7 @@ Where a delegated-role FSM state references a GEARS item through `sourceItem`, i
 
 #### playbook-3
 
-Where a delegated-role FSM state references a GEARS item, its `input.role` and `meta.playbook.role` shall equal the canonical local id of the `Coder`, `Reviewer`, or `Analyst` role under which that item is declared — `coder` for BRANCH's and PR's one delegated item each — and the compiled state metadata shall define no host-binding or player-id field.
+Where a delegated-role FSM state references a GEARS item, its `input.role` and `meta.playbook.role` shall equal the canonical local id of the `Coder`, `Reviewer`, `Analyst`, or `Inspector` role under which that item is declared — `coder` for BRANCH's and PR's one delegated item each and `inspector` for INSPECT — and the compiled state metadata shall define no host-binding or player-id field.
 
 #### playbook-4
 
@@ -325,7 +325,18 @@ Where a maintained workflow runs under artifact schema `3`, its compiled runtime
 Where a maintained workflow runs under artifact schema `3`, its compiled runtime shall decide the failure cause of [[playbook-runtime-96](playbook-runtime.md#playbook-runtime-96)] where each failure is decided and publish it from the failed state's status data, telemetry, run result, control view, and exported snapshot alike, whether the shared factory interprets a flat machine or DECIDE's machine through its parallel profile of [[playbook-runtime-87](playbook-runtime.md#playbook-runtime-87)].
 A cancellation the runtime itself issues — a parallel proposal cancelled because its sibling failed — decides no cause of its own, and the cohort's failure carries the cause of the member that failed first.
 
+#### playbook-58
+
+When INSPECT receives an inspection request, it shall delegate to its sole Inspector role with the exact request and discussion context, selected engagement attachments supplied by the host [[playbook-captain-78](playbook-captain.md#playbook-captain-78)], and only configured tools, while requiring an unchanged repository for each Inspector call.
+It shall suspend for a complete Boss question, continue the same Inspector conversation after the answer with a fresh-conversation fallback carrying the prior question, complete successfully with `{status:'complete',report}` only on an affirmative inspected explanation, or end in an authored failure with `{status:'unavailable',report}` for unavailable required evidence or tools.
+The report shall preserve the complete Inspector explanation, and the authored prompts shall prohibit repository changes, invented observation, and invented file or asset identities.
+
 ## Verification
+
+#### playbook-59
+
+When integration tests run compiled INSPECT through its real registry and shared host, they shall verify unchanged-repository completion, Boss clarification and fresh continuation, unavailable-evidence failure, and authentic media presentation without a fabricated capture claim [[playbook-58](#playbook-58)].
+
 
 ### Source and artifact coverage
 

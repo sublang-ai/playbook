@@ -7,6 +7,7 @@
 // complete retained-generation map under guarded source-first publication.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { createAssetStore, parseAssetUri, validateAssetRef, validateAssetRefs } from '../session-assets.js';
 import {
   SESSION_MANIFEST_VERSION, EMPTY_REPLAY_SHA256, sha256,
   validateSessionManifest, recoveryFromManifest, manifestFromRecovery,
@@ -637,6 +638,12 @@ export function createCaptainSessionStore(options = {}) {
   const replayReadCursors = new Map();
   const replayReadQueues = new Map();
   const portableWriters = new Map();
+  const assetStores = new Map();
+  const assetStoreFor = (sessionId) => {
+    assertSessionId(sessionId);
+    if (!assetStores.has(sessionId)) assetStores.set(sessionId, createAssetStore({ directory: join(sessionsDir, `${sessionId}.assets`), ...(options.maxAssetBytes === undefined ? {} : { maxAssetBytes: options.maxAssetBytes }) }));
+    return assetStores.get(sessionId);
+  };
 
   if (!isAbsolute(sessionsDir)) {
     throw new Error('Captain session store path must be absolute');
@@ -758,7 +765,11 @@ export function createCaptainSessionStore(options = {}) {
     if (value.sessionId !== sessionId) throw new Error('session manifest identity does not match its filename');
     return value.schemaVersion === 7 ? validateSessionManifest(value) : value;
   };
-  const prepare = () => prepareSessionPermissions(sessionsDir, fs);
+  const prepare = async () => {
+    await prepareSessionPermissions(sessionsDir, fs);
+    let names; try { names = await fs.readdir(sessionsDir); } catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
+    for (const name of names) if (name.endsWith('.assets') && SESSION_ID_PATTERN.test(name.slice(0, -7))) await assetStoreFor(name.slice(0, -7)).prepare();
+  };
   const readHistory = async (sessionId, options = {}) => {
     assertSessionId(sessionId);
     const history = await readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: options.afterSeq ?? 0 });
@@ -770,6 +781,35 @@ export function createCaptainSessionStore(options = {}) {
       if (legacy.kind !== CAPTAIN_SESSION_RECORD_KIND || legacy.sessionId !== sessionId || !Array.isArray(legacy.snapshot?.journal) || !Number.isFinite(Date.parse(legacy.updatedAt))) return history;
     } catch { return history; }
     return legacyJournalHistory(legacy, options.afterSeq ?? 0, history);
+  };
+  // Only our typed reference locations participate; opaque tool/text data is history.
+  const assertAssetInventory = (manifest, entries) => {
+    const declared = new Map((manifest.assets?.entries ?? []).map((reference) => [reference.assetId, reference]));
+    const check = (reference) => {
+      const valid = validateAssetRef(reference);
+      if (declared.get(valid.assetId)?.byteLength !== valid.byteLength) throw new Error(`session asset reference is absent from its checkpoint inventory: ${valid.assetId}`);
+    };
+    const checkRefs = (references) => { for (const reference of references ?? []) check(reference); };
+    const snapshot = (value) => {
+      if (!value) return;
+      checkRefs(value.pendingAttachments);
+      for (const frame of value.frames ?? []) checkRefs(frame.attachments);
+      for (const item of value.journal ?? []) if (item.kind === 'boss' && typeof item.payload === 'object' && item.payload !== null) checkRefs(item.payload.attachments);
+    };
+    snapshot(manifest.snapshot); snapshot(manifest.uncertain?.progress?.snapshot);
+    checkRefs(manifest.uncertain?.attachments);
+    for (const generation of Object.values(manifest.retainedGenerations ?? {})) for (const frame of generation.frames ?? []) checkRefs(frame.attachments);
+    for (const { record } of entries) {
+      if (record.type === 'turn_started') checkRefs(record.turn?.attachments);
+      else if (record.type === 'playbook_evidence') check(record.asset);
+      else if (record.type === 'player_event' || record.type === 'captain_event') {
+        const event = record.event;
+        if (event?.type === 'media' && event.payload?.source?.type === 'uri') {
+          const id = parseAssetUri(event.payload.source.uri);
+          if (id && !declared.has(id)) throw new Error(`session media asset is absent from its checkpoint inventory: ${id}`);
+        } else if (event?.type === 'tool_result' && event.payload?.output?.type === 'asset_reference') check(event.payload.output.asset);
+      }
+    }
   };
   const validate = async (sessionId, context = {}) => {
     const manifest = await readManifest(sessionId);
@@ -789,6 +829,12 @@ export function createCaptainSessionStore(options = {}) {
       if (history.entries.some(({ record }) => !isDeepStrictEqual(record, sanitizeReplayRecord(record)))) {
         integrityValid = false;
         reasons.push('session replay contains provider continuation fields');
+      }
+      try { assertAssetInventory(manifest, history.entries.filter(({ seq }) => seq <= manifest.replay.seq)); }
+      catch (cause) { integrityValid = false; reasons.push(errorMessage(cause)); }
+      for (const reference of manifest.assets?.entries ?? []) {
+        try { const reader = await assetStoreFor(sessionId).openAsset(reference); await reader.close(); }
+        catch (cause) { integrityValid = false; reasons.push(`session asset is unavailable: ${errorMessage(cause)}`); }
       }
       if (manifest.state === 'history-only') reasons.push(manifest.reason);
       if (manifest.replay.incomplete || history.incomplete) reasons.push('session replay is incomplete');
@@ -1111,6 +1157,18 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const deleteRecord = async (sessionId) => {
+    const assetsDirectory = join(sessionsDir, `${sessionId}.assets`);
+    try {
+      await assertPrivateDirectory(assetsDirectory, fs);
+      const names = await fs.readdir(assetsDirectory);
+      for (const name of names) {
+        if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) throw new Error('unknown session asset entry prevents deletion');
+        await assertPrivateRegularPath(join(assetsDirectory, name), 0o600, fs, 'session asset');
+      }
+      for (const name of names) await fs.unlink(join(assetsDirectory, name));
+      await fs.rmdir(assetsDirectory);
+      await syncDirectory(sessionsDir, fs);
+    } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
     for (const suffix of ['.records.jsonl', '.hints.json', '.spex.json', '.json']) {
       const path = join(sessionsDir, `${sessionId}${suffix}`);
       try { await assertPrivateRegularPath(path, 0o600, fs, 'session file'); await fs.unlink(path); await syncDirectory(sessionsDir, fs); }
@@ -1396,6 +1454,7 @@ export function createCaptainSessionStore(options = {}) {
   const acquire = async (sessionId, management = false) => {
     assertSessionId(sessionId);
     await prepareSessionPermissions(sessionsDir, fs, sessionId);
+    await assetStoreFor(sessionId).prepare();
     let stage;
     let stagePublished = false;
     try {
@@ -1451,6 +1510,7 @@ export function createCaptainSessionStore(options = {}) {
         readHistory,
         validateSession: validate,
         portableWriters,
+        assetStore: assetStoreFor(sessionId),
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
@@ -1684,8 +1744,39 @@ export function createCaptainSessionStore(options = {}) {
     finally { await lease.release(); }
   };
 
+  const exportBundle = async (sessionId) => {
+    assertSessionId(sessionId);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const manifestText = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record');
+      const manifest = validateSessionManifest(JSON.parse(manifestText));
+      const replayBytes = Buffer.from(await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'replay stream'), 'utf8');
+      let end = 0;
+      for (let seq = 0; seq < manifest.replay.seq; seq++) {
+        const next = replayBytes.indexOf(10, end);
+        if (next === -1) throw new Error('session bundle is missing its checkpoint replay prefix');
+        end = next + 1;
+      }
+      const replay = replayBytes.subarray(0, end);
+      if (sha256(replay) !== manifest.replay.sha256 || manifest.replay.incomplete) throw new Error('session bundle replay checkpoint is incomplete or corrupt');
+      assertAssetInventory(manifest, parseSessionHistory(replay).entries);
+      const assets = [];
+      for (const reference of manifest.assets?.entries ?? []) {
+        const reader = await assetStoreFor(sessionId).openAsset(reference); await reader.close();
+        const hash = reference.assetId.slice(7);
+        assets.push(Object.freeze({ assetId: reference.assetId, path: hash, metadataPath: `${hash}.json`, byteLength: reference.byteLength }));
+      }
+      if (manifestText !== await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record')) continue;
+      return Object.freeze({ sessionId, manifest: Buffer.from(manifestText, 'utf8'), replay, assets: Object.freeze(assets) });
+    }
+    throw new Error('session changed while exporting its bundle; retry');
+  };
+
   return Object.freeze({
     sessionsDir,
+    readAsset: (sessionId, reference, options) => assetStoreFor(sessionId).readAsset(reference, options),
+    openAsset: (sessionId, reference, options) => assetStoreFor(sessionId).openAsset(reference, options),
+    describeAsset: (sessionId, assetId) => assetStoreFor(sessionId).describeAsset(assetId),
+    exportBundle,
     prepare,
     migrate,
     migrateLegacyDefault,
@@ -2540,6 +2631,7 @@ async function createLease({
   readHistory,
   validateSession,
   portableWriters,
+  assetStore,
   writeRecord,
   syncRecordDirectory,
   deleteRecord,
@@ -2636,7 +2728,9 @@ async function createLease({
     const seq = history.digests[durableSeq] === undefined ? previousManifest?.replay?.seq ?? 0 : durableSeq;
     const digest = history.digests[seq] ?? previousManifest?.replay?.sha256 ?? EMPTY_REPLAY_SHA256;
     const replay = { seq, sha256: digest, incomplete: previousManifest?.replay?.incomplete === true || status.incomplete || history.incomplete || history.digests[seq] === undefined };
-    const manifest = manifestFromRecovery(recovery, replay, contextSeq);
+    const entries = await assetStore.listAssets();
+    const assets = entries.length === 0 ? undefined : { version: 1, entries: await Promise.all(entries.map(({ assetId }) => assetStore.describeAsset(assetId))) };
+    const manifest = manifestFromRecovery(recovery, replay, contextSeq, assets);
     return manifest;
   };
   portableWriters.set(sessionId, { checkpoint, sync: replayWriter.checkpoint, published: (manifest) => { previousManifest = manifest; } });
@@ -2928,6 +3022,8 @@ async function createLease({
             source.effectLedger,
           );
 
+          const inheritedAssets = new Map(Object.values(retainedGenerations).flatMap((generation) => generation.frames.flatMap((frame) => frame.attachments ?? [])).map((reference) => [reference.assetId, reference]));
+          for (const reference of inheritedAssets.values()) await assetStore.copyAsset(sourceLease, reference);
           await sourceLease.assertOwner();
           await assertOwnerUnchecked();
           let sourcePublished = false;
@@ -3026,11 +3122,12 @@ async function createLease({
 
   const beginTurn = ({
     input,
+    attachments,
     attemptId,
     attemptedExecutionProjection,
   } = {}) =>
     runExclusive(async () => {
-      assertAcceptedInput(input);
+      assertAcceptedInput(input, attachments);
       assertUuid(attemptId, 'Captain session attempt id');
       const attempted = validateCaptainSessionExecutionProjection(
         attemptedExecutionProjection,
@@ -3065,6 +3162,7 @@ async function createLease({
         uncertain: {
           baseUpdatedAt: prior.updatedAt,
           input,
+          ...(attachments?.length ? { attachments: validateAssetRefs(attachments) } : {}),
           attemptId,
           attemptNumber: 1,
           markedAt: timestamp,
@@ -3119,6 +3217,7 @@ async function createLease({
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
           ...(prior.uncertain.progress === undefined ? {} : { progress: prior.uncertain.progress }),
           input: prior.uncertain.input,
+          ...(prior.uncertain.attachments === undefined ? {} : { attachments: prior.uncertain.attachments }),
           attemptId: nextAttemptId,
           attemptNumber: prior.uncertain.attemptNumber + 1,
           markedAt: timestamp,
@@ -3637,11 +3736,11 @@ async function createLease({
         if (Object.hasOwn(step, 'result') && !['completion', 'answer'].includes(step.kind)) throw new Error('A step result requires its saved start');
         progress.steps.push(step);
       } else {
-        const { result, ...start } = step;
+        const { result, workerEvidence, ...start } = step;
         const saved = progress.steps[index];
-        const { result: priorResult, ...priorStart } = saved;
+        const { result: priorResult, workerEvidence: priorEvidence, ...priorStart } = saved;
         if (!isDeepStrictEqual(start, priorStart) ||
-            (priorResult !== undefined && !isDeepStrictEqual(priorResult, result))) {
+            (priorResult !== undefined && (!isDeepStrictEqual(priorResult, result) || !isDeepStrictEqual(priorEvidence, workerEvidence)))) {
           throw new Error('A saved step cannot be replaced');
         }
         progress.steps[index] = step;
@@ -3728,6 +3827,11 @@ async function createLease({
     sessionId,
     ownerToken: owner.ownerToken,
     append,
+    importAsset: (input) => runExclusive(async () => { await assertOwnerUnchecked(); return assetStore.importAsset(input); }),
+    resolveAttachments: (references, options) => runExclusive(async () => { await assertOwnerUnchecked(); if (!Array.isArray(references)) throw new TypeError('attachments must be an array'); return Promise.all(references.map((reference) => assetStore.resolveAttachment(reference, options))); }),
+    readAsset: (reference, options) => assetStore.readAsset(reference, options),
+    openAsset: (reference, options) => assetStore.openAsset(reference, options),
+    describeAsset: (assetId) => assetStore.describeAsset(assetId),
     recordContext,
     consumeHints,
     acknowledgeHint,
@@ -4089,7 +4193,7 @@ function validateCanonicalCaptainSessionRecord(
     exactOptionalKeys(
       uncertain,
       UNCERTAIN_KEYS,
-      ['abandonment', 'progress'],
+      ['abandonment', 'progress', 'attachments'],
       'Captain session record uncertain',
     );
     if (uncertain.baseUpdatedAt !== null) {
@@ -4110,7 +4214,7 @@ function validateCanonicalCaptainSessionRecord(
         );
       }
     }
-    assertAcceptedInput(uncertain.input);
+    assertAcceptedInput(uncertain.input, uncertain.attachments);
     assertUuid(uncertain.attemptId, 'Captain session attempt id');
     if (
       !Number.isSafeInteger(uncertain.attemptNumber) ||
@@ -4172,8 +4276,9 @@ function validateCanonicalCaptainSessionRecord(
       exactOptionalKeys(progress, ['snapshot', 'steps'], ['positionStepId'], 'Captain progress');
       if (!Array.isArray(progress.steps)) throw new Error('Captain steps must be an array');
       const ids = new Set();
+      const workerBoundaryIds = new Set();
       for (const step of progress.steps) {
-        exactOptionalKeys(requireRecord(step, 'Captain step'), ['id', 'kind', 'stateId', 'runtimeSessionId', 'playbookId'], ['result'], 'Captain step');
+        exactOptionalKeys(requireRecord(step, 'Captain step'), ['id', 'kind', 'stateId', 'runtimeSessionId', 'playbookId'], ['result', 'workerEvidence'], 'Captain step');
         assertUuid(step.id, 'Captain step id');
         assertUuid(step.runtimeSessionId, 'Captain step runtime');
         if (ids.has(step.id)) throw new Error('Captain step ids must be unique');
@@ -4209,6 +4314,22 @@ function validateCanonicalCaptainSessionRecord(
         }
         requireCanonicalNonblank(step.stateId, 'Captain step state');
         if (!Object.hasOwn(structural.catalog, step.playbookId)) throw new Error('Captain step names an unknown playbook');
+        if (step.workerEvidence !== undefined) {
+          const evidence = requireRecord(step.workerEvidence, 'Worker evidence');
+          exactOptionalKeys(evidence, ['boundaryId', 'playerId'], [], 'Worker evidence');
+          assertUuid(evidence.boundaryId, 'Worker evidence boundary');
+          requireCanonicalNonblank(evidence.playerId, 'Worker evidence player');
+          const boundary = record.effectLedger.boundaries.find((entry) => entry.boundaryId === evidence.boundaryId);
+          if (step.kind !== 'player' || !step.result || typeof step.result !== 'object' || Array.isArray(step.result) ||
+              !boundary || boundary.playbookId !== step.playbookId || boundary.sourceStateId !== step.stateId ||
+              workerBoundaryIds.has(evidence.boundaryId) || isDeepStrictEqual(boundary, record.snapshot.effectLedger.boundaries[boundary.sequence - 1]) ||
+              !boundary.physicalReceipt || !boundary.finalText?.trim() ||
+              boundary.semanticCandidate?.guard !== step.result.guard || typeof step.result.guard !== 'string' || step.result.guard === 'needsBossReply' ||
+              structural.catalog[step.playbookId]?.roles?.[boundary.roleId]?.playerId !== evidence.playerId) {
+            throw new Error('Worker evidence must name its accepted player boundary');
+          }
+          workerBoundaryIds.add(evidence.boundaryId);
+        }
       }
       if (progress.positionStepId !== undefined && progress.positionStepId !== null && !ids.has(progress.positionStepId)) throw new Error('Captain progress positionStepId must name a recorded step');
       if (progress.snapshot === null && progress.positionStepId != null) throw new Error('Captain progress positionStepId requires a saved position');
@@ -5312,7 +5433,7 @@ function assertReleasedSchema2CaptainSessionRecord(record) {
       );
     }
   }
-  assertAcceptedInput(uncertain.input);
+  assertAcceptedInput(uncertain.input, uncertain.attachments);
   assertUuid(uncertain.attemptId, 'Captain session attempt id');
   if (
     !Number.isSafeInteger(uncertain.attemptNumber) ||
@@ -5408,6 +5529,7 @@ function validateCaptainSessionProjection(
             'fastMode',
             'subagentModel',
             'subagentEffort',
+            'browser',
           ],
       playerPath,
     );
@@ -5578,6 +5700,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
   const agent = requireRecord(value, path);
   if (!structural) {
     validateProjectedFastMode(agent, `${path}.fastMode`);
+    if (agent.browser !== undefined && typeof agent.browser !== 'boolean') throw new Error(`${path}.browser must be a boolean`);
     validateProjectedSubagentTuning(agent, path);
   }
   if (!hasId) {
@@ -5592,6 +5715,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
             'fastMode',
             'subagentModel',
             'subagentEffort',
+            'browser',
           ],
       path,
     );
@@ -6144,9 +6268,10 @@ function validateRetainedGenerationFrame(
       'roleBindings',
       'runtime',
     ],
-    ['parentSessionId', 'parentCallId', 'request', 'inputs'],
+    ['parentSessionId', 'parentCallId', 'request', 'inputs', 'attachments'],
     path,
   );
+  if (frame.attachments !== undefined) validateAssetRefs(frame.attachments);
   if (frame.request !== undefined) {
     if (index !== 0) throw new Error(`${path}.request belongs only to the root`);
     requireNonblank(frame.request, `${path}.request`);
@@ -6369,8 +6494,9 @@ async function requireUncertainRecord(record, attemptId) {
   return record;
 }
 
-function assertAcceptedInput(value) {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+function assertAcceptedInput(value, attachments) {
+  if (attachments !== undefined) validateAssetRefs(attachments);
+  if (typeof value !== 'string' || (value.trim().length === 0 && !attachments?.length)) {
     throw new Error('Captain session input must be a non-empty string');
   }
 }

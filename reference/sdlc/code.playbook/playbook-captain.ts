@@ -61,8 +61,14 @@ import createDefaultCaptainRuntime, {
   type SettlementEvidence,
 } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
+import type { Attachment } from '@sublang/cligent';
+import { validateAssetRef, validateAssetRefs } from './session-assets.js';
+import type { SessionAssetRef } from './session-assets.js';
+import { QUOTED_EVIDENCE_LIMIT, workerReportExcerpt, workerReportBlock } from './worker-evidence.js';
 
 interface SessionAgent {
+  /** Mutable next-turn execution capability; never structural identity. */
+  readonly browser?: boolean;
   readonly adapter: string;
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
@@ -121,13 +127,13 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
   readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser'>>;
 
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 
 export interface ProgressChange {
   snapshot?: PlaybookCaptainShellSnapshot | null;
-  step?: Omit<PlaybookStepRecord, 'kind'> & { kind: PlaybookStepRecord['kind'] | 'preparation' | 'completion' | 'answer'; runtimeSessionId: string; playbookId: string };
+  step?: Omit<PlaybookStepRecord, 'kind'> & { kind: PlaybookStepRecord['kind'] | 'preparation' | 'completion' | 'answer'; runtimeSessionId: string; playbookId: string; workerEvidence?: { boundaryId: string; playerId: string } };
 }
 export interface InterruptedReport {
   text: string;
@@ -137,6 +143,9 @@ export interface InterruptedReport {
 }
 
 export interface PlaybookCaptainDeps {
+  onTurnAttachments?: (references: readonly SessionAssetRef[]) => void;
+  beginPreparationMedia?: (runtimeSessionId: string) => () => void;
+  resolveAttachments?: (references: readonly SessionAssetRef[], signal: AbortSignal) => Promise<readonly Attachment[]>;
   /** Stop the host's active turn, including admitted tool calls, on preparation expiry or a required save failure. */
   abortPreparation?: (reason?: string) => void;
   recordProgress?: (change: ProgressChange) => Promise<void>;
@@ -259,6 +268,7 @@ export interface PlaybookCaptainFrameSnapshot {
   readonly parentCallId?: string;
   readonly request?: string;
   readonly inputs?: readonly string[];
+  readonly attachments?: readonly SessionAssetRef[];
   readonly options: JsonValue;
   readonly roleBindings: Readonly<Record<string, string>>;
   readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
@@ -282,6 +292,7 @@ interface PlaybookCaptainShellSnapshotFields {
     readonly journal: number;
   };
   readonly journal: readonly PlaybookCaptainJournalRecord[];
+  readonly pendingAttachments?: readonly SessionAssetRef[];
   readonly lastAction?:
     | 'respond'
     | 'start'
@@ -388,6 +399,9 @@ export interface PlaybookCaptainSettlement {
 
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
+  /** Bind already-owned evidence to the next visible Boss turn without changing its text. */
+  setTurnAttachments(references: readonly SessionAssetRef[]): void;
+  recordMediaEvidence(reference: SessionAssetRef, runtimeSessionId?: string): void;
   installRetainedGenerations(
     generations: Readonly<
       Record<string, PlaybookCaptainRetainedGeneration>
@@ -488,6 +502,8 @@ type PlayerTransaction =
     });
 
 interface EngagementFrame {
+  effectOwnerSessionId?: string;
+  attachments?: readonly SessionAssetRef[];
   request?: string;
   inputs?: string[];
   pauseCancellation?: () => () => void;
@@ -677,6 +693,12 @@ interface ActiveTurnSummary {
 
 /** The shell state of one Boss turn (DR-029). */
 interface ActiveTurn {
+  readonly workerReports: Map<string, string>;
+  readonly workerStepStarts: Map<string, ReadonlySet<string>>;
+  readonly workerCalls: Map<string, { frame: EngagementFrame; callId: string; roleId: string; playerId: string; stateId: string; finalText: string }>;
+  evidence?: readonly SessionAssetRef[];
+  attachments: readonly SessionAssetRef[];
+  selectedAttachments?: readonly SessionAssetRef[];
   appliedActionCount: number;
   startedEngagement?: boolean;
   countedSummary?: ActiveTurnSummary;
@@ -847,7 +869,6 @@ function quoteEvidence(text: string): string {
 // into a fact and still knows it is foreign — never at the digest renderer,
 // which sees an opaque payload and cannot tell quoted output from the Boss
 // text, captain speech, or settlement facts the shell authored itself.
-const QUOTED_EVIDENCE_LIMIT = 400;
 
 // The same guard for strings the shell interpolates into a single-line fact:
 // control characters collapse to spaces so a quoted message can never open a
@@ -3011,6 +3032,7 @@ export function assertPlaybookCaptainShellSnapshot(
     'issuedSessionIds',
     'sequences',
     'journal',
+    'pendingAttachments',
     'lastAction',
     'lastSettlementStatus',
     'mode',
@@ -3339,6 +3361,7 @@ export function assertPlaybookCaptainShellSnapshot(
     issuedSessionIds: issued,
     sequences: { turn: turnSequence, journal: journalSequence },
     journal: normalizedJournal,
+    ...(snapshot.pendingAttachments === undefined ? {} : { pendingAttachments: validateAssetRefs(snapshot.pendingAttachments) }),
     ...(lastAction === undefined ? {} : { lastAction }),
     ...(lastSettlementStatus === undefined
       ? {}
@@ -3390,6 +3413,7 @@ export function assertPlaybookCaptainShellSnapshot(
         'parentCallId',
         'request',
         'inputs',
+        'attachments',
         'options',
         'roleBindings',
         'runtime',
@@ -3447,6 +3471,7 @@ export function assertPlaybookCaptainShellSnapshot(
       ...(parentCallId === undefined ? {} : { parentCallId }),
       ...(frame.request === undefined ? {} : { request: frame.request as string }),
       ...(frame.inputs === undefined ? {} : { inputs: frame.inputs as string[] }),
+      ...(frame.attachments === undefined ? {} : { attachments: validateAssetRefs(frame.attachments) }),
       options,
       roleBindings,
       runtime,
@@ -3763,6 +3788,7 @@ function snapshotSessionAgent(
       'fastMode',
       'subagentModel',
       'subagentEffort',
+      'browser',
       'instruction',
       'permissions',
     ],
@@ -3776,7 +3802,8 @@ function snapshotSessionAgent(
           key !== 'effort' &&
           key !== 'fastMode' &&
           key !== 'subagentModel' &&
-          key !== 'subagentEffort',
+          key !== 'subagentEffort' &&
+          key !== 'browser',
       ),
     ) as JsonValue,
     path,
@@ -3789,6 +3816,7 @@ function snapshotSessionAgent(
     ...(fixed.permissions === undefined
       ? {}
       : { permissions: livePermissions(fixed.permissions) }),
+    ...(agent.browser === undefined ? {} : { browser: snapshotFastMode(agent.browser, `${path}.browser`) }),
     model: snapshotTuningSelection(agent.model, `${path}.model`),
     effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
     ...(agent.fastMode === undefined
@@ -3813,7 +3841,7 @@ function snapshotSessionAgent(
   };
 }
 
-function fixedAgent(agent: SessionAgent): Omit<SessionAgent, TuningKey> {
+function fixedAgent(agent: SessionAgent): Omit<SessionAgent, TuningKey | 'browser'> {
   return {
     adapter: agent.adapter,
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
@@ -3833,6 +3861,7 @@ function callSettings(
   return {
     model: tuning.model,
     effort: tuning.effort,
+    browser: agent.browser ?? false,
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
     ...(tuning.subagentModel === undefined
       ? {}
@@ -3843,6 +3872,10 @@ function callSettings(
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
     ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
   };
+}
+
+function controlCallSettings(agent: SessionAgent): AgentCallSettings {
+  return { ...callSettings(agent), browser: false, mcpServers: {} };
 }
 
 function promptIdentity(binding: EffectivePlayerBinding): string {
@@ -4421,6 +4454,17 @@ export function createPlaybookCaptainShell(
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
   const unresolvedEffectSettlement = deps.unresolvedEffectSettlement;
   const continuity = deps.continuity;
+  const resolveAttachments = deps.resolveAttachments;
+  const beginPreparationMedia = deps.beginPreparationMedia;
+  const onTurnAttachments = deps.onTurnAttachments;
+  let nextTurnAttachments: readonly SessionAssetRef[] = [];
+  let pendingAttachments: readonly SessionAssetRef[] = [];
+  const mergeAttachments = (...groups: readonly (readonly SessionAssetRef[])[]) => [...new Map(groups.flat().map((reference) => [reference.assetId, reference])).values()];
+  const attachmentPaths = async (references: readonly SessionAssetRef[] | undefined, signal: AbortSignal) => {
+    if (!references?.length) return undefined;
+    if (!resolveAttachments) throw new Error('The session host cannot materialize required attachments');
+    return resolveAttachments(references, signal);
+  };
   const abortPreparation = deps.abortPreparation;
   let pendingHostCapabilities = deps.hostCapabilities;
   let currentEffectLedger = () => emptyPlaybookEffectLedger();
@@ -4879,6 +4923,7 @@ export function createPlaybookCaptainShell(
             'parentCallId',
             'request',
             'inputs',
+            'attachments',
             'options',
             'roleBindings',
             'runtime',
@@ -5028,6 +5073,7 @@ export function createPlaybookCaptainShell(
           ...(parentCallId === undefined ? {} : { parentCallId }),
           ...(frame.request === undefined ? {} : { request: frame.request as string }),
           ...(frame.inputs === undefined ? {} : { inputs: frame.inputs as string[] }),
+          ...(frame.attachments === undefined ? {} : { attachments: validateAssetRefs(frame.attachments) }),
           options,
           roleBindings,
           runtime,
@@ -5527,15 +5573,21 @@ export function createPlaybookCaptainShell(
     prompt: string,
     options: Parameters<CaptainContext['callCaptain']>[1],
     signal: AbortSignal,
+    media?: { readonly attachments?: readonly SessionAssetRef[]; readonly preparation?: true },
   ): ReturnType<CaptainContext['callCaptain']> => {
     const queued = captainQueue.add(async () => {
       signal.throwIfAborted();
-      const result = await trackHostCall(
-        frame,
-        context.callCaptain(prompt, options),
-      );
+      const attachments = media?.attachments?.length ? await attachmentPaths(media.attachments, signal) : undefined;
       signal.throwIfAborted();
-      return result;
+      const endMedia = media?.preparation ? beginPreparationMedia?.(frame.sessionId) : undefined;
+      try {
+        const result = await trackHostCall(
+          frame,
+          context.callCaptain(prompt, { ...options, ...(attachments === undefined ? {} : { attachments }) }),
+        );
+        signal.throwIfAborted();
+        return result;
+      } finally { endMedia?.(); }
     });
     return trackHostCall(frame, queued);
   };
@@ -5621,10 +5673,18 @@ export function createPlaybookCaptainShell(
       !Number.isSafeInteger(trace.turnId) ||
       (trace.turnId as number) <= 0 ||
       !Number.isSafeInteger(trace.sequence) ||
-      (trace.sequence as number) <= 0 ||
-      summary === undefined ||
-      !summaryIncludes(frame)
+      (trace.sequence as number) <= 0
     ) {
+      return;
+    }
+    if (trace.type === 'player.call.finished') {
+      const call = payloadRecord(trace.payload);
+      if (typeof trace.callId === 'string' && call?.status === 'ok' &&
+          typeof call.roleId === 'string' && typeof call.playerId === 'string' &&
+          frame.playerBindings.get(call.roleId)?.playerId === call.playerId &&
+          typeof call.stateId === 'string' && typeof call.finalText === 'string') {
+        turn.workerCalls.set(`${frame.sessionId}:${trace.callId}`, { frame, callId: trace.callId, roleId: call.roleId, playerId: call.playerId, stateId: call.stateId, finalText: call.finalText });
+      }
       return;
     }
     if (trace.type !== 'outcome.accepted') return;
@@ -5644,6 +5704,21 @@ export function createPlaybookCaptainShell(
     ) {
       return;
     }
+    const ledger = currentEffectLedger();
+    const previous = turn.progressBase?.effectLedger;
+    for (const call of turn.workerCalls.values()) {
+      if (call.frame !== frame || call.stateId !== receipt.source) continue;
+      const boundary = [...ledger.boundaries].reverse().find((entry) =>
+        entry.playbookId === frame.entry.id &&
+        entry.runtimeSessionId === (frame.effectOwnerSessionId ?? frame.sessionId) &&
+        entry.callId === call.callId && entry.roleId === call.roleId &&
+        entry.sourceStateId === call.stateId && entry.finalText === call.finalText &&
+        !isDeepStrictEqual(entry, previous?.boundaries[entry.sequence - 1]));
+      if (!boundary || turn.workerReports.has(boundary.boundaryId)) continue;
+      const report = workerReportExcerpt(boundary, call.playerId, receipt.acceptedOutcome);
+      if (report !== undefined) turn.workerReports.set(boundary.boundaryId, report);
+    }
+    if (summary === undefined || !summaryIncludes(frame)) return;
     const traceKey = `${frame.sessionId}:${trace.sequence}`;
     if (summary.acceptedOutcomeTraceKeys.has(traceKey)) return;
     summary.acceptedOutcomeTraceKeys.add(traceKey);
@@ -5671,8 +5746,28 @@ export function createPlaybookCaptainShell(
   const createPorts = (frame: EngagementFrame): PlaybookPorts => ({
     ...(recordProgress === undefined ? {} : { recordStep: async (step: PlaybookStepRecord, position?: PlaybookRuntimeSnapshot) => {
       journalledFrames.add(frame);
+      const turn = activeTurn;
+      if (step.kind === 'player' && step.result === undefined) {
+        turn?.workerStepStarts.set(step.id, new Set(turn.workerCalls.keys()));
+      }
+      let workerEvidence: { boundaryId: string; playerId: string } | undefined;
+      const guard = payloadRecord(step.result)?.guard;
+      const before = turn?.workerStepStarts.get(step.id);
+      if (step.kind === 'player' && typeof guard === 'string' && before !== undefined && turn) {
+        const candidates = [...turn.workerCalls.entries()].flatMap(([key, call]) => {
+          if (before.has(key) || call.frame !== frame || call.stateId !== step.stateId) return [];
+          return currentEffectLedger().boundaries.filter((boundary) =>
+            boundary.playbookId === frame.entry.id && boundary.sourceStateId === step.stateId &&
+            boundary.runtimeSessionId === (frame.effectOwnerSessionId ?? frame.sessionId) &&
+            boundary.callId === call.callId && boundary.roleId === call.roleId && boundary.finalText === call.finalText &&
+            !isDeepStrictEqual(boundary, turn.progressBase?.effectLedger.boundaries[boundary.sequence - 1]) &&
+            workerReportExcerpt(boundary, call.playerId, guard) !== undefined
+          ).map((boundary) => ({ boundaryId: boundary.boundaryId, playerId: call.playerId }));
+        });
+        if (candidates.length === 1) workerEvidence = candidates[0];
+      }
       await saveProgress(step.result === undefined ? { frame, position } : undefined,
-        { ...step, runtimeSessionId: frame.sessionId, playbookId: frame.entry.id });
+        { ...step, runtimeSessionId: frame.sessionId, playbookId: frame.entry.id, ...(workerEvidence === undefined ? {} : { workerEvidence }) });
     } }),
     callPlayer: async (roleId, prompt, signal, options) => {
       admitHostBoundary();
@@ -5705,6 +5800,7 @@ export function createPlaybookCaptainShell(
         );
       }
       const settings = callSettings(binding.agent, binding);
+      const attachments = await attachmentPaths(frame.attachments, signal);
       const calling: PlayerTransaction = {
         phase: 'calling',
         frame,
@@ -5731,7 +5827,7 @@ export function createPlaybookCaptainShell(
             const raw = await trackHostCall(
               frame,
               classifySettingsCall(() =>
-                context.callPlayer(binding.playerId, resume === false ? options.freshPrompt ?? prompt : prompt, { resume, settings }),
+                context.callPlayer(binding.playerId, resume === false ? options.freshPrompt ?? prompt : prompt, { resume, settings, ...(attachments === undefined ? {} : { attachments }) }),
               ),
             );
             hostResolved = true;
@@ -5862,9 +5958,11 @@ export function createPlaybookCaptainShell(
         {
           visibility: options.visibility,
           resume: options.resume,
+          settings: options.allowedTools?.length === 0 ? controlCallSettings(captainAgent!) : callSettings(captainAgent!),
           ...forwardedToolOptions(options.allowedTools, captainAdapter),
         },
         signal,
+        { attachments: options.allowedTools?.length === 0 ? undefined : frame.attachments },
       );
       const output = {
         status: result.status,
@@ -5886,6 +5984,7 @@ export function createPlaybookCaptainShell(
         activeContext,
         hiddenJudgeEnvelope(prompt),
         {
+          settings: controlCallSettings(captainAgent!),
           visibility: 'hidden',
           resume: false,
           ...controlCallToolOptions(captainAdapter),
@@ -6049,6 +6148,7 @@ export function createPlaybookCaptainShell(
       runtime,
       sessionId,
       rootSessionId: parent?.frame.rootSessionId ?? sessionId,
+      ...((parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn?.attachments)?.length ? { attachments: [...(parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn!.attachments)] } : {}),
       depth: parent ? parent.frame.depth + 1 : 0,
       playerBindings,
       ...(parent ? { parent } : {}),
@@ -6072,12 +6172,14 @@ export function createPlaybookCaptainShell(
       enablement,
       runtime,
       sessionId: snapshot.sessionId,
+      effectOwnerSessionId: snapshot.runtime.retainedEffectSourceSessionId ?? snapshot.sessionId,
       rootSessionId: snapshot.rootSessionId,
       depth: snapshot.depth,
       playerBindings,
       ...(parent ? { parent } : {}),
       ...(snapshot.request === undefined ? {} : { request: snapshot.request }),
       ...(snapshot.inputs === undefined ? {} : { inputs: [...snapshot.inputs] }),
+      ...(snapshot.attachments === undefined ? {} : { attachments: [...snapshot.attachments] }),
       state: snapshot.runtime.state,
       inFlightHostCalls: new Set(),
     };
@@ -6384,6 +6486,7 @@ export function createPlaybookCaptainShell(
       } finally {
         if (leafFrame() === frame) {
           frames.pop();
+          if (!frame.parent) pendingAttachments = [];
           if (frame.parent) {
             pendingChildParents.delete(frame.parent.frame);
           }
@@ -7899,11 +8002,11 @@ export function createPlaybookCaptainShell(
       context.signal.throwIfAborted();
       attempt.providerBoundaryEntered = true;
       const result = await classifySettingsCall(() =>
-        context.callCaptain(prompt, {
+        context.callCaptain(pendingAttachments.length || activeTurn?.attachments.length || activeTurn?.evidence?.length || leafFrame()?.attachments?.length ? `${prompt}\n\nAttachment context (metadata only; do not claim to have viewed these bytes): ${JSON.stringify({ current: activeTurn?.attachments ?? [], pending: pendingAttachments, engagement: leafFrame()?.attachments ?? [], evidence: activeTurn?.evidence ?? [] })}` : prompt, {
           visibility: 'hidden',
           resume,
           ...controlCallToolOptions(captainAdapter),
-          settings: callSettings(captainAgent!),
+          settings: controlCallSettings(captainAgent!),
         }),
       );
       context.signal.throwIfAborted();
@@ -8121,6 +8224,9 @@ export function createPlaybookCaptainShell(
             : [labeledBlock('ControlView digest', controlViewDigest())]),
           ...(kind === 'decision'
             ? [labeledBlock('Catalog digest', catalogDigest())]
+            : []),
+          ...(kind === 'closingReply' && turn?.workerReports.size
+            ? [workerReportBlock([...turn.workerReports.values()])!]
             : []),
           ...(kind === 'closingReply' && turn?.report
             ? [
@@ -8506,6 +8612,7 @@ export function createPlaybookCaptainShell(
         enablement,
         runtime: offer.runtimes[index]!,
         sessionId: targetSessionIds[index]!,
+        effectOwnerSessionId: sourceFrame.runtime.retainedEffectSourceSessionId ?? sourceFrame.sessionId,
         rootSessionId: targetRootSessionId,
         depth: index,
         playerBindings: makePlayerBindings(enablement),
@@ -8514,6 +8621,7 @@ export function createPlaybookCaptainShell(
           : {}),
         ...(sourceFrame.request === undefined ? {} : { request: sourceFrame.request }),
         ...(sourceFrame.inputs === undefined ? {} : { inputs: [...sourceFrame.inputs] }),
+        ...(sourceFrame.attachments === undefined ? {} : { attachments: [...sourceFrame.attachments] }),
         state: sourceFrame.runtime.state,
         inFlightHostCalls: new Set(),
       });
@@ -9177,6 +9285,11 @@ export function createPlaybookCaptainShell(
           );
         }
       }
+      const selectedIds = selection.attachmentIds;
+      const available = new Map(mergeAttachments(pendingAttachments, turn.attachments, leafFrame()?.attachments ?? []).map((reference) => [reference.assetId, reference]));
+      if (selectedIds?.some((id) => !available.has(id as SessionAssetRef['assetId'])) || (selectedIds && new Set(selectedIds).size !== selectedIds.length)) return rejectSelection(selection, 'the request selects unavailable attachment evidence');
+      turn.selectedAttachments = selectedIds === undefined ? turn.attachments : selectedIds.map((id) => available.get(id as SessionAssetRef['assetId'])!);
+      pendingAttachments = [];
       turn.settled = true;
       journalAction({
         action: selection.action,
@@ -9324,7 +9437,7 @@ export function createPlaybookCaptainShell(
             `Later Boss input (context only): ${JSON.stringify(laterInputs)}`,
             `Existing instructions: ${JSON.stringify(instructions)}`,
             `Pending questions (quoted evidence): ${JSON.stringify(before.pendingQuestions.map(({ question }) => question))}`,
-          ].join('\n')), { visibility: 'hidden', resume: false, ...controlCallToolOptions(captainAdapter), settings: callSettings(captainAgent!) }, signal);
+          ].join('\n')), { visibility: 'hidden', resume: false, ...controlCallToolOptions(captainAdapter), settings: controlCallSettings(captainAgent!) }, signal);
           const answer = result.status === 'ok' ? controlReplyJson(result.finalText) : undefined;
           const index = answer && typeof answer === 'object' && !Array.isArray(answer) && Object.keys(answer).join(',') === 'instructionIndex'
             ? (answer as { instructionIndex: unknown }).instructionIndex : undefined;
@@ -9383,8 +9496,9 @@ export function createPlaybookCaptainShell(
           claim = await capability.acquire({ signal: preparationSignal }) as NonNullable<typeof claim>;
           await claim.assertOwner();
           const result = await runEffect(() => callCaptainQueued(
-            leaf, context, preparationPrompt,
-            { visibility: 'hidden', resume: false, settings: callSettings(captainAgent!) }, preparationSignal,
+              leaf, context, preparationPrompt,
+              { visibility: 'hidden', resume: false, settings: callSettings(captainAgent!) }, preparationSignal,
+              { attachments: leaf.attachments, preparation: true },
           ));
           preparationSignal.throwIfAborted();
           await claim.assertOwner();
@@ -9429,6 +9543,11 @@ export function createPlaybookCaptainShell(
     }
 
     if (selection.action === 'deliver') {
+      const available = new Map(mergeAttachments(pendingAttachments, turn.attachments, leaf.attachments ?? []).map((reference) => [reference.assetId, reference]));
+      if (selection.attachmentIds?.some((id) => !available.has(id as SessionAssetRef['assetId'])) || (selection.attachmentIds && new Set(selection.attachmentIds).size !== selection.attachmentIds.length)) return rejectSelection(selection, 'the request selects unavailable attachment evidence');
+      const selected = selection.attachmentIds === undefined ? turn.attachments : selection.attachmentIds.map((id) => available.get(id as SessionAssetRef['assetId'])!);
+      const nextAttachments = mergeAttachments(leaf.attachments ?? [], selected);
+      if (nextAttachments.length) leaf.attachments = nextAttachments;
       // CAPTAIN-8: delivery carries text only, and the shell is authoritative
       // for that text — any text carried on the selection is ignored.
       turn.settled = true;
@@ -10077,6 +10196,7 @@ export function createPlaybookCaptainShell(
             : {}),
           ...(frame.request === undefined ? {} : { request: frame.request }),
           ...(frame.inputs === undefined ? {} : { inputs: [...frame.inputs] }),
+          ...(frame.attachments === undefined ? {} : { attachments: [...frame.attachments] }),
           options: frame.enablement.options,
           roleBindings: Object.fromEntries(
             [...frame.playerBindings].map(([role, binding]) => [
@@ -10345,6 +10465,7 @@ export function createPlaybookCaptainShell(
         issuedSessionIds: [...issuedSessionIds],
         sequences: { turn: turnSequence, journal: journalSeq },
         journal,
+        ...(pendingAttachments.length ? { pendingAttachments } : {}),
         ...(lastAction === undefined ? {} : { lastAction }),
         ...(lastSettlementStatus === undefined
           ? {}
@@ -10683,6 +10804,7 @@ export function createPlaybookCaptainShell(
       }
       for (const id of snapshot.issuedSessionIds) issuedSessionIds.add(id);
       journal.push(...snapshot.journal);
+      pendingAttachments = [...(snapshot.pendingAttachments ?? [])];
       journalSeq = snapshot.sequences.journal;
       turnSequence = snapshot.sequences.turn;
       conversation = snapshot.captain.conversation;
@@ -10841,8 +10963,27 @@ export function createPlaybookCaptainShell(
     submitShellAction: selectShellAction,
     selectInterruptedReport(input, report) {
       if (activeTurn) throw new Error('A Captain turn is already active');
-      if (!input.trim() || !report.text.trim()) throw new Error('Interruption report requires its recorded input and explanation');
+      if ((!input.trim() && nextTurnAttachments.length === 0) || !report.text.trim()) throw new Error('Interruption report requires its recorded input and explanation');
       pendingHostSelection = { kind: 'report', text: input, report };
+    },
+
+    recordMediaEvidence(reference, runtimeSessionId) {
+      const asset = validateAssetRef(reference);
+      if (!activeTurn) throw new Error('Media evidence arrived outside an active turn');
+      activeTurn.evidence = mergeAttachments(activeTurn.evidence ?? [], [asset]);
+      const producingIndex = frames.findIndex((candidate) => candidate.sessionId === runtimeSessionId);
+      // Observed output belongs to this engagement's reasoning context: a
+      // resumed parent may inspect its child's figure. Boss input additions
+      // still target only the addressed leaf, and a new root inherits none.
+      for (const frame of frames.slice(0, producingIndex + 1)) {
+        frame.attachments = mergeAttachments(frame.attachments ?? [], [asset]);
+      }
+    },
+
+    setTurnAttachments(references) {
+      if (activeTurn || activeTurnHostCalls) throw new Error('A Captain turn is already active');
+      nextTurnAttachments = validateAssetRefs(references);
+      onTurnAttachments?.(nextTurnAttachments);
     },
 
     async handleBossTurn(
@@ -10870,7 +11011,9 @@ export function createPlaybookCaptainShell(
       // telemetry (CAPTAIN-7).
       retentionSettlementReady = false;
       abandonmentSettlementUnsafe = false;
-      if (turn.prompt.trim().length === 0) return;
+      const attachments = nextTurnAttachments;
+      nextTurnAttachments = [];
+      if (turn.prompt.trim().length === 0 && attachments.length === 0) return;
       const progressBase = exportShellSnapshot();
       settledTurnUnresolvedEffects = undefined;
       retainedGenerationInstallationClosed = true;
@@ -10900,6 +11043,10 @@ export function createPlaybookCaptainShell(
       const parsed =
         decided === undefined ? resolveCommandTurn(turn.prompt) : undefined;
       activeTurn = {
+        attachments,
+        workerReports: new Map(),
+        workerStepStarts: new Map(),
+        workerCalls: new Map(),
         appliedActionCount: 0,
         stoppedFrames: new Set<string>(),
         ...(progressBase === undefined ? {} : { progressBase }),
@@ -10932,13 +11079,19 @@ export function createPlaybookCaptainShell(
         }
       }
       decisionCall = undefined;
-      appendJournal('boss', turn.prompt);
+      appendJournal('boss', attachments.length ? { text: turn.prompt, attachments } as unknown as JsonValue : turn.prompt);
+      pendingAttachments = mergeAttachments(pendingAttachments, attachments);
       try {
         await drainRetiredRetainedRuntimes();
         await prepareRetainedGenerationOffers();
         if (activeTurn.interruptedReport) {
           markConversationCatchUp();
           await settleSelection({ action: 'respond', text: activeTurn.interruptedReport.text }, context.signal);
+          return;
+        }
+        if (!turn.prompt.trim() && attachments.length) {
+          markConversationCatchUp();
+          await settleSelection({ action: 'respond', text: 'What would you like me to do with the attached material?' }, context.signal);
           return;
         }
         const result = await captainRuntime.handleBossInput({

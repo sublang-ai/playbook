@@ -8,6 +8,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -50,6 +51,13 @@ interface FixtureShape {
   readonly rootPermissionPolicy?: string;
   readonly settingsInstruction?: string;
   readonly settingsPermissions?: string;
+  readonly settingsBrowser?: string;
+  readonly settingsMcpServers?: string;
+  readonly rootAttachment?: string;
+  readonly rootMcpServerConfig?: string;
+  readonly rootMcpServers?: string;
+  readonly playerAttachments?: string;
+  readonly captainAttachments?: string;
   readonly playerSettings?: string;
   readonly captainSettings?: string;
   readonly playerResume?: string;
@@ -113,6 +121,22 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     }`,
     settingsInstruction = 'readonly instruction?: string;',
     settingsPermissions = 'readonly permissions?: PermissionPolicy;',
+    settingsBrowser = 'readonly browser?: boolean;',
+    settingsMcpServers = 'readonly mcpServers?: McpServers;',
+    rootAttachment = 'export interface Attachment { readonly path: string; readonly mimeType?: string; }',
+    rootMcpServerConfig = `export type McpServerConfig = {
+      readonly type: 'stdio';
+      readonly command: string;
+      readonly args?: readonly string[];
+      readonly env?: Readonly<Record<string, string>>;
+    } | {
+      readonly type: 'http';
+      readonly url: string;
+      readonly headers?: Readonly<Record<string, string>>;
+    };`,
+    rootMcpServers = 'export type McpServers = Readonly<Record<string, McpServerConfig>>;',
+    playerAttachments = 'readonly attachments?: readonly Attachment[];',
+    captainAttachments = 'readonly attachments?: readonly Attachment[];',
     playerSettings = 'readonly settings?: AgentCallSettings;',
     captainSettings = 'readonly settings?: AgentCallSettings;',
     playerResume = 'readonly resume?: string | false;',
@@ -218,7 +242,7 @@ export function assertSubagentModelSupported(agent, path = 'subagentModel') {
   );
   write(
     join(packageRoot, 'dist', 'index.d.ts'),
-    `export type { Effort, PermissionPolicy } from './app/tmux-play/contract.js';
+    `export type { Effort, PermissionPolicy, Attachment, McpServerConfig, McpServers } from './app/tmux-play/contract.js';
 export type AgentType = 'claude-code' | 'codex' | 'gemini' | 'kimi' | 'opencode';
 ${fastModeAssertion}
 ${subagentModelAssertion}
@@ -303,6 +327,9 @@ ${
 ${rootPermissionPolicy}
 ${rootEffort}
 ${tuningSelection}
+${rootAttachment}
+${rootMcpServerConfig}
+${rootMcpServers}
 export interface AgentCallSettings {
   ${settingsModel}
   ${settingsEffort}
@@ -311,6 +338,8 @@ export interface AgentCallSettings {
   ${settingsSubagentEffort}
   ${settingsInstruction}
   ${settingsPermissions}
+  ${settingsBrowser}
+  ${settingsMcpServers}
 }
 ${settingsError}
 ${settingsPredicate}
@@ -319,10 +348,12 @@ export interface CallCaptainOptions {
   ${captainResume}
   ${captainAllowedTools}
   ${captainSettings}
+  ${captainAttachments}
 }
 export interface CallPlayerOptions {
   ${playerResume}
   ${playerSettings}
+  ${playerAttachments}
 }
 export interface Captain {
     ${prepareDispose}
@@ -411,6 +442,9 @@ ${runManagedSignature}
   subagentEffort: unknown;
   instruction: unknown;
   permissions: unknown;
+  attachments: unknown;
+  browser: unknown;
+  mcpServers: unknown;
   signal: unknown;
   beforeNativeAttach: unknown;
   attach: unknown;
@@ -447,6 +481,9 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'subagentEffort',
   'instruction',
   'permissions',
+  'attachments',
+  'browser',
+  'mcpServers',
   'AgentCallSettingsError',
   'isAgentCallSettingsError',
   'assertFastModeSupported',
@@ -504,6 +541,8 @@ describe('the cligent release-capability guard', () => {
       'CallCaptainOptions.resume',
       'CallCaptainOptions.allowedTools',
       'CallCaptainOptions.settings',
+      'CallPlayerOptions.attachments',
+      'CallCaptainOptions.attachments',
       'AgentCallSettings.model',
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
@@ -511,6 +550,8 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.subagentEffort',
       'AgentCallSettings.instruction',
       'AgentCallSettings.permissions',
+      'AgentCallSettings.browser',
+      'AgentCallSettings.mcpServers',
       'AgentCallSettingsError',
       'isAgentCallSettingsError',
       'assertFastModeSupported',
@@ -543,6 +584,58 @@ describe('the cligent release-capability guard', () => {
   });
 
   it.each([
+    ...(['CallPlayerOptions', 'CallCaptainOptions'] as const).flatMap((owner) =>
+      [
+        ['absent', ''],
+        ['required', 'readonly attachments: readonly Attachment[];'],
+        ['mutable array', 'readonly attachments?: Attachment[];'],
+        ['narrowed', 'readonly attachments?: readonly [];'],
+        ['widened', 'readonly attachments?: readonly unknown[];'],
+      ].map(([kind, declaration]) => [
+        `${kind} ${owner} attachments`,
+        { [owner === 'CallPlayerOptions' ? 'playerAttachments' : 'captainAttachments']: declaration },
+        `${owner}.attachments`,
+      ]),
+    ),
+    ...[
+      ['absent', ''],
+      ['required', 'readonly browser: boolean;'],
+      ['narrowed', 'readonly browser?: true;'],
+      ['widened', 'readonly browser?: boolean | string;'],
+    ].map(([kind, declaration]) => [
+      `${kind} complete browser setting`,
+      { settingsBrowser: declaration },
+      'AgentCallSettings.browser',
+    ]),
+    ...[
+      ['absent', ''],
+      ['required', 'readonly mcpServers: McpServers;'],
+      ['narrowed', "readonly mcpServers?: Readonly<Record<string, Extract<McpServerConfig, { type: 'stdio' }>>>;"],
+      ['widened', 'readonly mcpServers?: Readonly<Record<string, unknown>>;'],
+    ].map(([kind, declaration]) => [
+      `${kind} complete MCP setting`,
+      { settingsMcpServers: declaration },
+      'AgentCallSettings.mcpServers',
+    ]),
+    ...[
+      ['absent path', 'export interface Attachment { readonly mimeType?: string; }'],
+      ['required MIME', 'export interface Attachment { readonly path: string; readonly mimeType: string; }'],
+      ['narrowed MIME', "export interface Attachment { readonly path: string; readonly mimeType?: 'image/png'; }"],
+    ].map(([kind, declaration]) => [
+      `${kind} public attachment shape`,
+      { rootAttachment: declaration },
+      'CallPlayerOptions.attachments',
+    ]),
+    [
+      'narrowed public MCP transport',
+      { rootMcpServerConfig: "export type McpServerConfig = { readonly type: 'stdio'; readonly command: string; readonly args?: readonly string[]; readonly env?: Readonly<Record<string, string>> };" },
+      'AgentCallSettings.mcpServers',
+    ],
+    [
+      'narrowed public MCP map',
+      { rootMcpServers: "export type McpServers = Readonly<Record<string, Extract<McpServerConfig, { type: 'stdio' }>>>;" },
+      'AgentCallSettings.mcpServers',
+    ],
     ...(['CaptainRunResult', 'PlayerRunResult'] as const).flatMap((owner) =>
       [
         ['absent', ''],
@@ -1034,7 +1127,10 @@ describe('the cligent release-capability guard', () => {
     ],
   ] as const)(
     'fails when the fixture loses %s',
-    (_name, shape, expectedCapability) => {
+    async (_name, shape, expectedCapability) => {
+      // Each compiler probe is synchronous; yield between rows so the larger
+      // matrix cannot starve Vitest's worker RPC acknowledgements.
+      await setImmediate();
       const root = scratch();
       const packageRoot = fixtureCligent(root, shape);
       const result = check(packageRoot, root);

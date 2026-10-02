@@ -647,3 +647,43 @@ describe('shared portable session lifecycle', () => {
  });
 
 });
+
+it('checkpoints asset-only accepted input, exports its exact prefix and preserves independent copied bundles (session-storage-20)', async () => {
+ const {root,store,id,lease,file,stream}=await fixture();
+ const bytes=Buffer.from('portable visual evidence');
+ const reference=await lease.importAsset({bytes,mimeType:'image/png',name:'evidence.png'});
+ const attemptId=randomUUID();
+ const accepted=await lease.beginTurn({input:'',attachments:[reference],attemptId,attemptedExecutionProjection:executionProjection()});
+ expect(accepted.uncertain).toMatchObject({input:'',attachments:[reference]});
+ await lease.append({type:'turn_started',timestamp:1,turnId:1,turn:{id:1,prompt:'',attachments:[reference]}});
+ const snapshot:any=shellSnapshot(executionProjection(),1);snapshot.pendingAttachments=[reference];snapshot.journal[0].payload={text:'',attachments:[reference]};
+ await lease.settle({attemptId,snapshot,unresolvedEffects:[]});
+ const manifest=await store.readManifest(id);expect(manifest).toHaveProperty('assets',{version:1,entries:[reference]});
+ const provenReplay=await readFile(stream);await lease.append({type:'later_uncheckpointed',timestamp:2});
+ const bundle=await store.exportBundle(id);
+ expect(Buffer.from(bundle.manifest)).toEqual(await readFile(file));expect(Buffer.from(bundle.replay)).toEqual(provenReplay);
+ expect(bundle.assets).toEqual([{assetId:reference.assetId,path:reference.assetId.slice(7),metadataPath:`${reference.assetId.slice(7)}.json`,byteLength:bytes.length}]);
+ const copied=createSessionStore({sessionsDir:join(root,'copied')});await mkdir(copied.sessionsDir,{mode:0o700});await copied.prepare();
+ await writeFile(join(copied.sessionsDir,`${id}.json`),bundle.manifest,{mode:0o600});
+ await writeFile(join(copied.sessionsDir,`${id}.records.jsonl`),bundle.replay,{mode:0o600});
+ const destination=join(copied.sessionsDir,`${id}.assets`);await mkdir(destination,{mode:0o755});
+ for(const entry of bundle.assets) for(const relative of [entry.path,entry.metadataPath]) await writeFile(join(destination,relative),await readFile(join(store.sessionsDir,`${id}.assets`,relative)),{mode:0o644});
+ await copied.prepare();expect((await copied.validate(id)).resumable).toBe(true);
+ const reader=await copied.openAsset(id,reference);expect(Buffer.from(await reader.read({offset:9,length:6}))).toEqual(bytes.subarray(9,15));await reader.close();
+ await lease.release();await expect(lease.importAsset({bytes,mimeType:'image/png'})).rejects.toThrow();
+ await store.delete(id);expect(Buffer.from(await copied.readAsset(id,reference))).toEqual(bytes);
+ expect((await copied.read(id)).snapshot.pendingAttachments).toEqual([reference]);
+ await copied.delete(id);expect(await readdir(copied.sessionsDir)).not.toContain(`${id}.assets`);
+});
+
+it('refuses undeclared, absent and corrupt session assets without discarding readable history (session-storage-20)', async()=>{
+ const {store,id,lease,file}=await fixture();const reference=await lease.importAsset({bytes:Buffer.from('content'),mimeType:'text/plain'});
+ const attemptId=randomUUID();await lease.beginTurn({input:'read evidence',attachments:[reference],attemptId,attemptedExecutionProjection:executionProjection()});
+ await lease.append({type:'playbook_evidence',timestamp:1,turnId:1,callId:'call',origin:{kind:'player',actorId:'dev.coder'},asset:reference});
+ await lease.settle({attemptId,snapshot:shellSnapshot(executionProjection(),1),unresolvedEffects:[]});await lease.release();
+ const saved=await readFile(file,'utf8');const manifest=JSON.parse(saved);delete manifest.assets;await writeFile(file,JSON.stringify(manifest));
+ expect((await store.validate(id)).reasons.join()).toContain('inventory');await expect(store.exportBundle(id)).rejects.toThrow('inventory');
+ await writeFile(file,saved);const path=join(store.sessionsDir,`${id}.assets`,reference.assetId.slice(7));await writeFile(path,'corrupt');
+ expect((await store.validate(id)).resumable).toBe(false);await expect(store.exportBundle(id)).rejects.toThrow('integrity');
+ await rm(path);expect((await store.validate(id)).resumable).toBe(false);expect((await store.readHistory(id)).entries.some(({record})=>record.type==='playbook_evidence')).toBe(true);
+});

@@ -39,7 +39,7 @@ when the file at the resolved path is absent, the command shall create
 it from the bundled starter generic config, creating parent
 directories as needed, print one stderr line naming the resolved path,
 and then continue with that seeded config.
-The seeded starter config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their explicit public registry modules and
+The seeded starter config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT through their explicit public registry modules and
 carry the default agent lineup defined by
 [[playbook-cli-11](playbook-cli.md#playbook-cli-11)].
 When the file at the resolved path is already present, the command
@@ -66,6 +66,7 @@ Interactive and headless host projections shall preserve that exact id under [[p
 A local role id shall be its source role name lowercased by Unicode case mapping: nonempty, carrying no whitespace or control character, and never the reserved `captain`.
 Every config role key, imported manifest role id [[playbook-1](playbook.md#playbook-1)], and stored catalog role id shall be accepted if and only if it equals its own lowercase form under that rule, which restricts neither script nor alphabet, so `coder`, `编码者`, and `作者` are accepted while `Coder` is refused.
 A scalar `captain` or `players.<player-id>` value shall name an adapter shorthand such as `claude` or `codex`; a full block shall follow the host tmux-play agent-block schema and shall carry its own adapter and default model, subagent model, subagent effort, effort, fast mode, instruction, and permissions as needed ([DR-075](../decisions/075-subagent-model-is-tuning.md), [DR-076](../decisions/076-subagents-delegate-by-default.md)).
+A Captain or player block may carry `browser:boolean` as a mutable execution capability, defaulting off; the launcher shall preserve its effective value in execution projections and complete calls, exclude it from structural identity, and capture it with the next accepted turn so uncertain retry retains the original value.
 A block's `subagentModel` shall be a nonblank model string, the literal `inherit` naming the agent's own model, or `false` selecting the runtime's own order with no delegation directive, and its `subagentEffort` shall be a nonblank effort string the installed cligent loader accepts for the block's adapter and resolved subagent model ([DR-076](../decisions/076-subagents-delegate-by-default.md)).
 Each `playbooks.<id>.roles.<role>` value shall be either a scalar player id or a block containing exactly `player` plus optional `model`, `subagentModel`, `subagentEffort`, `effort`, and `fastMode`; each model, subagent-model, subagent-effort, or effort override shall be a nonempty concrete string — `inherit` naming the agent's own model as a subagent model — or boolean `false` selecting `provider-default`, each `fastMode` override shall be a boolean whose `false` is a literal request rather than a provider-default selection, omission of any override shall inherit the top-level player default, and adapter, instruction, permissions, workspace, and tool settings shall be forbidden in a role binding.
 Every binding shall resolve each model and effort field from its own override or the player default into an explicit concrete-value or provider-default selection and shall carry the effective fast mode, subagent model, and subagent effort when its override or the player default supplies one, so each resumed call can reapply complete tuning rather than inherit another role's provider state.
@@ -287,7 +288,7 @@ allowlist can be enforced
 Each normalized `captain.options.playbooks.<id>` entry shall carry the canonical prepared `from`, normalized effective `command`, exact `roles: Readonly<Record<roleId, { playerId: string; model: TuningSelection; effort: TuningSelection; fastMode?: boolean; subagentModel?: string; subagentEffort?: string }>>`, and an `options` slice built from every non-launcher key of the block; `from`, `command`, and `roles` shall not appear in the option slice.
 `hostCapabilities` shall be a reserved host-owned key and shall be rejected rather than copied into that configured option slice.
 `PermissionPolicy` shall be the exact normalized cligent shape `{ mode?: 'auto' | 'bypass'; fileWrite?: 'allow' | 'ask' | 'deny'; shellExecute?: 'allow' | 'ask' | 'deny'; networkAccess?: 'allow' | 'ask' | 'deny'; writablePaths?: readonly string[] }`.
-The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the normalized top-level default `{ adapter: string; model: TuningSelection; effort: TuningSelection; fastMode?: boolean; subagentModel?: string; subagentEffort?: string; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, a provider-default subagent-model or subagent-effort selection resolves to absence, and each role's independently resolved model, effort, fast mode, subagent model, and subagent effort remain in its own binding; the shell uses the agent envelope plus that binding to form cligent's atomic complete-call settings for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
+The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the normalized top-level default `{ adapter: string; model: TuningSelection; effort: TuningSelection; fastMode?: boolean; subagentModel?: string; subagentEffort?: string; browser?: boolean; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, a provider-default subagent-model or subagent-effort selection resolves to absence, and each role's independently resolved model, effort, fast mode, subagent model, and subagent effort remain in its own binding; the shell uses the agent envelope plus that binding to form cligent's atomic complete-call settings for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
 Where the installed cligent's public capability reports a Captain or player block's adapter as serving a subagent model and that block leaves `subagentModel` unset, the launcher shall resolve the agent's subagent model to `inherit` before cligent normalization, resolve a block's `false` to absence, resolve an adapter serving none to absence, and rewrite no config file ([DR-076](../decisions/076-subagents-delegate-by-default.md)).
 The command shall resolve a scalar `captain` or `players.<player-id>` value as an adapter shorthand and shall normalize a full block as a self-contained tmux-play agent block through the installed cligent loader ([DR-021](../decisions/021-inline-agent-settings.md)).
 Before composing, the command shall reject — with a path-named
@@ -348,8 +349,8 @@ access to `layout.initialVisible`
 
 Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
-config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, and PR with their `playbooks.<id>.from` values set to the matching public registry modules.
-The starter shall define players `dev.coder`, `dev.reviewer`, and `dev.analyst`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)), and BRANCH and PR shall each bind `coder` to that same `dev.coder` with no player added, so the Coder that reads the issue and names the branch makes the commits and then describes them in the pull request ([DR-050](../decisions/050-pull-request-delivery.md)).
+config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT with their `playbooks.<id>.from` values set to the matching public registry modules.
+The starter shall define players `dev.coder`, `dev.reviewer`, `dev.analyst`, and `inspect.inspector`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)), and BRANCH and PR shall each bind `coder` to that same `dev.coder` with no player added, so the Coder that reads the issue and names the branch makes the commits and then describes them in the pull request ([DR-050](../decisions/050-pull-request-delivery.md)). INSPECT shall bind `inspector` to the separate `inspect.inspector` player, preserving inspection conversation isolation from implementation ([DR-077](../decisions/077-portable-assets-and-inspection.md)).
 The seeded lineup shall take one adapter for every seeded agent, chosen when the
 file is written from the adapters the credential check of
 [[playbook-cli-12](playbook-cli.md#playbook-cli-12)] already sees, by this fixed
@@ -362,7 +363,7 @@ order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-ada
 
 - the first ready adapter in that order supplies every seeded agent, so one
   seeded config names one provider;
-- Captain and Coder shall take reasoning effort `high`, Reviewer and Analyst
+- Captain, Coder, and Inspector shall take reasoning effort `high`, Reviewer and Analyst
   `xhigh`, for whichever adapter is chosen;
 - where no listed adapter is ready, the first row shall be seeded and the
   command shall print one stderr line stating that no adapter probed ready and
@@ -372,7 +373,7 @@ order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-ada
   this selection, so writing the file stays synchronous and depends on no
   installed runtime.
 The starter config shall carry no `profiles` map: Captain settings shall be inline under top-level `captain`, player settings shall be inline under top-level `players`, and each playbook shall contain only explicit role bindings ([DR-032](../decisions/032-explicit-roles-session-players.md)).
-Every seeded agent — the Captain and the three players — shall set
+Every seeded agent — the Captain and the four players — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
 codex to on-request + auto_review) without routine in-session approval
@@ -648,7 +649,7 @@ Where any `playbooks.<id>.players` block remains, the command shall reject it be
 #### playbook-cli-73
 
 Where the package publishes the shared session store, `@sublang/playbook/session-store` shall retain the narrow JavaScript named exports `RECORDS_STREAM_VERSION`, `defaultSessionsDir`, and `openSessionStore` alongside the portable lifecycle and validator surface [[session-storage-11](session-storage.md#session-storage-11)], with no default export.
-Its self-contained declaration shall import nothing; the narrow facade shall retain those three values plus `ReplayJsonValue`, `ReplayRecord`, `ReplayStreamEntry`, `ReplayStreamReadOptions`, `ReplayStreamReadResult`, `LeaseReplayStreamReadResult`, `ReplayStreamStatus`, `PlaybookSessionSummary`, `SkippedPlaybookSession`, `PlaybookSessionListResult`, `PlaybookSessionStore`, and `PlaybookSessionLease`, and shall assign them these exact signatures:
+Its declaration closure may import only the shipped dependency-free primitive asset descriptor sibling, requiring no runtime framework, Cligent declaration or Node global types [[session-assets-5](session-assets.md#session-assets-5)]; the narrow facade shall retain those three values plus `ReplayJsonValue`, `ReplayRecord`, `ReplayStreamEntry`, `ReplayStreamReadOptions`, `ReplayStreamReadResult`, `LeaseReplayStreamReadResult`, `ReplayStreamStatus`, `PlaybookSessionSummary`, `SkippedPlaybookSession`, `PlaybookSessionListResult`, `PlaybookSessionStore`, and `PlaybookSessionLease`, and shall retain these baseline signatures alongside the asset lifecycle extension [[session-storage-18](session-storage.md#session-storage-18)]:
 
 ```ts
 export declare const RECORDS_STREAM_VERSION: 1;
@@ -1143,7 +1144,7 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `config/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, DEV, BRANCH, and PR through their matching public registry modules with explicit CODE, REVIEW, DECIDE, DEV, BRANCH, and PR role bindings — BRANCH's and PR's `coder` on `dev.coder` — no `profiles` map, `permissions.mode: auto` on every seeded agent, the notification defaults, and the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup its seeding environment selects:
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT through their matching public registry modules with explicit CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT role bindings — BRANCH's and PR's `coder` on `dev.coder` — no `profiles` map, `permissions.mode: auto` on every seeded agent, the notification defaults, and the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup its seeding environment selects:
 
 | Credentials visible to the seed | Seeded lineup | Notice |
 | --- | --- | --- |

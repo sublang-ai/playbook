@@ -6,7 +6,7 @@
 ## Intent
 
 This package defines the portable session format, local provider hints and lifecycle shared by interactive CLI, headless CLI and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
-A **session bundle** consists of a manifest and the replay stream matching its checkpoint digest; both files are required for portability.
+A **session bundle** consists of a manifest, the replay stream matching its checkpoint digest, and its declared immutable asset files; all are required for portability.
 **Closed** JSON objects permit only the declared fields.
 History requires neither a provider conversation nor an application's project registry.
 
@@ -24,6 +24,7 @@ The session store shall use these locations and files for each session's canonic
 | --- | --- | --- |
 | `<id>.json` | Manifest [[session-storage-2](#session-storage-2)] | Portable |
 | `<id>.records.jsonl` | Replay [[session-storage-3](#session-storage-3)] | Portable |
+| `<id>.assets/` | Immutable content and descriptors [[session-storage-18](#session-storage-18)] | Portable |
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
 
@@ -43,6 +44,7 @@ The store shall encode a manifest as a closed schema-version-7 JSON object with 
 | `sessionId`, `cwd` | Canonical UUID matching the filename; normalized absolute working directory |
 | `createdAt`, `updatedAt` | Canonical ISO UTC timestamps; creation time stays fixed, each forward update has a later time |
 | `replay` | Exactly `{seq,sha256,incomplete}` under the checkpoint rule [[session-storage-4](#session-storage-4)] |
+| `assets` (optional) | Exactly `{version:1,entries}`; unique asset references naming the complete owned immutable assets [[session-storage-18](#session-storage-18)] |
 | `contextSeq` | Positive safe integer no greater than `replay.seq`, naming the applicable context [[session-storage-5](#session-storage-5)]; `null` only in history-only state lacking context |
 | `state: 'settled' \| 'uncertain'` | `structuralProjection`, `lastAppliedExecutionProjection`, `snapshot`, `effectLedger`, `unresolvedEffects`; optional `retainedGenerations` and `settledAbandonment`; `uncertain` present exactly in uncertain state |
 | `state: 'history-only'` | Nonempty string `reason`; no executable recovery fields |
@@ -192,6 +194,23 @@ When a host requests session deletion, the shared store shall acquire provable e
 - unknown recovery versions remain deletable by session ID under the same lease without loading a module;
 - deletion writes no tombstone and never removes another session's files.
 
+### session-storage-18
+
+The session lifecycle shall own one `<sessionId>.assets` directory through the immutable asset facade [[session-assets-1](session-assets.md#session-assets-1)] [[session-assets-2](session-assets.md#session-assets-2)] [[session-assets-3](session-assets.md#session-assets-3)] [[session-assets-4](session-assets.md#session-assets-4)], with imports serialized by the session writer lease and reads available through the shared store.
+Checkpoint publication shall include descriptors for its complete assets, and continuation shall reject a missing or corrupt declared asset or a known input, evidence, snapshot or media reference absent from that inventory.
+An absent assets member shall preserve legacy manifest/replay-only sessions under the coordinated host upgrade rule [[session-storage-2](#session-storage-2)].
+
+### session-storage-19
+
+When exporting a session bundle, the shared store shall return exact manifest bytes, exactly the replay prefix proven by its checkpoint, and verified relative content and descriptor entries for every declared asset, refusing incomplete checkpoints and retrying a concurrently changed manifest within a bounded operation.
+When deleting a session under its management lease, the store shall validate and remove only that session's private asset directory before removing its manifest, without removing copies belonging to another owner.
+
+### session-storage-21
+
+Before session presentation or replay, the host shall use the shared native-event ingestion boundary [[session-assets-9](session-assets.md#session-assets-9)] and report unavailable media when persistence fails, retaining no original large payload in that failure record.
+The host shall promote saved media to one visible `playbook_evidence` record per content digest per genuine player call or explicitly scoped recovery-preparation call [[session-assets-5](session-assets.md#session-assets-5)], preserve its originating call and turn, and supply its reference to the active engagement.
+Hidden decision, report and judge traffic shall produce no visible evidence promotion.
+
 ## Internal Behavior
 
 ### session-storage-13
@@ -199,6 +218,11 @@ When a host requests session deletion, the shared store shall acquire provable e
 The shared lifecycle shall use one version-aware codec for validation, projection, migration and hint attachment across all hosts, preserving unknown versions unchanged and rejecting mismatched recovery mirrors before external effects.
 
 ## Verification
+
+### session-storage-22
+
+When integration tests run working and hidden control calls through the shared session host, they shall verify saved native media, bounded replay payloads, once-per-call visible evidence, explicit preparation scope, and exclusion of hidden control traffic [[session-storage-21](#session-storage-21)].
+
 
 ### session-storage-14
 
@@ -234,6 +258,10 @@ When the integration suite migrates legacy CLI/desktop fixtures and opens their 
 
 - history-only access for unsupported path changes, portable POSIX/Windows recorded paths, and reconciliation for matching native paths [[session-storage-9](#session-storage-9)];
 - safe `0644` desktop-source tightening, refusal of unsafe sources, retained complete unterminated records, preserved original bytes, version/format refusals without repeated lease residue, retry after source/context changes, lease-protected source revalidation, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
+
+### session-storage-20
+
+When integration tests import assets under a real session lease, checkpoint, reopen, export and delete the session, they shall verify complete descriptors, exact replay-prefix export, independent owner copies, and refusal of missing or corrupt bytes without unsafe cleanup [[session-storage-18](#session-storage-18)] [[session-storage-19](#session-storage-19)].
 
 ## References
 

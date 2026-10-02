@@ -29,7 +29,7 @@ Run `playbook` for an interactive tmux UI powered by [cligent](https://github.co
 
 ## Quick start
 
-Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, **DECIDE** for independently proposed and reviewed specification decisions, **DEV** for repository-aware planning of a development request, **BRANCH** for checking out a new branch for a GitHub issue, and **PR** for publishing, checking, and merging that branch through a pull request.
+Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, **DECIDE** for independently proposed and reviewed specification decisions, **DEV** for repository-aware planning of a development request, **BRANCH** for checking out a new branch for a GitHub issue, **PR** for publishing, checking, and merging that branch through a pull request, and **INSPECT** for explaining supplied material or a running interface without changing the repository.
 CODE and DECIDE call REVIEW as a nested playbook; DEV calls CODE, or DECIDE and then CODE, and wraps them in BRANCH and PR when the request names a GitHub issue or asks for a pull request.
 
 The shared starter config selects one adapter for the Captain and all players
@@ -37,7 +37,8 @@ from locally visible credentials: Claude first, then Codex. If neither is
 configured, it seeds Claude and prints a notice. CODE, REVIEW, DECIDE, BRANCH, and PR bind
 their local roles explicitly to `dev.coder` and `dev.reviewer`, so nested and later
 engagements share a conversation only where their bindings name the same
-player ID; DEV's Analyst binds a distinct `dev.analyst` player.
+player ID; DEV's Analyst binds a distinct `dev.analyst` player and INSPECT's
+Inspector binds `inspect.inspector`.
 
 ```sh
 npm install -g @sublang/playbook
@@ -84,6 +85,8 @@ playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 "continue"
 `playbook run` prints the one Boss-visible Captain reply to stdout and operational status to stderr; CODE and DECIDE can complete their nested REVIEW calls there too.
 
 If a step fails or needs preparation before your answer, ask Captain to fix the prerequisite and resume; see [Preparing a stopped step](docs/cli.md#preparing-a-stopped-step).
+
+Use `/inspect` to analyze existing material or explain a running interface. Browser access requires explicitly enabling the Inspector’s [browser capability](docs/configuration.md#browser-capability). Embedded hosts can submit portable attachments and display saved native figures through the [asset and session APIs](docs/embedding.md#attachments-and-captured-evidence).
 
 See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configuring agents](docs/configuration.md) for the shared lineup, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](https://github.com/sublang-ai/playbook/blob/main/CHANGELOG.md) for releases.
 

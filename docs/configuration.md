@@ -102,6 +102,13 @@ players:
     permissions:
       mode: auto # protected auto mode for the Claude Analyst
 
+  inspect.inspector:
+    adapter: claude
+    model: claude-opus-5-5
+    effort: high
+    permissions:
+      mode: auto
+
 playbooks:
   code:
     from: '@sublang/playbook/code/registry'
@@ -138,6 +145,11 @@ playbooks:
     from: '@sublang/playbook/pr/registry'
     roles:
       coder: dev.coder
+
+  inspect:
+    from: '@sublang/playbook/inspect/registry'
+    roles:
+      inspector: inspect.inspector
 ```
 
 The current bundled workflows accept no workflow-specific options.
@@ -261,6 +273,30 @@ Adapter readiness is intentionally light: `claude` is ready with local
 Claude Code auth or `ANTHROPIC_API_KEY`; `codex` with local Codex CLI
 auth or `OPENAI_API_KEY`. A known adapter that is not ready blocks the
 launch and prints the help text.
+
+## Browser capability
+
+A Captain or player agent block may set `browser: true` to make Cligent's managed
+browser tools available to working calls. Existing configurations default to
+false. This is an execution capability: reopening the same settled session with a
+changed value applies it to the next accepted turn. Recovery of an uncertain turn
+uses that attempt's recorded value. Agent permissions remain fixed and retain
+their native precedence.
+
+Ordinary Captain decisions, replies, question checks and judges always receive
+`browser: false` and an empty MCP configuration. Enabling Browser does not turn
+them into working actors. A working player, or bounded recovery preparation when
+needed, can use the capability explicitly configured for its agent. An embedding
+application should use Cligent's capability and browser-preparation APIs before
+enabling its Browser control and report setup failures; Playbook does not invent a
+successful setup or change permissions to make it succeed.
+
+For browser inspection, enable `browser: true` on `players.inspect.inspector`
+and ask `/inspect Open http://localhost:3000, capture a screenshot, and explain
+the navigation.` Keep the application running and give its exact address. The
+Inspector uses actual tool results and native images, asks about missing targets,
+and reports unavailable evidence explicitly. Browser capture supports web pages;
+it does not grant arbitrary operating-system desktop control.
 
 ## Per-launch overlays
 

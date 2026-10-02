@@ -65,6 +65,8 @@ import createDecidePlaybookRuntime, {
   _internal as decideArtifact,
   type PlaybookHostCapabilities as DecidePlaybookHostCapabilities,
 } from '../reference/sdlc/decide.playbook/decide.playbook.js';
+import { inspectMachine } from '../reference/sdlc/inspect.playbook/inspect.fsm.js';
+import { _internal as inspectArtifact } from '../reference/sdlc/inspect.playbook/inspect.playbook.js';
 import { prMachine } from '../reference/sdlc/pr.playbook/pr.fsm.js';
 import { _internal as prArtifact } from '../reference/sdlc/pr.playbook/pr.playbook.js';
 import { reviewMachine } from '../reference/sdlc/review.playbook/review.fsm.js';
@@ -135,6 +137,12 @@ const maintainedArtifactFinalMetadata = [
     artifactPath: 'reference/sdlc/dev.playbook/dev.playbook.ts',
     machine: devMachine,
     unfinishedFinalStateIds: devArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+  {
+    label: 'INSPECT',
+    artifactPath: 'reference/sdlc/inspect.playbook/inspect.playbook.ts',
+    machine: inspectMachine,
+    unfinishedFinalStateIds: inspectArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
   {
     label: 'PR',

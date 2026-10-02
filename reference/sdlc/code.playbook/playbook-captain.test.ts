@@ -102,6 +102,7 @@ const ISOLATED_VISIBLE_CAPTAIN_OPTIONS = {
 } as const;
 
 const DEFAULT_AGENT_SETTINGS = {
+  browser: false,
   model: { kind: 'provider-default' },
   effort: { kind: 'provider-default' },
 } as const;
@@ -110,7 +111,7 @@ const ISOLATED_HIDDEN_CAPTAIN_OPTIONS = {
   visibility: 'hidden',
   resume: false,
   allowedTools: [],
-  settings: DEFAULT_AGENT_SETTINGS,
+  settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
 } as const;
 
 type HandleHook = (
@@ -1454,6 +1455,7 @@ function makeShell(
     unresolvedEffectSettlement?: PlaybookCaptainDeps['unresolvedEffectSettlement'];
     continuity?: PlaybookCaptainDeps['continuity'];
     recordProgress?: PlaybookCaptainDeps['recordProgress'];
+    resolveAttachments?: PlaybookCaptainDeps['resolveAttachments'];
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
@@ -1564,6 +1566,7 @@ function makeShell(
       },
       hostCapabilities,
       ...(opts.recordProgress ? { recordProgress: opts.recordProgress } : {}),
+      ...(opts.resolveAttachments ? { resolveAttachments: opts.resolveAttachments } : {}),
       ...(opts.continuity ? { continuity: opts.continuity } : {}),
       ...(opts.unresolvedEffectSettlement
         ? {
@@ -2350,7 +2353,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
             {
               visibility: 'hidden',
               resume: false,
-              settings: DEFAULT_AGENT_SETTINGS,
+              settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
             },
       );
       expect(
@@ -2864,7 +2867,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       visibility: 'hidden',
       resume: 'conversation-1',
       allowedTools: [],
-      settings: DEFAULT_AGENT_SETTINGS,
+      settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'first task',
@@ -4303,6 +4306,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
         options: {
           resume: false,
           settings: {
+            browser: false,
             model: { kind: 'value', value: 'gpt-5.6-sol' },
             effort: { kind: 'value', value: 'high' },
             fastMode: false,
@@ -4371,16 +4375,20 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
     expect(context.playerCalls.map((call) => call.options?.settings)).toEqual([
       {
+        browser: false,
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'role-subagents',
       },
       {
+        browser: false,
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
       },
     ]);
     expect(context.captainCalls.at(-1)?.options?.settings).toEqual({
+      browser: false,
+      mcpServers: {},
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
       subagentModel: 'captain-subagents',
@@ -4449,18 +4457,22 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
     expect(context.playerCalls.map((call) => call.options?.settings)).toEqual([
       {
+        browser: false,
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'inherit',
         subagentEffort: 'high',
       },
       {
+        browser: false,
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'inherit',
       },
     ]);
     expect(context.captainCalls.at(-1)?.options?.settings).toEqual({
+      browser: false,
+      mcpServers: {},
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
       subagentModel: 'inherit',
@@ -5044,18 +5056,20 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           visibility: 'visible',
           resume: 'captain-resume-token',
           allowedTools: ['Read', 'Search'],
+          settings: DEFAULT_AGENT_SETTINGS,
         },
       },
       {
         prompt: 'unrestricted captain prompt',
         options: {
+          settings: DEFAULT_AGENT_SETTINGS,
           visibility: 'visible',
           resume: false,
         },
       },
     ]);
     expect(nonSummaryCaptainCalls[2]?.options).toEqual(
-      { visibility: 'hidden', resume: false, allowedTools: [] },
+      { visibility: 'hidden', resume: false, allowedTools: [], settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} } },
     );
     expectHiddenJudgeEnvelope(
       nonSummaryCaptainCalls[2]?.prompt,
@@ -5122,7 +5136,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
     expect(judgeCalls(context)).toHaveLength(1);
     expect(judgeCalls(context)[0]?.options).toEqual(
-      { visibility: 'hidden', resume: false, allowedTools: [] },
+      { visibility: 'hidden', resume: false, allowedTools: [], settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} } },
     );
     expectHiddenJudgeEnvelope(judgeCalls(context)[0]?.prompt, runtimePrompt);
     expect(judgeReply).toBe('{"guard":"accepted"}');
@@ -9862,6 +9876,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       options: {
         resume: 'player-retained-token',
         settings: {
+          browser: false,
           model: { kind: 'provider-default' },
           effort: { kind: 'value', value: 'high' },
           fastMode: false,
@@ -9998,6 +10013,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         options: {
           resume: 'player-retained-token',
           settings: {
+            browser: false,
             model: { kind: 'value', value: 'stable-model' },
             effort: { kind: 'value', value: 'high' },
             ...(roleSubagentModel === undefined
@@ -10009,6 +10025,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
         resume: 'conversation-1',
         settings: {
+          browser: false,
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'captain-subagents-b',
@@ -10136,6 +10153,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         options: {
           resume: 'player-retained-token',
           settings: {
+            browser: false,
             model: { kind: 'value', value: 'stable-model' },
             effort: { kind: 'value', value: 'high' },
             subagentModel: 'inherit',
@@ -10148,6 +10166,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
         resume: 'conversation-1',
         settings: {
+          browser: false,
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'inherit',
@@ -15891,8 +15910,10 @@ describe('portable provider continuity (session-storage-8)', () => {
       });
       registry.entry.requiredRoleIds = ['coder'];
       const log = continuityLog();
-      const shell = makeShell(registry, { continuity: log.continuity });
+      const attachment = { assetId: `sha256:${'b'.repeat(64)}` as const, byteLength: 4, mimeType: 'image/png' };
+      const shell = makeShell(registry, { continuity: log.continuity, resolveAttachments: async references => references.map(reference => ({path: `/owned/${reference.assetId.slice(7)}`,mimeType: reference.mimeType})) });
       await shell.init!(stubSession().session);
+      shell.setTurnAttachments([attachment]);
       const seed = stubContext();
       let participantId = '';
       seed.context.callPlayer = async (playerId, prompt) => {
@@ -15921,6 +15942,8 @@ describe('portable provider continuity (session-storage-8)', () => {
         expect(calls[0]?.prompt).toBe(compact);
         expect(calls[1]?.prompt).toBe(complete);
         expect(calls[1]?.options?.settings).toEqual(calls[0]?.options?.settings);
+        expect(calls[1]?.options?.attachments).toEqual(calls[0]?.options?.attachments);
+        expect(calls[0]?.options?.attachments).toEqual([{path:`/owned/${attachment.assetId.slice(7)}`,mimeType:'image/png'}]);
       }
       expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual(['seed', 'continue']);
       const participantEvents = log.events.filter((event) => event[1] === participantId);
@@ -15938,4 +15961,98 @@ describe('portable provider continuity (session-storage-8)', () => {
       await shell.dispose?.();
     },
   );
+});
+
+describe('attachment scope across Captain engagement boundaries (playbook-captain-77)', () => {
+  const asset = (digit: string) => ({ assetId: `sha256:${digit.repeat(64)}` as const, byteLength: 4, mimeType: 'image/png' });
+  const materialize: NonNullable<PlaybookCaptainDeps['resolveAttachments']> = async references => references.map(reference => ({ path: `/owned/${reference.assetId.slice(7)}`, mimeType: reference.mimeType }));
+  const paths = (digits: string[]) => digits.map(digit => ({ path: `/owned/${digit.repeat(64)}`, mimeType: 'image/png' }));
+
+  it('selects pending assets explicitly, defaults to this turn, rejects unavailable IDs, and clears scope on dismissal', async () => {
+    const registry = fakeCodeEntry(async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
+      await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false);
+    });
+    registry.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell(registry, { resolveAttachments: materialize });
+    await shell.init!(stubSession().session);
+    try {
+      const blank = stubContext();
+      shell.setTurnAttachments([asset('a')]); await shell.handleBossTurn(turn(''), blank.context);
+      shell.setTurnAttachments([asset('b')]); await shell.handleBossTurn(turn('', 2), blank.context);
+      expect(blank.captainCalls).toHaveLength(0); expect(blank.playerCalls).toHaveLength(0);
+      expect(shell.exportSnapshot()?.pendingAttachments).toEqual([asset('a'), asset('b')]);
+      const started = stubContext();
+      shell.setTurnAttachments([asset('c')]); await shell.handleBossTurn(turn('/code exact task', 3), started.context);
+      expect(started.playerCalls[0]?.prompt).toBe('exact task');
+      expect(started.playerCalls[0]?.options?.attachments).toEqual(paths(['c']));
+      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
+      shell.setTurnAttachments([asset('a')]); await shell.handleBossTurn(turn('', 4), blank.context);
+      const rejected = stubContext([captainJson({ action: 'deliver', attachmentIds: [asset('f').assetId] })]);
+      await shell.handleBossTurn(turn('compare these', 5), rejected.context);
+      expect(rejected.playerCalls).toHaveLength(0); expect(registry.runtimes[0]?.inputs).toHaveLength(1);
+      const delivered = stubContext([captainJson({ action: 'deliver', attachmentIds: [asset('a').assetId] })]);
+      await shell.handleBossTurn(turn('compare these', 6), delivered.context);
+      expect(delivered.playerCalls[0]?.prompt).toBe('compare these');
+      expect(delivered.playerCalls[0]?.options?.attachments).toEqual(paths(['c', 'a']));
+      for (const call of delivered.captainCalls) {
+        expect(call.options?.attachments).toBeUndefined();
+        expect(call.options?.settings).toMatchObject({ browser: false, mcpServers: {} });
+      }
+      shell.setTurnAttachments([asset('b')]); await shell.handleBossTurn(turn('', 7), blank.context);
+      await shell.handleBossTurn(turn('stop', 8), stubContext([captainJson({ action: 'dismiss' })]).context);
+      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
+      const unrelated = stubContext(); await shell.handleBossTurn(turn('/code unrelated', 9), unrelated.context);
+      expect(unrelated.playerCalls[0]?.options?.attachments).toBeUndefined();
+    } finally { await shell.dispose?.(); }
+  });
+
+  it('inherits a detached asset selection in nested work and adds new evidence only to the addressed leaf', async () => {
+    const root = fakeCodeEntry(async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
+      const result = await runtime.ports!.callPlaybook({ callId: 'code:inspect:assets', playbookId: 'inspect', text: input.text }, input.signal);
+      if (result.state !== 'suspended') throw new Error('Expected nested work to remain active');
+      const suspended = suspendedResult({ callId: 'code:inspect:assets', playbookId: 'inspect', childSessionId: result.childSessionId });
+      suspended.state = playbookState('waitingForChild', { tags: ['playbook.suspended'] });
+      runtime.snapshot = runtimeSnapshot('code', suspended.state, { turn: 1, suspendedCall: { callId: 'code:inspect:assets', stateId: 'waitingForChild', playbookId: 'inspect', text: input.text, childSessionId: result.childSessionId, turnId: 1 } });
+      return suspended;
+    }, undefined, undefined, async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
+      await callPlayerAndCommit(runtime, 'coder', 'parent continuation', input.signal, false);
+      return quiescentResult();
+    });
+    root.entry.requiredRoleIds = ['coder'];
+    const child = fakePlaybookEntry('inspect', 'inspect', async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('inspect', playbookState('ready'), {});
+      await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false);
+      if (input.text === 'finish') return terminalResult('done', { report: 'Observed the screenshot.' });
+    });
+    child.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell([root, child], { resolveAttachments: materialize });
+    await shell.init!(stubSession().session);
+    try {
+      const started = stubContext(); shell.setTurnAttachments([asset('a')]);
+      await shell.handleBossTurn(turn('/code nested inspection'), started.context);
+      expect(started.playerCalls[0]?.prompt).toBe('nested inspection');
+      expect(started.playerCalls[0]?.options?.attachments).toEqual(paths(['a']));
+      const next = stubContext([captainJson({ action: 'deliver' })]); shell.setTurnAttachments([asset('b')]);
+      await shell.handleBossTurn(turn('compare with this', 2), next.context);
+      expect(next.playerCalls[0]?.options?.attachments).toEqual(paths(['a', 'b']));
+      const snapshot = shell.exportSnapshot()!;
+      expect(snapshot.mode).toBe('engaged.parked');
+      if ('frames' in snapshot) expect(snapshot.frames.map(frame => frame.attachments)).toEqual([[asset('a')], [asset('a'), asset('b')]]);
+      const finished = stubContext([captainJson({ action: 'deliver' })]);
+      const callPlayer = finished.context.callPlayer;
+      finished.context.callPlayer = async (playerId, prompt, options) => {
+        if (prompt === 'finish') shell.recordMediaEvidence(asset('d'), child.runtimes[0]!.session!.sessionId);
+        return callPlayer(playerId, prompt, options);
+      };
+      await shell.handleBossTurn(turn('finish', 3), finished.context);
+      expect(finished.playerCalls.map(call => call.prompt)).toEqual(['finish', 'parent continuation']);
+      expect(finished.playerCalls[1]?.options?.attachments).toEqual(paths(['a', 'd']));
+      await shell.handleBossTurn(turn('stop', 4), stubContext([captainJson({ action: 'dismiss' })]).context);
+      const unrelated = stubContext(); await shell.handleBossTurn(turn('/code unrelated', 5), unrelated.context);
+      expect(unrelated.playerCalls[0]?.options?.attachments).toBeUndefined();
+    } finally { await shell.dispose?.(); }
+  });
 });

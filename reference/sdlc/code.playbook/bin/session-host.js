@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { randomUUID } from 'node:crypto';
+import { normalizeSessionTurnInput } from '../session-assets.js';
 import { createCaptainSessionStore, isUncertainTurnDiscardable, projectCaptainSessionStructure } from './session-store.js';
 import { createCaptainSessionHost, executionConfigFromPlan, installRetainedGenerationsForLaunch, validateFrozenExecutionConfig } from './run.js';
 import { createReplayRecordObserver } from './replay-observer.js';
@@ -33,9 +34,10 @@ export async function openSessionHost(options) {
     if (record !== undefined) await lease.assertContinuable({ cwd, executionProjection: selected });
     const config = await validateFrozenExecutionConfig(structure, selected, { loadModule, prepareRegistryModule: options.prepareRegistryModule });
     const replay = createReplayRecordObserver({ lease, onIncomplete: options.onIncomplete ?? (() => {}), onStored: options.onStoredRecord });
-    let terminal, replies = [];
+    let terminal, replies = [], submittedAttachments = [];
     const observe = {
       async onRecord(value) {
+        if (value.type === 'turn_started' && submittedAttachments.length) value = { ...value, turn: { ...value.turn, attachments: submittedAttachments } };
         if (value.type === "turn_finished" || value.type === "turn_aborted") terminal = value;
         if (value.type === "captain_reply") replies.push(value);
         await replay.observer.onRecord(value);
@@ -53,14 +55,21 @@ export async function openSessionHost(options) {
     const execute = async (input, retry, actionId, shellActionId) => {
       assertIdle();
       let attemptId;
+      let attachments = [];
       const operation = (async () => {
         let prior = await lease.read();
         if (retry) {
           if (prior?.state !== 'uncertain') throw new Error('session has no uncertain turn to retry');
           input = prior.uncertain.input;
+          attachments = prior.uncertain.attachments ?? [];
           if (!retryPending) throw new Error(RECOVERY_REOPEN);
         } else if (prior?.state !== 'settled') throw new Error(RECOVERY_REOPEN);
-        if (actionId === undefined && shellActionId === undefined && (typeof input !== 'string' || input.trim().length === 0)) throw new Error('session input must be nonempty');
+        if (actionId === undefined && shellActionId === undefined) {
+          const normalized = normalizeSessionTurnInput(retry ? { text: input, attachments } : input);
+          input = normalized.text; attachments = normalized.attachments;
+          if (!input.trim() && attachments.length === 0) throw new Error('session input must contain text or attachments');
+          if (attachments.length) await lease.resolveAttachments(attachments, { signal: options.signal });
+        }
         await created.reconcileRepositoryEffects();
         // The selection is made after reconciliation, so the advertised
         // reading it is validated against is the one this turn settles
@@ -74,11 +83,13 @@ export async function openSessionHost(options) {
         }
         terminal = undefined; replies = [];
         attemptId = options.createAttemptId?.() ?? randomUUID();
-        const marked = retry ? await lease.beginRetry({ expectedAttemptId: prior.uncertain.attemptId, nextAttemptId: attemptId }) : await lease.beginTurn({ input, attemptId, attemptedExecutionProjection: config });
+        const marked = retry ? await lease.beginRetry({ expectedAttemptId: prior.uncertain.attemptId, nextAttemptId: attemptId }) : await lease.beginTurn({ input, attachments, attemptId, attemptedExecutionProjection: config });
         retryPending = false;
         await replay.flushStoredRecords();
         await options.onCheckpoint?.(marked);
         await lease.assertOwner();
+        submittedAttachments = attachments;
+        created.shell.setTurnAttachments?.(attachments);
         await created.host.runBossTurn(input);
         if (terminal?.type !== "turn_finished" || replies.length !== 1 || typeof replies[0].text !== "string" || replies[0].text.trim().length === 0) throw new Error("Captain turn did not finish with one reply; session remains uncertain");
         const settlement = created.shell.exportSettlement();
@@ -101,7 +112,7 @@ export async function openSessionHost(options) {
         throw error;
       });
       active = operation;
-      try { return await operation; } finally { active = undefined; }
+      try { return await operation; } finally { active = undefined; submittedAttachments = []; }
     };
 
     const dispose = () => {

@@ -34,8 +34,9 @@ settles as one visible captain reply with no engagement and no
 lifecycle status line, and a task intent starts an enabled playbook
 through the validated `start` action, with the specialized work
 never performed by the Captain itself.
-Empty or whitespace-only input shall produce no model call, no
+Empty or whitespace-only input without attachment references shall produce no model call, no
 session, no status line, and no telemetry event.
+Attachment-only input shall follow [[playbook-captain-78](#playbook-captain-78)].
 
 #### playbook-captain-2
 
@@ -268,6 +269,7 @@ entry's own option slice, and a `createRuntime` factory for the
 linked runtime.
 The registry-entry contract shall require schema `3` and expose `createRuntime(configuredOptions, hostCapabilities)` with the second input required and host-owned while retaining the common manifest fields above.
 The CODE entry shall declare `id` and command `code` with artifact schema `3`, required role `coder`, and no concurrent role set; REVIEW shall declare `review` with schema `3`, roles `coder` and `reviewer`, and no concurrent role set; DECIDE shall declare `decide` with schema `3`, roles `coder` and `reviewer`, exact concurrent role sets `[['coder', 'reviewer']]`, and the shared-factory runtime profile; DEV shall declare `dev` with schema `3`, required role `analyst`, no concurrent role set, and the shared-factory runtime profile; and BRANCH and PR shall declare `branch` and `pr` respectively, each with schema `3`, required role `coder`, no concurrent role set, and the shared-factory runtime profile.
+INSPECT shall declare `inspect` with schema `3`, required role `inspector`, no concurrent role set, and the shared-factory runtime profile [[playbook-58](playbook.md#playbook-58)].
 The shell shall capture each imported manifest member once, reject a missing or malformed runtime profile, and reject an advertised artifact schema that differs from the shared factory's captured `spec.compat.artifactSchema` or from the bespoke implementation's directly declared schema under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] before option validation or runtime construction.
 The shell shall take each playbook's artifact schema, required roles, concurrent role sets, summary policy,
 option validator, and runtime factory
@@ -1358,6 +1360,28 @@ When a failure statement [[playbook-captain-71](#playbook-captain-71)] or the ru
 
 - `<id>` is the action id as a JSON string, whatever it holds, while `<label>` is the runtime's diagnostic label — `playbook` unless the playbook names its own — `<state>` a state id, and `<reason>` a governed settlement's reason, each any nonempty text.
 
+#### playbook-captain-78
+
+When a host submits exact Boss text with owned attachment references [[session-assets-5](session-assets.md#session-assets-5)], the shell shall bind references independently of text, preserve them in the accepted journal and snapshot, and retain selected references for its active engagement and each nested child's inherited snapshot.
+A new root shall receive explicit validated `attachmentIds` selected from current, pending or active context, defaulting on omission only to current-turn references, and shall consume the pending group.
+References from clarification-only turns shall remain pending until selected or a new root consumes their group.
+A delivered follow-up shall add its selected references to the leaf; completion, dismissal and unrelated new work shall not implicitly inherit prior engagement references.
+Every decision, Judge and reporting call shall explicitly disable managed browser and configured MCP servers, preserving the existing provider-specific tool-isolation rule, regardless of the mutable capability of working actors.
+Each acting-player call and its fresh-session fallback shall receive the same materialized attachment bytes, failing explicitly when the host cannot provide required evidence.
+When text is empty but attachments are present, the shell shall settle one visible clarification reply without a model call, working-runtime invocation or fabricated Boss instruction, preserving references for explicit selection on a later turn.
+
+Native generated evidence shall also append to the producing runtime's still-active ancestors within the same root engagement, while new Boss references append only to the addressed leaf; original evidence attribution and per-call deduplication shall remain unchanged [[session-assets-5](session-assets.md#session-assets-5)].
+
+### playbook-captain-79
+
+When a visible delegated-player outcome is accepted during a Boss turn, the host shall expose a report excerpt to Captain only after matching the validated runtime and call lineage, source state and outcome against that turn's changed acknowledged receipt and saved player presentation.
+The report shall identify the producing player, quote its text as JSON with an 8192-character rendered-report bound and an explicit truncation label, and distinguish reported findings from instructions, authorization and authoritative effect or completion facts.
+The report collection shall retain the latest accepted observations within 24576 characters, marking omitted earlier reports while preserving full durable text.
+Nested reports belong to their active root turn; hidden controls and prior unrelated work shall contribute no report.
+The host shall save an exact boundary and player reference atomically with the accepted player-step result [[recovery-18](recovery.md#recovery-18)].
+Interrupted recovery shall reconstruct attributed evidence only through that reference, including after an adopted root is disposed, without another player call or interpretation of arbitrary workflow output fields; older steps without a provable reference shall contribute no report.
+Deterministic recovery shall present user-facing attribution without model-directed reporting instructions.
+
 ## Verification
 
 ### Routing Coverage
@@ -2060,3 +2084,11 @@ When the shell suite settles a started turn whose closing reply stays unusable a
 #### playbook-captain-75
 
 When the shell suite settles, while the closing reply stays unusable after its corrective re-ask, a thrown runtime action on a ready leaf whose error names the action id the host supplied, a failed receipt whose recorded text quotes the action's id, once plain and once machine-shaped, a failed receipt and a refusal whose recorded text is the runtime's refusal reason, a refusal whose reason reads as prose, a failed receipt on a ready leaf and a refusal each of an action whose label names control vocabulary, a give-up whose disposal error names control vocabulary as a code and as prose, a returned failed run naming control vocabulary, a returned failed run of a command naming control vocabulary, a returned failed run whose repository cause names a path in control vocabulary, a nested cleanup whose error names the parent's live state, a nested cleanup of a child whose command names control vocabulary, a nested cleanup whose caller then fails with the identical recorded error, a returned failed run whose repository cause its unresolved-effect entry carries, and a thrown delivery whose cause an entry carries on a parked and on a ready leaf, it shall fail unless the reply lists what happened with exactly one line carrying each failure and no `Failure:` line repeating it (verifying [[playbook-captain-69](#playbook-captain-69)]), unless a code span repeating a supplied or live identifier, and a phrased reason whose own words fail, read `an internal error` while the result-phase prompt keeps the recorded text and the Boss reads neither that identifier nor that text (verifying [[playbook-captain-69](#playbook-captain-69)] and [[playbook-captain-74](#playbook-captain-74)]), unless the runtime's refusal reason reads `that action is no longer offered.` on the receipt and the refusal alike and never as an internal error (verifying [[playbook-captain-76](#playbook-captain-76)]), unless a failed receipt quoting the action's id is one statement naming the action by its label outside its code span while the span keeps the recorded id, or reads `an internal error` where that id is machine-shaped, and no `Failure:` line repeats it (verifying [[playbook-captain-69](#playbook-captain-69)]), unless an action label, or a failure subject beginning its statement, naming control vocabulary reads `the selected action` or `The step` in a statement that stays, while another statement naming the same command keeps it and a statement whose other words still fail is listed as it is (verifying [[playbook-captain-69](#playbook-captain-69)]), unless of two failures with identical recorded text the Boss reads only the earlier statement while the result-phase prompt reads both (verifying [[playbook-captain-69](#playbook-captain-69)]), unless a give-up's control vocabulary stands only inside a code span, prose included (verifying [[playbook-captain-69](#playbook-captain-69)] and [[playbook-captain-74](#playbook-captain-74)]), unless the refusal's prose reason is quoted (verifying [[playbook-captain-74](#playbook-captain-74)]), unless every entry stays beside the returned run and the delivery alike while the fact whose reason an entry carries goes, the report naming the reason once and keeping its closing statement (verifying [[playbook-captain-58](#playbook-captain-58)] and [[playbook-captain-69](#playbook-captain-69)]), and unless, after a model's reply, a parked leaf whose recorded reason repeats that supplied id, or whose phrased reason names a path in control vocabulary, reads `Failure: the step failed with an internal error.` (verifying [[playbook-captain-67](#playbook-captain-67)] and [[playbook-captain-69](#playbook-captain-69)]).
+
+#### playbook-captain-77
+
+When integration tests submit attachment-only, clarified, nested and unrelated turns through the shared host and reopen saved state, they shall verify unchanged Boss text, one durable clarification reply, selected attachment propagation and isolation, child-generated evidence reaching parent continuation but not an unrelated root, materialization failure before acting work, and byte-identical fresh-session fallback [[playbook-captain-78](#playbook-captain-78)].
+
+### playbook-captain-80
+
+When host integration drives inspection, nested work, interruption and a rejected repository effect, the suite shall verify substantive worker findings reach the Captain report with exact producing identity, quoted injection-like content cannot forge a host block, long content is marked as an excerpt while findings beyond introductory prose remain visible, aggregate overflow preserves latest reports with an omission marker, recovery reports saved findings without repeating work, repeated visits to one state cannot attribute an unacknowledged later result to an earlier accepted step, disposed adopted roots retain exact producing references, and no rejected receipt, hidden control or unrelated turn is reported as accepted completion [[playbook-captain-79](#playbook-captain-79)].

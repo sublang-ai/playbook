@@ -7,6 +7,8 @@
 // presenter; it does not construct a registry runtime or PlaybookPorts itself.
 
 import { randomUUID } from "node:crypto";
+import { workerReportExcerpt, workerRecoveryReportBlock } from "../worker-evidence.js";
+import { createSessionMediaProjector } from "./session-media.js";
 import { attachSessionHints, validateSessionContext } from "./portable-codec.js";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -995,6 +997,13 @@ export function restoreInterruptedProgress(record, ledger) {
       : `Captain preparation for ${name}: ${step.result.summary}`;
     return `${name} ${step.kind} call: ${step.result === undefined ? 'started; no result was saved' : step.result?.status === undefined ? 'result saved' : `returned ${step.result.status}`}.`;
   });
+  const workerReports = changedBoundaries.flatMap((boundary) => {
+    const completedStep = steps.find((step) => step.kind === 'player' &&
+      step.workerEvidence?.boundaryId === boundary.boundaryId);
+    if (!completedStep) return [];
+    const report = workerReportExcerpt(boundary, completedStep.workerEvidence.playerId, completedStep.result.guard);
+    return report === undefined ? [] : [report];
+  });
   const completedRoots = steps.filter((step) => step.kind === 'completion' && step.result.retention !== 'keep').map((step) => ({ kind: 'clear', rootPlaybookId: step.playbookId }));
   const report = {
     retentionUpdates: completedRoots,
@@ -1008,7 +1017,7 @@ export function restoreInterruptedProgress(record, ledger) {
         ? completion && !saved.frames?.length
           ? 'The completed run is restored; no work was repeated.'
           : 'The run stopped. Its saved position is restored; no work was repeated. Choose how to continue. Before repeating unfinished work, confirm that the earlier worker has stopped and check any outside actions it may have taken.'
-        : 'The exact stopping point was not saved. Files and repository evidence are preserved; no work was repeated. Check the saved work and stop any earlier worker before starting another attempt.', ...facts].join('\n\n'),
+        : 'The exact stopping point was not saved. Files and repository evidence are preserved; no work was repeated. Check the saved work and stop any earlier worker before starting another attempt.', ...facts, ...(workerReports.length ? [workerRecoveryReportBlock(workerReports)] : [])].join('\n\n'),
   };
   if (noWork) return { snapshot: base, report };
   if (saved) {
@@ -1115,23 +1124,29 @@ export async function createCaptainSessionHost({
   if (sourceSnapshot !== undefined && !interrupted && typeof sessionLease.consumeHints === "function") {
     sourceSnapshot = attachSessionHints(sourceSnapshot, await sessionLease.consumeHints());
   }
+  let presentationAttachments = [];
+  const mediaProjector = createSessionMediaProjector({ lease: sessionLease, onEvidence: (asset, origin) => shell.recordMediaEvidence(asset, origin.runtimeSessionId) });
   const bufferedRecords = [];
   let presentationReady = false;
   const presentationTurnOffset = restoreSnapshot?.sequences.turn ?? 0;
   const forwardRecord = async (record) => {
+    if (record.type === 'turn_started' && presentationAttachments.length) record = { ...record, turn: { ...record.turn, attachments: presentationAttachments } };
     const projected = presentationTurnOffset > 0 && typeof record.turnId === "number"
       ? { ...record, turnId: record.turnId + presentationTurnOffset, ...(record.type === "turn_started" ? { turn: { ...record.turn, id: record.turn.id + presentationTurnOffset } } : {}) }
       : record;
-    for (const observer of observers ?? []) await observer.onRecord?.(projected);
+    for (const value of await mediaProjector.project(projected)) for (const observer of observers ?? []) await observer.onRecord?.(value);
   };
   const bufferedObservers = [{ async onRecord(record) {
     if (!presentationReady) bufferedRecords.push(record);
     else await forwardRecord(record);
   } }];
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
+    onTurnAttachments: (references) => { presentationAttachments = references; },
+    beginPreparationMedia: (runtimeSessionId) => mediaProjector.beginPreparation(runtimeSessionId),
     abortPreparation: (reason) => host?.abortActiveTurn(typeof reason === 'string' ? reason : 'Captain preparation exceeded its 150-second limit'),
     loadModule,
     hostCapabilities,
+    ...(typeof sessionLease.resolveAttachments === 'function' ? { resolveAttachments: (references, signal) => sessionLease.resolveAttachments(references, { signal }) } : {}),
     ...(typeof sessionLease.recordProgress === 'function' ? {
       recordProgress: (change) => sessionLease.recordProgress(change),
     } : {}),
@@ -1193,7 +1208,10 @@ export async function createCaptainSessionHost({
     }
     presentationReady = true;
     for (const record of bufferedRecords) await forwardRecord(record);
-    if (interruptedReport) shell.selectInterruptedReport(interrupted.uncertain.input, interruptedReport);
+    if (interruptedReport) {
+      shell.setTurnAttachments(interrupted.uncertain.attachments ?? []);
+      shell.selectInterruptedReport(interrupted.uncertain.input, interruptedReport);
+    }
     return { shell, host, snapshot, reconcileRepositoryEffects, getInterruptedSettlement: (attemptId) => attemptId !== undefined && interruptedSettlement?.attemptId === attemptId ? interruptedSettlement.record : undefined };
   } catch (error) {
     let cleanupError;

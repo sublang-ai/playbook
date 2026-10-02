@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,8 @@ import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
 
 import { _testing } from '../scripts/release-smoke.mjs';
+import { createSessionStore } from '@sublang/playbook/session-store';
+import { executionConfigFromPlan, loadLaunchPlan, openSessionHost } from '@sublang/playbook/session-host';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -154,6 +157,9 @@ describe('deterministic packed release lane smoke', () => {
     expect(source).toContain(
       "runtime: prFactory(construction('pr', ['coder'], []))",
     );
+    expect(source).toContain(
+      "runtime: inspectFactory(construction('inspect', ['inspector'], []))",
+    );
     expect(source).toContain('artifactSchema: 3');
     expect(source).toContain('emptyPlaybookEffectLedger');
     expect(source).toContain("const adoptionMembers = ['adopt']");
@@ -249,6 +255,57 @@ describe('deterministic packed release lane smoke', () => {
     expect(tsconfig.compilerOptions.emitDeclarationOnly).not.toBe(true);
     expect(tsconfig.files).toEqual(['consumer.ts']);
   });
+
+  it('keeps packed asset ownership checks on the public facades', () => {
+    const source = _testing.sessionAssetsConsumerSource({
+      sessionsDir: sessionStoreConsumerFixture.sessionsDir,
+      sessionId: sessionStoreConsumerFixture.sessionId,
+      assetRoot: '/tmp/packed-session-store-consumer/owned-assets',
+    });
+    const packageImports = [...source.matchAll(/\bfrom\s+['"](@sublang\/[^'"]+)['"]/g)]
+      .map((match) => match[1]);
+    expect(packageImports).toEqual([
+      '@sublang/playbook/session-assets',
+      '@sublang/playbook/session-store',
+    ]);
+    expect(source).not.toMatch(/(?:bin\/session-store|reference\/sdlc|src\/)/);
+    for (const operation of ['source.importAsset', 'source.resolveAttachment', 'copied.copyAsset',
+      'copied.prepare', 'copied.openAsset', 'lease.resolveAttachments', 'store.exportBundle',
+      'reopened.readAsset']) expect(source).toContain(operation);
+  });
+
+  it('executes the asset consumer against a real durable session without provider calls', async () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-packed-assets-'));
+    const cwd = join(scratch, 'repo');
+    let host: Awaited<ReturnType<typeof openSessionHost>> | undefined;
+    try {
+      mkdirSync(cwd);
+      execFileSync('git', ['init', '-q'], { cwd });
+      execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'baseline'], { cwd });
+      mkdirSync(join(scratch, 'node_modules', '@sublang'), { recursive: true });
+      symlinkSync(repoRoot, join(scratch, 'node_modules', '@sublang', 'playbook'), 'junction');
+      const configPath = join(scratch, 'config.yaml');
+      writeFileSync(configPath, 'captain: { adapter: claude, model: unused }\nplayers:\n  inspector: { adapter: claude, model: unused }\nplaybooks:\n  inspect: { from: "@sublang/playbook/inspect/registry", roles: { inspector: inspector } }\n');
+      const config = executionConfigFromPlan(await loadLaunchPlan({ userConfigPath: configPath }));
+      const sessionsDir = join(scratch, 'sessions');
+      const store = createSessionStore({ sessionsDir });
+      class NoProvider {
+        readonly agent = 'claude-code' as const;
+        async *run(): AsyncGenerator<never> { throw new Error('asset smoke must make no provider call'); }
+      }
+      host = await openSessionHost({ store, cwd, config, mode: 'new', adapterImports: { claude: async () => NoProvider } as never });
+      const initial = await host.lease.importAsset({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'application/octet-stream' });
+      await host.handleBossTurn({ text: '', attachments: [initial] });
+      const sessionId = host.sessionId;
+      await host.dispose(); host = undefined;
+      const source = join(scratch, 'consumer.mjs');
+      writeFileSync(source, _testing.sessionAssetsConsumerSource({ sessionsDir, sessionId, assetRoot: join(scratch, 'owned-assets') }));
+      execFileSync(process.execPath, [source], { cwd: scratch, timeout: 30_000, stdio: 'pipe' });
+    } finally {
+      await host?.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it(
     'strictly compiles and emits the packed session-store consumer',
