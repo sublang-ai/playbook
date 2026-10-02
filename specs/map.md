@@ -104,6 +104,7 @@ meta.md       The spec of specs
 | [DR-076](decisions/076-subagents-delegate-by-default.md) | 076-subagents-delegate-by-default.md | Subagents delegate by default, at an effort of their own: `subagentModel` admits `inherit` and defaults to it where the adapter serves one, `subagentEffort` is a fifth tuning field, `false` switches delegation off; Cligent floor `^0.30.0`; amends DR-075 and DR-074 |
 | [DR-077](decisions/077-portable-assets-and-inspection.md) | 077-portable-assets-and-inspection.md | Owner-scoped immutable assets, attachment turns, worker evidence and browser-enabled inspection with tool-free control |
 | [DR-078](decisions/078-live-tool-approval-forwarding.md) | 078-live-tool-approval-forwarding.md | Ephemeral host approval callbacks, durable turn attribution and cancellation without workflow semantics |
+| [DR-079](decisions/079-topology-selects-question-storage.md) | 079-topology-selects-question-storage.md | Compiler question storage follows the existing flat scalar and parallel keyed runtime projections |
 
 ## Packages
 

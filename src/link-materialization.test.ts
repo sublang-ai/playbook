@@ -87,6 +87,45 @@ function descriptor(player = true): Record<string, any> {
   };
 }
 
+function questionFixture(storage: 'scalar' | 'keyed' | 'private-wrapper'): string {
+  return `import { assign, fromPromise, setup } from 'xstate';
+const storage = ${JSON.stringify(storage)};
+const meta = (stateId, extra = {}) => ({ playbook: { stateId, description: stateId, ...extra } });
+const selected = context => storage === 'scalar' ? context : storage === 'keyed'
+  ? { pendingBossQuestion: context.pendingBossQuestions?.work, bossReply: context.bossReplies?.work }
+  : context.continuation ?? {};
+export const fixtureMachine = setup({ actors: { player: fromPromise(async () => ({})) } }).createMachine({
+  id: 'fixture', initial: 'ready', context: () => ({ bossIntent: '' }),
+  states: {
+    ready: { id: 'ready', tags: ['playbook.parked'], meta: meta('ready'), on: {
+      BOSS_TASK: { target: 'work', actions: assign({ bossIntent: ({ event }) => event.bossIntent }) }
+    } },
+    work: { id: 'work', tags: ['playbook.busy'], meta: meta('work', { role: 'coder' }), invoke: {
+      src: 'player', input: ({ context }) => ({ stateId: 'work', sourceItem: 'FIXTURE-1', role: 'coder',
+        prompt: 'Verify the approval.\\n> <boss-intent>', bossIntent: context.bossIntent, ...selected(context),
+        result: { done: 'Verification complete.', needsBossReply: 'The agent asked Boss a question. Output shall include \`question: <verbatim question>\`.' }
+      }), onDone: [
+        { guard: ({ event }) => event.output.guard === 'needsBossReply', target: 'awaitBossReply', actions: assign(({ event }) => {
+          const pendingBossQuestion = { questionId: 'work', resumeStateId: 'work', sourceItem: 'FIXTURE-1', asker: { kind: 'role', roleId: 'coder' }, question: event.output.question };
+          return storage === 'scalar' ? { pendingBossQuestion, bossReply: undefined } : storage === 'keyed'
+            ? { pendingBossQuestions: { work: pendingBossQuestion }, bossReplies: {} }
+            : { continuation: { pendingBossQuestion } };
+        }) },
+        { guard: ({ event }) => event.output.guard === 'done', target: 'done', actions: assign(() => ({ pendingBossQuestion: undefined, bossReply: undefined, pendingBossQuestions: {}, bossReplies: {}, continuation: undefined })) },
+        { target: 'failed' }
+      ], onError: 'failed'
+    } },
+    awaitBossReply: { id: 'awaitBossReply', tags: ['playbook.parked'], meta: meta('awaitBossReply'), on: {
+      BOSS_REPLY: { target: 'work', guard: ({ context, event }) => event.questionId === selected(context).pendingBossQuestion?.questionId,
+        actions: assign(({ context, event }) => storage === 'scalar' ? { bossReply: event.answer } : storage === 'keyed'
+          ? { bossReplies: { work: event.answer } } : { continuation: { ...context.continuation, bossReply: event.answer } }) }
+    } },
+    failed: { id: 'failed', tags: ['playbook.parked'], meta: meta('failed') },
+    done: { id: 'done', type: 'final', meta: meta('done', { terminal: 'success' }) }
+  }
+});\n`;
+}
+
 describe('optional link materialization integration', () => {
   let root: string;
   let fsm: string;
@@ -118,6 +157,75 @@ describe('optional link materialization integration', () => {
     expect(result.status, result.stderr + result.stdout).toBe(0);
     return result.stdout;
   }
+
+  it.each(['scalar', 'keyed', 'private-wrapper'] as const)('runs compiled flat %s question discovery through the actual factory', storage => {
+    writeFileSync(fsm, questionFixture(storage));
+    const result = emit({
+      ...descriptor(), profile: 'flat-quoted-relays', options: {}, inputMapping: {},
+      outcomeAuthority: { governedPlayerStates: { work: {
+        done: { fields: {}, repositoryDisposition: 'unchanged' },
+        needsBossReply: { fields: { question: 'presentation' }, repositoryDisposition: 'unchanged' },
+      } } },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    execute(`
+      import assert from 'node:assert/strict';
+      import { execFileSync } from 'node:child_process';
+      import { randomUUID } from 'node:crypto';
+      import createRuntime from ${JSON.stringify(pathToFileURL(out).href)};
+      import { createWorktreeHostCapabilities } from '@sublang/playbook/host-capabilities';
+      const git = (...args) => execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+      git('init', '--quiet');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'add', '.');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Initial fixture');
+      const head = git('rev-parse', 'HEAD');
+      const hostCapabilities = await createWorktreeHostCapabilities({ cwd: process.cwd(), playbookId: 'fixture', requiredRoleIds: ['coder'] });
+      const runtime = createRuntime({ configuredOptions: {}, hostCapabilities });
+      const question = 'Promote verified-promotion 1.0.0?\\nPreserve $& and <literal>.';
+      const answer = 'Approve exactly 1.0.0.\\nKeep $& and <literal> unchanged.';
+      const prompts = [];
+      const statuses = [];
+      let calls = 0;
+      const forbid = async () => { throw new Error('unexpected port'); };
+      const sessionId = randomUUID();
+      await runtime.init({ sessionId, playbookId: 'fixture', rootSessionId: sessionId, depth: 0,
+        roleBindings: { coder: { playerId: 'fixture.coder', promptIdentity: 'Fixture Coder' } },
+        ports: {
+          callPlayer: async (_id, prompt) => { prompts.push(prompt); return { status: 'ok', finalText: ++calls === 1 ? question : 'Verification complete.' }; },
+          callJudge: async prompt => {
+            if (prompt.includes('Classify the following Boss message')) {
+              assert.ok(prompt.includes(question));
+              return JSON.stringify({ type: 'BOSS_REPLY', questionId: 'work' });
+            }
+            return JSON.stringify({ guard: calls === 1 ? 'needsBossReply' : 'done' });
+          },
+          callCaptain: forbid, callPlaybook: forbid,
+          emitStatus: async message => { statuses.push(message); }, emitTelemetry: async () => {},
+        }
+      });
+      try {
+        const parked = await runtime.handleBossInput({ text: 'Verify Atlas approval.', signal: new AbortController().signal });
+        assert.equal(parked.outcome, 'quiescent');
+        assert.equal(parked.state.stateId, 'awaitBossReply');
+        const pending = ${JSON.stringify(storage)} === 'scalar' ? [{ questionId: 'work', asker: { kind: 'role', roleId: 'coder' }, sourceItem: 'FIXTURE-1', question }] : [];
+        assert.deepEqual(runtime.exportSnapshot().pendingBossQuestions, pending);
+        assert.deepEqual(runtime.describe().pendingQuestions, pending);
+        assert.equal(calls, 1);
+        if (${JSON.stringify(storage)} === 'scalar') {
+          assert.ok(statuses.some(value => value.includes(question)));
+          const resumed = await runtime.handleBossInput({ text: answer, signal: new AbortController().signal });
+          assert.equal(resumed.outcome, 'terminal');
+          assert.equal(resumed.state.stateId, 'done');
+          assert.equal(calls, 2);
+          assert.ok(prompts[1].includes('Your previous question:\\n' + question));
+          assert.ok(prompts[1].includes('Boss reply:\\n' + answer));
+          assert.deepEqual(hostCapabilities.effectLedger.snapshot().boundaries.map(boundary => boundary.physicalReceipt.classification), ['unchanged', 'unchanged']);
+        }
+        assert.equal(git('rev-parse', 'HEAD'), head);
+        assert.equal(git('status', '--porcelain'), '');
+      } finally { await runtime.dispose(); }
+    `);
+  });
 
   it('preserves Boss-reply resumption independently of interrupt targets', () => {
     const source = fixture().replace("    failed: {", "    awaitBossReply: { id: 'awaitBossReply', tags: ['playbook.parked'], meta: meta('awaitBossReply'), on: { BOSS_REPLY: { target: '#work' } } },\n    failed: {");

@@ -835,8 +835,8 @@ Only
 The canonical storage paths are `context.pendingBossQuestion` and `context.bossReply` for the scalar form, or `context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]` for the keyed form.
 A private wrapper such as `context.continuation` shall not replace these fields directly on machine context.
 
-A machine with at most one active Captain or player task may use the scalar
-form:
+A machine that declares no root parallel group shall use the scalar form;
+keyed storage alone is not visible to the flat shared factory:
 
 - An `awaitBossReply` state with stable `id: 'awaitBossReply'`, tag
   `playbook.parked`, and description
@@ -847,7 +847,9 @@ form:
 - `resumableStates(ids)`, `setPendingBossQuestion`, and
   `clearBossReplyContext` helpers with the existing single-question behavior.
 
-A machine with parallel delegated-player tasks shall use the keyed form:
+A machine that declares a root parallel group shall use the keyed form
+throughout the machine, including any sequential working leaves and their
+root reply wait:
 
 - One local waiting leaf per branch, tagged `playbook.parked`.
 - A `BOSS_REPLY` event carrying `{ questionId: string; answer: string }`.

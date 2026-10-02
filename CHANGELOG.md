@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Require scalar Boss-question storage for flat compiled workflows and keyed storage throughout workflows declaring parallel groups, matching the shared factory's existing discovery contract. Integration checks now drive a materialized, compiled question-and-reply flow through the actual factory and Git receipts, rather than projecting keyed flat context into a scalar reader.
+
 ## [17.4.0] - 2026-10-02
 
 ### Added
