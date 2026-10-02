@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [17.4.0] - 2026-10-01
+## [17.4.0] - 2026-10-02
 
 ### Added
 
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Require Cligent 0.33.** The registry dependency moves to `^0.33.0` for live host approvals, native attachments, media output, browser readiness and complete per-call browser/MCP settings. Public declaration and installed-runtime gates verify those capabilities.
+- **Require Cligent 0.33.1.** The registry dependency moves to `^0.33.1` for live host approvals, native attachments, media output, browser readiness and complete per-call browser/MCP settings. Unsupported native OpenCode questions proven to belong to the current invocation receive an explicit rejection instead of waiting for an unavailable answer channel; foreign or unproven requests are left alone. Public declaration and installed-runtime gates verify the shared host capabilities.
 - **Coordinated store upgrade required for new asset and evidence data.** Upgrade every CLI and embedded SDK sharing a store, and stop older writers before any upgraded host saves asset-bearing sessions or worker-evidence progress. Existing sessions remain readable by this release; tolerance of unknown replay records does not make older writers safe.
 - **Preserve existing Captain snapshots.** Authenticated compiler output for the attachment prompt and optional selection fields is reconciled into the maintained Captain's released topology and bridge. An actual 17.3.0 snapshot restores without calls or replay. The complete fresh compiler bundle and hashes remain available as compilation evidence.
 

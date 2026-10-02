@@ -578,3 +578,11 @@ request actionable. Native provider limits and OS dialogs still apply; a tool
 approval cannot grant an operating-system permission. Controller disposal denies
 pending requests before draining work and releasing the session lease. Without a
 handler, adapters retain their native fail-closed behavior.
+
+This callback handles tool consent independently of tool or application names.
+Native questions, forms, and URL authentication require separate typed response
+transports; a later Boss reply cannot answer a native callback still waiting
+inside the current call. A workflow can instead return its declared Boss-question
+outcome and resume after a reply, including a request to perform an external
+prerequisite. The reply is an acknowledgement; the working agent must check the
+prerequisite before claiming that it is satisfied.
