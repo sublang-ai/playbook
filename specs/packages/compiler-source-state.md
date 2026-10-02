@@ -23,10 +23,11 @@ When gears2fsm emits Boss-reply suspension for direct-Captain or delegated-playe
 
 | Form | Pending question | Boss reply |
 | --- | --- | --- |
-| Scalar, permitted when at most one Captain or player task is active | `context.pendingBossQuestion` | `context.bossReply` |
-| Keyed, required for parallel delegated-player tasks | `context.pendingBossQuestions[stateId]` | `context.bossReplies[stateId]` |
+| Scalar, required for a machine declaring no root parallel group | `context.pendingBossQuestion` | `context.bossReply` |
+| Keyed, required throughout a machine declaring a root parallel group, including sequential working leaves | `context.pendingBossQuestions[stateId]` | `context.bossReplies[stateId]` |
 
 Each working leaf's `invoke.input` shall pass its selected question and reply, when present, unchanged as singular `pendingBossQuestion` and `bossReply` fields for shared continuation [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], regardless of context form; a private wrapper such as `context.continuation` shall not replace the canonical context fields.
+This topology selection preserves the shared factory's flat scalar and parallel keyed projections [[playbook-runtime-88](playbook-runtime.md#playbook-runtime-88)] ([DR-079](../decisions/079-topology-selects-question-storage.md)).
 
 ## Verification
 
@@ -36,4 +37,4 @@ When the integration suite inspects the gears2fsm definition and runs focused XS
 
 ### compiler-source-state-5
 
-When the [continuation integration suite](../../src/compiler-continuation.test.ts) drives real XState question/reply flows for direct-Captain and delegated-player inputs, it shall verify that scalar and keyed contexts expose the exact selected question through the shared question reader and deliver the exact question/reply pair on the resumed invocation, while a private-wrapper control can receive a manually injected reply yet remains invisible to question discovery [[compiler-source-state-4](#compiler-source-state-4)].
+When the [continuation integration suite](../../src/compiler-continuation.test.ts) drives real XState question/reply flows for direct-Captain and delegated-player inputs, and the [materialization integration suite](../../src/link-materialization.test.ts) emits, compiles, and runs a flat delegated-player artifact through the actual shared factory and Git worktree capabilities, the suites shall verify exact question discovery and resumed Q/A through scalar context, no question discovery for flat keyed or private-wrapper controls even when a manually injected reply can reach an invocation, and the definition's topology-specific storage requirement [[compiler-source-state-4](#compiler-source-state-4)].

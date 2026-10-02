@@ -22,10 +22,13 @@ const cases = (['captain', 'player'] as const).flatMap(actor =>
   (['scalar', 'keyed', 'private-wrapper'] as const).map(storage => ({ actor, storage })),
 );
 
-it.each(cases)('keeps $actor/$storage suspension visible at its canonical boundary', async ({ actor: kind, storage }) => {
+it.each(cases)('checks $actor/$storage flat discovery and invocation continuity', async ({ actor: kind, storage }) => {
   expect(definition).toContain('`context.pendingBossQuestion` and `context.bossReply`');
   expect(definition).toContain('`context.pendingBossQuestions[stateId]` and `context.bossReplies[stateId]`');
   expect(definition).toContain('A private wrapper such as `context.continuation` shall not replace these fields directly on machine context.');
+  expect(definition).toContain('A machine that declares no root parallel group shall use the scalar form;');
+  expect(definition).toContain('A machine that declares a root parallel group shall use the keyed form');
+  expect(definition).toContain('throughout the machine, including any sequential working leaves and their');
   const question: Question = {
     questionId: 'work', resumeStateId: 'work', sourceItem: 'TASK-1',
     asker: kind === 'captain' ? { kind: 'captain' } : { kind: 'role', roleId: 'agent' },
@@ -87,10 +90,10 @@ it.each(cases)('keeps $actor/$storage suspension visible at its canonical bounda
   try {
     await waitFor(actor, snapshot => snapshot.value === 'awaitBossReply');
     const context = actor.getSnapshot().context;
-    // The flat factory reads scalar context directly. A keyed branch projects
-    // its selected record into the same singular invocation-input contract.
-    const visible = pendingBossQuestionFromContext(storage === 'keyed' ? selected(context) : context);
-    expect(visible).toEqual(storage === 'private-wrapper' ? undefined : question);
+    // Read the actual flat context. Projecting a keyed record to scalar input
+    // here would disguise the compiler/runtime incompatibility.
+    const visible = pendingBossQuestionFromContext(context);
+    expect(visible).toEqual(storage === 'scalar' ? question : undefined);
     actor.send({ type: 'REPLY', answer: reply });
     await waitFor(actor, snapshot => snapshot.status === 'done');
     expect(inputs[1]).toMatchObject({ pendingBossQuestion: question, bossReply: reply });
