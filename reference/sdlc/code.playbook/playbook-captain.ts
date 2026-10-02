@@ -446,10 +446,25 @@ export interface PlaybookCaptainShell extends Captain {
 // normalized `captain.options.playbooks.<id>` role map.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
+  readonly configuredFrom: string;
   artifactSchema: 3;
   command: string;
   options: JsonValue;
   roleBindings: ReadonlyMap<string, EffectivePlayerBinding>;
+}
+
+function missingPackagedReview(
+  enablementById: ReadonlyMap<string, Enablement>,
+  playbookId: string,
+): string | undefined {
+  const selected = enablementById.get(playbookId);
+  if (
+    selected === undefined ||
+    enablementById.has('review') ||
+    !['code', 'decide'].includes(playbookId) ||
+    selected.configuredFrom !== `@sublang/playbook/${playbookId}/registry`
+  ) return undefined;
+  return `/${selected.command} requires enabled playbook "review"; enable REVIEW before starting this packaged workflow`;
 }
 
 function createRuntimeForEnablement(
@@ -4181,6 +4196,7 @@ async function buildEnablements(
     hostCapabilitiesById.set(entry.id, hostCapability);
     enablementById.set(entry.id, {
       entry,
+      configuredFrom: from,
       artifactSchema,
       command,
       options: validatedOptions,
@@ -7011,6 +7027,9 @@ export function createPlaybookCaptainShell(
       );
     }
 
+    const reviewRefusal = missingPackagedReview(enablementById, entry.id);
+    if (reviewRefusal !== undefined) throw new Error(reviewRefusal);
+
     pendingChildParents.add(parent);
     let child: EngagementFrame;
     try {
@@ -9004,7 +9023,13 @@ export function createPlaybookCaptainShell(
       // its decision-call prose crosses the presentation boundary. Acting
       // selections freeze after their work and before reporting begins.
       if (selection.action === 'respond') freezeControllerEvidence();
-      let settlement = await executeSelection(selection, signal, automaticRecovery);
+      signal.throwIfAborted();
+      const reviewRefusal = selection.action === 'start' || selection.action === 'switch'
+        ? missingPackagedReview(enablementById, selection.playbookId)
+        : undefined;
+      let settlement = reviewRefusal === undefined
+        ? await executeSelection(selection, signal, automaticRecovery)
+        : await rejectSelection(selection, reviewRefusal);
       // One controller action can include bounded prerequisite recovery.
       // Neither the model nor a retry manufactures an unadvertised transition.
       if (turn && abortPreparation && settlement.status !== 'rejected' && !['respond', 'dismiss', 'recover'].includes(selection.action)) {

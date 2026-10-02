@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Require scalar Boss-question storage for flat compiled workflows and keyed storage throughout workflows declaring parallel groups, matching the shared factory's existing discovery contract. Integration checks now drive a materialized, compiled question-and-reply flow through the actual factory and Git receipts, rather than projecting keyed flat context into a scalar reader.
 - Apply the live acceptance model overrides consistently to SDK and CLI Boss-question relay fixtures.
+- Refuse fresh packaged CODE and DECIDE engagements before any coding or replacement when REVIEW is disabled, with an actionable command-specific explanation. Unrelated workflows, custom registries and existing recovery remain available.
 
 ## [17.4.0] - 2026-10-02
 

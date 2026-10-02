@@ -105,6 +105,7 @@ meta.md       The spec of specs
 | [DR-077](decisions/077-portable-assets-and-inspection.md) | 077-portable-assets-and-inspection.md | Owner-scoped immutable assets, attachment turns, worker evidence and browser-enabled inspection with tool-free control |
 | [DR-078](decisions/078-live-tool-approval-forwarding.md) | 078-live-tool-approval-forwarding.md | Ephemeral host approval callbacks, durable turn attribution and cancellation without workflow semantics |
 | [DR-079](decisions/079-topology-selects-question-storage.md) | 079-topology-selects-question-storage.md | Compiler question storage follows the existing flat scalar and parallel keyed runtime projections |
+| [DR-080](decisions/080-packaged-review-admission.md) | 080-packaged-review-admission.md | Packaged CODE and DECIDE require enabled REVIEW before fresh working-frame construction |
 
 ## Packages
 
