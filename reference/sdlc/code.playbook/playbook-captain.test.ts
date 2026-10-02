@@ -5954,7 +5954,8 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 });
 
 describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () => {
-  const CODE_FROM = '@sublang/playbook/code/registry';
+  // These loader cases supply a synthetic two-role registry, not packaged CODE.
+  const CODE_FROM = 'mod://fixture-code';
 
   function namespacedSession() {
     return stubSession([

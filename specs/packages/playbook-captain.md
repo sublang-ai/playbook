@@ -300,6 +300,15 @@ payload.
 The shell shall not duplicate the full Boss conversation in its
 ledger.
 
+#### playbook-captain-81
+
+Where an enabled manifest has id `code` with exact configured `from` value `@sublang/playbook/code/registry`, or id `decide` with exact configured `from` value `@sublang/playbook/decide/registry`, when the shell admits a fresh root or nested engagement, the shell shall require an enabled validated entry with id `review` [[playbook-captain-5](#playbook-captain-5)] before constructing that working frame, dispatching its players, replacing an existing engagement, or reserving a pending child:
+
+- Missing REVIEW rejects a root start or switch through the normal selection/result path, naming the selected effective command and required REVIEW, while a nested call fails before child construction or bookkeeping.
+- A refused switch preserves the current root and pending work.
+- Configuration validation remains unchanged; chat and unrelated playbooks remain usable, no entry is automatically enabled, and custom same-id entries or differently spelled module aliases are outside this guard.
+- The exact configured provenance is private, not a registry ABI member or persisted snapshot field; delivery to an existing engagement, saved assessment, retained adoption and recovery remain governed by their existing contracts.
+
 #### playbook-captain-6
 
 Where the Playbook Captain shell handles Boss turns, the shell FSM
@@ -2092,3 +2101,7 @@ When integration tests submit attachment-only, clarified, nested and unrelated t
 ### playbook-captain-80
 
 When host integration drives inspection, nested work, interruption and a rejected repository effect, the suite shall verify substantive worker findings reach the Captain report with exact producing identity, quoted injection-like content cannot forge a host block, long content is marked as an excerpt while findings beyond introductory prose remain visible, aggregate overflow preserves latest reports with an omission marker, recovery reports saved findings without repeating work, repeated visits to one state cannot attribute an unacknowledged later result to an earlier accepted step, disposed adopted roots retain exact producing references, and no rejected receipt, hidden control or unrelated turn is reported as accepted completion [[playbook-captain-79](#playbook-captain-79)].
+
+### playbook-captain-82
+
+When shared-host integration drives the real packaged CODE and DECIDE registries over fresh Git worktrees without REVIEW, the suite shall verify zero working-factory, player and Git effects for start, switch and nested refusal, preservation of the active root on a refused switch, absence of pending-child residue after repeated nested attempts, a normal rejected-selection record and reply naming REVIEW, usable unrelated chat/work, and admission with validated REVIEW or a custom same-id module, including an effective command override, with no provenance added to persisted snapshots [[playbook-captain-81](#playbook-captain-81)].

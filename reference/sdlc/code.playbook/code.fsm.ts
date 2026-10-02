@@ -95,6 +95,8 @@ export interface IrTaskPhasePlayerInput extends PlayerInputBase {
   readonly sourceItem: 'CODE-3';
   /** `<ir-number>`: the IR whose next unfinished task this phase implements. */
   readonly irNumber?: string;
+  /** Source-owned relay; historical canonical evidence, not present approval. */
+  readonly previousPhaseReview: string;
 }
 
 export type PlayerInput = FirstPhasePlayerInput | IrTaskPhasePlayerInput;
@@ -194,6 +196,15 @@ export interface CodeInput {
   readonly runResults?: string;
 }
 
+export interface PreviousPhaseReview {
+  readonly phaseKind: 'direct' | 'new-intent' | 'ir-task';
+  readonly phaseOutcome: PhaseOutcome;
+  readonly scopeCommit: string;
+  readonly evaluatedRevision: string;
+  readonly irNumber?: string;
+  readonly irTask?: string;
+}
+
 export interface CodeContext {
   /** `<run-results>`: relevant run results relayed to every phase. */
   readonly runResults: string;
@@ -211,6 +222,8 @@ export interface CodeContext {
   readonly phaseOutcome?: PhaseOutcome;
   /** Revision evaluated by the latest passing review. */
   readonly evaluatedRevision?: string;
+  /** Frozen only by an accepted canonical clean child REVIEW. */
+  readonly previousPhaseReview?: PreviousPhaseReview;
   /** Compact failure CODE reports when review did not pass a phase. */
   readonly reviewError?: CompactError;
   /** Sanitized evidence of the review result that ended CODE. */
@@ -269,6 +282,9 @@ const IR_TASK_PHASE_PROMPT = [
   'Do not implement a later task in this phase.',
   "Mark the IR's progress and deliverables when relevant.",
   'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
+  'Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.',
+  'Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.',
+  'It does not replace independent review of this task or any new owner or release decision.',
   '',
   'Keep to the original intent and follow what it asks.',
   'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
@@ -280,6 +296,7 @@ const IR_TASK_PHASE_PROMPT = [
   '> Original request: <caller-input>',
   '> IR number: <ir-number>',
   '> Run results: <run-results>',
+  '> Previous phase review: <previous-phase-review>',
 ].join('\n');
 
 const REVIEW_NEW_INTENT_PHASE_TEMPLATE = [
@@ -823,6 +840,7 @@ export const codeMachine = setup({
             irTask: undefined,
             phaseOutcome: undefined,
             evaluatedRevision: undefined,
+            previousPhaseReview: undefined,
             reviewError: undefined,
             reviewEvidence: undefined,
             lastError: undefined,
@@ -834,6 +852,7 @@ export const codeMachine = setup({
     resetForInterrupt: assign({
       phaseOutcome: undefined,
       evaluatedRevision: undefined,
+      previousPhaseReview: undefined,
       reviewError: undefined,
       reviewEvidence: undefined,
       lastError: undefined,
@@ -876,11 +895,24 @@ export const codeMachine = setup({
       pendingBossQuestion: undefined,
       bossReply: undefined,
     }),
-    rememberReviewPass: assign(({ event }) => {
+    rememberReviewPass: assign(({ context, event }) => {
       const pass = reviewPassOf(event);
-      return pass === undefined
+      return pass === undefined || context.codeCommit === undefined || context.phaseOutcome === undefined
         ? {}
-        : { evaluatedRevision: pass.evaluatedRevision, lastError: undefined };
+        : {
+            evaluatedRevision: pass.evaluatedRevision,
+            previousPhaseReview: {
+              phaseKind: context.phaseOutcome === 'directCommit'
+                ? 'direct' as const : context.phaseOutcome === 'irCommit'
+                ? 'new-intent' as const : 'ir-task' as const,
+              phaseOutcome: context.phaseOutcome,
+              scopeCommit: context.codeCommit,
+              evaluatedRevision: pass.evaluatedRevision,
+              ...(context.irNumber === undefined ? {} : { irNumber: context.irNumber }),
+              ...(context.irTask === undefined ? {} : { irTask: context.irTask }),
+            },
+            lastError: undefined,
+          };
     }),
     rememberReviewNotPassed: assign(({ event }) => {
       const output = doneOutputOf(event);
@@ -1086,6 +1118,9 @@ export const codeMachine = setup({
             ? { irNumber: context.irNumber }
             : {}),
           runResults: context.runResults,
+          previousPhaseReview: context.previousPhaseReview === undefined
+            ? 'No accepted prior-phase review is available.'
+            : JSON.stringify(context.previousPhaseReview),
           ...bossReplyFields(context),
         }),
         onDone: [

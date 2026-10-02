@@ -10,9 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.4.1] - 2026-10-02
+
+### Changed
+
+- Require Cligent 0.33.2 so fresh Claude sessions receive a deterministic title without invoking an ancillary title model.
+
 ### Fixed
 
+- Relay the previous phase's canonical clean REVIEW scope and evaluated revision
+  to later CODE IR tasks, preserving review-fix descendants and owner decisions.
 - Require scalar Boss-question storage for flat compiled workflows and keyed storage throughout workflows declaring parallel groups, matching the shared factory's existing discovery contract. Integration checks now drive a materialized, compiled question-and-reply flow through the actual factory and Git receipts, rather than projecting keyed flat context into a scalar reader.
+- Apply the live acceptance model overrides consistently to SDK and CLI Boss-question relay fixtures.
+- Refuse fresh packaged CODE and DECIDE engagements before any coding or replacement when REVIEW is disabled, with an actionable command-specific explanation. Unrelated workflows, custom registries and existing recovery remain available.
 
 ## [17.4.0] - 2026-10-02
 
@@ -817,7 +827,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.4.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.4.1...HEAD
+[17.4.1]: https://github.com/sublang-ai/playbook/compare/v17.4.0...v17.4.1
 [17.4.0]: https://github.com/sublang-ai/playbook/compare/v17.3.0...v17.4.0
 [17.3.0]: https://github.com/sublang-ai/playbook/compare/v17.2.0...v17.3.0
 [17.2.0]: https://github.com/sublang-ai/playbook/compare/v17.1.0...v17.2.0

@@ -23,6 +23,8 @@ import { openSessionHost } from '../reference/sdlc/code.playbook/session-host.js
 import { loadLaunchPlan } from '../reference/sdlc/code.playbook/bin/launch-config.js';
 import { executionConfigFromPlan } from '../reference/sdlc/code.playbook/bin/run.js';
 
+const GENERATED_CHECK_CACHE = 'generated check cache';
+
 const metadata = (stateId: string, description: string, role?: string) => ({
   playbook: { stateId, description, ...(role ? { role } : {}) },
 });
@@ -224,7 +226,7 @@ class InterruptedCodex extends CodexAdapter {
         InterruptedCodex.injectStrayFile = false;
         // Inject after the real worker finishes, so its own tidying cannot
         // erase the failure this acceptance scenario is meant to exercise.
-        await writeFile(join(options!.cwd!, 'scratch-output'), 'injected generated output');
+        await writeFile(join(options!.cwd!, 'scratch-output'), GENERATED_CHECK_CACHE);
       }
       yield event;
     }
@@ -266,7 +268,7 @@ it.each(['player', 'judge', 'files', 'preparation', 'missing-transition'])(
     if (failure === 'files') {
       await mkdir(join(cwd, '.runtime'));
       await writeFile(join(cwd, '.runtime/ready'), 'ready');
-      await writeFile(join(cwd, 'check.mjs'), "import {existsSync,writeFileSync} from 'node:fs'; if(!existsSync('.runtime/no-cache')) writeFileSync('scratch-output','generated check cache'); console.log('RECOVERY_LIVE_OK');\n");
+      await writeFile(join(cwd, 'check.mjs'), `import {existsSync,writeFileSync} from 'node:fs'; if(!existsSync('.runtime/no-cache')) writeFileSync('scratch-output',${JSON.stringify(GENERATED_CHECK_CACHE)}); console.log('RECOVERY_LIVE_OK');\n`);
     }
     git('add', '.');
     git('commit', '-qm', 'fixture');

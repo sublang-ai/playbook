@@ -96,6 +96,12 @@ const RETIRED_COMMIT_RESPONSE_INSTRUCTION =
 describe('CODE Source, GEARS, and FSM agreement', () => {
   it('preserves every authored instruction and quoted relay', () => {
     expect(checkSourceGearsContract(source, gearsText)).toEqual([]);
+    const start = source.indexOf('On each successful nested REVIEW,');
+    const lifecycle = source.slice(start, source.indexOf('\n\nAt the start', start));
+    expect(start).toBeGreaterThan(0);
+    for (const id of ['CODE-2', 'CODE-4'] as const) {
+      expect(gearsSection(id)).toContain(lifecycle);
+    }
   });
 
   it('maps exactly CODE-1 through CODE-4 once', () => {
@@ -143,12 +149,13 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     expect(byId.get('CODE-3')?.prompt[0]).toBe(
       'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
     );
-    expect(byId.get('CODE-3')?.prompt.slice(-3)).toEqual([
+    expect(byId.get('CODE-3')?.prompt.slice(-4)).toEqual([
       '> Original request: <caller-input>',
       '> IR number: <ir-number>',
       '> Run results: <run-results>',
+      '> Previous phase review: <previous-phase-review>',
     ]);
-    for (const [id, relays] of [['CODE-1', 2], ['CODE-3', 3]] as const) {
+    for (const [id, relays] of [['CODE-1', 2], ['CODE-3', 4]] as const) {
       const prompt = byId.get(id)?.prompt ?? [];
       expect(prompt.at(-relays - 1), id).toBe('');
       expect(

@@ -24,6 +24,15 @@ function retainedEffectLedgerCanRebase(checkpoint, current) {
         .slice(checkpoint.boundaries.length)
         .every(({ physicalReceipt }) => physicalReceipt?.classification === 'unchanged');
 }
+function missingPackagedReview(enablementById, playbookId) {
+    const selected = enablementById.get(playbookId);
+    if (selected === undefined ||
+        enablementById.has('review') ||
+        !['code', 'decide'].includes(playbookId) ||
+        selected.configuredFrom !== `@sublang/playbook/${playbookId}/registry`)
+        return undefined;
+    return `/${selected.command} requires enabled playbook "review"; enable REVIEW before starting this packaged workflow`;
+}
 function createRuntimeForEnablement(enablement, hostCapabilitiesById) {
     const hostCapabilities = hostCapabilitiesById.get(enablement.entry.id);
     if (hostCapabilities === undefined) {
@@ -2363,6 +2372,7 @@ async function buildEnablements(options, loadModule, hostCapabilities) {
         hostCapabilitiesById.set(entry.id, hostCapability);
         enablementById.set(entry.id, {
             entry,
+            configuredFrom: from,
             artifactSchema,
             command,
             options: validatedOptions,
@@ -4610,6 +4620,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 request.playbookId,
             ].join(' -> ')}`);
         }
+        const reviewRefusal = missingPackagedReview(enablementById, entry.id);
+        if (reviewRefusal !== undefined)
+            throw new Error(reviewRefusal);
         pendingChildParents.add(parent);
         let child;
         try {
@@ -6245,7 +6258,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             // selections freeze after their work and before reporting begins.
             if (selection.action === 'respond')
                 freezeControllerEvidence();
-            let settlement = await executeSelection(selection, signal, automaticRecovery);
+            signal.throwIfAborted();
+            const reviewRefusal = selection.action === 'start' || selection.action === 'switch'
+                ? missingPackagedReview(enablementById, selection.playbookId)
+                : undefined;
+            let settlement = reviewRefusal === undefined
+                ? await executeSelection(selection, signal, automaticRecovery)
+                : await rejectSelection(selection, reviewRefusal);
             // One controller action can include bounded prerequisite recovery.
             // Neither the model nor a retry manufactures an unadvertised transition.
             if (turn && abortPreparation && settlement.status !== 'rejected' && !['respond', 'dismiss', 'recover'].includes(selection.action)) {
