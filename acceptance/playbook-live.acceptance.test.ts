@@ -180,7 +180,11 @@ const reviewTask =
   'Review the latest commit and resulting repository state against its ' +
   'documented requirements. Resolve only material findings.';
 const reviewToken = 'REVIEW_ACCEPTANCE_OK';
-const hermeticTask = 'Echo the hermetic acceptance token.';
+// This gate checks both exact-token delivery and Captain completion meaning.
+// Ask for both explicitly; the worker fixture still returns only its token.
+const hermeticTask =
+  'Echo the hermetic acceptance token, then briefly explain in the final ' +
+  'Captain reply whether the worker returned the exact token and the request completed.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
 // Approval is a recorded machine outcome, never a turn of phrase: REVIEW
