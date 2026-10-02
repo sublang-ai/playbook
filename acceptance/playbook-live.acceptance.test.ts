@@ -866,6 +866,7 @@ describe.sequential('installed playbook live acceptance', () => {
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
             fastMode: true,
+            subagentModel: 'inherit',
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
@@ -883,6 +884,7 @@ describe.sequential('installed playbook live acceptance', () => {
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
             fastMode: true,
+            subagentModel: 'inherit',
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
