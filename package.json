@@ -262,7 +262,7 @@
   "scripts": {
     "build": "tsc",
     "test": "spex lint && vitest run --exclude src/cligent-release-capabilities.test.ts && vitest run src/cligent-release-capabilities.test.ts",
-    "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
+    "test:acceptance": "node scripts/run-live-acceptance.mjs",
     "smoke:release": "node scripts/release-smoke.mjs",
     "check:links": "node scripts/check-links.mjs",
     "playbook": "node reference/sdlc/code.playbook/bin/playbook.js"

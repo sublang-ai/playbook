@@ -459,6 +459,8 @@ The suite shall not retry model calls automatically. One explicit rerun is
 permitted only after the developer diagnoses a transient provider or network
 failure; a lifecycle, tmux, package, or repository assertion failure blocks
 the release until corrected.
+The gate shall discover every test file admitted by its acceptance configuration and run the installed-candidate file first, followed by the remaining files in deterministic order, stopping before any later file after a failed process, setup hook, or caller interruption.
+It shall give those processes one fresh owned npm cache, overriding inherited cache settings while preserving the caller's provider authentication roots, retain that cache on failure, and forward interruption to the current owned process group without starting another file.
 
 #### release-10
 
@@ -835,6 +837,10 @@ configuration or by GitHub CI.
 It shall stop after the first failed scenario rather than spend more model
 calls, preserve the failed scenario artifacts, and report a bounded
 terminal-control-stripped diagnostic snapshot outside the fixture repository.
+
+#### release-37
+
+When model-free fixtures exercise the real acceptance runner and Vitest processes, verification shall prove that a failed `beforeAll` hook prevents a later file from starting, every configured file runs once in deterministic installed-first order on success, both inherited npm cache spellings are replaced by one fresh shared cache while authentication roots remain unchanged, and interruption terminates the current file and a signal-ignoring owned descendant without starting another [[release-24](#release-24)].
 
 ### Conditional manual tmux UX smoke
 
