@@ -10,15 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Judge current-call completion without treating superseded interim questions
-  or later-stage owner prerequisites as an unanswered current-phase question.
-  CODE's question meaning stays aligned with its Source and compiled artifacts,
-  and its Coder reports remaining IR work separately from later acceptance;
-  contradictory or insufficient evidence and commit-disposition mismatches
-  continue to fail closed.
-
 ## [17.4.1] - 2026-10-02
 
 ### Changed
@@ -27,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Judge current-call completion without treating superseded interim questions
+  or later-stage owner prerequisites as an unanswered current-phase question.
+  CODE's question meaning stays aligned with its Source and compiled artifacts,
+  and its Coder reports remaining IR work separately from later acceptance;
+  contradictory or insufficient evidence and commit-disposition mismatches
+  continue to fail closed.
 - Relay the previous phase's canonical clean REVIEW scope and evaluated revision
   to later CODE IR tasks, preserving review-fix descendants and owner decisions.
 - Require scalar Boss-question storage for flat compiled workflows and keyed storage throughout workflows declaring parallel groups, matching the shared factory's existing discovery contract. Integration checks now drive a materialized, compiled question-and-reply flow through the actual factory and Git receipts, rather than projecting keyed flat context into a scalar reader.
