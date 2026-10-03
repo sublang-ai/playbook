@@ -132,7 +132,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       expect(item?.player).toBeDefined();
       expect(input.role).toBe(item?.player?.toLowerCase());
       expect(input.prompt).toBe(item?.prompt.join('\n'));
-      expect(Object.entries(input.result).slice(0, -1)).toEqual(
+      expect(Object.entries(input.result)).toEqual(
         item?.results.map(({ guard, description }) => [guard, description]),
       );
       expect(input.result.needsBossReply).toContain('question:');

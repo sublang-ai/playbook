@@ -1755,6 +1755,10 @@ describe('player + script workflow over the shared factory', () => {
     expect(judgePrompts[0]).toContain(
       'The coder role just produced this output:',
     );
+    expect(judgePrompts[0]).toContain('All done, boss.');
+    expect(judgePrompts[0]).toContain("Classify the invoked role's current call");
+    expect(judgePrompts[0]).toContain('genuinely unanswered question');
+    expect(judgePrompts[0]).toContain('A commit statement alone does not establish semantic completion');
     // Default composer substituted the machine-carried field.
     expect(playerPrompts).toEqual(['Implement this task: build the widget']);
 

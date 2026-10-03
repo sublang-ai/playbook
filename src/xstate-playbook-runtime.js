@@ -866,12 +866,16 @@ export function defaultExtractRequiredFields(description) {
         fields.push(m[1]);
     return fields;
 }
+const CURRENT_CALL_ADJUDICATION_GUIDANCE = "Classify the invoked role's current call by the result it reports at call end, using the full output and declared outcome meanings. " +
+    'An earlier interim question is not outstanding when later prose explicitly resolves or supersedes it for this call; a prerequisite only for a later workflow stage does not block an affirmatively completed current call. ' +
+    'A genuinely unanswered question needed to finish the current call remains outstanding. A commit statement alone does not establish semantic completion; do not force contradictory or insufficient evidence into a completed outcome.';
 /** Default delegated-player adjudicator prompt. */
 export function defaultBuildJudgePrompt(input, finalText) {
     const lines = [];
     lines.push('This is hidden control work. Do not call tools, inspect files, or ' +
         'seek external evidence. Decide only from the supplied player output ' +
         'and outcome descriptions. Reply with exactly one JSON object and no prose.');
+    lines.push(CURRENT_CALL_ADJUDICATION_GUIDANCE);
     lines.push('');
     lines.push(`The ${input.role} role just produced this output:`);
     lines.push('');
@@ -957,6 +961,7 @@ function buildGovernedJudgePrompt(input, finalText, outcomes, correction) {
     const lines = [
         'This is hidden control work. Do not call tools, inspect files, or seek external evidence.',
         'Decide only from the supplied player output and declared outcomes.',
+        CURRENT_CALL_ADJUDICATION_GUIDANCE,
         'Reply with exactly one JSON object and no prose.',
         '',
         `The ${input.role} role just produced this output:`,
