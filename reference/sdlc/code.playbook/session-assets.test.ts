@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash } from 'node:crypto';
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -102,6 +102,24 @@ describe('immutable owner assets (session-assets-6, session-assets-7)', () => {
     expect(Buffer.from(await store.readAsset(ref)).toString()).toBe('checkout');
     await chmod(join(directory, ref.assetId.slice(7)), 0o400);
     await expect(store.prepare()).rejects.toThrow('insufficient');
+  });
+
+  it('repeats preparation from another store without disturbing verified readers or concurrent verification', async () => {
+    const { store, directory } = await fixture();
+    const ref = await store.importAsset({ bytes: Buffer.from('steady'), mimeType: 'text/plain' });
+    const reader = await store.openAsset(ref);
+    const other = createAssetStore({ directory });
+    await other.prepare();
+    const [, concurrent] = await Promise.all([other.prepare(), store.openAsset(ref)]);
+    expect(Buffer.from(await reader.read({ offset: 0, length: 6 })).toString()).toBe('steady');
+    expect(Buffer.from(await concurrent.read({ offset: 0, length: 6 })).toString()).toBe('steady');
+    await reader.close(); await concurrent.close();
+    if (process.platform === 'win32') return;
+    const content = join(directory, ref.assetId.slice(7));
+    await chmod(content, 0o644); await chmod(directory, 0o755);
+    await other.prepare();
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    expect((await stat(content)).mode & 0o777).toBe(0o600);
   });
 
   it('retains complete orphan bytes but never treats a missing content file as an empty owner', async () => {

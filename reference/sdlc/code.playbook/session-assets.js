@@ -102,7 +102,8 @@ export function createAssetStore(options) {
     try {
       const opened = await directoryHandle.stat();
       if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('asset owner directory changed during preparation');
-      if (process.platform !== 'win32') await directoryHandle.chmod(0o700);
+      // fchmod always moves ctime, which verified readers pin: change only modes that differ.
+      if (process.platform !== 'win32' && (opened.mode & 0o777) !== 0o700) await directoryHandle.chmod(0o700);
       for (const name of await readdir(directory)) {
         if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) throw new Error('unknown asset owner entry');
         const path = join(directory, name);
@@ -114,7 +115,7 @@ export function createAssetStore(options) {
         try {
           const pinned = await handle.stat();
           if (!sameFile(stat, pinned)) throw new Error('asset entry changed during preparation');
-          if (process.platform !== 'win32') await handle.chmod(0o600);
+          if (process.platform !== 'win32' && (pinned.mode & 0o777) !== 0o600) await handle.chmod(0o600);
           assertFile(await handle.stat(), 'asset entry');
           const final = await lstat(path);
           if (final.dev !== pinned.dev || final.ino !== pinned.ino || final.nlink !== 1) throw new Error('asset entry changed during preparation');

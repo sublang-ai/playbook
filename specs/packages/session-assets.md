@@ -26,6 +26,7 @@ When a caller reads or materializes a reference, the facade shall verify the own
 Invalid references, absent bytes, corrupt bytes and paths escaping the owner shall fail explicitly.
 The facade shall provide immutable descriptor lookup by asset ID and a closeable verified reader whose bounded positional reads reuse one content integrity check and reject subsequent file mutation.
 The facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, and tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content.
+Preparation shall change no mode or file status metadata of a directory already at `0700` or a file already at `0600`, so verified readers and concurrent verification survive a repeated preparation.
 Materialized paths shall be execution-only values and shall not replace portable references.
 
 ### session-assets-4
@@ -54,7 +55,7 @@ When integration tests ingest authentic media and tool-result events into a real
 
 ### session-assets-6
 
-When integration tests import, read, materialize and copy real files through the public facade, they shall verify byte-exact content identity, independent metadata, atomic publication, cancellation, configurable limits, owner isolation and duplicate reuse [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
+When integration tests import, read, materialize and copy real files through the public facade, they shall verify byte-exact content identity, independent metadata, atomic publication, cancellation, configurable limits, owner isolation, duplicate reuse and open readers surviving a repeated preparation [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
 
 ### session-assets-7
 
