@@ -28,6 +28,9 @@ When the first coding phase begins for the caller's coding request and any relev
 > For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 > Do not implement a later task in this phase.
 > Mark the IR's progress and deliverables when relevant.
+> After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.
+> Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.
+> Report only what the IR and completed work establish, in ordinary prose without a required marker.
 > If the IR will be finished after this phase, double-check that all acceptance criteria are met.
 >
 > Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
@@ -47,6 +50,7 @@ Results:
 - `irCommit`: Coder decomposed the new coding intent into a new IR, implemented no IR task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irNumber` identifying the created IR.
 - `moreTasks`: Coder continued an existing IR, implemented exactly its next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.
 - `finalTask`: Coder continued an existing IR, implemented its final unfinished task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.
+- `needsBossReply`: At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.
 
 ### CODE-2
 
@@ -80,6 +84,9 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 > Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 > Do not implement a later task in this phase.
 > Mark the IR's progress and deliverables when relevant.
+> After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.
+> Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.
+> Report only what the IR and completed work establish, in ordinary prose without a required marker.
 > If the IR will be finished after this phase, double-check that all acceptance criteria are met.
 > Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.
 > Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.
@@ -100,6 +107,7 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 Results:
 - `moreTasks`: Coder implemented exactly the IR's next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask` naming the implemented task.
 - `finalTask`: Coder implemented the IR's final unfinished task and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask` naming the implemented task.
+- `needsBossReply`: At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.
 
 ### CODE-4
 

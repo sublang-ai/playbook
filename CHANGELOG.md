@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Judge current-call completion without treating superseded interim questions
+  or later-stage owner prerequisites as an unanswered current-phase question.
+  CODE's question meaning stays aligned with its Source and compiled artifacts,
+  and its Coder reports remaining IR work separately from later acceptance;
+  contradictory or insufficient evidence and commit-disposition mismatches
+  continue to fail closed.
+
 ## [17.4.1] - 2026-10-02
 
 ### Changed

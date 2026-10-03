@@ -383,6 +383,7 @@ control-plane error the turn's drain surfaces ([[playbook-runtime-41](#playbook-
 
 When adjudicating a player's `finalText`, the runtime shall call `callJudge` with a prompt that names the invoked player, includes the player's output verbatim, and lists every guard key of the FSM state's `result` map with its description.
 For a matching outcome it shall require a JSON object reply carrying a `guard` field equal to one of those keys.
+The prompt shall direct the judge to classify the invoked role's current call at call end from the full output and declared outcome meanings: an earlier interim question explicitly resolved or superseded by later affirmative completion is no longer outstanding, and a prerequisite only for a later workflow stage does not block an affirmatively completed current call, while a genuinely unanswered question needed to finish the current call remains outstanding and a commit statement alone establishes no semantic completion or permission to force contradictory or insufficient evidence into success.
 For a governed call whose output fits no declared outcome, the prompt shall instead permit exactly `{blocked:<nonempty explanation>}`; reconciliation shall retain that reply and return `no-matching-outcome` with its explanation as a runtime-defect cause, without correcting the reply or delivering an FSM outcome.
 For a nongoverned delegated-player call, each description is rendered verbatim.
 For a governed delegated-player call, each description's meaning before its `Output shall include` clause is rendered verbatim, while that clause — authored for the complete actor output — is replaced by the reply contract derived from the outcome's declared field authority under [[playbook-runtime-50](#playbook-runtime-50)]: exactly `guard` plus the outcome's semantic-owned fields, each keeping the placeholder or guidance its clause authors, with every presentation-, effect-, and runtime-owned field named as runtime-supplied to omit, so the judge is never asked for a field it does not own while the artifact's description text stays unaltered.
@@ -1239,6 +1240,7 @@ under fake ports, the test suite shall fail unless (verifying [[playbook-runtime
 - the adjudicator prompt identifies hidden control work, prohibits tool use,
   file inspection, and external evidence, and requires exactly one JSON object
   with no prose;
+- the adjudicator prompt keeps the complete role output and distinguishes the current call's affirmative completion, superseded interim questions and later-stage prerequisites from genuine outstanding current-call questions, while forbidding forced completion from a commit statement or contradictory or insufficient evidence;
 - `PlayerResult` `status='ok'` with non-empty `finalText` advances
   the FSM through `onDone`;
 - `status='aborted'` and `status='error'` each route the FSM to

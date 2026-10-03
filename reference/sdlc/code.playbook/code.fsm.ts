@@ -262,6 +262,9 @@ const FIRST_PHASE_PROMPT = [
   'For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
   'Do not implement a later task in this phase.',
   "Mark the IR's progress and deliverables when relevant.",
+  "After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.",
+  "Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.",
+  "Report only what the IR and completed work establish, in ordinary prose without a required marker.",
   'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
   '',
   'Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.',
@@ -281,6 +284,9 @@ const IR_TASK_PHASE_PROMPT = [
   'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
   'Do not implement a later task in this phase.',
   "Mark the IR's progress and deliverables when relevant.",
+  "After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.",
+  "Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.",
+  "Report only what the IR and completed work establish, in ordinary prose without a required marker.",
   'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
   'Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.',
   'Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.',
@@ -314,7 +320,7 @@ const REVIEW_IR_TASK_PHASE_TEMPLATE = [
 ].join('\n');
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
-  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
+  "At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const FIRST_PHASE_RESULT = {
   directCommit:

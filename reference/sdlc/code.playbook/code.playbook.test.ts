@@ -496,6 +496,124 @@ describe('linked CODE runtime', () => {
     },
   );
 
+  it.each([
+    ['resolved interim question', 'Which target should I use?\nThe target is now confirmed. This direct coding phase is implemented and tested, and its one commit is complete.'],
+    ['later-stage owner prerequisites', '请补充正式发布所需的产品负责人确认。\n当前直接编码阶段已实现、验证并完成一个提交，交回绑定 REVIEW；产品验收和正式发布仍属于后续阶段。'],
+  ])('adjudicates current-call completion with %s without dropping worker text', async (_label, finalText) => {
+    const host = await harness({
+      players: [{ status: 'ok', finalText }],
+      judges: [{ guard: 'directCommit' }],
+      children: [approvedChild(1)],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    try {
+      const result = await runtime.handleBossInput({ text: 'Implement one direct phase.', signal: new AbortController().signal });
+      const prompt = host.judgePrompts[0]!;
+      expect(prompt).toContain(finalText);
+      expect(prompt).toContain("Classify the invoked role's current call");
+      expect(prompt).toContain('a prerequisite only for a later workflow stage');
+      expect(prompt).toContain('At the end of this call, Coder has an unanswered clarifying question');
+      expect(host.playerCalls).toHaveLength(1);
+      expect(host.judgePrompts).toHaveLength(1);
+      expect(host.childRequests).toHaveLength(1);
+      expect(host.childRequests[0]?.text).toContain(`> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.`);
+      expect(host.childRequests[0]?.text).toContain(finalText.replace(/\n/g, '\n> '));
+      expect(host.effectLedger.snapshot().boundaries[0]?.finalText).toBe(finalText);
+      expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt).toMatchObject({ classification: 'one-descendant-commit', commitOid: host.commitOids[0] });
+      expect(result).toMatchObject({ outcome: 'terminal', output: { lastCodeCommit: host.commitOids[0], allReviewsPassed: true } });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('preserves a genuine unanswered current-call question as the authored wait', async () => {
+    const finalText = 'Which destination is required? I cannot finish this coding phase without that answer.';
+    const host = await harness({
+      players: [{ status: 'ok', finalText, repositoryEffect: 'unchanged' }],
+      judges: [{ guard: 'needsBossReply' }],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    try {
+      const result = await runtime.handleBossInput({ text: 'Implement the change.', signal: new AbortController().signal });
+      expect(host.judgePrompts[0]).toContain(finalText);
+      expect(host.judgePrompts[0]).toContain('genuinely unanswered question');
+      expect(result).toMatchObject({ outcome: 'quiescent', state: { stateId: 'awaitBossReply' } });
+      expect(runtime.describe?.().pendingQuestions).toMatchObject([{ question: finalText, asker: { kind: 'role', roleId: 'coder' } }]);
+      expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt).toMatchObject({ classification: 'unchanged' });
+      expect(host.commitOids).toEqual([]);
+      expect(host.childRequests).toEqual([]);
+      expect(host.playerCalls).toHaveLength(1);
+      expect(host.judgePrompts).toHaveLength(1);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('requests ordinary-prose IR task finality in first and later Coder calls', async () => {
+    const outputs = [
+      'IR-009 task 1 Coder work is implemented and committed. Task 2 has unfinished Coder work and is next; independent REVIEW is pending.',
+      'IR-009 task 2 Coder work is implemented and committed. No IR task has unfinished Coder work; this was its final IR task. Independent REVIEW, owner acceptance and workshop delivery are pending separately.',
+    ];
+    const host = await harness({
+      players: outputs.map((finalText) => ({ status: 'ok' as const, finalText })),
+      judges: [
+        { guard: 'moreTasks', irNumber: '009', irTask: '1' },
+        { guard: 'finalTask', irNumber: '009', irTask: '2' },
+      ],
+      children: [approvedChild(1), approvedChild(2)],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    try {
+      const result = await runtime.handleBossInput({ text: 'Continue IR-009 with its next unfinished task.', signal: new AbortController().signal });
+      expect(host.playerCalls).toHaveLength(2);
+      for (const call of host.playerCalls) {
+        expect(call.prompt).toContain('After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work;');
+        expect(call.prompt).toContain('they imply an unfinished IR task only when the IR assigns that work to a remaining task.');
+        expect(call.prompt).toContain('in ordinary prose without a required marker.');
+      }
+      expect(host.judgePrompts).toHaveLength(2);
+      outputs.forEach((output, index) => expect(host.judgePrompts[index]).toContain(output));
+      expect(acceptedOutcomes(host)).toMatchObject([{ acceptedOutcome: 'moreTasks' }, { acceptedOutcome: 'finalTask' }]);
+      expect(host.effectLedger.snapshot().boundaries.map(({ semanticCandidate }) => semanticCandidate)).toEqual([
+        { guard: 'moreTasks', irNumber: '009', irTask: '1' },
+        { guard: 'finalTask', irNumber: '009', irTask: '2' },
+      ]);
+      expect(host.childRequests).toHaveLength(2);
+      host.childRequests.forEach((request, index) => expect(request.text).toContain(`> Review scope: the commit ${host.commitOids[index]} from this coding phase and its resulting repository state.`));
+      expect(result).toMatchObject({ outcome: 'terminal', output: { lastCodeCommit: host.commitOids[1], allReviewsPassed: true } });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each([
+    ['blocked contradictory completion', { blocked: 'A commit is reported, but current-phase completion remains contradictory.' }, 'no-matching-outcome'],
+    ['wrong question after a commit', { guard: 'needsBossReply' }, 'repository-disposition-mismatch'],
+  ])('keeps %s unresolved despite current-call guidance', async (_label, candidate, reason) => {
+    const finalText = 'I committed the candidate, but still need Boss to decide the required behavior before this current coding phase can be complete.';
+    const host = await harness({ players: [{ status: 'ok', finalText }], judges: [candidate] });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    try {
+      const result = await runtime.handleBossInput({ text: 'Implement the change.', signal: new AbortController().signal });
+      expect(host.judgePrompts[0]).toContain(finalText);
+      expect(host.judgePrompts[0]).toContain('A commit statement alone does not establish semantic completion');
+      expect(result).toMatchObject({ outcome: 'failed', state: { stateId: 'failed' } });
+      expect(runtime.describe?.().lastError?.message).toContain(reason);
+      expect(runtime.describe?.().actions.map(({ id }) => id)).toEqual(['reconcile:unresolved-effect', 'abandon:unresolved-effect']);
+      expect(host.effectLedger.snapshot().boundaries[0]).toMatchObject({ finalText, semanticCandidate: candidate, correctionBudget: { spent: false }, physicalReceipt: { classification: 'one-descendant-commit', commitOid: host.commitOids[0] } });
+      expect(host.playerCalls).toHaveLength(1);
+      expect(host.judgePrompts).toHaveLength(1);
+      expect(host.childRequests).toEqual([]);
+      expect(acceptedOutcomes(host)).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('rejects a semantic attempt to supply effect-owned latestCommit', async () => {
     const forged = { guard: 'directCommit', latestCommit: 'f'.repeat(40) };
     const host = await harness({

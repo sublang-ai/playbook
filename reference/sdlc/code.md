@@ -40,6 +40,9 @@ Plan affected spec updates before, with, or after their corresponding code chang
 For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 Do not implement a later task in this phase.
 Mark the IR's progress and deliverables when relevant.
+After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.
+Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.
+Report only what the IR and completed work establish, in ordinary prose without a required marker.
 If the IR will be finished after this phase, double-check that all acceptance criteria are met.
 
 Consult @specs/map.md for relevant context and @specs/meta.md for spec requirements, if needed.
@@ -61,6 +64,9 @@ At the start of every later IR-task phase, Captain shall relay to Coder the orig
 Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 Do not implement a later task in this phase.
 Mark the IR's progress and deliverables when relevant.
+After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.
+Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.
+Report only what the IR and completed work establish, in ordinary prose without a required marker.
 If the IR will be finished after this phase, double-check that all acceptance criteria are met.
 Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.
 Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.
@@ -82,6 +88,8 @@ Every new-intent phase has two semantic outcomes: direct implementation and new 
 Every IR-task phase, including the first phase for an existing IR, identifies the IR and the implemented task, and has two semantic outcomes: more tasks and final task.
 The first phase therefore has four semantic outcomes — direct implementation, new IR, more tasks, and final task — plus the Boss question when the continued IR is ambiguous.
 Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
+The Boss-question outcome means that, at the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome.
+A commit statement alone does not establish semantic completion, and contradictory or insufficient evidence supports no forced commit outcome.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 
 At the end of every phase, Captain shall call playbook `review` and input the following in quotes (`>`):
