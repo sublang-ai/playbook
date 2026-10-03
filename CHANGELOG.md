@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve a deferred question's parked session when a changed repository
   checkpoint blocks its answer, keeping the shell's question projection exact
   so explicit reconciliation can recover it without repeating player work.
+- Instruct CODE's Coder to ask and return without a partial commit when a
+  required Boss answer blocks the current phase, preserving permitted work
+  for its deferred continuation and committing once before REVIEW after
+  completion. Receipt and Judge checks continue to refuse mismatches.
 
 ## [17.4.1] - 2026-10-02
 

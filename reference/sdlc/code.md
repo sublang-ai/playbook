@@ -12,7 +12,7 @@ The caller supplies a coding request together with any relevant context.
 
 A new coding intent follows either one direct implementation phase or an IR sequence consisting of a new-IR phase followed by one phase for each IR task.
 An existing IR follows one IR-task phase for each remaining unfinished task, starting with its next unfinished task.
-Each phase ends with one new Coder commit (owned by `code`).
+Each completed phase ends with one new Coder commit (owned by `code`).
 After each `code`-owned commit, Captain shall call the `review` playbook and wait until it passes with no unsettled findings.
 Playbook `review` owns every review round and every review-fix commit.
 Do not rewrite any existing commit.
@@ -78,7 +78,10 @@ At the start of *every* phase, Captain shall append the following instruction:
 ```markdown
 Keep to the original intent and follow what it asks.
 Do not re-run tests or builds whose inputs have not changed since any previous reported run.
-Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
+If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.
+Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.
+After the answer allows completion, make exactly one phase-owned commit before REVIEW.
+When the phase is complete, make its minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
 Identify every new commit you make.
 Credit every AI that contributed to this commit: Coder <coder-llm>.
@@ -92,7 +95,7 @@ The Boss-question outcome means that, at the end of this call, Coder has an unan
 A commit statement alone does not establish semantic completion, and contradictory or insufficient evidence supports no forced commit outcome.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 
-At the end of every phase, Captain shall call playbook `review` and input the following in quotes (`>`):
+At the end of every completed phase, Captain shall call playbook `review` and input the following in quotes (`>`):
 
 > Original intent: \<caller-input\>
 > Review scope: the commit \<code-commit\> from this coding phase and its resulting repository state.

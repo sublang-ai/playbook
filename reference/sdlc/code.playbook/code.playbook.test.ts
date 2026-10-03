@@ -614,6 +614,40 @@ describe('linked CODE runtime', () => {
     }
   });
 
+  it('refuses a later IR task partial commit while its required owner answer remains unanswered', async () => {
+    const finalText = 'Task 7 remains incomplete because its required owner decision has not arrived. I committed the available incident materials, but still need Boss to decide whether to reject this incomplete candidate.';
+    const host = await harness({
+      players: [
+        { status: 'ok', finalText: 'Created IR-009.' },
+        { status: 'ok', finalText },
+      ],
+      judges: [{ guard: 'irCommit', irNumber: '009' }, { guard: 'needsBossReply' }],
+      children: [approvedChild(1)],
+    });
+    const runtime = linkedRuntime(host);
+    await runtime.init(rootSession(host.ports));
+    try {
+      const result = await runtime.handleBossInput({ text: 'Implement the incident workflow.', signal: new AbortController().signal });
+      expect(host.playerCalls[1]?.prompt).toContain('do not create a partial or blocker-only commit to meet the one-commit requirement.');
+      expect(host.judgePrompts[1]).toContain(finalText);
+      expect(result).toMatchObject({ outcome: 'failed', state: { stateId: 'failed' } });
+      expect(runtime.describe?.().lastError?.message).toContain('repository-disposition-mismatch');
+      expect(host.effectLedger.snapshot().boundaries[1]).toMatchObject({
+        sourceStateId: 'irTaskPhase', finalText,
+        semanticCandidate: { guard: 'needsBossReply' },
+        correctionBudget: { spent: false },
+        physicalReceipt: { classification: 'one-descendant-commit', commitOid: host.commitOids[1] },
+      });
+      expect(host.playerCalls).toHaveLength(2);
+      expect(host.judgePrompts).toHaveLength(2);
+      expect(host.childRequests).toHaveLength(1);
+      expect(acceptedOutcomes(host)).toMatchObject([{ acceptedOutcome: 'irCommit' }]);
+      expect(host.commitOids).toHaveLength(2);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('rejects a semantic attempt to supply effect-owned latestCommit', async () => {
     const forged = { guard: 'directCommit', latestCommit: 'f'.repeat(40) };
     const host = await harness({
@@ -774,6 +808,11 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
     expect(parked.outcome).toBe('quiescent');
+    expect(host.playerCalls[1]?.prompt).toContain('If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.');
+    expect(host.playerCalls[1]?.prompt).toContain('Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.');
+    expect(host.playerCalls[1]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit before REVIEW.');
+    expect(host.commitOids).toHaveLength(1);
+    expect(host.childRequests).toHaveLength(1);
     expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
       pendingQuestion: {
         question: 'Which compatibility boundary should I use?',
@@ -1165,6 +1204,10 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
     expect(parked.outcome).toBe('quiescent');
+    expect(host.playerCalls[0]?.prompt).toContain('If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.');
+    expect(host.playerCalls[0]?.prompt).toContain('Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.');
+    expect(host.playerCalls[0]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit before REVIEW.');
+    expect(host.commitOids).toEqual([]);
     const openOperation = host.effectLedger.snapshot().logicalOperations[0];
     expect(openOperation).toMatchObject({
       originalBaseline: { projection: {} },
