@@ -11,7 +11,7 @@ Roles:
 
 ### CODE-1
 
-Each phase ends with exactly one new Coder commit owned by `code`, and no existing commit is rewritten.
+Each completed phase ends with exactly one new Coder commit owned by `code`, and no existing commit is rewritten.
 Captain uses the repository-effect receipt as the authoritative identity of the phase's new commit.
 When the request may continue an existing IR that it does not identify unambiguously, Coder asks Boss before changing files, and Boss's answer resumes this same phase.
 
@@ -37,7 +37,10 @@ When the first coding phase begins for the caller's coding request and any relev
 >
 > Keep to the original intent and follow what it asks.
 > Do not re-run tests or builds whose inputs have not changed since any previous reported run.
-> Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
+> If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.
+> Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.
+> After the answer allows completion, make exactly one phase-owned commit before REVIEW.
+> When the phase is complete, make its minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 > Make the commit message explain concisely what changed and why, including relevant verification.
 > Identify every new commit you make.
 > Credit every AI that contributed to this commit: Coder <coder-llm>.
@@ -76,7 +79,7 @@ When the nested `review` call fails outside that authored result contract, `code
 
 When absent, the previous phase review reads "No accepted prior-phase review is available.".
 
-Each phase ends with exactly one new Coder commit owned by `code`, and no existing commit is rewritten.
+Each completed phase ends with exactly one new Coder commit owned by `code`, and no existing commit is rewritten.
 Captain uses the repository-effect receipt as the authoritative identity of the phase's new commit.
 
 When a later IR-task phase begins, Captain shall prompt Coder:
@@ -94,7 +97,10 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 >
 > Keep to the original intent and follow what it asks.
 > Do not re-run tests or builds whose inputs have not changed since any previous reported run.
-> Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
+> If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.
+> Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.
+> After the answer allows completion, make exactly one phase-owned commit before REVIEW.
+> When the phase is complete, make its minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 > Make the commit message explain concisely what changed and why, including relevant verification.
 > Identify every new commit you make.
 > Credit every AI that contributed to this commit: Coder <coder-llm>.
