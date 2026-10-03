@@ -25,13 +25,13 @@ The default per-asset limit shall be 100 MiB, with an explicit positive safe-int
 When a caller reads or materializes a reference, the facade shall verify the owner's private directory, the asset's private current-user-owned single-link regular file, byte count and SHA-256 digest before returning bytes or an absolute local attachment path.
 Invalid references, absent bytes, corrupt bytes and paths escaping the owner shall fail explicitly.
 The facade shall provide immutable descriptor lookup by asset ID and a closeable verified reader whose bounded positional reads reuse one content integrity check and reject subsequent file mutation.
-The facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, and tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content.
+The facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content, and ignores and never modifies an entry named other than a digest-named asset, its `.json` descriptor or an `.import-*.tmp` temporary.
 Preparation shall change no mode or file status metadata of a directory already at `0700` or a file already at `0600`, so verified readers and concurrent verification survive a repeated preparation.
 Materialized paths shall be execution-only values and shall not replace portable references.
 
 ### session-assets-4
 
-The facade shall enumerate only verified immutable asset files as relative digest names and byte counts, and shall copy assets between owners by verified bytes without shared links.
+The facade shall enumerate only verified immutable asset files as relative digest names and byte counts, ignoring entries of any other name, and shall copy assets between owners by verified bytes without shared links.
 An owner may retain unreferenced complete bytes until its own deletion; no import or enumeration shall remove another owner's content.
 
 ### session-assets-5
@@ -59,7 +59,7 @@ When integration tests import, read, materialize and copy real files through the
 
 ### session-assets-7
 
-When integration tests present malformed references, unsafe filesystem entries and modified content to the public facade, they shall verify explicit rejection without source mutation or deletion of other owner files [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
+When integration tests present malformed references, unsafe filesystem entries and modified content to the public facade, they shall verify explicit rejection without source mutation or deletion of other owner files, and foreign entries left untouched by preparation and enumeration [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
 
 ### session-assets-8
 

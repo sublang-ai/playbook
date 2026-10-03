@@ -676,6 +676,20 @@ it('checkpoints asset-only accepted input, exports its exact prefix and preserve
  await copied.delete(id);expect(await readdir(copied.sessionsDir)).not.toContain(`${id}.assets`);
 });
 
+it('prepares, acquires and deletes sessions past foreign entries in their asset directories (session-storage-20)', async () => {
+ const {store,id,lease}=await fixture();
+ const reference=await lease.importAsset({bytes:Buffer.from('kept'),mimeType:'text/plain'});await lease.release();
+ const assets=join(store.sessionsDir,`${id}.assets`);await writeFile(join(assets,'.DS_Store'),'finder',{mode:0o600});
+ await store.prepare();const again=await store.acquire(id);
+ expect(Buffer.from(await again.readAsset(reference)).toString()).toBe('kept');await again.release();
+ await store.delete(id);expect((await readdir(store.sessionsDir)).filter(name=>name.startsWith(id))).toEqual([]);
+ const other=randomUUID();const otherLease=await store.acquire(other);await otherLease.initializeSettledWithPredecessor(freshBoundary() as any);
+ await otherLease.importAsset({bytes:Buffer.from('gone'),mimeType:'text/plain'});await otherLease.release();
+ const otherAssets=join(store.sessionsDir,`${other}.assets`);await mkdir(join(otherAssets,'nested'));await writeFile(join(otherAssets,'notes.txt'),'editor');
+ await store.delete(other);expect(await readdir(otherAssets)).toEqual(['nested']);
+ expect((await readdir(store.sessionsDir)).filter(name=>name.startsWith(other))).toEqual([`${other}.assets`]);
+});
+
 it('refuses undeclared, absent and corrupt session assets without discarding readable history (session-storage-20)', async()=>{
  const {store,id,lease,file}=await fixture();const reference=await lease.importAsset({bytes:Buffer.from('content'),mimeType:'text/plain'});
  const attemptId=randomUUID();await lease.beginTurn({input:'read evidence',attachments:[reference],attemptId,attemptedExecutionProjection:executionProjection()});

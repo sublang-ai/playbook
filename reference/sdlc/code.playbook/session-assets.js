@@ -105,7 +105,8 @@ export function createAssetStore(options) {
       // fchmod always moves ctime, which verified readers pin: change only modes that differ.
       if (process.platform !== 'win32' && (opened.mode & 0o777) !== 0o700) await directoryHandle.chmod(0o700);
       for (const name of await readdir(directory)) {
-        if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) throw new Error('unknown asset owner entry');
+        // Foreign names (Finder or editor files) are neither assets nor ours to modify.
+        if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) continue;
         const path = join(directory, name);
         const stat = await lstat(path);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('asset entry must be a single-link regular file');
@@ -287,9 +288,8 @@ export function createAssetStore(options) {
       const entries = await readdir(directory);
       const result = [];
       for (const name of entries.sort()) {
-        if (/^\.import-[0-9a-f-]+\.tmp$/.test(name)) continue;
-        if (/^[0-9a-f]{64}\.json$/.test(name)) continue;
-        if (!/^[0-9a-f]{64}$/.test(name)) throw new Error(`unknown asset owner entry ${JSON.stringify(basename(name))}`);
+        // Descriptors, import temporaries and foreign files are not enumerated.
+        if (!/^[0-9a-f]{64}$/.test(name)) continue;
         if (!entries.includes(`${name}.json`)) { const orphan = await checkedOpen(name, 'unreferenced asset content'); await orphan.handle.close(); continue; }
         const reader = await openAsset(`sha256:${name}`); await reader.close();
         result.push(Object.freeze({ assetId: reader.reference.assetId, path: name, metadataPath: `${name}.json`, byteLength: reader.reference.byteLength }));

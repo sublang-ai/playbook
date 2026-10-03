@@ -122,6 +122,19 @@ describe('immutable owner assets (session-assets-6, session-assets-7)', () => {
     expect((await stat(content)).mode & 0o777).toBe(0o600);
   });
 
+  it('ignores and never modifies foreign owner entries during preparation and enumeration', async () => {
+    const { store, directory } = await fixture();
+    const ref = await store.importAsset({ bytes: Buffer.from('kept'), mimeType: 'text/plain' });
+    await writeFile(join(directory, '.DS_Store'), 'finder', { mode: 0o600 });
+    await writeFile(join(directory, 'notes.txt'), 'editor', { mode: 0o644 });
+    await mkdir(join(directory, 'nested'), { mode: 0o755 });
+    await store.prepare();
+    expect(await store.listAssets()).toEqual([{ assetId: ref.assetId, path: ref.assetId.slice(7), metadataPath: `${ref.assetId.slice(7)}.json`, byteLength: 4 }]);
+    expect(Buffer.from(await store.readAsset(ref)).toString()).toBe('kept');
+    expect(await readFile(join(directory, '.DS_Store'), 'utf8')).toBe('finder');
+    if (process.platform !== 'win32') expect((await stat(join(directory, 'notes.txt'))).mode & 0o777).toBe(0o644);
+  });
+
   it('retains complete orphan bytes but never treats a missing content file as an empty owner', async () => {
     const { store, directory } = await fixture();
     await mkdir(directory, { mode: 0o700 });
