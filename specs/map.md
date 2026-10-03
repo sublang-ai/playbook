@@ -107,6 +107,7 @@ meta.md       The spec of specs
 | [DR-079](decisions/079-topology-selects-question-storage.md) | 079-topology-selects-question-storage.md | Compiler question storage follows the existing flat scalar and parallel keyed runtime projections |
 | [DR-080](decisions/080-packaged-review-admission.md) | 080-packaged-review-admission.md | Packaged CODE and DECIDE require enabled REVIEW before fresh working-frame construction |
 | [DR-081](decisions/081-code-prior-review-relay.md) | 081-code-prior-review-relay.md | CODE relays receipt-owned prior-phase scope and canonical clean REVIEW revision to later IR tasks without granting new approval |
+| [DR-082](decisions/082-retain-input-owned-boss-replies.md) | 082-retain-input-owned-boss-replies.md | Retain complete canonical Boss input after semantic acceptance without a Judge-extracted echo |
 
 ## Packages
 

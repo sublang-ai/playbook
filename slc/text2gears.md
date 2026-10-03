@@ -189,6 +189,13 @@ between the Source and the catalog: leave the Target unwritten and report it
 as an incompatible compiler input rather than rename or invent.
 A Source outside those ids is named from its own words as above.
 
+A value Source assigns to the received Boss input or reply is already runtime
+input, not a value the acting agent produces. Where Source requires that
+complete value retained for later calls, preserve the exact input's retention
+and the Source's acceptance condition in non-acting GEARS prose; do not declare
+a Judge-extracted echo property for it. The semantic approval or refusal stays
+in the acting result contract.
+
 A produced value consumed later shall have a declared producer: where any
 later item's blockquote reads a value through a `<placeholder>`, the item
 whose behavior produces that value shall declare the `Results:` contract

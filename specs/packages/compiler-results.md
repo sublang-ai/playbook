@@ -46,6 +46,10 @@ When gears2fsm compiles an accepted `onDone` arm of an artifact-schema-3 governe
 
 When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
 
+### compiler-results-17
+
+Where Source requires the complete received Boss input or reply retained for a later call, when text2gears emits GEARS, it shall preserve that input-owned retention and its Source-authored acceptance condition in non-acting prose, without declaring a Judge-extracted echo property; the acting result contract retains the semantic approval or refusal ([DR-082](../decisions/082-retain-input-owned-boss-replies.md)).
+
 ## Verification
 
 ### compiler-results-8
@@ -89,3 +93,8 @@ When the integration suite reads the shipped text2gears definition, it shall ver
 ### compiler-results-16
 
 When the integration suite reads the shipped gears2fsm definition and each maintained workflow FSM, it shall verify that the definition requires the accepted-outcome marker on every accepted governed arm and that each maintained FSM with a governed delegated-player state declares the `playbook.acceptedOutcome` action and carries it on its accepted arms, an arm that completes a parallel parent naming the join's target [[compiler-results-15](#compiler-results-15)].
+
+### compiler-results-18
+
+When the integration suite drives a question/reply workflow through the shared factory's closed acting-result contract, it shall verify that the semantic approval remains a guard-only result, a refusal remains distinct, and an added echo field is rejected rather than substituted for the canonical input [[compiler-results-17](#compiler-results-17)].
+The suite shall also verify that the shipped text2gears guidance preserves input-owned retention without an echo declaration [[compiler-results-17](#compiler-results-17)]; scripted judgments shall not claim model approval accuracy.
