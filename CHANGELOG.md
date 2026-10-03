@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.4.1] - 2026-10-03
+
+### Changed
+
+- Require Cligent 0.33.2 so fresh Claude sessions receive a deterministic title without invoking an ancillary title model.
+
 ### Fixed
 
 - Guide Source-owned empty array discussion to retain its declared shape in
@@ -27,15 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Captain did not select never reach a child worker.
 - Keep pending attachments across the end of a root engagement until a later
   root consumes them, and stop offering a reference once a delivery selects it.
-
-## [17.4.1] - 2026-10-02
-
-### Changed
-
-- Require Cligent 0.33.2 so fresh Claude sessions receive a deterministic title without invoking an ancillary title model.
-
-### Fixed
-
 - Preserve a deferred question's parked session when a changed repository
   checkpoint blocks its answer, keeping the shell's question projection exact
   so explicit reconciliation can recover it without repeating player work.
