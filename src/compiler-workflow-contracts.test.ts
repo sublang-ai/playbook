@@ -251,6 +251,7 @@ it("holds a builtin compiled under its own id to the catalog's interface", () =>
     branch: ["branch", "issueSummary", "coderOutput"],
     pr: ["pullRequest", "pullRequestUrl", "coderOutput"],
     review: ["evaluatedRevision"],
+    inspect: ["report"],
   };
   for (const [workflow, names] of Object.entries(returned)) {
     const gears = declared(workflow);
