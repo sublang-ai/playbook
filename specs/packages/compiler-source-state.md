@@ -34,6 +34,10 @@ This topology selection preserves the shared factory's flat scalar and parallel 
 Where Source requires the complete received Boss reply retained after an acting agent accepts it semantically, when gears2fsm emits that accepted boundary, the FSM shall first verify the current question's state, Source-item and asker binding and receipt of a nonempty reply, then retain the exact canonical reply in serializable context before clearing the question and reply, preserving surrounding whitespace, CRLF/LF separators, blank lines and trailing separators rather than requiring or substituting a model-produced echo ([DR-082](../decisions/082-retain-input-owned-boss-replies.md)).
 Neither stale question/reply context nor a different actor-supplied value shall establish that binding or semantic approval.
 
+### compiler-source-state-8
+
+Where Source owns array-valued retained discussion with no initial history, when gears2fsm emits that context field, it shall initialize and reset its empty value as a JSON-safe empty array only at Source lifecycle boundaries, preserving the declared array shape in ordinary and continuation actor inputs and the Source-owned retention duty [[compiler-source-state-2](#compiler-source-state-2)], without inventing caller intent, domain evidence, prerequisite reports, approvals or prior-stage results ([DR-086](../decisions/086-empty-typed-history-shapes.md)).
+
 ## Verification
 
 ### compiler-source-state-3
@@ -49,3 +53,8 @@ When the [continuation integration suite](../../src/compiler-continuation.test.t
 When the integration suite runs the shared factory against a real Git worktree, it shall verify that an accepted reply is retained exactly through Q/A clearing and a later invocation for LF, CRLF, blank lines and surrounding whitespace [[compiler-source-state-6](#compiler-source-state-6)].
 It shall verify that semantic refusal, malformed results, mismatched question identity or authority, stale Source-item context and empty replies confer no retained approval or later call [[compiler-source-state-6](#compiler-source-state-6)].
 The suite shall verify unchanged repository receipts and the shipped lifecycle guidance [[compiler-source-state-6](#compiler-source-state-6)], without claiming that a fixture proves a future model-produced artifact conforms.
+
+### compiler-source-state-9
+
+When the [history-shape integration suite](../../src/compiler-history-shape.test.ts) drives real XState fresh, reset and repeated-question flows and invokes the selected real SLC prompt-composition checker, it shall verify that initialized/reset empty retained arrays preserve their declared ordinary and continuation input shape with byte-identical actual prompts and terminal outcomes, that an absent-history control yields the documented scalar-probe composition refusal, and that malformed actual histories and absent required caller or approval evidence remain rejected [[compiler-source-state-8](#compiler-source-state-8)].
+The suite shall verify the shipped initialization/reset guidance [[compiler-source-state-8](#compiler-source-state-8)], without claiming that its fixture establishes future generated-artifact conformance.

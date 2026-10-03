@@ -602,6 +602,9 @@ safety beyond the guarded direct transition.
 ## Context and prompts
 
 Context fields used to drive guards or compose prompts shall be **typed and named**.
+Where Source owns array-valued retained discussion whose initial state is no history, initialize that context field to `[]` and reset it to `[]` only at its Source lifecycle boundaries.
+Carry its declared array shape through ordinary and continuation `invoke.input`; do not leave the empty structural history absent so a prompt-contract probe mistakes it for a scalar.
+This empty history is not a default caller intent, prerequisite report, domain evidence, approval, or prior-stage result; those remain unavailable until actually established.
 The compiler shall not branch on untyped properties of `lastResult`; persistent routing decisions belong in typed context fields. (`lastResult` is for inspection only.)
 Where Source declares a finite ordered plan, represent it as a typed readonly
 JSON-safe array and validate that shape on the actor-output transition; an

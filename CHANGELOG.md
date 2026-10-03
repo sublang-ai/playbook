@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guide Source-owned empty array discussion to retain its declared shape in
+  initial context and lifecycle resets without defaulting required evidence.
 - Guide compiled workflows to retain a Source-required complete Boss reply
   directly from canonical input after semantic acceptance, preserving exact
   whitespace and separators without a Judge-extracted echo field.
