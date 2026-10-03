@@ -886,6 +886,15 @@ pending question and reply selected for that working leaf as singular
 `pendingBossQuestion` and `bossReply` fields, regardless of the scalar or keyed
 context representation, so prompt composition has one stable contract.
 When Source requires earlier discussion or constraints on a later invocation, the compiler shall persist that source-owned history in serializable machine context before replacing or clearing the pending Q/A fields.
+Where that Source-owned value is the complete received Boss reply, retain it
+directly from the current working leaf's canonical reply context at the
+Source-authored accepted-outcome boundary, before clearing that leaf's Q/A.
+Preserve its exact string, including surrounding whitespace, CRLF/LF separators,
+blank lines and trailing separators; do not require a model-produced echo or
+replace it with one. Acceptance remains the acting agent's semantic judgment,
+guarded by the current matching question's state, Source-item and asker binding
+and actual receipt of a nonempty reply. Neither stale question/reply context
+nor a different actor-supplied value establishes that binding or approval.
 The later `invoke.input` shall relay that persisted context on both resumed and fresh calls that Source says need it, preserving Source-owned relevance and format without imposing all-history semantics on sources that do not require it.
 Shared Boss-reply continuation carries only the latest Q/A pair, and a backend continuation token is not durable Source history.
 When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).

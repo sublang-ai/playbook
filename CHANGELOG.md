@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Guide compiled workflows to retain a Source-required complete Boss reply
+  directly from canonical input after semantic acceptance, preserving exact
+  whitespace and separators without a Judge-extracted echo field.
+
 ## [17.4.1] - 2026-10-02
 
 ### Changed

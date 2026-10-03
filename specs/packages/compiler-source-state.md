@@ -29,6 +29,11 @@ When gears2fsm emits Boss-reply suspension for direct-Captain or delegated-playe
 Each working leaf's `invoke.input` shall pass its selected question and reply, when present, unchanged as singular `pendingBossQuestion` and `bossReply` fields for shared continuation [[playbook-runtime-92](playbook-runtime.md#playbook-runtime-92)], regardless of context form; a private wrapper such as `context.continuation` shall not replace the canonical context fields.
 This topology selection preserves the shared factory's flat scalar and parallel keyed projections [[playbook-runtime-88](playbook-runtime.md#playbook-runtime-88)] ([DR-079](../decisions/079-topology-selects-question-storage.md)).
 
+### compiler-source-state-6
+
+Where Source requires the complete received Boss reply retained after an acting agent accepts it semantically, when gears2fsm emits that accepted boundary, the FSM shall first verify the current question's state, Source-item and asker binding and receipt of a nonempty reply, then retain the exact canonical reply in serializable context before clearing the question and reply, preserving surrounding whitespace, CRLF/LF separators, blank lines and trailing separators rather than requiring or substituting a model-produced echo ([DR-082](../decisions/082-retain-input-owned-boss-replies.md)).
+Neither stale question/reply context nor a different actor-supplied value shall establish that binding or semantic approval.
+
 ## Verification
 
 ### compiler-source-state-3
@@ -38,3 +43,9 @@ When the integration suite inspects the gears2fsm definition and runs focused XS
 ### compiler-source-state-5
 
 When the [continuation integration suite](../../src/compiler-continuation.test.ts) drives real XState question/reply flows for direct-Captain and delegated-player inputs, and the [materialization integration suite](../../src/link-materialization.test.ts) emits, compiles, and runs a flat delegated-player artifact through the actual shared factory and Git worktree capabilities, the suites shall verify exact question discovery and resumed Q/A through scalar context, no question discovery for flat keyed or private-wrapper controls even when a manually injected reply can reach an invocation, and the definition's topology-specific storage requirement [[compiler-source-state-4](#compiler-source-state-4)].
+
+### compiler-source-state-7
+
+When the integration suite runs the shared factory against a real Git worktree, it shall verify that an accepted reply is retained exactly through Q/A clearing and a later invocation for LF, CRLF, blank lines and surrounding whitespace [[compiler-source-state-6](#compiler-source-state-6)].
+It shall verify that semantic refusal, malformed results, mismatched question identity or authority, stale Source-item context and empty replies confer no retained approval or later call [[compiler-source-state-6](#compiler-source-state-6)].
+The suite shall verify unchanged repository receipts and the shipped lifecycle guidance [[compiler-source-state-6](#compiler-source-state-6)], without claiming that a fixture proves a future model-produced artifact conforms.
