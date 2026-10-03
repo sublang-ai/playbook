@@ -4165,8 +4165,6 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             finally {
                 if (leafFrame() === frame) {
                     frames.pop();
-                    if (!frame.parent)
-                        pendingAttachments = [];
                     if (frame.parent) {
                         pendingChildParents.delete(frame.parent.frame);
                     }
@@ -6763,6 +6761,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const nextAttachments = mergeAttachments(leaf.attachments ?? [], selected);
             if (nextAttachments.length)
                 leaf.attachments = nextAttachments;
+            // Delivered references now belong to the leaf; the rest stay pending.
+            const delivered = new Set(selected.map((reference) => reference.assetId));
+            pendingAttachments = pendingAttachments.filter((reference) => !delivered.has(reference.assetId));
             // CAPTAIN-8: delivery carries text only, and the shell is authoritative
             // for that text — any text carried on the selection is ignored.
             turn.settled = true;
