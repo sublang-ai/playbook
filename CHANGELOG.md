@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve a deferred question's parked session when a changed repository
+  checkpoint blocks its answer, keeping the shell's question projection exact
+  so explicit reconciliation can recover it without repeating player work.
+
 ## [17.4.1] - 2026-10-02
 
 ### Changed

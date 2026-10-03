@@ -208,10 +208,15 @@ describe('model-free prior-review relay through real CODE and REVIEW', () => {
       await git(evidence.cwd, 'add', 'outside.txt'); await git(evidence.cwd, 'commit', '-qm', 'chore: unrelated external change');
       const staleHead = await git(evidence.cwd, 'rev-parse', 'HEAD');
       expect(staleHead).not.toBe(reviewed);
-      await expect(reopened.handleBossTurn('Use the new synthetic owner-approved local target.'))
-        .rejects.toThrow('session remains uncertain');
+      const stopped = await reopened.handleBossTurn('Use the new synthetic owner-approved local target.');
+      expect(stopped.state).toBe('settled');
+      expect(stopped.snapshot.mode).toBe('engaged.parked');
+      expect(stopped.snapshot.frames[0].runtime.state.stateId).toBe('awaitBossReply');
+      expect(stopped.snapshot.pendingBossQuestions ?? []).toEqual([]);
+      expect(stopped.effectLedger.logicalOperations.at(-1)?.checkpointRestorationEligible).toBe(true);
+      expect(reopened.listRuntimeActions().map(action => action.id)).toContain('reconcile:unresolved-effect');
       expect(evidence.subsequentCalls).toBe(1);
-      expect((await reopened.read())?.state).toBe('uncertain');
+      expect((await reopened.read())?.state).toBe('settled');
       expect(await git(evidence.cwd, 'rev-parse', 'HEAD')).toBe(staleHead);
       expect(await readFile(join(evidence.cwd, 'intent.md'), 'utf8')).toContain('review pending');
     });
