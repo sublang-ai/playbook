@@ -4551,6 +4551,24 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return;
         }
         assertRetainableResult(frame, result);
+        // A deferred checkpoint refusal changes the runtime's control overlay
+        // without publishing an FSM transition. Refresh its derived question
+        // mirror from an exact safe snapshot before reporting or saving the stop.
+        if (leafFrame() === frame && !frame.disposing &&
+            retainedEffectReconciliation === undefined) {
+            try {
+                const exported = frame.runtime.exportSnapshot?.();
+                if (exported !== undefined) {
+                    const snapshot = assertPlaybookRuntimeSnapshot(exported, frame.entry.id);
+                    if (isDeepStrictEqual(snapshot.state, result.state) &&
+                        isDeepStrictEqual(snapshot.effectLedger, currentEffectLedger())) {
+                        pendingBossQuestions = snapshot.pendingBossQuestions.length === 0 && pendingBossQuestions === undefined
+                            ? undefined : mirroredBossQuestions(snapshot.pendingBossQuestions);
+                    }
+                }
+            }
+            catch { /* An inconsistent runtime must still fail exact capture. */ }
+        }
         if (result.outcome === 'aborted' && runFailureFacts) {
             runFailureFacts.push(`${frameLabel(frame)} was aborted before its outcome could be confirmed; it was not repeated automatically.`);
         }
