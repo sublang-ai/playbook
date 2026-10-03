@@ -5,6 +5,8 @@
 
 ## Status
 
+Amended by [DR-077](077-portable-assets-and-inspection.md): session-owned immutable assets.
+
 Amended by [DR-073](073-durable-step-progress.md): portable progress records replace continuation points, with one shared discard predicate.
 
 Accepted (2026-09-05).

@@ -203,7 +203,10 @@ An absent assets member shall preserve legacy manifest/replay-only sessions unde
 ### session-storage-19
 
 When exporting a session bundle, the shared store shall return exact manifest bytes, exactly the replay prefix proven by its checkpoint, and verified relative content and descriptor entries for every declared asset, refusing incomplete checkpoints and retrying a concurrently changed manifest within a bounded operation.
-When deleting a session under its management lease, the store shall validate and remove only that session's private asset directory before removing its manifest, without removing copies belonging to another owner.
+When deleting a session under its management lease, the store shall validate and remove that session's asset entries and then its private asset directory before removing its manifest, without removing copies belonging to another owner:
+
+- regular non-link foreign files in that directory are removed with its asset entries;
+- a directory still holding a subdirectory or link afterward remains, and deletion of the session's other files continues.
 
 ### session-storage-21
 
@@ -271,7 +274,7 @@ When the integration suite migrates legacy CLI/desktop fixtures and opens their 
 
 ### session-storage-20
 
-When integration tests import assets under a real session lease, checkpoint, reopen, export and delete the session, they shall verify complete descriptors, exact replay-prefix export, independent owner copies, and refusal of missing or corrupt bytes without unsafe cleanup [[session-storage-18](#session-storage-18)] [[session-storage-19](#session-storage-19)].
+When integration tests import assets under a real session lease, checkpoint, reopen, export and delete the session, they shall verify complete descriptors, exact replay-prefix export, independent owner copies, preparation, acquisition and deletion past foreign asset-directory entries, and refusal of missing or corrupt bytes without unsafe cleanup [[session-storage-18](#session-storage-18)] [[session-storage-19](#session-storage-19)].
 
 ## References
 

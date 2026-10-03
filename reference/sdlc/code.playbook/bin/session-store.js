@@ -1161,12 +1161,18 @@ export function createCaptainSessionStore(options = {}) {
     try {
       await assertPrivateDirectory(assetsDirectory, fs);
       const names = await fs.readdir(assetsDirectory);
-      for (const name of names) {
-        if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) throw new Error('unknown session asset entry prevents deletion');
-        await assertPrivateRegularPath(join(assetsDirectory, name), 0o600, fs, 'session asset');
+      const owned = names.filter((name) => /^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name));
+      for (const name of owned) await assertPrivateRegularPath(join(assetsDirectory, name), 0o600, fs, 'session asset');
+      for (const name of owned) await fs.unlink(join(assetsDirectory, name));
+      // Foreign regular files (Finder or editor files) go with the session; a
+      // remaining subdirectory or link keeps the directory, not the session.
+      for (const name of names.filter((entry) => !owned.includes(entry))) {
+        const path = join(assetsDirectory, name);
+        try { const stat = await fs.lstat(path); if (stat.isFile() && !stat.isSymbolicLink()) await fs.unlink(path); }
+        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
       }
-      for (const name of names) await fs.unlink(join(assetsDirectory, name));
-      await fs.rmdir(assetsDirectory);
+      try { await fs.rmdir(assetsDirectory); }
+      catch (cause) { if (cause?.code !== 'ENOTEMPTY' && cause?.code !== 'EEXIST') throw cause; }
       await syncDirectory(sessionsDir, fs);
     } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
     for (const suffix of ['.records.jsonl', '.hints.json', '.spex.json', '.json']) {

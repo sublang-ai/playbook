@@ -10,6 +10,8 @@ Accepted.
 [DR-011](011-composable-playbook-execution.md) extends the same contract to independently parked parallel branches.
 [DR-032](032-explicit-roles-session-players.md) replaces the question record's overloaded player label with a discriminated Captain-or-local-role asker.
 [DR-040](040-outcome-authority-effect-reconciliation.md) binds an effect-authorized question to one cumulative repository operation, permits only a checkpoint-identical authored continuation, and sends any other exit to unresolved reconciliation while leaving read-only question calls on their unchanged predicate.
+Compiler question-storage selection clarified by [DR-079](079-topology-selects-question-storage.md).
+Input-owned reply retention clarified by [DR-082](082-retain-input-owned-boss-replies.md).
 
 ## Context
 

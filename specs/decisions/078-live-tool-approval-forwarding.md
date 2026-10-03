@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+Cligent floor raised to `^0.33.2` by Playbook 17.4.1 for deterministic fresh Claude session titles.
 
 ## Context
 

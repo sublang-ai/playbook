@@ -6158,13 +6158,16 @@ export function createPlaybookCaptainShell(
       enablement,
       hostCapabilitiesById,
     );
+    // A nested child inherits only its parent's selection, never the turn's
+    // unselected references; only a root reads the turn's selection.
+    const inherited = parent ? parent.frame.attachments : (activeTurn?.selectedAttachments ?? activeTurn?.attachments);
     return {
       entry,
       enablement,
       runtime,
       sessionId,
       rootSessionId: parent?.frame.rootSessionId ?? sessionId,
-      ...((parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn?.attachments)?.length ? { attachments: [...(parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn!.attachments)] } : {}),
+      ...(inherited?.length ? { attachments: [...inherited] } : {}),
       depth: parent ? parent.frame.depth + 1 : 0,
       playerBindings,
       ...(parent ? { parent } : {}),
@@ -6502,7 +6505,6 @@ export function createPlaybookCaptainShell(
       } finally {
         if (leafFrame() === frame) {
           frames.pop();
-          if (!frame.parent) pendingAttachments = [];
           if (frame.parent) {
             pendingChildParents.delete(frame.parent.frame);
           }
@@ -9590,6 +9592,9 @@ export function createPlaybookCaptainShell(
       const selected = selection.attachmentIds === undefined ? turn.attachments : selection.attachmentIds.map((id) => available.get(id as SessionAssetRef['assetId'])!);
       const nextAttachments = mergeAttachments(leaf.attachments ?? [], selected);
       if (nextAttachments.length) leaf.attachments = nextAttachments;
+      // Delivered references now belong to the leaf; the rest stay pending.
+      const delivered = new Set(selected.map((reference) => reference.assetId));
+      pendingAttachments = pendingAttachments.filter((reference) => !delivered.has(reference.assetId));
       // CAPTAIN-8: delivery carries text only, and the shell is authoritative
       // for that text — any text carried on the selection is ignored.
       turn.settled = true;

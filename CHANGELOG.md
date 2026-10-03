@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guide compiled workflows to retain a Source-required complete Boss reply
   directly from canonical input after semantic acceptance, preserving exact
   whitespace and separators without a Judge-extracted echo field.
+- Prepare session asset directories without changing the mode or file status
+  of entries already private, so a repeated preparation by another store no
+  longer invalidates open verified readers or races concurrent verification.
+- Ignore foreign files such as `.DS_Store` in a session asset directory during
+  preparation and enumeration, and remove regular ones on session deletion,
+  which now succeeds even when a subdirectory keeps the directory in place.
+- Give a nested call only its parent engagement's attachments, so references
+  the Captain did not select never reach a child worker.
+- Keep pending attachments across the end of a root engagement until a later
+  root consumes them, and stop offering a reference once a delivery selects it.
 
 ## [17.4.1] - 2026-10-02
 

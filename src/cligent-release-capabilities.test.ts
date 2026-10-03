@@ -476,7 +476,12 @@ ${runManagedSignature}
   runManagedTmuxPlaySession: unknown;
   assertFastModeSupported: unknown;
   assertSubagentModelSupported: unknown;
+  approvalHandler: unknown;
+  invocationId: unknown;
+  expiresAt: unknown;
 }
+/** Answers a {@link TmuxPlayApprovalRequest} through a {@link TmuxPlayApprovalHandler}. */
+export type ApprovalDecisionDecoy = 'allow_once' | 'deny';
 export declare class AgentCallSettingsErrorDecoy {}
 export declare function isAgentCallSettingsErrorDecoy(): void;
 export type TuningSelectionDecoy =
@@ -519,6 +524,12 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'runManagedTmuxPlaySession',
   "kind: 'value'",
   "kind: 'provider-default'",
+  'approvalHandler',
+  'TmuxPlayApprovalRequest',
+  'TmuxPlayApprovalHandler',
+  'invocationId',
+  'expiresAt',
+  "'allow_once' | 'deny'",
 ] as const;
 
 function naiveDeclarationScanIsGreen(packageRoot: string): boolean {

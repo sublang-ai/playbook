@@ -15969,7 +15969,7 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
   const materialize: NonNullable<PlaybookCaptainDeps['resolveAttachments']> = async references => references.map(reference => ({ path: `/owned/${reference.assetId.slice(7)}`, mimeType: reference.mimeType }));
   const paths = (digits: string[]) => digits.map(digit => ({ path: `/owned/${digit.repeat(64)}`, mimeType: 'image/png' }));
 
-  it('selects pending assets explicitly, defaults to this turn, rejects unavailable IDs, and clears scope on dismissal', async () => {
+  it('selects pending assets explicitly, defaults to this turn, rejects unavailable IDs, and keeps unselected pending assets past dismissal', async () => {
     const registry = fakeCodeEntry(async (runtime, input) => {
       runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
       await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false);
@@ -15996,15 +15996,24 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
       await shell.handleBossTurn(turn('compare these', 6), delivered.context);
       expect(delivered.playerCalls[0]?.prompt).toBe('compare these');
       expect(delivered.playerCalls[0]?.options?.attachments).toEqual(paths(['c', 'a']));
+      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
       for (const call of delivered.captainCalls) {
         expect(call.options?.attachments).toBeUndefined();
         expect(call.options?.settings).toMatchObject({ browser: false, mcpServers: {} });
       }
       shell.setTurnAttachments([asset('b')]); await shell.handleBossTurn(turn('', 7), blank.context);
       await shell.handleBossTurn(turn('stop', 8), stubContext([captainJson({ action: 'dismiss' })]).context);
-      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
+      expect(shell.exportSnapshot()?.pendingAttachments).toEqual([asset('b')]);
       const unrelated = stubContext(); await shell.handleBossTurn(turn('/code unrelated', 9), unrelated.context);
       expect(unrelated.playerCalls[0]?.options?.attachments).toBeUndefined();
+      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
+      shell.setTurnAttachments([asset('d')]); await shell.handleBossTurn(turn('', 10), blank.context);
+      await shell.handleBossTurn(turn('stop', 11), stubContext([captainJson({ action: 'dismiss' })]).context);
+      expect(shell.exportSnapshot()?.pendingAttachments).toEqual([asset('d')]);
+      const later = stubContext([captainJson({ action: 'start', playbookId: 'code', input: 'inspect the saved image', attachmentIds: [asset('d').assetId] })]);
+      await shell.handleBossTurn(turn('inspect the saved image', 12), later.context);
+      expect(later.playerCalls[0]?.options?.attachments).toEqual(paths(['d']));
+      expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
     } finally { await shell.dispose?.(); }
   });
 
@@ -16054,6 +16063,37 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
       await shell.handleBossTurn(turn('stop', 4), stubContext([captainJson({ action: 'dismiss' })]).context);
       const unrelated = stubContext(); await shell.handleBossTurn(turn('/code unrelated', 5), unrelated.context);
       expect(unrelated.playerCalls[0]?.options?.attachments).toBeUndefined();
+    } finally { await shell.dispose?.(); }
+  });
+
+  it('gives a nested child only its parent selection when a follow-up delivers none of its references', async () => {
+    const root = fakeCodeEntry(async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
+      if (input.text !== 'nest') { await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false); return; }
+      const result = await runtime.ports!.callPlaybook({ callId: 'code:inspect:plain', playbookId: 'inspect', text: input.text }, input.signal);
+      if (result.state !== 'suspended') throw new Error('Expected nested work to remain active');
+      const suspended = suspendedResult({ callId: 'code:inspect:plain', playbookId: 'inspect', childSessionId: result.childSessionId });
+      suspended.state = playbookState('waitingForChild', { tags: ['playbook.suspended'] });
+      runtime.snapshot = runtimeSnapshot('code', suspended.state, { turn: 2, suspendedCall: { callId: 'code:inspect:plain', stateId: 'waitingForChild', playbookId: 'inspect', text: input.text, childSessionId: result.childSessionId, turnId: 2 } });
+      return suspended;
+    });
+    root.entry.requiredRoleIds = ['coder'];
+    const child = fakePlaybookEntry('inspect', 'inspect', async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('inspect', playbookState('ready'), {});
+      await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false);
+    });
+    child.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell([root, child], { resolveAttachments: materialize });
+    await shell.init!(stubSession().session);
+    try {
+      const started = stubContext(); await shell.handleBossTurn(turn('/code plain start'), started.context);
+      expect(started.playerCalls[0]?.options?.attachments).toBeUndefined();
+      const nested = stubContext([captainJson({ action: 'deliver', attachmentIds: [] })]); shell.setTurnAttachments([asset('a')]);
+      await shell.handleBossTurn(turn('nest', 2), nested.context);
+      expect(nested.playerCalls.map(call => call.prompt)).toEqual(['nest']);
+      expect(nested.playerCalls[0]?.options?.attachments).toBeUndefined();
+      const snapshot = shell.exportSnapshot()!;
+      if ('frames' in snapshot) expect(snapshot.frames.map(frame => frame.attachments)).toEqual([undefined, undefined]);
     } finally { await shell.dispose?.(); }
   });
 });
