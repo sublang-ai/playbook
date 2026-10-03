@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.4.1] - 2026-10-02
+
+### Changed
+
+- Require Cligent 0.33.2 so fresh Claude sessions receive a deterministic title without invoking an ancillary title model.
+
 ### Fixed
 
 - Preserve a deferred question's parked session when a changed repository
@@ -19,15 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required Boss answer blocks the current phase, preserving permitted work
   for its deferred continuation and committing once before REVIEW after
   completion. Receipt and Judge checks continue to refuse mismatches.
-
-## [17.4.1] - 2026-10-02
-
-### Changed
-
-- Require Cligent 0.33.2 so fresh Claude sessions receive a deterministic title without invoking an ancillary title model.
-
-### Fixed
-
 - Judge current-call completion without treating superseded interim questions
   or later-stage owner prerequisites as an unanswered current-phase question.
   CODE's question meaning stays aligned with its Source and compiled artifacts,
