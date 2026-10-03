@@ -1372,7 +1372,7 @@ When a failure statement [[playbook-captain-71](#playbook-captain-71)] or the ru
 
 #### playbook-captain-78
 
-When a host submits exact Boss text with owned attachment references [[session-assets-5](session-assets.md#session-assets-5)], the shell shall bind references independently of text, preserve them in the accepted journal and snapshot, and retain selected references for its active engagement and each nested child's inherited snapshot.
+When a host submits exact Boss text with owned attachment references [[session-assets-5](session-assets.md#session-assets-5)], the shell shall bind references independently of text, preserve them in the accepted journal and snapshot, and retain selected references for its active engagement, each nested child inheriting only its parent's references in its snapshot.
 A new root shall receive explicit validated `attachmentIds` selected from current, pending or active context, defaulting on omission only to current-turn references, and shall consume the pending group.
 References from clarification-only turns shall remain pending until selected or a new root consumes their group.
 A delivered follow-up shall add its selected references to the leaf; completion, dismissal and unrelated new work shall not implicitly inherit prior engagement references.
@@ -2098,7 +2098,7 @@ When the shell suite settles, while the closing reply stays unusable after its c
 
 #### playbook-captain-77
 
-When integration tests submit attachment-only, clarified, nested and unrelated turns through the shared host and reopen saved state, they shall verify unchanged Boss text, one durable clarification reply, selected attachment propagation and isolation, child-generated evidence reaching parent continuation but not an unrelated root, materialization failure before acting work, and byte-identical fresh-session fallback [[playbook-captain-78](#playbook-captain-78)].
+When integration tests submit attachment-only, clarified, nested and unrelated turns through the shared host and reopen saved state, they shall verify unchanged Boss text, one durable clarification reply, selected attachment propagation and isolation, no attachments for a nested child spawned after a follow-up delivered none of its references, child-generated evidence reaching parent continuation but not an unrelated root, materialization failure before acting work, and byte-identical fresh-session fallback [[playbook-captain-78](#playbook-captain-78)].
 
 ### playbook-captain-80
 

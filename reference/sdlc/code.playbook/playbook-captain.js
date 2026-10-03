@@ -3852,13 +3852,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const sessionId = allocateSessionId();
         const playerBindings = makePlayerBindings(enablement);
         const runtime = createRuntimeForEnablement(enablement, hostCapabilitiesById);
+        // A nested child inherits only its parent's selection, never the turn's
+        // unselected references; only a root reads the turn's selection.
+        const inherited = parent ? parent.frame.attachments : (activeTurn?.selectedAttachments ?? activeTurn?.attachments);
         return {
             entry,
             enablement,
             runtime,
             sessionId,
             rootSessionId: parent?.frame.rootSessionId ?? sessionId,
-            ...((parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn?.attachments)?.length ? { attachments: [...(parent?.frame.attachments ?? activeTurn?.selectedAttachments ?? activeTurn.attachments)] } : {}),
+            ...(inherited?.length ? { attachments: [...inherited] } : {}),
             depth: parent ? parent.frame.depth + 1 : 0,
             playerBindings,
             ...(parent ? { parent } : {}),

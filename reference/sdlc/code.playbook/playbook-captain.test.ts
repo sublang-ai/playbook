@@ -16056,4 +16056,35 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
       expect(unrelated.playerCalls[0]?.options?.attachments).toBeUndefined();
     } finally { await shell.dispose?.(); }
   });
+
+  it('gives a nested child only its parent selection when a follow-up delivers none of its references', async () => {
+    const root = fakeCodeEntry(async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {});
+      if (input.text !== 'nest') { await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false); return; }
+      const result = await runtime.ports!.callPlaybook({ callId: 'code:inspect:plain', playbookId: 'inspect', text: input.text }, input.signal);
+      if (result.state !== 'suspended') throw new Error('Expected nested work to remain active');
+      const suspended = suspendedResult({ callId: 'code:inspect:plain', playbookId: 'inspect', childSessionId: result.childSessionId });
+      suspended.state = playbookState('waitingForChild', { tags: ['playbook.suspended'] });
+      runtime.snapshot = runtimeSnapshot('code', suspended.state, { turn: 2, suspendedCall: { callId: 'code:inspect:plain', stateId: 'waitingForChild', playbookId: 'inspect', text: input.text, childSessionId: result.childSessionId, turnId: 2 } });
+      return suspended;
+    });
+    root.entry.requiredRoleIds = ['coder'];
+    const child = fakePlaybookEntry('inspect', 'inspect', async (runtime, input) => {
+      runtime.snapshot = runtimeSnapshot('inspect', playbookState('ready'), {});
+      await callPlayerAndCommit(runtime, 'coder', input.text, input.signal, false);
+    });
+    child.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell([root, child], { resolveAttachments: materialize });
+    await shell.init!(stubSession().session);
+    try {
+      const started = stubContext(); await shell.handleBossTurn(turn('/code plain start'), started.context);
+      expect(started.playerCalls[0]?.options?.attachments).toBeUndefined();
+      const nested = stubContext([captainJson({ action: 'deliver', attachmentIds: [] })]); shell.setTurnAttachments([asset('a')]);
+      await shell.handleBossTurn(turn('nest', 2), nested.context);
+      expect(nested.playerCalls.map(call => call.prompt)).toEqual(['nest']);
+      expect(nested.playerCalls[0]?.options?.attachments).toBeUndefined();
+      const snapshot = shell.exportSnapshot()!;
+      if ('frames' in snapshot) expect(snapshot.frames.map(frame => frame.attachments)).toEqual([undefined, undefined]);
+    } finally { await shell.dispose?.(); }
+  });
 });
