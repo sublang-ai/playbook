@@ -8,6 +8,7 @@
 Accepted (2026-09-24).
 Amends [DR-055](055-public-workflow-contracts.md): the catalog binds the compiled side of a builtin as well as its callers, and `text2gears` joins `gears2fsm` and `link` in reading it.
 Everything else of that record stands.
+Input-owned reply retention clarified by [DR-082](082-retain-input-owned-boss-replies.md).
 
 ## Context
 

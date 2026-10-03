@@ -10,6 +10,7 @@ Amends [DR-019](019-shared-linked-runtime-factory.md) §1 and §4: the shared fa
 Amends [DR-011](011-composable-playbook-execution.md) §1 in one respect: the runtime that interprets the parallel proposal pair is the shared engine, not a linked runtime of its own.
 Everything else of both records stands.
 Recovery is refined by [DR-073](073-durable-step-progress.md): parallel regions record work without a single-invocation retry, while sequential steps after the join use saved-step recovery.
+Compiler question-storage selection clarified by [DR-079](079-topology-selects-question-storage.md).
 
 ## Context
 

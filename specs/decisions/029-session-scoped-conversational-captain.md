@@ -5,6 +5,8 @@
 
 ## Status
 
+Amended by [DR-077](077-portable-assets-and-inspection.md): attachment context and visible worker evidence.
+
 Amended by [DR-073](073-durable-step-progress.md): automatic work requires a same-turn stop; input acceptance and presented changes are recorded at their source.
 
 Amended by [DR-069](069-captain-prepares-step-recovery.md): ordinary Captain calls remain tool-free; task authorization permits separate bounded prerequisite preparation and automatic continuation.
