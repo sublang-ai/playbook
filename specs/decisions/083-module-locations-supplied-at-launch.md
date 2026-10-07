@@ -31,7 +31,7 @@ A module location is a property of the machine and installation running the laun
 The change is additive: every configuration valid before stays valid and composes the same plan, and the preparation hook, single import, registry checks and stored catalog are unchanged.
 A host or user can open a session from a configuration without `from`, and the CLI can continue any recorded session without restating its modules.
 A malformed `from` is still refused even when a module is supplied, so a broken shared file is never masked.
-The reopen exemption for stray ids lets a host supply the modules of its whole current configuration without first computing the stored subset.
+The reopen exemption for current playbooks the session does not hold lets a host supply the modules of its whole current configuration without first computing the stored subset.
 
 ## References
 

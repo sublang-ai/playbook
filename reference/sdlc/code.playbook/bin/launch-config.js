@@ -331,8 +331,6 @@ function resolveSuppliedModules(modules, enabledIds, currentIds) {
         `a module was supplied for ${JSON.stringify(id)}, which names no enabled playbook`,
       );
     }
-    // A current playbook outside the stored catalog is ignored on a reopen.
-    if (!enabledIds.includes(id)) continue;
     if (
       typeof specifier !== "string" ||
       specifier.trim().length === 0 ||
@@ -347,6 +345,9 @@ function resolveSuppliedModules(modules, enabledIds, currentIds) {
         `the module supplied for ${id} is a relative path; supply an absolute path, a file URL, or a package specifier`,
       );
     }
+    // A current playbook outside the stored catalog is ignored on a reopen,
+    // once its value has passed the checks above.
+    if (!enabledIds.includes(id)) continue;
     supplied.set(
       id,
       !specifier.startsWith("file:") && isAbsolute(specifier)
