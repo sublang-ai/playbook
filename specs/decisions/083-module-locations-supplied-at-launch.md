@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-10-06).
-Amends [DR-009](009-generic-playbook-cli-and-registry.md) §1–§2 in one scope: an enabled playbook's registry module may be supplied by the launch instead of its configured `from`; enablement, validation and everything else of that record stand.
+Amends [DR-009](009-generic-playbook-cli-and-registry.md) §1, §2 and §6 in one scope: an enabled playbook's registry module may be supplied by the launch, including through the CLI, instead of its configured `from`; enablement, validation and everything else of that record stand.
 
 ## Context
 
@@ -24,7 +24,7 @@ A module location is a property of the machine and installation running the laun
 4. On a new launch, a supplied module naming no enabled playbook is refused before any import; an ordinary reopen consults only its stored playbook ids, as it ignores every current playbook the session does not hold.
 5. A playbook with neither a supplied module nor `from` is refused on a new launch; on a reopen it takes the module the session already records, and otherwise the module so taken — the supplied one, else a present `from` — must equal the stored module; a present `from` beside a supplied module is checked for form only.
 6. The CLI exposes the option as a repeatable `--module <id>=<specifier>`, launcher-owned like `--with`: consumed, never forwarded or submitted as Boss input, refused beside a raw `--config`, with a relative path resolved against the invocation's working directory.
-7. No supplied module is written to any configuration file; the session record keeps the canonical prepared module exactly as it does for a configured one.
+7. A supplied module is written into neither the primary config nor any overlay; the session record keeps the canonical prepared module exactly as it does for a configured one.
 
 ## Consequences
 

@@ -426,8 +426,8 @@ consulted. These loaders hold no stored session record, so they refuse a
 playbook with neither a supplied module nor `from`, with or without
 `selectedMembers`; only the CLI's reopen of a recorded session falls back to
 the module that record holds. The preparation hook, single import, registry
-checks and the plan's canonical `from` are unchanged, and no supplied module
-is written to any file
+checks and the plan's canonical `from` are unchanged, and a supplied module is
+never written back to your config files
 ([DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
 
 `shared.readLeaseState(sessionId)` reports `active`, `idle` or `unknown` without

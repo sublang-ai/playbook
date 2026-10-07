@@ -441,8 +441,8 @@ playbooks:
 playbook run --module my-workflow=/opt/env/my-workflow.js "/my-workflow perform the task"
 ```
 
-A supplied module wins over a `from` the file does carry, and nothing is
-written back. A playbook with neither is refused before any import:
+A supplied module wins over a `from` the file does carry, and it is never
+written back to your config files. A playbook with neither is refused before any import:
 `playbooks.<id> names no module: set playbooks.<id>.from or supply a module for
 <id> (--module <id>=<specifier>)`. A malformed `from` is still refused even
 when a module is supplied. Reopening a recorded session needs neither: with

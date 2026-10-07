@@ -244,9 +244,9 @@ A directory where both imports already resolve is untouched, and
 module's directory is a git repository, add `node_modules/` to its
 `.gitignore` so provisioned links never enter player commits.
 
-A launch can also supply a playbook's module without writing it to any file,
-for example when an embedding host keeps each playbook installed in an
-environment of its own. `--module <id>=<specifier>` (or
+A launch can also supply a playbook's module, which is never written back to
+your config files, for example when an embedding host keeps each playbook
+installed in an environment of its own. `--module <id>=<specifier>` (or
 `--module=<id>=<specifier>`) is accepted by `playbook`, `playbook --session`,
 `--list`, `--theme-diagnostics`, and fresh or continuing `playbook run`, and
 wins over that playbook's `from` the way a `--with` fragment wins over the
