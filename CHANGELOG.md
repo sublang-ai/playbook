@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Module locations supplied at launch: the `modules` option of the shared
+  loader and the repeatable `--module <id>=<specifier>` flag.
+
+### Changed
+
+- `playbooks.<id>.from` is optional when the launch supplies the module or a
+  reopened session already records it.
+
 ## [17.4.1] - 2026-10-03
 
 ### Changed

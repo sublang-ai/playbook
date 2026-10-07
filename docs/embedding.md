@@ -402,6 +402,31 @@ The controller owns uncertainty, reconciliation, settlement and lease release;
 observers receive presentation events or exact appended envelopes through
 `onStoredRecord`. Keep the controller open for successive turns.
 
+`loadLaunchPlan()` and `normalizeLaunchPlan()` accept an optional `modules`
+option, a read-only record from playbook id to module specifier. A host that
+keeps each playbook installed somewhere of its own hands the module locations
+there instead of writing them into the shared config, whose
+`playbooks.<id>.from` may then be left out:
+
+```ts
+import { loadLaunchPlan } from '@sublang/playbook/session-host';
+
+const plan = await loadLaunchPlan({
+  userConfigPath,
+  modules: { code: '/opt/env/code/registry.mjs', review: '@sublang/playbook/review/registry' },
+});
+```
+
+Each enabled playbook takes `modules[id]` ahead of its `from`. An absolute
+path becomes a file URL, while a file URL or package specifier is kept; a
+relative path is refused, so resolve it against your own working directory
+first. On a new launch, a module naming no enabled playbook is refused before
+any import; an ordinary reopen consults only the playbook ids the session
+holds, and one whose config names no `from` uses its recorded module. The
+preparation hook, single import, registry checks and the plan's canonical
+`from` are unchanged, and no supplied module is written to any file
+([DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
+
 `shared.readLeaseState(sessionId)` reports `active`, `idle` or `unknown` without
 changing files. Use it for presentation; mutations still require a lease.
 

@@ -57,8 +57,11 @@ preflight their auth.
 
 Within a `playbooks.<id>` block, `from` (the registry module), `command` (an
 optional slash-command override), and `roles` are launcher-owned; every other
-key is that playbook's option slice. Every manifest role must be present
-exactly once. The launcher injects the rest — you do not write host wiring by
+key is that playbook's option slice. `from` is required unless the launch
+supplies that playbook's module with `--module <id>=<specifier>` (or an
+embedding host's `modules` option), or a reopened session already records
+one; see [Modules supplied at launch](#modules-supplied-at-launch). Every
+manifest role must be present exactly once. The launcher injects the rest — you do not write host wiring by
 hand.
 
 The launcher seeds one adapter for the Captain and all stable players from
@@ -421,6 +424,31 @@ entry emitted in a project working tree.
 Before either front end imports a filesystem registry, the shared launcher
 checks and, unless `--no-provision` is set, provisions its runtime engine
 links as described in [Using the CLI](cli.md#external-playbooks-and-engine-provisioning).
+
+### Modules supplied at launch
+
+A config may leave `playbooks.<id>.from` out when the launch supplies the
+module instead, so the shared file names no machine-specific path:
+
+```yaml
+playbooks:
+  my-workflow:
+    roles:
+      worker: my.worker
+```
+
+```sh
+playbook run --module my-workflow=/opt/env/my-workflow.js "/my-workflow perform the task"
+```
+
+A supplied module wins over a `from` the file does carry, and nothing is
+written back. A playbook with neither is refused before any import:
+`playbooks.<id> names no module: set playbooks.<id>.from or supply a module for
+<id> (--module <id>=<specifier>)`. A malformed `from` is still refused even
+when a module is supplied. Reopening a recorded session needs neither: with
+no `from` and no `--module`, it uses the module the session already records,
+and a present `from` or supplied module must equal that record
+([DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
 
 ## Migrating per-playbook players
 

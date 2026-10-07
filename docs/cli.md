@@ -181,6 +181,7 @@ stderr, and `--verbose` adds only telemetry topic names to stderr.
 | Flag | Meaning |
 | --- | --- |
 | `--with <path>` | overlay current config for a fresh session or compatible ordinary reopen; repeatable |
+| `--module <id>=<specifier>` | supply playbook `<id>`'s registry module ahead of its `playbooks.<id>.from`; repeatable, one per id; a relative path resolves against the current directory |
 | `--no-provision` | do not create missing engine links for configured filesystem registries |
 | `--json` | print exactly one `sessionId` / `reply` object |
 | `--verbose` | add Captain telemetry topic names to stderr |
@@ -239,7 +240,26 @@ creates engine symlinks beside the module and prints one provisioning line
 [DR-024](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/024-runtime-engine-provisioning.md)).
 
 A directory where both imports already resolve is untouched, and
-`--no-provision` disables new links for either fresh front end. If the
+`--no-provision` disables new links for either fresh front end.
+
+A launch can also supply a playbook's module without writing it to any file,
+for example when an embedding host keeps each playbook installed in an
+environment of its own. `--module <id>=<specifier>` (or
+`--module=<id>=<specifier>`) is accepted by `playbook`, `playbook --session`,
+`--list`, `--theme-diagnostics`, and fresh or continuing `playbook run`, and
+wins over that playbook's `from` the way a `--with` fragment wins over the
+file. An absolute path becomes a file URL, a relative path resolves against
+the directory where you run the command, and a file URL or package specifier
+is kept. The flag is never forwarded to tmux-play or sent as Boss input; it is
+refused beside a raw `--config`, during uncertain-turn recovery, for an id
+given twice, and for an id the config does not enable
+([[playbook-cli-94](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-94)],
+[DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
+
+```sh
+playbook --module code=/opt/env/code/registry.mjs
+playbook run --module review=@sublang/playbook/review/registry "/review the last commit"
+``` If the
 module's directory is a git repository, add `node_modules/` to its
 `.gitignore` so provisioned links never enter player commits.
 
@@ -279,7 +299,10 @@ competing front end fails closed instead of forking the history.
 
 An ordinary reopen reads current config and any opening `--with` fragments,
 projects them to the stored catalog and player roster, and requires the stored
-role bindings plus every structural setting to remain exact. Compatible
+role bindings plus every structural setting to remain exact. A playbook whose
+current config names no `from` and receives no `--module` keeps the module the
+session records; a present `from` or supplied module must equal it, and a
+`--module` for a playbook the session does not hold is ignored. Compatible
 current `model`, `effort`, and optional `fastMode`, `subagentModel`, and
 `subagentEffort` settings apply to the next call. Boolean `false` explicitly
 resets model, effort, subagent model, or subagent effort to the provider
