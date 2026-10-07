@@ -624,6 +624,14 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         { captain: 'claude', players: roster, playbooks: { code: { roles } } },
         ld,
       ),
+    ).rejects.toThrow(
+      'playbooks.code names no module: set playbooks.code.from or supply a module for code (--module code=<specifier>)',
+    );
+    await expect(
+      composeGenericConfig(
+        { captain: 'claude', players: roster, playbooks: { code: { from: ' ', roles } } },
+        ld,
+      ),
     ).rejects.toThrow(/from must be a canonical trimmed module specifier/);
     await expect(
       composeGenericConfig(
@@ -3661,6 +3669,265 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(nonMap.stderr).toContain('must be a YAML map');
 
     expect(spawn.calls).toHaveLength(0);
+  });
+});
+
+describe('playbook --module (PBCLI-95)', () => {
+  const FROMLESS_CONFIG = [
+    'captain: claude',
+    'players:',
+    '  dev.coder: claude',
+    '  dev.reviewer: codex',
+    'playbooks:',
+    '  code:',
+    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
+    '',
+  ].join('\n');
+
+  async function moduleHarness(config = FROMLESS_CONFIG) {
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(configPath, config, 'utf8');
+    return { home, configPath };
+  }
+
+  function launch(
+    argv: string[],
+    home: string,
+    spawn: ReturnType<typeof fakeSpawn>,
+    extra: Record<string, unknown> = {},
+  ) {
+    const stdout = writer();
+    const stderr = writer();
+    const loads: string[] = [];
+    return runPlaybookCli({
+      argv,
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      loadModule: async (specifier: string) => {
+        loads.push(specifier);
+        if (specifier === 'mod://code' || specifier.startsWith('file:')) {
+          return { default: fakeEntry };
+        }
+        throw new Error(`no module ${specifier}`);
+      },
+      prepareRegistryModule: async ({ from }: { from: string }) => from,
+      stdout: stdout as never,
+      stderr: stderr as never,
+      spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+      ...extra,
+    }).then((result: any) => ({
+      code: result.code,
+      stdout: stdout.text(),
+      stderr: stderr.text(),
+      loads,
+    }));
+  }
+
+  it('composes a supplied module for a config naming no from without forwarding or writing it', async () => {
+    const { home, configPath } = await moduleHarness();
+    const spawn = fakeSpawn();
+
+    const out = await launch(['--module', 'code=mod://code'], home, spawn);
+
+    expect(out.code).toBe(0);
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.captain.options.playbooks.code.from).toBe('mod://code');
+    expect(spawn.calls[0].args.join(' ')).not.toContain('--module');
+    await expect(readFile(configPath, 'utf8')).resolves.toBe(FROMLESS_CONFIG);
+  });
+
+  it('lets --module=<id>=<specifier> win over from in --list and theme diagnostics', async () => {
+    const { home } = await moduleHarness(
+      FROMLESS_CONFIG.replace(
+        '    roles:',
+        '    from: "mod://stale"\n    roles:',
+      ),
+    );
+    const spawn = fakeSpawn();
+
+    const list = await launch(['--list', '--module=code=mod://code'], home, spawn);
+    expect(list.code).toBe(0);
+    expect(list.stdout).toContain('/code');
+    expect(list.loads).toEqual(['mod://code']);
+
+    const diagnostics = await launch(
+      ['--theme-diagnostics', '--module', 'code=mod://code', '--sample'],
+      home,
+      spawn,
+    );
+    expect(diagnostics.code).toBe(0);
+    expect(diagnostics.loads).toEqual(['mod://code']);
+    const args = spawn.calls.at(-1)!.args;
+    expect(args.slice(-1)).toEqual(['--sample']);
+    expect(args.join(' ')).not.toContain('--module');
+    const composed = parseYaml(spawn.configs.at(-1)!.content);
+    expect(composed.captain.options.playbooks.code.from).toBe('mod://code');
+  });
+
+  it('lists --module in the fresh and selected help forms', async () => {
+    const { home } = await moduleHarness();
+    const out = await launch(['--help'], home, fakeSpawn());
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain(
+      'playbook [--with <path>]... [--module <id>=<specifier>]...',
+    );
+    expect(out.stdout).toContain(
+      '[--module <id>=<specifier>]... [--no-provision]',
+    );
+    expect(out.stdout).toContain(
+      "--module <id>=<specifier> supplies playbook <id>'s registry module",
+    );
+  });
+
+  it('resolves a relative supplied path against the invocation directory', async () => {
+    const { home } = await moduleHarness();
+    const cwd = await mkdtemp(join(tmpdir(), 'playbook-module-cwd-'));
+    tempDirs.push(cwd);
+    const spawn = fakeSpawn();
+
+    const out = await launch(['--list', '--module', 'code=./env/code.mjs'], home, spawn, {
+      cwd,
+    });
+
+    expect(out.code).toBe(0);
+    expect(out.loads).toEqual([
+      pathToFileURL(resolve(cwd, 'env', 'code.mjs')).href,
+    ]);
+  });
+
+  it.each([
+    [
+      'beside raw --config',
+      ['--module', 'code=mod://code', '--config', '/tmp/raw.yaml'],
+      'cannot combine with a raw --config launch',
+    ],
+    ['without a pair', ['--module', 'code'], 'must be <id>=<specifier>'],
+    ['without a value', ['--module'], '--module needs an <id>=<specifier> value'],
+    ['with an empty id', ['--module', '=mod://code'], 'names no playbook id'],
+    ['with an empty specifier', ['--module=code='], 'names no module specifier'],
+    [
+      'naming one id twice',
+      ['--module', 'code=mod://code', '--module', 'code=mod://other'],
+      'names playbook "code" more than once',
+    ],
+    [
+      'naming no enabled playbook',
+      ['--module', 'code=mod://code', '--module', 'cod=mod://code'],
+      'a module was supplied for "cod", which names no enabled playbook',
+    ],
+  ])('rejects --module %s before import or launch', async (_case, argv, message) => {
+    const { home } = await moduleHarness();
+    const spawn = fakeSpawn();
+
+    const out = await launch(argv, home, spawn);
+
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain(message);
+    expect(out.loads).toEqual([]);
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('reopens a selected session from its recorded module and refuses a differing one', async () => {
+    const id = '90000000-0000-4000-8000-000000000095';
+    const root = await mkdtemp(join(tmpdir(), 'playbook-module-reopen-'));
+    tempDirs.push(root);
+    const sessionsDir = join(root, 'sessions');
+    await mkdir(sessionsDir, { mode: 0o700 });
+    const home = await makeTempHome();
+    const recorded = [
+      `sessions: ${JSON.stringify(sessionsDir)}`,
+      'captain: claude',
+      'players:',
+      '  dev.coder: codex',
+      'playbooks:',
+      '  code:',
+      '    from: "mod://code"',
+      '    roles: { coder: dev.coder }',
+      '',
+    ].join('\n');
+    await writeUserConfig(home, recorded);
+    const plan = await loadLaunchPlan({
+      userConfigPath: resolveUserConfigPath({}, home),
+      loadModule: loader({
+        'mod://code': { default: { ...fakeEntry, requiredRoleIds: ['coder'] } },
+      }),
+    });
+    const execution = executionConfigFromPlan(plan);
+    const record = validateCaptainSessionRecord({
+      schemaVersion: 6,
+      kind: 'captain-session',
+      state: 'settled',
+      sessionId: id,
+      createdAt: '2026-10-06T18:00:00.000Z',
+      updatedAt: '2026-10-06T18:00:00.001Z',
+      cwd: process.cwd(),
+      structuralProjection: projectCaptainSessionStructure(execution),
+      lastAppliedExecutionProjection: execution,
+      snapshot: selectedTurnZeroSnapshot(execution),
+      effectLedger: emptyEffectLedger(),
+      unresolvedEffects: [],
+      retainedGenerations: {},
+    });
+    const recordPath = join(sessionsDir, `${id}.json`);
+    await writeFile(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    await chmod(recordPath, 0o600);
+    await createCaptainSessionStore({ sessionsDir }).migrate(id);
+    const fromless = recorded.replace('    from: "mod://code"\n', '');
+
+    const reopen = async (argv: string[]) => {
+      let descriptor: any;
+      const out = await managedCliHarness({
+        argv,
+        config: fromless,
+        homeDir: home,
+        sessionId: id,
+        loadModule: async () => {
+          throw new Error('selected outer process must not import a registry');
+        },
+        launchManagedTmuxPlay: async (options: any) => {
+          const workDir = await requestManagedSessionCommand(options);
+          descriptor = JSON.parse(
+            await readFile(
+              join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE),
+              'utf8',
+            ),
+          );
+          return {
+            sessionId: id,
+            workDir,
+            async cancel() {},
+            async attach() {},
+          };
+        },
+      });
+      return { ...out, descriptor };
+    };
+
+    const stored = await reopen(['--session', id]);
+    expect(stored.result).toEqual({ code: 0 });
+    expect(stored.descriptor.executionProjection.catalog.code.from).toBe(
+      'mod://code',
+    );
+
+    const same = await reopen(['--session', id, '--module', 'code=mod://code']);
+    expect(same.result).toEqual({ code: 0 });
+
+    const differing = await reopen([
+      '--session',
+      id,
+      '--module',
+      'code=mod://other',
+    ]);
+    expect(differing.result).toEqual({ code: 1 });
+    expect(differing.stderr.text()).toContain(
+      'the module supplied for code differs from the stored structural projection',
+    );
+    expect(differing.descriptor).toBeUndefined();
   });
 });
 

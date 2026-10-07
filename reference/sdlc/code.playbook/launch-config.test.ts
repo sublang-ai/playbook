@@ -2574,3 +2574,224 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     expect(loadModule).not.toHaveBeenCalled();
   });
 });
+
+describe('module locations supplied at launch (PBCLI-95)', () => {
+  function fromlessConfig() {
+    return {
+      captain: 'claude',
+      players: { 'dev.coder': 'codex' },
+      playbooks: { code: { roles: { coder: 'dev.coder' } } },
+    };
+  }
+
+  async function storedFor(from: string) {
+    const plan = await launchConfig.normalizeLaunchPlan(
+      {
+        ...oneRoleConfig(),
+        playbooks: { code: { from, roles: { coder: 'dev.coder' } } },
+      },
+      { loadModule: async () => ({ default: entry('code', ['coder']) }) },
+    );
+    return structuralProjection(plan);
+  }
+
+  it('composes and stores a supplied module for a config naming no from', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-supplied-module-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const source = [
+      'captain: claude',
+      'players: { dev.coder: codex }',
+      'playbooks:',
+      '  code: { roles: { coder: dev.coder } }',
+      '',
+    ].join('\n');
+    await writeFile(configPath, source, 'utf8');
+    const prepared: unknown[] = [];
+    const loadModule = vi.fn(async () => ({
+      default: entry('code', ['coder']),
+    }));
+
+    const plan = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      modules: Object.freeze({ code: 'mod://environment/code' }),
+      prepareRegistryModule: async (request: any) => {
+        prepared.push(request);
+        return request.from;
+      },
+      loadModule,
+    });
+
+    expect(prepared).toEqual([
+      {
+        id: 'code',
+        from: 'mod://environment/code',
+        authoredFrom: 'mod://environment/code',
+        configPath,
+      },
+    ]);
+    expect(loadModule.mock.calls).toEqual([['mod://environment/code']]);
+    expect(plan.catalog.code.from).toBe('mod://environment/code');
+    expect(structuralProjection(plan).catalog.code.from).toBe(
+      'mod://environment/code',
+    );
+    expect(executionConfigFromPlan(plan).catalog.code.from).toBe(
+      'mod://environment/code',
+    );
+    // Nothing supplied is ever written to the config.
+    expect(await readFile(configPath, 'utf8')).toBe(source);
+  });
+
+  it.each([
+    ['absolute path', '/srv/environment/code.mjs', pathToFileURL('/srv/environment/code.mjs').href],
+    ['file URL', 'file:///srv/environment/code.mjs', 'file:///srv/environment/code.mjs'],
+    ['bare package', '@sublang/playbook/code/registry', '@sublang/playbook/code/registry'],
+  ])('canonicalizes a supplied %s by the configured-module rules', async (_case, supplied, expected) => {
+    const loadModule = vi.fn(async () => ({
+      default: entry('code', ['coder']),
+    }));
+    const plan = await launchConfig.normalizeLaunchPlan(fromlessConfig(), {
+      modules: { code: supplied },
+      configPath: '/elsewhere/playbook.config.yaml',
+      prepareRegistryModule: async ({ from }: { from: string }) => from,
+      loadModule,
+    });
+    expect(loadModule.mock.calls).toEqual([[expected]]);
+    expect(plan.catalog.code.from).toBe(expected);
+  });
+
+  it('lets a supplied module win over the file from', async () => {
+    const loadModule = vi.fn(async () => ({
+      default: entry('code', ['coder']),
+    }));
+    const plan = await launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+      modules: { code: 'mod://supplied' },
+      loadModule,
+    });
+    expect(loadModule.mock.calls).toEqual([['mod://supplied']]);
+    expect(plan.catalog.code.from).toBe('mod://supplied');
+  });
+
+  it.each([
+    [
+      'a module naming no enabled playbook',
+      oneRoleConfig(),
+      { cod: 'mod://code' },
+      'a module was supplied for "cod", which names no enabled playbook',
+    ],
+    [
+      'a relative module path',
+      fromlessConfig(),
+      { code: './code.mjs' },
+      /module supplied for code is a relative path/,
+    ],
+    [
+      'a blank module',
+      fromlessConfig(),
+      { code: ' ' },
+      /module supplied for code must be a canonical trimmed module specifier/,
+    ],
+    [
+      'a non-string module',
+      fromlessConfig(),
+      { code: 7 },
+      /module supplied for code must be a canonical trimmed module specifier/,
+    ],
+    [
+      'a non-record modules option',
+      fromlessConfig(),
+      ['mod://code'],
+      /modules must be a record from playbook id to module specifier/,
+    ],
+    [
+      'a malformed from beside a supplied module',
+      {
+        ...oneRoleConfig(),
+        playbooks: { code: { from: ' mod://code', roles: { coder: 'dev.coder' } } },
+      },
+      { code: 'mod://code' },
+      /playbooks\.code\.from must be a canonical trimmed module specifier/,
+    ],
+    [
+      'neither a supplied module nor from',
+      fromlessConfig(),
+      undefined,
+      'playbooks.code names no module: set playbooks.code.from or supply a module for code (--module code=<specifier>)',
+    ],
+  ])('rejects %s before preparation or import', async (_case, config, modules, message) => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(config, {
+        modules,
+        prepareRegistryModule,
+        loadModule,
+      }),
+    ).rejects.toThrow(message);
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it('reopens a config naming no from on the module the session records', async () => {
+    const stored = await storedFor('mod://recorded');
+    const plan = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
+      fromlessConfig(),
+      { stored },
+    );
+    expect(plan.catalog.code.from).toBe('mod://recorded');
+  });
+
+  it('reopens with a supplied module only when it equals the stored one', async () => {
+    const stored = await storedFor('mod://recorded');
+    const same = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
+      oneRoleConfig(),
+      { stored, modules: { code: 'mod://recorded' } },
+    );
+    expect(same.catalog.code.from).toBe('mod://recorded');
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(fromlessConfig(), {
+        stored,
+        modules: { code: 'mod://elsewhere' },
+      }),
+    ).rejects.toThrow(
+      'the module supplied for code differs from the stored structural projection',
+    );
+    // A present from still has to equal the stored module, as before.
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(oneRoleConfig(), {
+        stored,
+      }),
+    ).rejects.toThrow(
+      'playbooks.code.from changed from the stored structural projection',
+    );
+  });
+
+  it('consults only stored playbook ids on an ordinary reopen', async () => {
+    const stored = await storedFor('mod://recorded');
+    const plan = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
+      fromlessConfig(),
+      { stored, modules: { added: 'mod://added' } },
+    );
+    expect(Object.keys(plan.catalog)).toEqual(['code']);
+
+    const loadModule = vi.fn(async () => ({
+      default: entry('code', ['coder']),
+    }));
+    const selected = await launchConfig.normalizeLaunchPlan(
+      {
+        ...fromlessConfig(),
+        playbooks: {
+          ...fromlessConfig().playbooks,
+          added: { from: 'mod://added', roles: {} },
+        },
+      },
+      {
+        selectedMembers: { playbookIds: ['code'], playerIds: ['dev.coder'] },
+        modules: { code: 'mod://recorded', added: 'mod://elsewhere' },
+        loadModule,
+      },
+    );
+    expect(loadModule.mock.calls).toEqual([['mod://recorded']]);
+    expect(Object.keys(selected.catalog)).toEqual(['code']);
+  });
+});

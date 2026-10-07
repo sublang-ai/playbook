@@ -18,10 +18,12 @@ import {
 } from "./adapter-sdk.js";
 import {
   adaptersFromLaunchPlan,
+  extractModuleFlags,
   extractWithFlags,
   loadLaunchPlan,
   loadSelectedLaunchPlanDataOnly,
   projectTmuxConfig,
+  suppliedModulesFromFlags,
   resolveLaunchSessionsDir,
   relocateLegacyUserConfig,
   resolveFormerUserConfigPaths,
@@ -54,15 +56,18 @@ export {
   checkReadiness,
   composeGenericConfig,
   deriveLaunchReadiness,
+  extractModuleFlags,
   extractWithFlags,
   loadLaunchPlan,
   loadOverlayFragment,
   mergeConfigs,
   migrateRetiredProfiles,
   normalizeLaunchPlan,
+  parseModuleFlagValue,
   projectTmuxConfig,
   resolveAgent,
   resolveUserConfigPath,
+  suppliedModulesFromFlags,
 } from "./launch-config.js";
 
 const READINESS_FAILURE_EXIT_CODE = 2;
@@ -188,10 +193,15 @@ export async function runPlaybookCli(options = {}) {
   // PBCLI-25/26: `--with <path>` overlays are launcher-owned — consumed
   // here, never forwarded to tmux-play, and incompatible with a raw
   // `--config` launch, which bypasses the composition they target.
+  // PBCLI-94 (DR-083): `--module <id>=<specifier>` is launcher-owned in the
+  // same way: consumed, never forwarded, and refused beside raw `--config`.
   let withPaths;
+  let modulePairs;
+  let modules;
   let forwardArgv;
   try {
     ({ withPaths, rest: forwardArgv } = extractWithFlags(argv));
+    ({ modulePairs, rest: forwardArgv } = extractModuleFlags(forwardArgv));
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -201,6 +211,22 @@ export async function runPlaybookCli(options = {}) {
       "playbook: --with overlays the top-level config and cannot combine " +
         "with a raw --config launch\n",
     );
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
+  if (modulePairs.length > 0 && hasExplicitConfig(argv)) {
+    stderr.write(
+      "playbook: --module supplies a playbook module for the top-level " +
+        "config and cannot combine with a raw --config launch\n",
+    );
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
+  try {
+    modules = suppliedModulesFromFlags(
+      modulePairs,
+      options.cwd ?? process.cwd(),
+    );
+  } catch (error) {
+    stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
   }
   const noProvision = forwardArgv.includes("--no-provision");
@@ -349,6 +375,7 @@ export async function runPlaybookCli(options = {}) {
       ? await loadSelectedLaunchPlanDataOnly({
           userConfigPath,
           overlayPaths: withPaths,
+          modules,
           structuralProjection: selectedRecord.structuralProjection,
           onNotice: (line) => stderr.write(line),
           env,
@@ -357,6 +384,7 @@ export async function runPlaybookCli(options = {}) {
       : await loadLaunchPlan({
           userConfigPath,
           overlayPaths: withPaths,
+          modules,
           env,
           homeDir: home,
           loadModule,
@@ -923,13 +951,17 @@ function helpText({
     ...sdkFailureLines,
     ...failures,
     "Usage:",
-    "  playbook [--with <path>]... [--no-provision] [--cwd <path>]",
-    "  playbook --session <id> [--with <path>]... [--no-provision]",
-    "  playbook --list [--with <path>]... [--no-provision]",
-    "  playbook --theme-diagnostics [--with <path>]... [--cwd <path>]",
+    "  playbook [--with <path>]... [--module <id>=<specifier>]...",
+    "           [--no-provision] [--cwd <path>]",
+    "  playbook --session <id> [--with <path>]...",
+    "           [--module <id>=<specifier>]... [--no-provision]",
+    "  playbook --list [--with <path>]... [--module <id>=<specifier>]...",
+    "           [--no-provision]",
+    "  playbook --theme-diagnostics [--with <path>]...",
+    "           [--module <id>=<specifier>]... [--cwd <path>]",
     "  playbook --config <path> [tmux-play arguments...]",
-    "  playbook run [--with <path>]... [--no-provision] [--json]",
-    "               [--verbose] [--] [input]",
+    "  playbook run [--with <path>]... [--module <id>=<specifier>]...",
+    "               [--no-provision] [--json] [--verbose] [--] [input]",
     "  playbook run (--continue | --session <id>) [reply]",
     "  playbook run --session <id> --retry-uncertain",
     "  playbook run --session <id> --discard-uncertain",
@@ -947,6 +979,11 @@ function helpText({
     "  the default config) for a fresh launch or compatible ordinary reopen —",
     "  maps merge recursively, other values replace, later files win, and the",
     "  default config file is never modified.",
+    "  --module <id>=<specifier> supplies playbook <id>'s registry module",
+    "  ahead of its playbooks.<id>.from (repeatable, one per id); a relative",
+    "  path resolves against the current directory, and nothing is written",
+    "  to a config file. Without --module or from, a reopened session uses",
+    "  the module it already records.",
     "  --no-provision keeps configured filesystem registries read-only;",
     "  any missing engine links remain a launch error.",
     "  `playbook run --verbose` prints Captain telemetry topics to stderr.",

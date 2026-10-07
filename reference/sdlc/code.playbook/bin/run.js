@@ -39,12 +39,14 @@ import {
   invalidRegistryEntryReason,
   loadLaunchPlan,
   loadSelectedLaunchPlanDataOnly,
+  parseModuleFlagValue,
   projectHostAgent,
   resolveLaunchSessionsDir,
   relocateLegacyUserConfig,
   resolveFormerUserConfigPaths,
   resolveUserConfigPath,
   snapshotRegistryEntry,
+  suppliedModulesFromFlags,
 } from "./launch-config.js";
 import { prepareConfiguredRegistries } from "./provision.js";
 import {
@@ -122,6 +124,12 @@ export async function runPlaybookRun(options = {}) {
   const recovering = args.retryUncertain || args.discardUncertain;
   const continuing = args.continue || args.sessionId !== undefined;
   let input = args.input;
+  // PBCLI-94 (DR-083): a relative supplied module resolves against the
+  // invocation's working directory before the loader sees it.
+  const modules = suppliedModulesFromFlags(
+    args.modulePairs,
+    options.cwd ?? process.cwd(),
+  );
 
   // PBCLI-18/40: a fresh piped producer is drained before config,
   // preparation, import, or readiness. Continuations first inspect the
@@ -369,6 +377,7 @@ export async function runPlaybookRun(options = {}) {
         ? await loadSelectedLaunchPlanDataOnly({
             userConfigPath,
             overlayPaths: args.withPaths,
+            modules,
             structuralProjection: priorRecord.structuralProjection,
             onNotice: (line) => configNotices.push(line),
             env,
@@ -377,6 +386,7 @@ export async function runPlaybookRun(options = {}) {
         : await loadLaunchPlan({
             userConfigPath,
             overlayPaths: args.withPaths,
+            modules,
             env,
             homeDir: home,
             loadModule,
@@ -1561,6 +1571,7 @@ export function parseRunArgs(argv) {
   const parsed = {
     input: undefined,
     withPaths: [],
+    modulePairs: [],
     noProvision: false,
     json: false,
     verbose: false,
@@ -1625,6 +1636,18 @@ export function parseRunArgs(argv) {
       const value = arg.slice("--with=".length);
       if (value === "") throw new Error("--with needs a value");
       parsed.withPaths.push(value);
+    } else if (arg === "--module" || arg.startsWith("--module=")) {
+      // PBCLI-94 (DR-083): one `<id>=<specifier>` per playbook id.
+      const pair = parseModuleFlagValue(
+        arg === "--module" ? argv[index + 1] : arg.slice("--module=".length),
+      );
+      if (arg === "--module") index += 1;
+      if (parsed.modulePairs.some(([id]) => id === pair[0])) {
+        throw new Error(
+          `--module names playbook ${JSON.stringify(pair[0])} more than once`,
+        );
+      }
+      parsed.modulePairs.push(pair);
     } else if (
       RETIRED_FLAGS.has(arg) ||
       [...RETIRED_FLAGS].some((flag) => arg.startsWith(`${flag}=`))
@@ -1680,6 +1703,12 @@ export function parseRunArgs(argv) {
     parsed.withPaths.length > 0
   ) {
     throw new Error("--with is unavailable during uncertain-turn recovery");
+  }
+  if (
+    (parsed.retryUncertain || parsed.discardUncertain) &&
+    parsed.modulePairs.length > 0
+  ) {
+    throw new Error("--module is unavailable during uncertain-turn recovery");
   }
   if (
     parsed.sessionId !== undefined &&
@@ -1928,10 +1957,11 @@ async function writeStream(stream, text) {
 function runHelpText(userConfigPath) {
   return [
     "Usage:",
-    "  playbook run [--with <path>]... [--no-provision] [--json]",
-    "               [--verbose] [--] [input]",
+    "  playbook run [--with <path>]... [--module <id>=<specifier>]...",
+    "               [--no-provision] [--json] [--verbose] [--] [input]",
     "  playbook run (--continue | --session <id>) [--with <path>]...",
-    "               [--no-provision] [--json] [--verbose] [--] [reply]",
+    "               [--module <id>=<specifier>]... [--no-provision] [--json]",
+    "               [--verbose] [--] [reply]",
     "  playbook run --session <id> --retry-uncertain [--no-provision]",
     "  playbook run --session <id> --discard-uncertain",
     "",
@@ -1959,6 +1989,10 @@ function runHelpText(userConfigPath) {
     "",
     "Options:",
     "  --with <path>    overlay a generic config fragment (repeatable)",
+    "  --module <id>=<specifier>",
+    "                   supply playbook <id>'s module ahead of its",
+    "                   playbooks.<id>.from (repeatable, one per id); a",
+    "                   continuation without either uses the stored module",
     "  --no-provision   do not provision thin filesystem registry engines",
     "  --continue       prefer this working directory, else global newest",
     "  --session <id>   reply to one durable Captain session UUID",

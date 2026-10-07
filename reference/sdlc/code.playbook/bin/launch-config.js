@@ -84,6 +84,73 @@ export function extractWithFlags(argv) {
   return { withPaths, rest };
 }
 
+// PBCLI-94 (DR-083): one `--module` value names `<id>=<specifier>`, split at
+// its first `=` so a specifier may itself carry one.
+export function parseModuleFlagValue(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("--module needs an <id>=<specifier> value");
+  }
+  const separator = value.indexOf("=");
+  if (separator < 0) {
+    throw new Error(
+      `--module ${JSON.stringify(value)} must be <id>=<specifier>`,
+    );
+  }
+  const id = value.slice(0, separator);
+  const specifier = value.slice(separator + 1);
+  if (id.length === 0) {
+    throw new Error(`--module ${JSON.stringify(value)} names no playbook id`);
+  }
+  if (specifier.length === 0) {
+    throw new Error(
+      `--module ${JSON.stringify(value)} names no module specifier`,
+    );
+  }
+  return [id, specifier];
+}
+
+// PBCLI-94 (DR-083): split ordered `--module <id>=<specifier>` pairs out of an
+// argument vector, beside `--with`. The caller's vector is never changed.
+export function extractModuleFlags(argv) {
+  const modulePairs = [];
+  const rest = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--module") {
+      modulePairs.push(parseModuleFlagValue(argv[i + 1]));
+      i += 1;
+    } else if (arg.startsWith("--module=")) {
+      modulePairs.push(parseModuleFlagValue(arg.slice("--module=".length)));
+    } else {
+      rest.push(arg);
+    }
+  }
+  return { modulePairs, rest };
+}
+
+// PBCLI-94 (DR-083): the CLI's supplied modules, one per playbook id. A
+// relative filesystem path resolves against the invocation's working
+// directory here, because the loader refuses relative paths.
+export function suppliedModulesFromFlags(modulePairs, cwd = process.cwd()) {
+  const seen = new Set();
+  const entries = [];
+  for (const [id, specifier] of modulePairs) {
+    if (seen.has(id)) {
+      throw new Error(
+        `--module names playbook ${JSON.stringify(id)} more than once`,
+      );
+    }
+    seen.add(id);
+    entries.push([
+      id,
+      isRelativeFilesystemRegistrySpecifier(specifier)
+        ? resolve(cwd, specifier)
+        : specifier,
+    ]);
+  }
+  return Object.freeze(Object.fromEntries(entries));
+}
+
 // PBCLI-25: an overlay fragment is a top-level-format YAML map.
 export function loadOverlayFragment(overlayPath) {
   const resolved = resolve(overlayPath);
@@ -244,6 +311,59 @@ export function canonicalizeRegistrySpecifier(from, configPath) {
   return from;
 }
 
+// PBCLI-94 (DR-083): validate the loader's `modules` option — a read-only
+// record from playbook id to module specifier — and canonicalize each value by
+// the configured-module rules, except that a relative path has no config
+// directory to anchor it and is refused. On a new launch every id must name an
+// enabled playbook; an ordinary reopen consults only its stored ids.
+function resolveSuppliedModules(modules, enabledIds, { strict }) {
+  const supplied = new Map();
+  if (modules === undefined) return supplied;
+  const record = cloneJson(modules, "modules");
+  if (!isPlainObject(record)) {
+    throw new Error(
+      "modules must be a record from playbook id to module specifier",
+    );
+  }
+  for (const [id, specifier] of Object.entries(record)) {
+    if (!enabledIds.includes(id)) {
+      if (strict) {
+        throw new Error(
+          `a module was supplied for ${JSON.stringify(id)}, which names no enabled playbook`,
+        );
+      }
+      continue;
+    }
+    if (
+      typeof specifier !== "string" ||
+      specifier.trim().length === 0 ||
+      specifier !== specifier.trim()
+    ) {
+      throw new Error(
+        `the module supplied for ${id} must be a canonical trimmed module specifier`,
+      );
+    }
+    if (isRelativeFilesystemRegistrySpecifier(specifier)) {
+      throw new Error(
+        `the module supplied for ${id} is a relative path; supply an absolute path, a file URL, or a package specifier`,
+      );
+    }
+    supplied.set(
+      id,
+      !specifier.startsWith("file:") && isAbsolute(specifier)
+        ? pathToFileURL(specifier).href
+        : specifier,
+    );
+  }
+  return supplied;
+}
+
+function missingModuleError(id) {
+  return new Error(
+    `playbooks.${id} names no module: set playbooks.${id}.from or supply a module for ${id} (--module ${id}=<specifier>)`,
+  );
+}
+
 function isRelativeFilesystemRegistrySpecifier(from) {
   return (
     from.startsWith("./") ||
@@ -264,6 +384,7 @@ export async function loadLaunchPlan({
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
   selectedMembers,
+  modules,
   env = process.env,
   homeDir = env.HOME ?? homedir(),
 }) {
@@ -292,6 +413,7 @@ export async function loadLaunchPlan({
     configPath: userConfigPath,
     prepareRegistryModule,
     selectedMembers,
+    modules,
   });
 }
 
@@ -304,6 +426,7 @@ export async function loadSelectedLaunchPlanDataOnly({
   userConfigPath,
   overlayPaths = [],
   structuralProjection,
+  modules,
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
   env = process.env,
@@ -335,12 +458,13 @@ export async function loadSelectedLaunchPlanDataOnly({
     configPath: userConfigPath,
     stored,
     selectedMembers,
+    modules,
   });
 }
 
 export async function normalizeSelectedLaunchPlanDataOnly(
   top,
-  { configPath, stored, selectedMembers } = {},
+  { configPath, stored, selectedMembers, modules } = {},
 ) {
   stored = validateStoredStructuralProjection(stored);
   const expectedMembers = selectedMembersFromStoredStructure(stored);
@@ -390,6 +514,11 @@ export async function normalizeSelectedLaunchPlanDataOnly(
   );
 
   const playbooksCfg = requireObject(top.playbooks, "playbooks");
+  const suppliedModules = resolveSuppliedModules(
+    modules,
+    expectedMembers.playbookIds,
+    { strict: false },
+  );
   const tuningChecks = [];
   let tuningCheckIndex = 0;
   const authored = new Map();
@@ -400,20 +529,30 @@ export async function normalizeSelectedLaunchPlanDataOnly(
       throw legacyPlayersError(`playbooks.${id}.players`, configPath);
     }
     rejectConfiguredHostCapabilities(block, `playbooks.${id}`);
+    const hasFrom = hasOwn(block, "from");
     if (
-      typeof block.from !== "string" ||
-      block.from.trim().length === 0 ||
-      block.from !== block.from.trim()
+      hasFrom &&
+      (typeof block.from !== "string" ||
+        block.from.trim().length === 0 ||
+        block.from !== block.from.trim())
     ) {
       throw new Error(
         `playbooks.${id}.from must be a canonical trimmed module specifier`,
       );
     }
-    const configuredFrom = canonicalizeRegistrySpecifier(
-      block.from,
-      configPath,
-    );
-    if (configuredFrom !== storedItem.from) {
+    // PBCLI-22/94 (DR-083): a supplied module wins over `from`; with neither,
+    // the reopen takes the module the session already records.
+    const suppliedModule = suppliedModules.get(id);
+    if (suppliedModule !== undefined) {
+      if (suppliedModule !== storedItem.from) {
+        throw new Error(
+          `the module supplied for ${id} differs from the stored structural projection`,
+        );
+      }
+    } else if (
+      hasFrom &&
+      canonicalizeRegistrySpecifier(block.from, configPath) !== storedItem.from
+    ) {
       throw new Error(
         `playbooks.${id}.from changed from the stored structural projection`,
       );
@@ -665,7 +804,13 @@ function rejectConfiguredHostCapabilities(value, path) {
 // consulted for validation and then discarded.
 export async function normalizeLaunchPlan(
   top,
-  { loadModule, configPath, prepareRegistryModule, selectedMembers } = {},
+  {
+    loadModule,
+    configPath,
+    prepareRegistryModule,
+    selectedMembers,
+    modules,
+  } = {},
 ) {
   const importModule = loadModule ?? ((specifier) => import(specifier));
   top = projectSelectedMembers(top, selectedMembers);
@@ -714,6 +859,11 @@ export async function normalizeLaunchPlan(
   if (ids.some((id) => id.trim().length === 0 || id !== id.trim())) {
     throw new Error("playbooks keys must be canonical trimmed nonblank ids");
   }
+  // PBCLI-94 (DR-083): supplied modules are checked before any preparation
+  // or import; an ordinary reopen consults only its stored playbook ids.
+  const suppliedModules = resolveSuppliedModules(modules, ids, {
+    strict: selectedMembers === undefined,
+  });
 
   let captain = resolveDelegationDefault(
     resolveAgent(top.captain, "captain", ["from", "options"]),
@@ -741,16 +891,28 @@ export async function normalizeLaunchPlan(
       throw legacyPlayersError(`playbooks.${id}.players`, configPath);
     }
     rejectConfiguredHostCapabilities(block, `playbooks.${id}`);
-    const from = block.from;
+    const hasFrom = hasOwn(block, "from");
     if (
-      typeof from !== "string" ||
-      from.trim().length === 0 ||
-      from !== from.trim()
+      hasFrom &&
+      (typeof block.from !== "string" ||
+        block.from.trim().length === 0 ||
+        block.from !== block.from.trim())
     ) {
       throw new Error(
         `playbooks.${id}.from must be a canonical trimmed module specifier`,
       );
     }
+    // PBCLI-9/94 (DR-083): the supplied module wins over `from`, as a --with
+    // fragment wins over the file; with neither, the playbook names no module.
+    const suppliedModule = suppliedModules.get(id);
+    if (!hasFrom && suppliedModule === undefined) {
+      throw missingModuleError(id);
+    }
+    const from = suppliedModule ?? block.from;
+    const fromLabel =
+      suppliedModule === undefined
+        ? `playbooks.${id}.from`
+        : `the module supplied for ${id}`;
     if (
       block.command !== undefined &&
       (typeof block.command !== "string" ||
@@ -816,10 +978,12 @@ export async function normalizeLaunchPlan(
         ([key]) => !PLAYBOOK_LAUNCHER_KEYS.includes(key),
       ),
     );
-    const configuredFrom = canonicalizeRegistrySpecifier(from, configPath);
+    const configuredFrom =
+      suppliedModule ?? canonicalizeRegistrySpecifier(from, configPath);
     configuredPlaybooks.push({
       id,
       from,
+      fromLabel,
       configuredFrom,
       commandOverride: block.command,
       roles,
@@ -906,7 +1070,7 @@ export async function normalizeLaunchPlan(
   // registry modules evaluated and others untouched.
   const preparedPlaybooks = [];
   for (const configured of configuredPlaybooks) {
-    const { id, from, configuredFrom } = configured;
+    const { id, from, fromLabel, configuredFrom } = configured;
     let preparedFrom = configuredFrom;
     if (prepareRegistryModule !== undefined) {
       try {
@@ -919,7 +1083,7 @@ export async function normalizeLaunchPlan(
         if (prepared !== undefined) preparedFrom = prepared;
       } catch (cause) {
         throw new Error(
-          `playbooks.${id}.from "${from}" failed to prepare: ${errorMessage(cause)}`,
+          `${fromLabel} "${from}" failed to prepare: ${errorMessage(cause)}`,
         );
       }
       if (
@@ -927,13 +1091,13 @@ export async function normalizeLaunchPlan(
         preparedFrom.trim().length === 0
       ) {
         throw new Error(
-          `playbooks.${id}.from "${from}" preparation must return a module specifier`,
+          `${fromLabel} "${from}" preparation must return a module specifier`,
         );
       }
     }
     preparedFrom = canonicalizePreparedRegistrySpecifier(
       preparedFrom,
-      `playbooks.${id}.from`,
+      fromLabel,
     );
     preparedPlaybooks.push({ ...configured, preparedFrom });
   }
@@ -945,6 +1109,7 @@ export async function normalizeLaunchPlan(
   for (const {
     id,
     from,
+    fromLabel,
     preparedFrom,
     commandOverride,
     roles,
@@ -956,14 +1121,14 @@ export async function normalizeLaunchPlan(
       mod = await importModule(preparedFrom);
     } catch (cause) {
       throw new Error(
-        `playbooks.${id}.from "${from}" failed to import: ${errorMessage(cause)}`,
+        `${fromLabel} "${from}" failed to import: ${errorMessage(cause)}`,
       );
     }
     const entry = snapshotRegistryEntry(mod?.default);
     const registryProblem = invalidRegistryEntryReason(entry);
     if (registryProblem !== undefined) {
       throw new Error(
-        `playbooks.${id}.from "${from}" exposes no valid registry entry: ` +
+        `${fromLabel} "${from}" exposes no valid registry entry: ` +
           registryProblem,
       );
     }

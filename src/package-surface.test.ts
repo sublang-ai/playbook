@@ -2018,6 +2018,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'SessionTurnInput', 'SessionAssetRef', 'SessionRecord', 'PlaybookEvidenceRecord',
       'TmuxPlayApprovalHandler', 'TmuxPlayApprovalRequest',
       'OpenSessionHostOptions',
+      'LaunchPlanModuleOptions',
+      'PlaybookModuleLocations',
       'SessionHost',
       'SessionHostController',
       'SessionHostOptions',

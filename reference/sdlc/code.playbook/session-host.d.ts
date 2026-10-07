@@ -43,8 +43,15 @@ export declare function installRetainedGenerationsForLaunch(options: {
 export declare function executionConfigFromPlan(plan: any): SessionExecutionProjection;
 export declare function validateFrozenExecutionConfig(structural: SessionStructuralProjection, execution: SessionExecutionProjection, dependencies: { loadModule: (specifier: string) => Promise<any>; prepareRegistryModule?: (request: {id: string; from: string; authoredFrom: string}) => Promise<string | void> }): Promise<SessionExecutionProjection>;
 export declare function driveHeadlessCaptainTurn(options: any): Promise<any>;
-export declare function normalizeLaunchPlan(top: any, options?: any): Promise<any>;
-export declare function loadLaunchPlan(options: any): Promise<any>;
+/** Playbook id to registry module specifier, supplied at launch ahead of `playbooks.<id>.from` (DR-083). */
+export type PlaybookModuleLocations = Readonly<Record<string, string>>;
+export interface LaunchPlanModuleOptions {
+  /** Absolute paths become file URLs; file URLs and package specifiers are kept; relative paths are refused. */
+  readonly modules?: PlaybookModuleLocations;
+  readonly [key: string]: any;
+}
+export declare function normalizeLaunchPlan(top: any, options?: LaunchPlanModuleOptions): Promise<any>;
+export declare function loadLaunchPlan(options: LaunchPlanModuleOptions): Promise<any>;
 export declare function composeGenericConfig(top: any, loadModule: (specifier: string) => Promise<any>, configPath?: string): Promise<any>;
 export declare function projectTmuxConfig(plan: any): any;
 export declare function resolveLaunchSessionsDir(options: any): string;

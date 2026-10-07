@@ -5438,6 +5438,121 @@ async function filesystemConfig() {
   return { dir, configPath };
 }
 
+describe('playbook run --module (PBCLI-95)', () => {
+  const sessionId = '90000000-0000-4000-8000-000000000001';
+  const supplied = ['--module', 'code=mod://code', '--module=review=mod://review'];
+
+  function fromlessSharedConfig() {
+    return sharedConfig()
+      .replace('    from: mod://code\n', '')
+      .replace('    from: mod://review\n', '');
+  }
+
+  it('runs and records supplied modules, then continues on the recorded ones', async () => {
+    const configPath = await writeConfig(fromlessSharedConfig());
+    const first = await headlessHarness(['run', ...supplied, 'hello'], {
+      userConfigPath: configPath,
+    });
+    expect(first.result.code).toBe(0);
+    expect(first.inputs).toEqual(['hello']);
+    expect(first.stdout).not.toContain('--module');
+    expect(await readFile(configPath, 'utf8')).toBe(fromlessSharedConfig());
+    const record = await createCaptainSessionStore({
+      sessionsDir: first.sessionsDir,
+    }).read(sessionId);
+    expect(record.structuralProjection.catalog.code.from).toBe('mod://code');
+    expect(record.structuralProjection.catalog.review.from).toBe(
+      'mod://review',
+    );
+
+    const continued = await headlessHarness(
+      ['run', '--session', sessionId, 'again'],
+      { userConfigPath: configPath, sessionsDir: first.sessionsDir },
+    );
+    expect(continued.result.code).toBe(0);
+    expect(continued.inputs).toEqual(['again']);
+
+    const resupplied = await headlessHarness(
+      ['run', '--continue', ...supplied, 'once more'],
+      { userConfigPath: configPath, sessionsDir: first.sessionsDir },
+    );
+    expect(resupplied.result.code).toBe(0);
+
+    const differing = await headlessHarness(
+      ['run', '--session', sessionId, '--module', 'code=mod://other', 'no'],
+      { userConfigPath: configPath, sessionsDir: first.sessionsDir },
+    );
+    expect(differing.result.code).toBe(1);
+    expect(differing.stdout).toBe('');
+    expect(differing.inputs).toEqual([]);
+    expect(differing.stderr).toContain(
+      'the module supplied for code differs from the stored structural projection',
+    );
+  });
+
+  it('lets a supplied module win over the file from on a fresh run', async () => {
+    const configPath = await writeConfig(
+      sharedConfig().replace('from: mod://code', 'from: mod://stale'),
+    );
+    const out = await headlessHarness(
+      ['run', '--module', 'code=mod://code', 'hello'],
+      { userConfigPath: configPath },
+    );
+    expect(out.result.code).toBe(0);
+    const record = await createCaptainSessionStore({
+      sessionsDir: out.sessionsDir,
+    }).read(sessionId);
+    expect(record.structuralProjection.catalog.code.from).toBe('mod://code');
+  });
+
+  it.each([
+    [['run', '--module', 'code', 'x'], 'must be <id>=<specifier>'],
+    [['run', '--module=', 'x'], '--module needs an <id>=<specifier> value'],
+    [['run', '--module', '=mod://code', 'x'], 'names no playbook id'],
+    [['run', '--module', 'code=', 'x'], 'names no module specifier'],
+    [
+      ['run', '--module', 'code=mod://code', '--module=code=mod://code', 'x'],
+      'names playbook "code" more than once',
+    ],
+    [
+      ['run', '--module', 'cod=mod://code', 'x'],
+      'a module was supplied for "cod", which names no enabled playbook',
+    ],
+    [
+      [
+        'run',
+        '--session',
+        sessionId,
+        '--retry-uncertain',
+        '--module',
+        'code=mod://code',
+      ],
+      '--module is unavailable during uncertain-turn recovery',
+    ],
+  ])('rejects %j with exit 1 before any turn', async (argv, message) => {
+    const out = await headlessHarness(argv);
+    expect(out.result.code).toBe(1);
+    expect(out.stdout).toBe('');
+    expect(out.inputs).toEqual([]);
+    expect(out.stderr).toContain(message);
+  });
+
+  it('parses --module beside --with and keeps terminated text as Boss input', () => {
+    expect(
+      parseRunArgs(['--with', 'x', '--module', 'code=a=b', '--continue', 'y']),
+    ).toMatchObject({
+      withPaths: ['x'],
+      modulePairs: [['code', 'a=b']],
+      continue: true,
+      input: 'y',
+    });
+    expect(parseRunArgs(['--', '--module'])).toMatchObject({
+      input: '--module',
+      modulePairs: [],
+    });
+  });
+});
+
 describe('configured engine provisioning parity (PBCLI-38/48)', () => {
   it('prepares filesystem registries for interactive and headless front ends', async () => {
     const roots = await syntheticRoots();
