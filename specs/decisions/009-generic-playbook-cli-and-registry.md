@@ -13,6 +13,7 @@ Accepted.
 [DR-040](040-outcome-authority-effect-reconciliation.md) refines §1 by separating persisted plain-JSON workflow options from current-host runtime-construction capabilities and refines §5 so CODE, REVIEW, and DECIDE metrics consume accepted outcomes while replies consume canonical structured settlements.
 [DR-050](050-pull-request-delivery.md) extends §6's starter enablement to BRANCH and PR.
 [DR-080](080-packaged-review-admission.md) adds a missing-REVIEW guard for fresh engagement of the explicitly configured packaged CODE and DECIDE registries without rejecting configuration or extending the registry ABI.
+[DR-083](083-module-locations-supplied-at-launch.md) lets the launch supply an enabled playbook's module ahead of its configured `from`, which becomes optional when a module is supplied or a reopened session records one.
 
 ## Context
 
