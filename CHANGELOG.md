@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.5.0] - 2026-10-07
+
 ### Added
 
 - Module locations supplied at launch: the `modules` option of the shared
@@ -865,7 +867,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.4.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.5.0...HEAD
+[17.5.0]: https://github.com/sublang-ai/playbook/compare/v17.4.1...v17.5.0
 [17.4.1]: https://github.com/sublang-ai/playbook/compare/v17.4.0...v17.4.1
 [17.4.0]: https://github.com/sublang-ai/playbook/compare/v17.3.0...v17.4.0
 [17.3.0]: https://github.com/sublang-ai/playbook/compare/v17.2.0...v17.3.0

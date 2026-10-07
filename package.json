@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "17.4.1",
+  "version": "17.5.0",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT workflows driven by GEARS specs.",
   "license": "Apache-2.0",
