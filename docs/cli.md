@@ -301,8 +301,10 @@ An ordinary reopen reads current config and any opening `--with` fragments,
 projects them to the stored catalog and player roster, and requires the stored
 role bindings plus every structural setting to remain exact. A playbook whose
 current config names no `from` and receives no `--module` keeps the module the
-session records; a present `from` or supplied module must equal it, and a
-`--module` for a playbook the session does not hold is ignored. Compatible
+session records. Otherwise the module so taken — the supplied one, else a
+present `from` — must equal the stored module; a present `from` beside a
+supplied module is checked for form only. A `--module` for a playbook the
+session does not hold is ignored. Compatible
 current `model`, `effort`, and optional `fastMode`, `subagentModel`, and
 `subagentEffort` settings apply to the next call. Boolean `false` explicitly
 resets model, effort, subagent model, or subagent effort to the provider

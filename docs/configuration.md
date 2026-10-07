@@ -446,8 +446,10 @@ written back. A playbook with neither is refused before any import:
 `playbooks.<id> names no module: set playbooks.<id>.from or supply a module for
 <id> (--module <id>=<specifier>)`. A malformed `from` is still refused even
 when a module is supplied. Reopening a recorded session needs neither: with
-no `from` and no `--module`, it uses the module the session already records,
-and a present `from` or supplied module must equal that record
+no `from` and no `--module`, it uses the module the session already records.
+Otherwise the module so taken — the supplied one, else a present `from` — must
+equal the stored module; a present `from` beside a supplied module is checked
+for form only
 ([DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
 
 ## Migrating per-playbook players

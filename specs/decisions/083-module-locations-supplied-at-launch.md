@@ -22,7 +22,7 @@ A module location is a property of the machine and installation running the laun
 2. Each enabled playbook takes its module from `modules[id]` when supplied, else from its `from`; a supplied module wins over a configured `from` the way a `--with` fragment wins over the file.
 3. A supplied module is canonicalised by the configured-module rules — an absolute path becomes a file URL, a file URL or package specifier is kept — except that the loader refuses a relative path, which has no config directory to anchor it.
 4. On a new launch, a supplied module naming no enabled playbook is refused before any import; an ordinary reopen consults only its stored playbook ids, as it ignores every current playbook the session does not hold.
-5. A playbook with neither a supplied module nor `from` is refused on a new launch; on a reopen it takes the module the session already records, while a present or supplied module must still equal that record.
+5. A playbook with neither a supplied module nor `from` is refused on a new launch; on a reopen it takes the module the session already records, and otherwise the module so taken — the supplied one, else a present `from` — must equal the stored module; a present `from` beside a supplied module is checked for form only.
 6. The CLI exposes the option as a repeatable `--module <id>=<specifier>`, launcher-owned like `--with`: consumed, never forwarded or submitted as Boss input, refused beside a raw `--config`, with a relative path resolved against the invocation's working directory.
 7. No supplied module is written to any configuration file; the session record keeps the canonical prepared module exactly as it does for a configured one.
 
