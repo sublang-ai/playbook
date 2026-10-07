@@ -240,7 +240,9 @@ creates engine symlinks beside the module and prints one provisioning line
 [DR-024](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/024-runtime-engine-provisioning.md)).
 
 A directory where both imports already resolve is untouched, and
-`--no-provision` disables new links for either fresh front end.
+`--no-provision` disables new links for either fresh front end. If the
+module's directory is a git repository, add `node_modules/` to its
+`.gitignore` so provisioned links never enter player commits.
 
 A launch can also supply a playbook's module without writing it to any file,
 for example when an embedding host keeps each playbook installed in an
@@ -259,9 +261,7 @@ given twice, and for an id the config does not enable
 ```sh
 playbook --module code=/opt/env/code/registry.mjs
 playbook run --module review=@sublang/playbook/review/registry "/review the last commit"
-``` If the
-module's directory is a git repository, add `node_modules/` to its
-`.gitignore` so provisioned links never enter player commits.
+```
 
 ### Continuing a Captain session
 
