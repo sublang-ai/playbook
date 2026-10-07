@@ -5488,6 +5488,17 @@ describe('playbook run --module (PBCLI-95)', () => {
     expect(differing.stderr).toContain(
       'the module supplied for code differs from the stored structural projection',
     );
+
+    const stray = await headlessHarness(
+      ['run', '--session', sessionId, '--module', 'ghost=mod://ghost', 'no'],
+      { userConfigPath: configPath, sessionsDir: first.sessionsDir },
+    );
+    expect(stray.result.code).toBe(1);
+    expect(stray.stdout).toBe('');
+    expect(stray.inputs).toEqual([]);
+    expect(stray.stderr).toContain(
+      'a module was supplied for "ghost", which names no enabled playbook',
+    );
   });
 
   it('lets a supplied module win over the file from on a fresh run', async () => {

@@ -314,9 +314,9 @@ export function canonicalizeRegistrySpecifier(from, configPath) {
 // PBCLI-94 (DR-083): validate the loader's `modules` option — a read-only
 // record from playbook id to module specifier — and canonicalize each value by
 // the configured-module rules, except that a relative path has no config
-// directory to anchor it and is refused. On a new launch every id must name an
-// enabled playbook; an ordinary reopen consults only its stored ids.
-function resolveSuppliedModules(modules, enabledIds, { strict }) {
+// directory to anchor it and is refused. Every id must name a playbook of the
+// current config; an ordinary reopen skips one the stored catalog lacks.
+function resolveSuppliedModules(modules, enabledIds, currentIds) {
   const supplied = new Map();
   if (modules === undefined) return supplied;
   const record = cloneJson(modules, "modules");
@@ -326,14 +326,13 @@ function resolveSuppliedModules(modules, enabledIds, { strict }) {
     );
   }
   for (const [id, specifier] of Object.entries(record)) {
-    if (!enabledIds.includes(id)) {
-      if (strict) {
-        throw new Error(
-          `a module was supplied for ${JSON.stringify(id)}, which names no enabled playbook`,
-        );
-      }
-      continue;
+    if (!currentIds.has(id)) {
+      throw new Error(
+        `a module was supplied for ${JSON.stringify(id)}, which names no enabled playbook`,
+      );
     }
+    // A current playbook outside the stored catalog is ignored on a reopen.
+    if (!enabledIds.includes(id)) continue;
     if (
       typeof specifier !== "string" ||
       specifier.trim().length === 0 ||
@@ -356,6 +355,23 @@ function resolveSuppliedModules(modules, enabledIds, { strict }) {
     );
   }
   return supplied;
+}
+
+// PBCLI-94 (DR-083): add the ids a layer's own `playbooks` map holds, read as
+// keys only, so a reopen can name a stray supplied id without inspecting any
+// member outside its stored selection.
+function addCurrentPlaybookIds(layer, ids = new Set()) {
+  if (!isPlainObject(layer)) return ids;
+  const descriptor = Object.getOwnPropertyDescriptor(layer, "playbooks");
+  if (
+    descriptor === undefined ||
+    !hasOwn(descriptor, "value") ||
+    !isPlainObject(descriptor.value)
+  ) {
+    return ids;
+  }
+  for (const id of Object.keys(descriptor.value)) ids.add(id);
+  return ids;
 }
 
 function missingModuleError(id) {
@@ -401,20 +417,26 @@ export async function loadLaunchPlan({
       `the top-level config at ${userConfigPath} must be a YAML map before --with can overlay it`,
     );
   }
+  const currentPlaybookIds = addCurrentPlaybookIds(top);
   for (const overlayPath of overlayPaths) {
     const overlay = loadOverlayFragment(overlayPath);
+    addCurrentPlaybookIds(overlay, currentPlaybookIds);
     top =
       selectedMembers === undefined
         ? mergeConfigs(top, overlay)
         : mergeSelectedConfigs(top, overlay, selectedMembers);
   }
-  return await normalizeLaunchPlan(top, {
-    loadModule,
-    configPath: userConfigPath,
-    prepareRegistryModule,
-    selectedMembers,
-    modules,
-  });
+  return await normalizeLaunchPlanWith(
+    top,
+    {
+      loadModule,
+      configPath: userConfigPath,
+      prepareRegistryModule,
+      selectedMembers,
+      modules,
+    },
+    currentPlaybookIds,
+  );
 }
 
 // PBCLI-22/49: an interactive selected launch may project current tuning and
@@ -442,29 +464,38 @@ export async function loadSelectedLaunchPlanDataOnly({
       `the top-level config at ${userConfigPath} must be a YAML map before --with can overlay it`,
     );
   }
+  const currentPlaybookIds = addCurrentPlaybookIds(top);
   top = projectSelectedLayer(
     top,
     validateSelectedMembers(selectedMembers),
     "config",
   );
   for (const overlayPath of overlayPaths) {
-    top = mergeSelectedConfigs(
-      top,
-      loadOverlayFragment(overlayPath),
-      selectedMembers,
-    );
+    const overlay = loadOverlayFragment(overlayPath);
+    addCurrentPlaybookIds(overlay, currentPlaybookIds);
+    top = mergeSelectedConfigs(top, overlay, selectedMembers);
   }
-  return await normalizeSelectedLaunchPlanDataOnly(top, {
-    configPath: userConfigPath,
-    stored,
-    selectedMembers,
-    modules,
-  });
+  return await normalizeSelectedLaunchPlanDataOnlyWith(
+    top,
+    { configPath: userConfigPath, stored, selectedMembers, modules },
+    currentPlaybookIds,
+  );
 }
 
-export async function normalizeSelectedLaunchPlanDataOnly(
+export async function normalizeSelectedLaunchPlanDataOnly(top, options = {}) {
+  return await normalizeSelectedLaunchPlanDataOnlyWith(
+    top,
+    options,
+    addCurrentPlaybookIds(top),
+  );
+}
+
+// `currentPlaybookIds` names every playbook of the current merged config,
+// gathered before the layers were projected to the stored selection.
+async function normalizeSelectedLaunchPlanDataOnlyWith(
   top,
   { configPath, stored, selectedMembers, modules } = {},
+  currentPlaybookIds,
 ) {
   stored = validateStoredStructuralProjection(stored);
   const expectedMembers = selectedMembersFromStoredStructure(stored);
@@ -517,7 +548,7 @@ export async function normalizeSelectedLaunchPlanDataOnly(
   const suppliedModules = resolveSuppliedModules(
     modules,
     expectedMembers.playbookIds,
-    { strict: false },
+    currentPlaybookIds,
   );
   const tuningChecks = [];
   let tuningCheckIndex = 0;
@@ -802,7 +833,17 @@ function rejectConfiguredHostCapabilities(value, path) {
 // PBCLI-46: normalize into a detached, deeply frozen JSON plan. The plan has
 // only execution data and presentation data; imported registry functions are
 // consulted for validation and then discarded.
-export async function normalizeLaunchPlan(
+export async function normalizeLaunchPlan(top, options = {}) {
+  return await normalizeLaunchPlanWith(
+    top,
+    options,
+    addCurrentPlaybookIds(top),
+  );
+}
+
+// `currentPlaybookIds` names every playbook of the current merged config,
+// gathered before a reopen projected the layers to its selection.
+async function normalizeLaunchPlanWith(
   top,
   {
     loadModule,
@@ -811,6 +852,7 @@ export async function normalizeLaunchPlan(
     selectedMembers,
     modules,
   } = {},
+  currentPlaybookIds,
 ) {
   const importModule = loadModule ?? ((specifier) => import(specifier));
   top = projectSelectedMembers(top, selectedMembers);
@@ -860,10 +902,12 @@ export async function normalizeLaunchPlan(
     throw new Error("playbooks keys must be canonical trimmed nonblank ids");
   }
   // PBCLI-94 (DR-083): supplied modules are checked before any preparation
-  // or import; an ordinary reopen consults only its stored playbook ids.
-  const suppliedModules = resolveSuppliedModules(modules, ids, {
-    strict: selectedMembers === undefined,
-  });
+  // or import; an ordinary reopen skips a current playbook it does not hold.
+  const suppliedModules = resolveSuppliedModules(
+    modules,
+    ids,
+    selectedMembers === undefined ? new Set(ids) : currentPlaybookIds,
+  );
 
   let captain = resolveDelegationDefault(
     resolveAgent(top.captain, "captain", ["from", "options"]),

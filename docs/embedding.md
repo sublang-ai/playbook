@@ -421,13 +421,14 @@ Each enabled playbook takes `modules[id]` ahead of its `from`. An absolute
 path becomes a file URL, while a file URL or package specifier is kept; a
 relative path is refused, so resolve it against your own working directory
 first. On a new launch, a module naming no enabled playbook is refused before
-any import; with `selectedMembers`, only the selected playbook ids are
-consulted. These loaders hold no stored session record, so they refuse a
-playbook with neither a supplied module nor `from`, with or without
-`selectedMembers`; only the CLI's reopen of a recorded session falls back to
-the module that record holds. The preparation hook, single import, registry
-checks and the plan's canonical `from` are unchanged, and a supplied module is
-never written back to your config files
+any import; with `selectedMembers`, one for a current playbook outside the
+selection is skipped, while one naming no current playbook is still refused.
+These loaders hold no stored session record, so they refuse a playbook with
+neither a supplied module nor `from`, with or without `selectedMembers`; only
+the CLI's reopen of a recorded session falls back to the module that record
+holds. The preparation hook, single import, registry checks and the plan's
+canonical `from` are unchanged, and a supplied module is never written back to
+your config files
 ([DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
 
 `shared.readLeaseState(sessionId)` reports `active`, `idle` or `unknown` without

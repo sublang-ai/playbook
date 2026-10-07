@@ -2766,31 +2766,105 @@ describe('module locations supplied at launch (PBCLI-95)', () => {
     );
   });
 
-  it('consults only stored playbook ids on an ordinary reopen', async () => {
+  it('skips a current playbook the session does not hold and refuses an id the config lacks on a reopen', async () => {
     const stored = await storedFor('mod://recorded');
+    const withAdded = () => ({
+      ...fromlessConfig(),
+      playbooks: {
+        ...fromlessConfig().playbooks,
+        added: { from: 'mod://added', roles: {} },
+      },
+    });
     const plan = await launchConfig.normalizeSelectedLaunchPlanDataOnly(
-      fromlessConfig(),
-      { stored, modules: { added: 'mod://added' } },
+      withAdded(),
+      { stored, modules: { added: 'mod://elsewhere' } },
     );
     expect(Object.keys(plan.catalog)).toEqual(['code']);
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(fromlessConfig(), {
+        stored,
+        modules: { added: 'mod://added' },
+      }),
+    ).rejects.toThrow(
+      'a module was supplied for "added", which names no enabled playbook',
+    );
 
     const loadModule = vi.fn(async () => ({
       default: entry('code', ['coder']),
     }));
-    const selected = await launchConfig.normalizeLaunchPlan(
-      {
-        ...fromlessConfig(),
-        playbooks: {
-          ...fromlessConfig().playbooks,
-          added: { from: 'mod://added', roles: {} },
-        },
-      },
-      {
-        selectedMembers: { playbookIds: ['code'], playerIds: ['dev.coder'] },
-        modules: { code: 'mod://recorded', added: 'mod://elsewhere' },
+    const selectedMembers = { playbookIds: ['code'], playerIds: ['dev.coder'] };
+    const selected = await launchConfig.normalizeLaunchPlan(withAdded(), {
+      selectedMembers,
+      modules: { code: 'mod://recorded', added: 'mod://elsewhere' },
+      loadModule,
+    });
+    expect(loadModule.mock.calls).toEqual([['mod://recorded']]);
+    expect(Object.keys(selected.catalog)).toEqual(['code']);
+    loadModule.mockClear();
+    await expect(
+      launchConfig.normalizeLaunchPlan(withAdded(), {
+        selectedMembers,
+        modules: { code: 'mod://recorded', ghost: 'mod://ghost' },
         loadModule,
-      },
+      }),
+    ).rejects.toThrow(
+      'a module was supplied for "ghost", which names no enabled playbook',
     );
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it('counts a playbook an overlay adds as current on a reopen', async () => {
+    const stored = await storedFor('mod://recorded');
+    const root = await mkdtemp(join(tmpdir(), 'playbook-supplied-reopen-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    await writeFile(
+      configPath,
+      [
+        'captain: claude',
+        'players: { dev.coder: codex }',
+        'playbooks:',
+        '  code: { roles: { coder: dev.coder } }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const overlayPath = join(root, 'added.yaml');
+    await writeFile(
+      overlayPath,
+      'playbooks:\n  added: { from: "mod://added", roles: {} }\n',
+      'utf8',
+    );
+    const modules = { code: 'mod://recorded', added: 'mod://elsewhere' };
+
+    const dataOnly = await launchConfig.loadSelectedLaunchPlanDataOnly({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      structuralProjection: stored,
+      modules,
+    });
+    expect(Object.keys(dataOnly.catalog)).toEqual(['code']);
+    expect(dataOnly.catalog.code.from).toBe('mod://recorded');
+    await expect(
+      launchConfig.loadSelectedLaunchPlanDataOnly({
+        userConfigPath: configPath,
+        structuralProjection: stored,
+        modules,
+      }),
+    ).rejects.toThrow(
+      'a module was supplied for "added", which names no enabled playbook',
+    );
+
+    const loadModule = vi.fn(async () => ({
+      default: entry('code', ['coder']),
+    }));
+    const selected = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      selectedMembers: { playbookIds: ['code'], playerIds: ['dev.coder'] },
+      modules,
+      loadModule,
+    });
     expect(loadModule.mock.calls).toEqual([['mod://recorded']]);
     expect(Object.keys(selected.catalog)).toEqual(['code']);
   });

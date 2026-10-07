@@ -304,10 +304,11 @@ role bindings plus every structural setting to remain exact. A playbook whose
 current config names no `from` and receives no `--module` keeps the module the
 session records. Otherwise the module so taken — the supplied one, else a
 present `from` — must equal the stored module; a present `from` beside a
-supplied module is checked for form only. A `--module` for a playbook the
-session does not hold is ignored. Compatible
-current `model`, `effort`, and optional `fastMode`, `subagentModel`, and
-`subagentEffort` settings apply to the next call. Boolean `false` explicitly
+supplied module is checked for form only. A `--module` for a playbook your
+config enables but the session does not hold is ignored, while one naming no
+playbook of your config is refused. Compatible current `model`, `effort`, and
+optional `fastMode`, `subagentModel`, and `subagentEffort` settings apply to
+the next call. Boolean `false` explicitly
 resets model, effort, subagent model, or subagent effort to the provider
 default, but `fastMode: false` is a literal
 disabled request; omission selects the provider default or inherits the player
