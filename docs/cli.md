@@ -256,6 +256,7 @@ is kept. The flag is never forwarded to tmux-play or sent as Boss input; it is
 refused beside a raw `--config`, during uncertain-turn recovery, for an id
 given twice, and for an id the config does not enable
 ([[playbook-cli-94](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-94)],
+[[playbook-cli-96](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-96)],
 [DR-083](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/083-module-locations-supplied-at-launch.md)).
 
 ```sh
