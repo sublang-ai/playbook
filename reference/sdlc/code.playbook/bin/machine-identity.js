@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// One machine identity per user and machine (DR-075, playbook-cli-94): a
+// One machine identity per user and machine (DR-087, playbook-cli-97): a
 // tagged value read from a private file under the XDG state directory,
 // published once and exclusively, never replaced, and carried in the
 // `hostname` field of session leases and repository claims in place of

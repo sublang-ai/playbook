@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// PBCLI-96: the machine identity (DR-075, playbook-cli-94/95) over isolated
+// PBCLI-99: the machine identity (DR-087, playbook-cli-97/95) over isolated
 // state directories and real child processes, and its carriage in session
 // leases and repository claims beside legacy host-name owners.
 
@@ -85,7 +85,7 @@ async function resolveInChild(env: Record<string, string>): Promise<string> {
   return stdout.trim();
 }
 
-describe('the machine identity file (PBCLI-94/95)', () => {
+describe('the machine identity file (PBCLI-97/95)', () => {
   it('names the XDG state file and accepts exactly the tagged form', async () => {
     expect(machineIdentityPath({ XDG_STATE_HOME: '/state' }, '/h')).toBe('/state/playbook/machine-id');
     expect(machineIdentityPath({ HOME: '/home/u' }, '/h')).toBe('/home/u/.local/state/playbook/machine-id');
@@ -286,12 +286,15 @@ describe('leases and claims carry the machine identity (PBCLI-23/59)', () => {
     const { root, env, home } = await scenario();
     const repo = join(root, 'repo');
     await mkdir(repo, { mode: 0o700 });
+    // The fixture's Git runs without the developer's signing setup, as
+    // repository-effects.test.ts runs its own.
+    const git = (...args: string[]) => execFileAsync('git', ['-C', repo, '-c', 'commit.gpgsign=false', ...args]);
     for (const args of [['init', '--quiet'], ['config', 'user.name', 'Identity Test'], ['config', 'user.email', 'identity@example.invalid']]) {
-      await execFileAsync('git', ['-C', repo, ...args]);
+      await git(...args);
     }
     await writeFile(join(repo, 'base.txt'), 'base\n');
-    await execFileAsync('git', ['-C', repo, 'add', '--all']);
-    await execFileAsync('git', ['-C', repo, 'commit', '--quiet', '-m', 'base']);
+    await git('add', '--all');
+    await git('commit', '--quiet', '-m', 'base');
     const identity = await resolveMachineIdentity({ env });
 
     const coordinator = createRepositoryEffectCoordinator({ env, homeDir: home, pollIntervalMs: 2 });

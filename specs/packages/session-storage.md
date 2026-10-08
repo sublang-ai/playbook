@@ -32,7 +32,7 @@ The session store shall use these locations and files for each session's canonic
   - only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
   - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening; preparation changes no content, ownership or lease metadata;
   - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
-- the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-94](playbook-cli.md#playbook-cli-94)] stay in place and are never inputs.
+- the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-97](playbook-cli.md#playbook-cli-97)] stay in place and are never inputs.
 - all hosts record the normalized absolute working directory as `cwd`; the format needs no Spex project ID or registry access.
 
 ### session-storage-2

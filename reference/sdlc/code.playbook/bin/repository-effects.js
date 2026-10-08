@@ -1327,7 +1327,7 @@ function validateCohort(options) {
 }
 
 export function createRepositoryEffectCoordinator(options = {}) {
-  // DR-075: the claim owner's `hostname` carries this machine's identity,
+  // DR-087: the claim owner's `hostname` carries this machine's identity,
   // read once at the first claim; an explicit value stands in for it
   // (tests). An untagged owner is a legacy host name compared with the
   // current one — or with an explicit untagged value, which then names

@@ -530,7 +530,7 @@ Where an accepted interactive `turn_finished` reaches a successful settled repla
 Every logical session shall have at most one cooperative writer.
 The store shall acquire an exclusive, complete, nonempty, private per-session lease before the authoritative record read and shall verify the owner token before every record mutation and immediately before model work.
 A live, foreign-machine, unverifiable, permission-unknown, malformed, or non-private lease shall fail closed before host or agent work.
-The owner's `hostname` field shall carry this machine's identity [[playbook-cli-94](#playbook-cli-94)]; a reader shall take exactly that tagged form as an identity, an untagged value as a legacy host name, and a value that begins like the tag but fails its exact form as unverifiable, and shall name a tagged value as a machine identity, never as a host name ([DR-075](../decisions/075-leases-name-the-machine.md)).
+The owner's `hostname` field shall carry this machine's identity [[playbook-cli-97](#playbook-cli-97)]; a reader shall take exactly that tagged form as an identity, an untagged value as a legacy host name, and a value that begins like the tag but fails its exact form as unverifiable, and shall name a tagged value as a machine identity, never as a host name ([DR-087](../decisions/087-leases-name-the-machine.md)).
 A lease may be reclaimed only when its recorded owner is this machine — a tagged identity equal to the current one, or a legacy host name equal to the current `os.hostname()` — and probing its PID definitively returns `ESRCH`; age alone shall never make a lease stale.
 Normal release and stale reclaim shall both atomically rename the canonical lease directory to a permanent, nonempty, token-specific retired path and sync the sessions directory.
 Retired paths are never reused or removed: two reclaimers that observed old token O therefore target the same occupied retired-O path, so an arbitrarily delayed reader cannot move, delete, or replace successor N.
@@ -666,9 +666,9 @@ Where any `playbooks.<id>.players` block remains, the command shall reject it be
 
 ### Machine identity
 
-#### playbook-cli-94
+#### playbook-cli-97
 
-When a session lease or repository claim needs this machine's identity, the host shall read one tagged value `machine-id:v1:<lowercase UUID>` from the private regular file `machine-id` under `${XDG_STATE_HOME:-~/.local/state}/playbook/` on macOS and Linux alike, shared by every store and Spex home the user runs on the machine ([DR-075](../decisions/075-leases-name-the-machine.md)):
+When a session lease or repository claim needs this machine's identity, the host shall read one tagged value `machine-id:v1:<lowercase UUID>` from the private regular file `machine-id` under `${XDG_STATE_HOME:-~/.local/state}/playbook/` on macOS and Linux alike, shared by every store and Spex home the user runs on the machine ([DR-087](../decisions/087-leases-name-the-machine.md)):
 
 - the directory is created `0700` when absent; the directory and the file qualify only as current-user-owned, non-symlink entries, the file a single-link regular file; excess permissions on a qualifying entry are tightened in place to `0700` and `0600` through the verified tighten-only rule of the session store [[session-storage-1](session-storage.md#session-storage-1)], and a wrong owner, link, special file, absent owner access, or failed repair makes the identity unavailable;
 - an absent file is published once: a complete value is written to a private same-directory temporary file, synced, and linked to `machine-id`, so publication is exclusive and the file never holds a partial value; a creator whose link finds the file present discards its value and reads the winner's; a read that finds no usable value retries within a bound and then fails;
@@ -676,7 +676,7 @@ When a session lease or repository claim needs this machine's identity, the host
 - while the identity is unavailable, every operation that would publish an owner refuses before host or agent work, naming the file and the reason, and no writer publishes `os.hostname()` in its place;
 - the value is read once per process and reused; the former-location cutover [[session-storage-1](session-storage.md#session-storage-1)] and every cleanup leave the `playbook/` directory and this file in place and never treat the file as an input.
 
-#### playbook-cli-95
+#### playbook-cli-98
 
 Where the package publishes the shared session store, `@sublang/playbook/machine-identity` shall have exactly the JavaScript named exports `MACHINE_IDENTITY_TAG_PREFIX`, `isMachineIdentity`, `machineIdentityPath`, and `resolveMachineIdentity` with no default export, backed by a self-contained declaration that imports nothing and assigns them these exact signatures:
 
@@ -691,9 +691,9 @@ export interface ResolveMachineIdentityOptions {
 export declare function resolveMachineIdentity(options?: ResolveMachineIdentityOptions): Promise<string>;
 ```
 
-- `isMachineIdentity` accepts exactly the tagged form of [[playbook-cli-94](#playbook-cli-94)];
-- `machineIdentityPath` names the file [[playbook-cli-94](#playbook-cli-94)] resolves for the given environment and home;
-- `resolveMachineIdentity` reads, publishes, or refuses under [[playbook-cli-94](#playbook-cli-94)], rejecting with an error whose `code` is `PLAYBOOK_MACHINE_IDENTITY_UNAVAILABLE` and whose message names the file and the reason;
+- `isMachineIdentity` accepts exactly the tagged form of [[playbook-cli-97](#playbook-cli-97)];
+- `machineIdentityPath` names the file [[playbook-cli-97](#playbook-cli-97)] resolves for the given environment and home;
+- `resolveMachineIdentity` reads, publishes, or refuses under [[playbook-cli-97](#playbook-cli-97)], rejecting with an error whose `code` is `PLAYBOOK_MACHINE_IDENTITY_UNAVAILABLE` and whose message names the file and the reason;
 - the standalone CLI, the session store, and the repository coordinator obtain the identity through this one implementation, and a host that embeds the store obtains it through the same facade rather than a copy of its rules [[playbook-cli-23](#playbook-cli-23)] [[playbook-cli-59](#playbook-cli-59)].
 
 ### Shared session store
@@ -1113,7 +1113,7 @@ The coordinator shall reject malformed or unauthorized cohort metadata before a 
 
 #### playbook-cli-59
 
-When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, this machine's identity in the `hostname` field [[playbook-cli-94](#playbook-cli-94)], and PID atomically; reject malformed, nonprivate, foreign-machine, unverifiable, permission-unknown, reused-token, or otherwise unprovable ownership, reading the owner's `hostname` as a lease reader does [[playbook-cli-23](#playbook-cli-23)]; reclaim only an owner on this machine whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
+When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, this machine's identity in the `hostname` field [[playbook-cli-97](#playbook-cli-97)], and PID atomically; reject malformed, nonprivate, foreign-machine, unverifiable, permission-unknown, reused-token, or otherwise unprovable ownership, reading the owner's `hostname` as a lease reader does [[playbook-cli-23](#playbook-cli-23)]; reclaim only an owner on this machine whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
 Every staging, active, and retired claim path shall be materialized outside the repository-relevant projection under [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)] of the canonical worktree it keys.
 One issued claim handle shall reject overlapping observation, receipt, ownership-check, or release methods, and a delayed stale-owner reclaimer shall not disturb a successor protected by the retired token.
 
@@ -1407,7 +1407,7 @@ When the claim-lifecycle integration suite exercises real Git administrative dir
 
 #### playbook-cli-62
 
-When the package-surface suite dry-packs the candidate, it shall fail unless the private coordination and machine-identity modules are present while the exact package exports — `./machine-identity` among them with the declaration and named exports of [[playbook-cli-95](#playbook-cli-95)] — and the executable map remain as declared (verifying [[playbook-cli-60](#playbook-cli-60)] and [[playbook-cli-95](#playbook-cli-95)]).
+When the package-surface suite dry-packs the candidate, it shall fail unless the private coordination and machine-identity modules are present while the exact package exports — `./machine-identity` among them with the declaration and named exports of [[playbook-cli-98](#playbook-cli-98)] — and the executable map remain as declared (verifying [[playbook-cli-60](#playbook-cli-60)] and [[playbook-cli-98](#playbook-cli-98)]).
 
 #### playbook-cli-64
 
@@ -1443,9 +1443,9 @@ The durable crash and successor-lease rows shall stop after durable begin and af
 
 ### Machine identity coverage
 
-#### playbook-cli-96
+#### playbook-cli-99
 
-When the machine-identity integration suite runs against isolated state directories and real child processes, it shall fail unless: two processes resolving an absent identity at once end with one tagged value and one complete file [[playbook-cli-94](#playbook-cli-94)]; a second resolution in a process returns the value read first [[playbook-cli-94](#playbook-cli-94)]; excess permissions on a qualifying directory and file are tightened to `0700` and `0600` and a symlink, an extra hard link, or a foreign owner makes the identity unavailable [[playbook-cli-94](#playbook-cli-94)]; an unreadable or malformed file is left byte-identical and refused with the file and reason named under the facade's `code` [[playbook-cli-95](#playbook-cli-95)]; a session lease and a repository claim publish the tagged value in `hostname` and refuse to publish while the identity is unavailable [[playbook-cli-23](#playbook-cli-23)] [[playbook-cli-59](#playbook-cli-59)]; a legacy host-name owner on this machine is reclaimed and one on another machine refused under the legacy rule [[playbook-cli-23](#playbook-cli-23)]; a value that begins like the tag but fails its form is refused as unverifiable [[playbook-cli-23](#playbook-cli-23)]; the former-location sessions cutover leaves the identity file beside the emptied sessions directory [[playbook-cli-94](#playbook-cli-94)]; and `isMachineIdentity` and `machineIdentityPath` answer exactly as declared [[playbook-cli-95](#playbook-cli-95)].
+When the machine-identity integration suite runs against isolated state directories and real child processes, it shall fail unless: two processes resolving an absent identity at once end with one tagged value and one complete file [[playbook-cli-97](#playbook-cli-97)]; a second resolution in a process returns the value read first [[playbook-cli-97](#playbook-cli-97)]; excess permissions on a qualifying directory and file are tightened to `0700` and `0600` and a symlink, an extra hard link, or a foreign owner makes the identity unavailable [[playbook-cli-97](#playbook-cli-97)]; an unreadable or malformed file is left byte-identical and refused with the file and reason named under the facade's `code` [[playbook-cli-98](#playbook-cli-98)]; a session lease and a repository claim publish the tagged value in `hostname` and refuse to publish while the identity is unavailable [[playbook-cli-23](#playbook-cli-23)] [[playbook-cli-59](#playbook-cli-59)]; a legacy host-name owner on this machine is reclaimed and one on another machine refused under the legacy rule [[playbook-cli-23](#playbook-cli-23)]; a value that begins like the tag but fails its form is refused as unverifiable [[playbook-cli-23](#playbook-cli-23)]; the former-location sessions cutover leaves the identity file beside the emptied sessions directory [[playbook-cli-97](#playbook-cli-97)]; and `isMachineIdentity` and `machineIdentityPath` answer exactly as declared [[playbook-cli-98](#playbook-cli-98)].
 
 ### Shared session store coverage
 

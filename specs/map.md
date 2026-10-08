@@ -110,7 +110,7 @@ meta.md       The spec of specs
 | [DR-082](decisions/082-retain-input-owned-boss-replies.md) | 082-retain-input-owned-boss-replies.md | Retain complete canonical Boss input after semantic acceptance without a Judge-extracted echo |
 | [DR-083](decisions/083-module-locations-supplied-at-launch.md) | 083-module-locations-supplied-at-launch.md | The launch may supply each playbook's module (loader `modules`, CLI `--module <id>=<specifier>`) ahead of `from`, which becomes optional; a reopen without either uses the recorded module |
 | [DR-086](decisions/086-empty-typed-history-shapes.md) | 086-empty-typed-history-shapes.md | Preserve Source-owned empty array history through typed initialization, lifecycle resets and actor inputs |
-| [DR-075](decisions/075-leases-name-the-machine.md) | 075-leases-name-the-machine.md | Leases name the machine: one machine identity under the XDG state directory, read through `@sublang/playbook/machine-identity`, carried in the owner's `hostname` field by session leases and repository claims, legacy host names reclaimable under the old rule, a coordinated upgrade; extends DR-042 and DR-046 |
+| [DR-087](decisions/087-leases-name-the-machine.md) | 087-leases-name-the-machine.md | Leases name the machine: one machine identity under the XDG state directory, read through `@sublang/playbook/machine-identity`, carried in the owner's `hostname` field by session leases and repository claims, legacy host names reclaimable under the old rule, a coordinated upgrade; extends DR-042 and DR-046 |
 
 ## Packages
 

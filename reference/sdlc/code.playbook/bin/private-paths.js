@@ -8,7 +8,7 @@
 // handle whose identity is compared before and after, so a link swapped in
 // between check and use cannot be tightened in its place. The session store
 // applies it to the sessions directory and its files; the machine identity
-// applies it to its state directory and file (playbook-cli-94).
+// applies it to its state directory and file (playbook-cli-97).
 
 import { constants } from 'node:fs';
 

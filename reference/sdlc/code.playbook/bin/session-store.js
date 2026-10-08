@@ -637,7 +637,7 @@ export function createCaptainSessionStore(options = {}) {
   const now = options.now ?? (() => new Date());
   const createTempId = options.createTempId ?? randomUUID;
   const createLeaseToken = options.createLeaseToken ?? randomUUID;
-  // DR-075: the owner's `hostname` carries this machine's identity, read
+  // DR-087: the owner's `hostname` carries this machine's identity, read
   // once at the first lease boundary; an explicit value stands in for it
   // (tests, migration sub-stores). An untagged owner is a legacy host
   // name, compared with the current one — or with an explicit untagged
@@ -6776,7 +6776,7 @@ async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId, inc
   try { initial = await fs.lstat(sessionsDir); }
   catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
   // The one verified tighten-only rule, shared with the machine identity
-  // (session-storage-1, playbook-cli-94).
+  // (session-storage-1, playbook-cli-97).
   const tighten = (path, before, directory) => tightenPrivateEntry(path, before, directory, fs, 'session permission preparation');
   await tighten(sessionsDir, initial, true);
   for (const name of await fs.readdir(sessionsDir)) {

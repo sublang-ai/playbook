@@ -1340,7 +1340,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createWorktreeHostCapabilities',
       'observeGitRepository',
     ],
-    // DR-075 / playbook-cli-95: the machine-identity facade.
+    // DR-087 / playbook-cli-98: the machine-identity facade.
     './machine-identity': [
       'MACHINE_IDENTITY_TAG_PREFIX',
       'isMachineIdentity',
@@ -1733,7 +1733,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'validateSessionContext',
       'validateSessionManifest',
     ],
-    // DR-075 / playbook-cli-95: the machine-identity facade.
+    // DR-087 / playbook-cli-98: the machine-identity facade.
     './machine-identity': [
       'MACHINE_IDENTITY_TAG_PREFIX',
       'ResolveMachineIdentityOptions',

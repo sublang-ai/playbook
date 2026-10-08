@@ -398,7 +398,7 @@ describe('shared portable session lifecycle', () => {
  });
  it('moves the former default with its complete replay and retained original bytes',async()=>{
   const f=await legacyDefaultFixture();
-  // PBCLI-94: the machine identity beside the former sessions location is never a migration input.
+  // PBCLI-97: the machine identity beside the former sessions location is never a migration input.
   const identityPath=join(dirname(f.sourceDir),'machine-id');const identityBytes=`machine-id:v1:${randomUUID()}\n`;await writeFile(identityPath,identityBytes,{mode:0o600});
   const report=await f.target.migrateLegacyDefault();
   expect(report).toEqual({sourceDir:f.sourceDir,migrated:[f.id],skipped:[]});
