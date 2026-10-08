@@ -81,6 +81,8 @@
     "reference/sdlc/code.playbook/session-store.d.ts",
     "reference/sdlc/code.playbook/host-capabilities.js",
     "reference/sdlc/code.playbook/host-capabilities.d.ts",
+    "reference/sdlc/code.playbook/machine-identity.js",
+    "reference/sdlc/code.playbook/machine-identity.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
@@ -89,6 +91,8 @@
     "reference/sdlc/code.playbook/bin/interactive-session.js",
     "reference/sdlc/code.playbook/bin/replay-observer.js",
     "reference/sdlc/code.playbook/bin/session-store.js",
+    "reference/sdlc/code.playbook/bin/private-paths.js",
+    "reference/sdlc/code.playbook/bin/machine-identity.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",
     "reference/sdlc/code.playbook/bin/repository-effects.js",
@@ -200,6 +204,10 @@
     "./host-capabilities": {
       "types": "./reference/sdlc/code.playbook/host-capabilities.d.ts",
       "default": "./reference/sdlc/code.playbook/host-capabilities.js"
+    },
+    "./machine-identity": {
+      "types": "./reference/sdlc/code.playbook/machine-identity.d.ts",
+      "default": "./reference/sdlc/code.playbook/machine-identity.js"
     },
     "./slc/*": "./slc/*",
     "./review/playbook": {

@@ -529,15 +529,16 @@ Except for shared stopped-recovery settlement [[recovery-20](recovery.md#recover
 Where an accepted interactive `turn_finished` reaches a successful settled replacement but ordered reply release or later cleanup fails, the record shall remain settled and shutdown shall not rewrite it to uncertain; presentation may already have begun according to ordered observer dispatch.
 Every logical session shall have at most one cooperative writer.
 The store shall acquire an exclusive, complete, nonempty, private per-session lease before the authoritative record read and shall verify the owner token before every record mutation and immediately before model work.
-A live, foreign-host, permission-unknown, malformed, or non-private lease shall fail closed before host or agent work.
-A lease may be reclaimed only when its recorded host is the current host and probing its PID definitively returns `ESRCH`; age alone shall never make a lease stale.
+A live, foreign-machine, unverifiable, permission-unknown, malformed, or non-private lease shall fail closed before host or agent work.
+The owner's `hostname` field shall carry this machine's identity [[playbook-cli-97](#playbook-cli-97)]; a reader shall take exactly that tagged form as an identity, an untagged value as a legacy host name, and a value that begins like the tag but fails its exact form as unverifiable, and shall name a tagged value as a machine identity, never as a host name ([DR-087](../decisions/087-leases-name-the-machine.md)).
+A lease may be reclaimed only when its recorded owner is this machine — a tagged identity equal to the current one, or a legacy host name equal to the current `os.hostname()` — and probing its PID definitively returns `ESRCH`; age alone shall never make a lease stale.
 Normal release and stale reclaim shall both atomically rename the canonical lease directory to a permanent, nonempty, token-specific retired path and sync the sessions directory.
 Retired paths are never reused or removed: two reclaimers that observed old token O therefore target the same occupied retired-O path, so an arbitrarily delayed reader cannot move, delete, or replace successor N.
 Lease publication shall use a fully synced private staging directory with a synced `0600` owner record, atomic no-replace rename, and post-publication token verification.
 SIGINT, SIGTERM, and SIGHUP observed by the lease-owning headless process or pane child before settlement shall abort active work and preserve the already-written uncertain record unless shared recovery settlement succeeds [[recovery-20](recovery.md#recovery-20)]; a signal arriving during noncancellable atomic settlement may leave the record settled.
 The lease-owning process shall in either case join active child work, retire its lease, withhold the interrupted reply, and then re-raise the signal.
 A signal received by the non-owning outer interactive client before native-client hand-off shall abort the prepared attachment and await child retirement before re-raising, while a signal received after that hand-off shall not retire the pane child's lease.
-SIGKILL may leave the uncertain record and canonical lease for the same-host dead-PID recovery rule.
+SIGKILL may leave the uncertain record and canonical lease for the same-machine dead-PID recovery rule.
 Where [[playbook-cli-22](#playbook-cli-22)] explicitly selects a record, the command shall reject an unsafe id, missing or malformed record, unsupported schema, invalid stored projection, incompatible current projection of a stored structural member, or unrestorable shell snapshot ([[playbook-captain-42](playbook-captain.md#playbook-captain-42)]) with exit `1` before a Boss turn.
 `--continue` shall validate every canonically named record before partitioning candidates, report and skip the exact nonresumable set of [[playbook-cli-22](#playbook-cli-22)], fail closed on any other malformed or unsafe record, a canonical record carrying a legacy artifact schema, or an unknown schema rather than silently falling back past corruption, and select within the same-working-directory pool or, when that pool is empty, the global pool by canonical `updatedAt` with a deterministic session-id tie-break; the global fallback shall emit the notice of [[playbook-cli-22](#playbook-cli-22)].
 Ordinary continuation shall read current user config and explicit opening overlays, preserve the stored working directory and catalog, project to its stored playbooks and referenced players before validation or side effects, require every retained structural member to remain exact, and apply current model, effort, optional fast mode, optional subagent model, and optional subagent effort to stored identities on the next call; uncertain retry shall instead use the attempt's exact stored projection.
@@ -663,6 +664,38 @@ diagnostic naming the config path when the migration otherwise fails.
 A migrated config shall present nothing to migrate on the next launch.
 Where any `playbooks.<id>.players` block remains, the command shall reject it before profile migration with a major-version diagnostic requiring explicit top-level player ids and `playbooks.<id>.roles`; it shall not choose session-sharing semantics by rewriting that block.
 
+### Machine identity
+
+#### playbook-cli-97
+
+When a session lease or repository claim needs this machine's identity, the host shall read one tagged value `machine-id:v1:<lowercase UUID>` from the private regular file `machine-id` under `${XDG_STATE_HOME:-~/.local/state}/playbook/` on macOS and Linux alike, shared by every store and Spex home the user runs on the machine ([DR-087](../decisions/087-leases-name-the-machine.md)):
+
+- the directory is created `0700` when absent; the directory and the file qualify only as current-user-owned, non-symlink entries, the file a single-link regular file; excess permissions on a qualifying entry are tightened in place to `0700` and `0600` through the verified tighten-only rule of the session store [[session-storage-1](session-storage.md#session-storage-1)], and a wrong owner, link, special file, absent owner access, or failed repair makes the identity unavailable;
+- an absent file is published once: a complete value is written to a private same-directory temporary file, synced, and linked to `machine-id`, so publication is exclusive and the file never holds a partial value; a creator whose link finds the file present discards its value and reads the winner's; a read that finds no usable value retries within a bound and then fails;
+- an existing file that is unreadable or holds anything but one tagged value is never replaced or repaired in content: the identity is unavailable;
+- while the identity is unavailable, every operation that would publish an owner refuses before host or agent work, naming the file and the reason, and no writer publishes `os.hostname()` in its place;
+- the value is read once per process and reused; the former-location cutover [[session-storage-1](session-storage.md#session-storage-1)] and every cleanup leave the `playbook/` directory and this file in place and never treat the file as an input.
+
+#### playbook-cli-98
+
+Where the package publishes the shared session store, `@sublang/playbook/machine-identity` shall have exactly the JavaScript named exports `MACHINE_IDENTITY_TAG_PREFIX`, `isMachineIdentity`, `machineIdentityPath`, and `resolveMachineIdentity` with no default export, backed by a self-contained declaration that imports nothing and assigns them these exact signatures:
+
+```ts
+export declare const MACHINE_IDENTITY_TAG_PREFIX: 'machine-id:v1:';
+export declare function isMachineIdentity(value: unknown): value is string;
+export declare function machineIdentityPath(env?: NodeJS.ProcessEnv, home?: string): string;
+export interface ResolveMachineIdentityOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}
+export declare function resolveMachineIdentity(options?: ResolveMachineIdentityOptions): Promise<string>;
+```
+
+- `isMachineIdentity` accepts exactly the tagged form of [[playbook-cli-97](#playbook-cli-97)];
+- `machineIdentityPath` names the file [[playbook-cli-97](#playbook-cli-97)] resolves for the given environment and home;
+- `resolveMachineIdentity` reads, publishes, or refuses under [[playbook-cli-97](#playbook-cli-97)], rejecting with an error whose `code` is `PLAYBOOK_MACHINE_IDENTITY_UNAVAILABLE` and whose message names the file and the reason;
+- the standalone CLI, the session store, and the repository coordinator obtain the identity through this one implementation, and a host that embeds the store obtains it through the same facade rather than a copy of its rules [[playbook-cli-23](#playbook-cli-23)] [[playbook-cli-59](#playbook-cli-59)].
+
 ### Shared session store
 
 #### playbook-cli-73
@@ -769,9 +802,9 @@ The facade shall reserve stable `Error.code` strings for exactly these two contr
 | Rejected operation | `code` |
 | --- | --- |
 | `read(sessionId)` when its canonical Playbook manifest does not exist | `PLAYBOOK_SESSION_NOT_FOUND` |
-| `acquire(sessionId)` when a valid canonical lease of [[playbook-cli-23](#playbook-cli-23)] is held by a verified-live current-host process or a foreign host, or when a valid foreign-host or verified-live current-host winning owner is observed after a publication race | `PLAYBOOK_SESSION_LEASE_ACTIVE` |
+| `acquire(sessionId)` when a valid canonical lease of [[playbook-cli-23](#playbook-cli-23)] is held by a verified-live process on this machine or by another machine, or when such a winning owner is observed after a publication race | `PLAYBOOK_SESSION_LEASE_ACTIVE` |
 
-An invalid argument, malformed or unsafe directory, manifest, or lease, current-host owner with an indeterminate process probe, or storage failure shall carry neither facade code.
+An invalid argument, malformed or unsafe directory, manifest, or lease, an owner on this machine with an indeterminate process probe, an unverifiable owner, or storage failure shall carry neither facade code.
 Manifest absence shall not gate lease-free stream reading under [[playbook-cli-82](#playbook-cli-82)] or lease acquisition under [[playbook-cli-83](#playbook-cli-83)].
 
 The summary/replay facade shall remain a narrow handle; embedding hosts shall use the published shared lifecycle for checkpoint validation, effect-ledger writing, turn/retry/settlement/discard/abandonment and management [[session-storage-11](session-storage.md#session-storage-11)], rather than copy private store code.
@@ -1080,7 +1113,7 @@ The coordinator shall reject malformed or unauthorized cohort metadata before a 
 
 #### playbook-cli-59
 
-When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, host, and PID atomically; reject malformed, nonprivate, foreign-host, permission-unknown, reused-token, or otherwise unprovable ownership; reclaim only a current-host owner whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
+When the private coordinator manages a cross-process claim, it shall publish one private exact owner token, this machine's identity in the `hostname` field [[playbook-cli-97](#playbook-cli-97)], and PID atomically; reject malformed, nonprivate, foreign-machine, unverifiable, permission-unknown, reused-token, or otherwise unprovable ownership, reading the owner's `hostname` as a lease reader does [[playbook-cli-23](#playbook-cli-23)]; reclaim only an owner on this machine whose PID probe definitively returns `ESRCH`; and retire normal, reclaimed, or post-publication-failed ownership to permanent token-specific paths after verifying the exact active token.
 Every staging, active, and retired claim path shall be materialized outside the repository-relevant projection under [[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)] of the canonical worktree it keys.
 One issued claim handle shall reject overlapping observation, receipt, ownership-check, or release methods, and a delayed stale-owner reclaimer shall not disturb a successor protected by the retired token.
 
@@ -1234,7 +1267,7 @@ When the integration suite exercises complete shared-Captain persistence and con
 The persistence suite shall also accept exactly stored artifact schema `3`, reject schema `2` and every other artifact schema before host work, and reject a stored `options.hostCapabilities` key before host work (verifying [[playbook-cli-23](#playbook-cli-23)]).
 It shall also accept a stored catalog whose required roles and role bindings are the non-ASCII canonical local role ids `编码者` and `审查者`, and reject a stored uppercase `Coder`, whitespace-carrying, or reserved `captain` role id (verifying [[playbook-cli-4](#playbook-cli-4)] and [[playbook-cli-23](#playbook-cli-23)]).
 The suite shall further fail unless every turn exposes a durable uncertain baseline before its first effect; a killed turn or failed drained settlement remains uncertain with stdout empty; a drainable failed turn saves its stopped stack under [[playbook-cli-23](#playbook-cli-23)]; ordinary continuation refuses it; retry reads no stdin, reuses its byte-exact input and attempted settings despite current config changes, advances the attempt before recorded work, and settles only once; discard restores the exact prior recovery baseline or deletes a compatible pre-turn-zero fresh record without config or host work; and SIGINT, SIGTERM, and SIGHUP cleanly retire ownership before the executable re-raises them (verifying [[playbook-cli-22](#playbook-cli-22)] and [[playbook-cli-23](#playbook-cli-23)]).
-Mutation-sensitive store and real-child crash rows shall prove one writer, authoritative reread after selection, live/foreign/EPERM/malformed fail-closed behavior, same-host ESRCH recovery, persistent normal-release and stale-O tombstones, owner-exact mutation/release, and the delayed two-reclaimer interleaving in which R2 retires O and publishes N before R1 resumes yet R1 cannot move N and no third writer starts (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-22](#playbook-cli-22)], [[playbook-cli-23](#playbook-cli-23)]).
+Mutation-sensitive store and real-child crash rows shall prove one writer, authoritative reread after selection, live/foreign-machine/unverifiable/EPERM/malformed fail-closed behavior, same-machine ESRCH recovery of a tagged owner and of a legacy host-name owner alike, a foreign-machine refusal naming the tagged value as a machine identity, persistent normal-release and stale-O tombstones, owner-exact mutation/release, and the delayed two-reclaimer interleaving in which R2 retires O and publishes N before R1 resumes yet R1 cannot move N and no third writer starts (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-22](#playbook-cli-22)], [[playbook-cli-23](#playbook-cli-23)]).
 The focused headless suite shall inject cleanup failure during setup, a started turn, and settlement failure, and shall fail unless stdout remains empty, the original setup-versus-started-turn exit class is preserved, every primary and cleanup failure is diagnosed, and the canonical lease rejects a same-process contender until process death permits stale-owner recovery (verifying [[playbook-cli-23](#playbook-cli-23)]).
 It shall further fail unless a continued session recovers a real engaged workflow parked in its recoverable failure state: with the real CODE registry driven to that state by a failing player in one invocation — or by a player that fails only after an answered Boss question resumed it, whose parked record then settles carrying no pending question — the next `--continue` invocation selects the retry that leaf still advertises, settles it as executed against exactly one further player call, and persists the same logical session with the same engagement moved off its failure state rather than dismissed (verifying [[playbook-cli-22](#playbook-cli-22)] and [[playbook-cli-23](#playbook-cli-23)]).
 
@@ -1370,11 +1403,11 @@ When the repository-coordination integration suite runs real concurrent claims, 
 
 #### playbook-cli-61
 
-When the claim-lifecycle integration suite exercises real Git administrative directories and processes, it shall fail unless owner publication is exact, private, and outside the observed worktree projection; post-publication failure retires its owner; overlapping handle methods reject without releasing; malformed and nonprivate owners, foreign hosts, unknown process probes, and retired-token reuse fail closed; a same-host dead PID is reclaimed; normal and reclaimed tokens remain retired; and a delayed old-owner reclaimer leaves its live successor authoritative (verifying [[playbook-cli-59](#playbook-cli-59)]).
+When the claim-lifecycle integration suite exercises real Git administrative directories and processes, it shall fail unless owner publication is exact, private, and outside the observed worktree projection; post-publication failure retires its owner; overlapping handle methods reject without releasing; malformed and nonprivate owners, foreign machines, unverifiable owners, unknown process probes, and retired-token reuse fail closed; a same-machine dead PID is reclaimed whether its owner recorded a tagged identity or a legacy host name; a foreign refusal names a tagged value as a machine identity; normal and reclaimed tokens remain retired; and a delayed old-owner reclaimer leaves its live successor authoritative (verifying [[playbook-cli-59](#playbook-cli-59)]).
 
 #### playbook-cli-62
 
-When the package-surface suite dry-packs the candidate, it shall fail unless the private coordination module is present while the exact package exports and executable map remain unchanged (verifying [[playbook-cli-60](#playbook-cli-60)]).
+When the package-surface suite dry-packs the candidate, it shall fail unless the private coordination and machine-identity modules are present while the exact package exports — `./machine-identity` among them with the declaration and named exports of [[playbook-cli-98](#playbook-cli-98)] — and the executable map remain as declared (verifying [[playbook-cli-60](#playbook-cli-60)] and [[playbook-cli-98](#playbook-cli-98)]).
 
 #### playbook-cli-64
 
@@ -1407,6 +1440,12 @@ Across the settled-recovery, shared front-end launch-order, runtime-adoption, an
 When the schema-version-7 persistence matrix drives both front ends through empty, parked-unresolved, reconciled, same-process, restored, and retained-adopted settlements, it shall fail unless every fresh record starts with required empty `unresolvedEffects`, every safe settlement atomically persists the exact shell list with its snapshot and retention updates, uncertain marking, retry, reread, and discard preserve the prior recovery baseline, guarded transfer preserves the source list while the fresh target stays empty and only a later adopted settlement derives its own list, and omission, unknown fields, malformed OIDs, unlawful classification or commit presence, reordered evidence, or mutation of any copied list rejects before host work or record replacement (verifying [[playbook-cli-23](#playbook-cli-23)], [[playbook-cli-51](#playbook-cli-51)], [[playbook-cli-53](#playbook-cli-53)], [[playbook-cli-69](#playbook-cli-69)], and [[playbook-cli-71](#playbook-cli-71)]).
 The root and nested-leaf abandonment matrix shall fail unless durable begin writes one exact nonempty `started` marker before disposal, an exact replay re-synchronizes durability without rewriting, mismatched identity or evidence rejects unchanged, complete leaf-to-root disposal precedes one atomic `disposed` transition that persists the frozen list and clears the entire root, only its matching successful host-disposal chat settlement removes the uncertain marker, and every begin, disposal, completion, validation, or owner-loss fault preserves one complete recoverable record without an exportable shell settlement, `ok`, or `executed` claim; later replacement and reply-release faults shall preserve that boundary and fail or withhold presentation without rewriting the already-issued controller receipt (verifying [[playbook-cli-23](#playbook-cli-23)] and [[playbook-cli-71](#playbook-cli-71)]).
 The durable crash and successor-lease rows shall stop after durable begin and after durable disposal, then fail unless the abandonment-recovery transition itself starts no shell, runtime, player, controller, or repository observation, atomically publishes one settled chat record with the exact list, authoritative ledger, cleared root, and exact recovered-phase `settledAbandonment` marker before config preparation, generation installation, or readiness, and never advertises or adopts the older generation; before later source restoration, current-host ledger recovery may complete an incomplete boundary only while leaving that frozen list byte-exact. The matrix shall exercise post-publication directory-sync failure and exact re-synchronizing replay at started, disposed, recovered, and final phases, accept only the authenticated recovered-to-final late settlement and its identical retry, preserve a source marker through unrelated predecessor transfer, and reject a retry, discard, failed-disposal snapshot, or mismatched attempt, root, evidence, or settlement without losing the durable boundary (verifying [[playbook-cli-63](#playbook-cli-63)] and [[playbook-cli-71](#playbook-cli-71)]).
+
+### Machine identity coverage
+
+#### playbook-cli-99
+
+When the machine-identity integration suite runs against isolated state directories and real child processes, it shall fail unless: two processes resolving an absent identity at once end with one tagged value and one complete file [[playbook-cli-97](#playbook-cli-97)]; a second resolution in a process returns the value read first [[playbook-cli-97](#playbook-cli-97)]; excess permissions on a qualifying directory and file are tightened to `0700` and `0600` and a symlink, an extra hard link, or a foreign owner makes the identity unavailable [[playbook-cli-97](#playbook-cli-97)]; an unreadable or malformed file is left byte-identical and refused with the file and reason named under the facade's `code` [[playbook-cli-98](#playbook-cli-98)]; a session lease and a repository claim publish the tagged value in `hostname` and refuse to publish while the identity is unavailable [[playbook-cli-23](#playbook-cli-23)] [[playbook-cli-59](#playbook-cli-59)]; a legacy host-name owner on this machine is reclaimed and one on another machine refused under the legacy rule [[playbook-cli-23](#playbook-cli-23)]; a value that begins like the tag but fails its form is refused as unverifiable [[playbook-cli-23](#playbook-cli-23)]; the former-location sessions cutover leaves the identity file beside the emptied sessions directory [[playbook-cli-97](#playbook-cli-97)]; and `isMachineIdentity` and `machineIdentityPath` answer exactly as declared [[playbook-cli-98](#playbook-cli-98)].
 
 ### Shared session store coverage
 

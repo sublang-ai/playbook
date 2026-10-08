@@ -26,6 +26,12 @@ import {
   snapshotJsonValue,
 } from '../../../../src/xstate-runtime.js';
 import { applyEffectLedgerCommands } from './session-store.js';
+import {
+  classifyOwnerMachine,
+  describeOwnerMachine,
+  isMachineIdentity,
+  resolveMachineIdentity,
+} from './machine-identity.js';
 
 const CLAIM_SCHEMA = 1;
 const CLAIM_OWNER_FILE = 'owner.json';
@@ -1321,13 +1327,35 @@ function validateCohort(options) {
 }
 
 export function createRepositoryEffectCoordinator(options = {}) {
-  const currentHostname = options.hostname ?? systemHostname();
+  // DR-087: the claim owner's `hostname` carries this machine's identity,
+  // read once at the first claim; an explicit value stands in for it
+  // (tests). An untagged owner is a legacy host name compared with the
+  // current one — or with an explicit untagged value, which then names
+  // this machine both ways.
+  const explicitHostname = options.hostname;
+  const legacyHostname =
+    options.legacyHostname ??
+    (typeof explicitHostname === 'string' && !isMachineIdentity(explicitHostname)
+      ? explicitHostname
+      : systemHostname());
+  let currentIdentityPending;
+  const currentIdentity = () =>
+    (currentIdentityPending ??=
+      explicitHostname !== undefined
+        ? Promise.resolve(explicitHostname)
+        : resolveMachineIdentity({
+            ...(options.env !== undefined ? { env: options.env } : {}),
+            ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+          }));
   const currentPid = options.pid ?? process.pid;
   const pollIntervalMs = options.pollIntervalMs ?? 10;
   const probeProcess = options.probeProcess ?? defaultProbeProcess;
   const createOwnerToken = options.createOwnerToken ?? randomUUID;
   const afterClaimPublished = options._testAfterClaimPublished;
-  if (typeof currentHostname !== 'string' || currentHostname.length === 0) {
+  if (
+    explicitHostname !== undefined &&
+    (typeof explicitHostname !== 'string' || explicitHostname.length === 0)
+  ) {
     throw new TypeError('repository coordinator hostname must be nonempty');
   }
   if (!Number.isSafeInteger(currentPid) || currentPid <= 0) {
@@ -1426,7 +1454,7 @@ export function createRepositoryEffectCoordinator(options = {}) {
       schema: CLAIM_SCHEMA,
       ownerToken,
       pid: currentPid,
-      hostname: currentHostname,
+      hostname: await currentIdentity(),
     });
 
     // A directory that is not a repository yet has no `.git` to publish a
@@ -1468,9 +1496,15 @@ export function createRepositoryEffectCoordinator(options = {}) {
         if (activeOwner.ownerToken === owner.ownerToken) {
           throw new Error('repository claim owner token was reused');
         }
-        if (activeOwner.hostname !== currentHostname) {
+        const machine = classifyOwnerMachine(activeOwner.hostname, owner.hostname, legacyHostname);
+        if (machine === 'foreign') {
           throw new Error(
-            `repository claim is owned by foreign host ${JSON.stringify(activeOwner.hostname)}`,
+            `repository claim is owned by ${describeOwnerMachine(activeOwner.hostname)}`,
+          );
+        }
+        if (machine !== 'local') {
+          throw new Error(
+            `repository claim owner machine ${JSON.stringify(activeOwner.hostname)} cannot be verified`,
           );
         }
         const state = await probeProcess(activeOwner.pid);
