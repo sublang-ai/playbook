@@ -30,7 +30,7 @@ The session store shall use these locations and files for each session's canonic
 
 - manifests and hints use the same private regular-file and atomic writing rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; opening prepares permissions before strict reads or granting a lease:
   - only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
-  - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening; preparation changes no content, ownership or lease metadata;
+  - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening, and a store that met a block prepares again at its next operation; preparation changes no content, ownership or lease metadata;
   - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
 - the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-97](playbook-cli.md#playbook-cli-97)] stay in place and are never inputs.
 - all hosts record the normalized absolute working directory as `cwd`; the format needs no Spex project ID or registry access.
@@ -243,7 +243,7 @@ When integration tests run working and hidden control calls through the shared s
 When the integration suite creates, continues and deletes sessions through interactive, headless and application hosts against one real store, it shall verify:
 
 - shared default and explicitly selected locations [[session-storage-1](#session-storage-1)];
-- permission tightening after Git creates `0755`/`0644` entries, unchanged bytes, and refusal of unsafe paths or insufficient owner access [[session-storage-1](#session-storage-1)];
+- permission tightening after Git creates `0755`/`0644` entries, unchanged bytes, refusal of unsafe paths or insufficient owner access, and the same opened store preparing again once the path is repaired [[session-storage-1](#session-storage-1)];
 - exact manifest fields for each state [[session-storage-2](#session-storage-2)];
 - shared lifecycle, leases and read-only active/idle/unknown observations without file changes [[session-storage-11](#session-storage-11)];
 - concurrent owner checks and release's admission barrier over the real store [[session-storage-11](#session-storage-11)];

@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Read the machine identity file again at the next lease or claim after a
+  refusal, so a session store or repository coordinator recovers once an
+  unreadable or malformed file is repaired instead of repeating the first
+  error for as long as it lives
+  ([[playbook-cli-97](specs/packages/playbook-cli.md#playbook-cli-97)]).
+- Prepare an opened `@sublang/playbook/session-store` store again at its
+  next operation after a blocked opening, so a repaired sessions directory
+  opens without reopening the store
+  ([[session-storage-1](specs/packages/session-storage.md#session-storage-1)]).
+
 ## [17.6.0] - 2026-10-08
 
 ### Added

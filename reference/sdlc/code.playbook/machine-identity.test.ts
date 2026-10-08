@@ -203,6 +203,21 @@ describe('leases and claims carry the machine identity (PBCLI-23/59)', () => {
     return sessionsDir;
   }
 
+  async function gitRepo(root: string) {
+    const repo = join(root, 'repo');
+    await mkdir(repo, { mode: 0o700 });
+    // The fixture's Git runs without the developer's signing setup, as
+    // repository-effects.test.ts runs its own.
+    const git = (...args: string[]) => execFileAsync('git', ['-C', repo, '-c', 'commit.gpgsign=false', ...args]);
+    for (const args of [['init', '--quiet'], ['config', 'user.name', 'Identity Test'], ['config', 'user.email', 'identity@example.invalid']]) {
+      await git(...args);
+    }
+    await writeFile(join(repo, 'base.txt'), 'base\n');
+    await git('add', '--all');
+    await git('commit', '--quiet', '-m', 'base');
+    return repo;
+  }
+
   async function writeOwner(sessionsDir: string, owner: Record<string, unknown>) {
     const lock = join(sessionsDir, `.${sessionId}.lock`);
     const stage = join(sessionsDir, `.${sessionId}.lock.stage.test`);
@@ -230,6 +245,27 @@ describe('leases and claims carry the machine identity (PBCLI-23/59)', () => {
     expect((await readdir(sessionsDir)).filter((name) => name === `.${sessionId}.lock`)).toEqual([]);
     expect(await readdir(join(broken.xdg, 'playbook'))).toEqual(['machine-id']);
     void xdg;
+  });
+
+  it('resolves again at the next lease and claim once a refused identity file is repaired', async () => {
+    const { root, env, home, path, xdg } = await scenario();
+    const sessionsDir = await sessionsDirFor(root);
+    const repo = await gitRepo(root);
+    await mkdir(join(xdg, 'playbook'), { recursive: true, mode: 0o700 });
+    await writeFile(path, 'nonsense\n', { mode: 0o600 });
+    const store = createCaptainSessionStore({ sessionsDir, env, homeDir: home, createLeaseToken: token });
+    const coordinator = createRepositoryEffectCoordinator({ env, homeDir: home, pollIntervalMs: 2 });
+    await expect(store.acquire(sessionId)).rejects.toThrow(`machine identity file ${path} is unavailable`);
+    await expect(coordinator.acquire(repo)).rejects.toMatchObject({ code: UNAVAILABLE });
+
+    const value = `machine-id:v1:${randomUUID()}`;
+    await writeFile(path, `${value}\n`, { mode: 0o600 });
+    const lease = await store.acquire(sessionId);
+    expect(JSON.parse(await readFile(join(sessionsDir, `.${sessionId}.lock`, 'owner.json'), 'utf8')).hostname).toBe(value);
+    await lease.release();
+    const claim = await coordinator.acquire(repo);
+    expect(JSON.parse(await readFile(join(repo, '.git', 'playbook-effect-claims', 'active', 'owner.json'), 'utf8')).hostname).toBe(value);
+    await claim.release();
   });
 
   it('reclaims a dead tagged owner of this machine and refuses another machine, naming the identity', async () => {
@@ -284,17 +320,7 @@ describe('leases and claims carry the machine identity (PBCLI-23/59)', () => {
 
   it('publishes the tagged identity in a repository claim and classifies owners the same way', async () => {
     const { root, env, home } = await scenario();
-    const repo = join(root, 'repo');
-    await mkdir(repo, { mode: 0o700 });
-    // The fixture's Git runs without the developer's signing setup, as
-    // repository-effects.test.ts runs its own.
-    const git = (...args: string[]) => execFileAsync('git', ['-C', repo, '-c', 'commit.gpgsign=false', ...args]);
-    for (const args of [['init', '--quiet'], ['config', 'user.name', 'Identity Test'], ['config', 'user.email', 'identity@example.invalid']]) {
-      await git(...args);
-    }
-    await writeFile(join(repo, 'base.txt'), 'base\n');
-    await git('add', '--all');
-    await git('commit', '--quiet', '-m', 'base');
+    const repo = await gitRepo(root);
     const identity = await resolveMachineIdentity({ env });
 
     const coordinator = createRepositoryEffectCoordinator({ env, homeDir: home, pollIntervalMs: 2 });

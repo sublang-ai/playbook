@@ -112,6 +112,24 @@ export function resolveMachineIdentity(options = {}) {
   return pending;
 }
 
+/** One store's or coordinator's lazy resolution (playbook-cli-97): the
+ * first identity it resolves is kept for its lifetime, and a refusal is
+ * not, so its next lease or claim resolves again once the file is
+ * repaired. */
+export function lazyMachineIdentity(resolve) {
+  let pending;
+  return () => {
+    if (pending === undefined) {
+      const attempt = Promise.resolve(resolve());
+      pending = attempt;
+      attempt.catch(() => {
+        if (pending === attempt) pending = undefined;
+      });
+    }
+    return pending;
+  };
+}
+
 async function readOrPublish(path, fs, createIdentity) {
   const directory = dirname(path);
   await prepareDirectory(directory, path, fs);

@@ -21,9 +21,19 @@ export function openSessionStore(sessionsDir) {
 }
 
 function wrapStore(store) {
+  // Preparation is kept once it succeeds; a refusal is not, so the next
+  // operation prepares again once the directory is repaired
+  // (session-storage-1).
   let preparation;
   const prepared = async (operation) => {
-    await (preparation ??= store.prepare());
+    if (preparation === undefined) {
+      const attempt = store.prepare();
+      preparation = attempt;
+      attempt.catch(() => {
+        if (preparation === attempt) preparation = undefined;
+      });
+    }
+    await preparation;
     return operation();
   };
   return Object.freeze({

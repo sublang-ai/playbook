@@ -389,6 +389,14 @@ describe('shared portable session lifecycle', () => {
   else {const other=join(root,'outside');await writeFile(other,'{}',{mode:0o600});await rm(file);if(kind==='symlink')await symlink(other,file);else await link(other,file);}
   await expect(store.prepare()).rejects.toThrow(/unsafe/);
  });
+ it('prepares an opened store again at its next operation once an unsafe entry is repaired',async()=>{
+  const {store,lease,file,root}=await fixture();await lease.release();
+  const bytes=await readFile(file);const twin=join(root,'twin');await link(file,twin);
+  const opened=openSessionStore(store.sessionsDir);
+  await expect(opened.list()).rejects.toThrow(/unsafe/);await expect(opened.list()).rejects.toThrow(/unsafe/);
+  await unlink(twin);expect(await readFile(file)).toEqual(bytes);
+  expect((await opened.list()).sessions).toHaveLength(1);
+ });
  it('migrates validated schema6 through retained exact inputs and is idempotent',async()=>{
   const {store,id,lease,file,stream,root}=await fixture();const legacy=await lease.read();await lease.release();
   const source=JSON.stringify(legacy);await writeFile(file,source);await rm(stream);

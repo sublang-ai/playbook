@@ -48,6 +48,7 @@ import {
   classifyOwnerMachine,
   describeOwnerMachine,
   isMachineIdentity,
+  lazyMachineIdentity,
   resolveMachineIdentity,
 } from './machine-identity.js';
 import { sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
@@ -638,24 +639,23 @@ export function createCaptainSessionStore(options = {}) {
   const createTempId = options.createTempId ?? randomUUID;
   const createLeaseToken = options.createLeaseToken ?? randomUUID;
   // DR-087: the owner's `hostname` carries this machine's identity, read
-  // once at the first lease boundary; an explicit value stands in for it
-  // (tests, migration sub-stores). An untagged owner is a legacy host
-  // name, compared with the current one — or with an explicit untagged
-  // value, which then names this machine both ways.
+  // at the first lease boundary and kept once read, while a refusal is
+  // read again at the next (playbook-cli-97); an explicit value stands in
+  // for it (tests, migration sub-stores). An untagged owner is a legacy
+  // host name, compared with the current one — or with an explicit
+  // untagged value, which then names this machine both ways.
   const explicitHostname = options.hostname;
   const legacyHostname =
     options.legacyHostname ??
     (typeof explicitHostname === 'string' && !isMachineIdentity(explicitHostname)
       ? explicitHostname
       : systemHostname());
-  let localIdentityPending;
-  const localIdentity = () =>
-    (localIdentityPending ??=
-      explicitHostname !== undefined
-        ? Promise.resolve(explicitHostname)
-        : options.resolveHostname !== undefined
-          ? options.resolveHostname()
-          : resolveMachineIdentity({ env, homeDir: home }));
+  const localIdentity = lazyMachineIdentity(() =>
+    explicitHostname !== undefined
+      ? explicitHostname
+      : options.resolveHostname !== undefined
+        ? options.resolveHostname()
+        : resolveMachineIdentity({ env, homeDir: home }));
   const localPid = options.pid ?? process.pid;
   const probeProcess =
     options.probeProcess ?? ((pid) => process.kill(pid, 0));

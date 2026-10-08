@@ -30,6 +30,7 @@ import {
   classifyOwnerMachine,
   describeOwnerMachine,
   isMachineIdentity,
+  lazyMachineIdentity,
   resolveMachineIdentity,
 } from './machine-identity.js';
 
@@ -1328,8 +1329,9 @@ function validateCohort(options) {
 
 export function createRepositoryEffectCoordinator(options = {}) {
   // DR-087: the claim owner's `hostname` carries this machine's identity,
-  // read once at the first claim; an explicit value stands in for it
-  // (tests). An untagged owner is a legacy host name compared with the
+  // read at the first claim and kept once read, while a refusal is read
+  // again at the next (playbook-cli-97); an explicit value stands in for
+  // it (tests). An untagged owner is a legacy host name compared with the
   // current one — or with an explicit untagged value, which then names
   // this machine both ways.
   const explicitHostname = options.hostname;
@@ -1338,15 +1340,13 @@ export function createRepositoryEffectCoordinator(options = {}) {
     (typeof explicitHostname === 'string' && !isMachineIdentity(explicitHostname)
       ? explicitHostname
       : systemHostname());
-  let currentIdentityPending;
-  const currentIdentity = () =>
-    (currentIdentityPending ??=
-      explicitHostname !== undefined
-        ? Promise.resolve(explicitHostname)
-        : resolveMachineIdentity({
-            ...(options.env !== undefined ? { env: options.env } : {}),
-            ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-          }));
+  const currentIdentity = lazyMachineIdentity(() =>
+    explicitHostname !== undefined
+      ? explicitHostname
+      : resolveMachineIdentity({
+          ...(options.env !== undefined ? { env: options.env } : {}),
+          ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+        }));
   const currentPid = options.pid ?? process.pid;
   const pollIntervalMs = options.pollIntervalMs ?? 10;
   const probeProcess = options.probeProcess ?? defaultProbeProcess;
