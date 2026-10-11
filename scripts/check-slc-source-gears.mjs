@@ -71,7 +71,9 @@ function introducesQuotedRelay(lines, start) {
     if (line.startsWith('#') || line.startsWith('```')) break;
     context.unshift(line);
   }
-  return /\bin quotes\s*\(`>`\)/i.test(context.join(' '));
+  // The marker is a backticked `>` in ASCII or full-width parentheses; the
+  // words around it are prose in any language.
+  return /[(（]\s*`>`\s*[)）]/.test(context.join(' '));
 }
 
 /** Prompt fragments authored explicitly in one free-form playbook Source. */

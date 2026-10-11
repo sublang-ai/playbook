@@ -35,7 +35,8 @@ E.g.:
 - Coder
 - Reviewer
 
-Capitalize English role names (e.g., `Writer`); quote non-English names (e.g., `作者`) when needed to distinguish from prose.
+Each role name shall be one capitalized word — an uppercase letter, or a letter of a script without case, followed only by letters and digits — so a two-word role is written as one word, e.g. `RiskOfficer`, never `Risk Officer`.
+Quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
 ## Behaviors
 
@@ -67,14 +68,15 @@ Boss-visible contract and is nonconformant.
 
 ### Authored prompt fragments
 
-Source may compose one acting prompt from authored Markdown instruction blocks and runtime context that it explicitly says to relay in quotes (`>`).
+Source may compose one acting prompt from authored Markdown instruction blocks and runtime context that it explicitly marks as relayed in quotes.
+The relay marker is a backticked `>` in ASCII or full-width parentheses, `` (`>`) `` or `` （`>`） ``, in the prose introducing the blockquote; the words around it, such as "in quotes" or "以引用形式", are prose in the Source's language.
 A fenced `markdown` block introduced as an instruction or prompt is an authored static prompt fragment: its fence delimiters are Source syntax, while every interior line and blank line is prompt content preserved after documented Markdown unescaping.
 
 An instruction fence and a relayed-context fragment that apply to one behavior shall appear in the target blockquote in their Source order.
 Distinct non-empty fragments shall be separated by one blank prompt line unless Source explicitly supplies a different boundary.
 text2gears shall not move a shared instruction ahead of behavior-specific context, move quoted evidence after an instruction that Source says follows the evidence, or otherwise regroup fragments for convenience.
 
-Where Source says that a runtime value is relayed in quotes, the leading `>` is prompt content rather than Source-only blockquote syntax.
+Where Source marks a runtime value as relayed in quotes, the leading `>` is prompt content rather than Source-only blockquote syntax.
 If Source supplies a blockquoted template for that relay, text2gears shall keep one literal leading `>` on every quoted line; the target GEARS line therefore uses its outer blockquote marker followed by the literal marker, such as `> > Coder output: <coder-output>`.
 If Source names the relayed value but supplies no template, text2gears shall emit a bare quoted prompt-content line, exactly `> <token>`, written as `> > <token>` in the GEARS file because the first marker encloses the prompt and the second is literal content, without an added label or surrounding prose, and shall not summarize, paraphrase, or invent the relayed value.
 An ordinary Source blockquote that specifies a complete acting prompt without requiring quoted relay retains the existing rule above: its one leading marker is Source syntax and is not prompt content.
