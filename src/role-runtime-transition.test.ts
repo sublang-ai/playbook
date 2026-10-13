@@ -32,6 +32,7 @@ import {
   createXStatePlaybookRuntime,
   detachPersistedMachineSnapshot,
   emptyPlaybookEffectLedger,
+  inferSemanticValueShapes,
   normalizePlaybookSnapshot,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
@@ -6284,6 +6285,275 @@ describe('DR-089 semantic fields take the shape the machine admits', () => {
         intentNumbers: 'IR-001 → IR-002 → IR-003 → IR-004',
       },
       correctionBudget: { limit: 1, spent: true },
+    });
+    await runtime.dispose();
+  });
+});
+
+// W-60: the sprint plan's `committed` outcome rides two player states, and a
+// compiled guard may read context the construction probe's sample cannot
+// satisfy. Where the probe revealed no shape the runtime once enforced a
+// string the machine itself refused, so the judge's list was corrected into a
+// string and the run failed after its commit stood (DR-091).
+type ShapeProbeContext = {
+  task: string;
+  delivered?: unknown;
+};
+
+const SPRINT_PLAN_SUMMARY_COMMITTED =
+  'Analyst writes and commits the intent records. ' +
+  'Output shall include `latestCommit: <commit identity>` and ' +
+  '`summary: <one-line summary of the committed records>`.';
+
+const SHAPE_PROBE_LABELS = {
+  finalRevision: 'Analyst writes and commits the revised intent records.',
+  commitApproved: 'Analyst writes and commits the approved intent records.',
+} as const;
+
+function shapeProbeMachine(
+  field: 'intentNumbers' | 'summary',
+  admits: (value: unknown, context: ShapeProbeContext) => boolean,
+) {
+  const description =
+    field === 'intentNumbers' ? SPRINT_PLAN_COMMITTED : SPRINT_PLAN_SUMMARY_COMMITTED;
+  const playerState = (stateId: 'finalRevision' | 'commitApproved') => ({
+    meta: roleMeta(stateId, 'analyst', SHAPE_PROBE_LABELS[stateId]),
+    tags: ['playbook.busy'],
+    invoke: {
+      src: 'player' as const,
+      input: ({ context }: { context: ShapeProbeContext }) => ({
+        stateId,
+        role: 'analyst',
+        sourceItem: stateId === 'finalRevision' ? 'SPRINT-PLAN-5' : 'SPRINT-PLAN-6',
+        prompt: `Write and commit the intent records for ${context.task}.`,
+        result: { committed: description },
+      }),
+      onDone: [
+        {
+          guard: 'committed' as const,
+          target: 'done',
+          actions: [
+            {
+              type: ACCEPTED_OUTCOME_ACTION_TYPE,
+              params: { source: stateId, target: 'done', acceptedOutcome: 'committed' },
+            },
+            assign({
+              delivered: ({ event }: { event: unknown }) =>
+                (event as { output: Record<string, unknown> }).output[field],
+            }),
+          ],
+        },
+        { target: 'failed' },
+      ],
+      onError: 'failed',
+    },
+  });
+  const startTask = assign({
+    task: ({ event }: { event: unknown }) => (event as { task: string }).task,
+  });
+  return setup({
+    types: { context: {} as ShapeProbeContext },
+    actions: { [ACCEPTED_OUTCOME_ACTION_TYPE]: () => undefined },
+    guards: {
+      committed: ({ context, event }) => {
+        const output = (event as { output?: Record<string, unknown> }).output;
+        return (
+          output?.guard === 'committed' &&
+          typeof output.latestCommit === 'string' &&
+          output.latestCommit.trim().length > 0 &&
+          admits(output[field], context)
+        );
+      },
+    },
+  }).createMachine({
+    id: 'sprint-plan-two-states',
+    context: { task: '' },
+    initial: 'ready',
+    states: {
+      ready: {
+        meta: stateMeta('ready', 'Waiting for an epic.'),
+        tags: ['playbook.parked'],
+        on: {
+          START: [
+            {
+              guard: ({ event }) =>
+                (event as { task: string }).task.startsWith('approved:'),
+              target: 'commitApproved',
+              actions: startTask,
+            },
+            { target: 'finalRevision', actions: startTask },
+          ],
+        },
+      },
+      finalRevision: playerState('finalRevision'),
+      commitApproved: playerState('commitApproved'),
+      done: {
+        meta: stateMeta('done', 'The intent records are committed.'),
+        tags: ['playbook.parked'],
+      },
+      failed: {
+        meta: stateMeta('failed', 'A malformed result interrupted the plan.'),
+        tags: ['playbook.parked'],
+      },
+    },
+  } as never);
+}
+
+function twoStateShapeAuthority(
+  field: 'intentNumbers' | 'summary',
+): XStateOutcomeAuthoritySpec {
+  const committed = {
+    fields: { latestCommit: 'effect', [field]: 'semantic' },
+    repositoryDisposition: 'one-descendant-commit',
+  } as const;
+  return {
+    governedPlayerStates: {
+      finalRevision: { committed },
+      commitApproved: { committed },
+    },
+  };
+}
+
+function twoStateShapeSpec(
+  field: 'intentNumbers' | 'summary',
+): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return repeatSchema3Spec({
+    label: 'SPRINT-PLAN',
+    roleStates: {
+      finalRevision: { role: 'analyst', label: SHAPE_PROBE_LABELS.finalRevision },
+      commitApproved: { role: 'analyst', label: SHAPE_PROBE_LABELS.commitApproved },
+    },
+    outcomeAuthority: twoStateShapeAuthority(field),
+  });
+}
+
+const INTENT_LIST = ['IR-007', 'IR-008', 'IR-009', 'IR-010'];
+
+async function runCommitApproved(
+  field: 'intentNumbers' | 'summary',
+  admits: (value: unknown, context: ShapeProbeContext) => boolean,
+  judgeReplies: readonly string[],
+) {
+  const hostCapabilities = emptyLedgerHostCapabilities({
+    classifications: ['one-descendant-commit'],
+  });
+  const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(async () => ({
+    status: 'ok',
+    finalText: ANALYST_REPORT,
+  }));
+  const callJudge = vi.fn<PlaybookPorts['callJudge']>();
+  for (const reply of judgeReplies) callJudge.mockResolvedValueOnce(reply);
+  const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+    shapeProbeMachine(field, admits),
+    twoStateShapeSpec(field),
+  )({ configuredOptions: {}, hostCapabilities });
+  await runtime.init(session({ ...recordingPorts(callPlayer), callJudge }));
+  const result = await runtime.handleBossInput(bossTurn('approved: the quiz epic'));
+  expect(callPlayer.mock.calls[0]![1]).toContain(
+    'Write and commit the intent records for approved: the quiz epic.',
+  );
+  return { runtime, result, callJudge, hostCapabilities };
+}
+
+describe('DR-091 a field the probe reveals no shape for is left to the machine', () => {
+  const listOnly = (value: unknown) => isIntentNumberList(value);
+  // The guard reads the started task, which the probe's initial context
+  // leaves empty, so no sample reveals the list it admits.
+  const listOnceStarted = (value: unknown, context: ShapeProbeContext) =>
+    context.task.length > 0 && isIntentNumberList(value);
+  const stringOnly = (value: unknown) =>
+    typeof value === 'string' && value.trim().length > 0;
+
+  it('reads the same list shape at both player states that carry the outcome', async () => {
+    const shapes = inferSemanticValueShapes(
+      shapeProbeMachine('intentNumbers', listOnly),
+      twoStateShapeAuthority('intentNumbers'),
+    );
+    for (const stateId of ['finalRevision', 'commitApproved']) {
+      expect(shapes.get(stateId)).toEqual({
+        committed: { intentNumbers: 'string-or-number-array' },
+      });
+    }
+
+    const { runtime, result, callJudge, hostCapabilities } =
+      await runCommitApproved('intentNumbers', listOnly, [
+        JSON.stringify({ guard: 'committed', intentNumbers: INTENT_LIST }),
+      ]);
+    expect(result).toMatchObject({ state: { stateId: 'done' } });
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(callJudge.mock.calls[0]![0]).toContain(
+      '  JSON value shape: `intentNumbers` is a JSON array of strings or numbers',
+    );
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0]).toMatchObject({
+      sourceStateId: 'commitApproved',
+      correctionBudget: { limit: 1, spent: false },
+    });
+    expect(runtime.exportSnapshot?.()?.machine).toMatchObject({
+      context: { delivered: INTENT_LIST },
+    });
+    await runtime.dispose();
+  });
+
+  it('delivers the judge\'s list where the probe revealed no shape, and the machine accepts it', async () => {
+    const shapes = inferSemanticValueShapes(
+      shapeProbeMachine('intentNumbers', listOnceStarted),
+      twoStateShapeAuthority('intentNumbers'),
+    );
+    expect(shapes.get('finalRevision')).toBeUndefined();
+    expect(shapes.get('commitApproved')).toBeUndefined();
+
+    // The W-60 trace's two judge replies: the list, then the string the
+    // string-only fallback asked for.
+    const { runtime, result, callJudge, hostCapabilities } =
+      await runCommitApproved('intentNumbers', listOnceStarted, [
+        JSON.stringify({ guard: 'committed', intentNumbers: INTENT_LIST }),
+        JSON.stringify({ guard: 'committed', intentNumbers: INTENT_LIST.join(', ') }),
+      ]);
+    expect(result).toMatchObject({ state: { stateId: 'done' } });
+    expect(callJudge).toHaveBeenCalledOnce();
+    expect(callJudge.mock.calls[0]![0]).toContain(
+      '  Reply exactly: { "guard": "committed", "intentNumbers": <按依赖顺序排列的意图编号列表> }',
+    );
+    expect(callJudge.mock.calls[0]![0]).not.toContain('JSON value shape:');
+    const boundary = hostCapabilities.effectLedger.snapshot().boundaries[0];
+    expect(boundary).toMatchObject({
+      sourceStateId: 'commitApproved',
+      semanticCandidate: { guard: 'committed', intentNumbers: INTENT_LIST },
+      correctionBudget: { limit: 1, spent: false },
+    });
+    expect(runtime.exportSnapshot?.()?.machine).toMatchObject({
+      context: { delivered: INTENT_LIST },
+    });
+    await runtime.dispose();
+  });
+
+  it('still refuses a list where the machine admits a string', async () => {
+    const shapes = inferSemanticValueShapes(
+      shapeProbeMachine('summary', stringOnly),
+      twoStateShapeAuthority('summary'),
+    );
+    for (const stateId of ['finalRevision', 'commitApproved']) {
+      expect(shapes.get(stateId)).toEqual({ committed: { summary: 'string' } });
+    }
+
+    const { runtime, result, callJudge, hostCapabilities } =
+      await runCommitApproved('summary', stringOnly, [
+        JSON.stringify({ guard: 'committed', summary: INTENT_LIST }),
+        JSON.stringify({ guard: 'committed', summary: 'Four intent records.' }),
+      ]);
+    expect(result).toMatchObject({ state: { stateId: 'done' } });
+    expect(callJudge).toHaveBeenCalledTimes(2);
+    expect(callJudge.mock.calls[1]![0]).toContain(
+      'Validation error: semantic candidate field "summary" must be a string',
+    );
+    expect(hostCapabilities.effectLedger.snapshot().boundaries[0]).toMatchObject({
+      sourceStateId: 'commitApproved',
+      semanticCandidate: { guard: 'committed', summary: 'Four intent records.' },
+      initialSemanticCandidate: { guard: 'committed', summary: INTENT_LIST },
+      correctionBudget: { limit: 1, spent: true },
+    });
+    expect(runtime.exportSnapshot?.()?.machine).toMatchObject({
+      context: { delivered: 'Four intent records.' },
     });
     await runtime.dispose();
   });

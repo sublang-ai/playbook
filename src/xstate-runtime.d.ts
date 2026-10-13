@@ -56,13 +56,14 @@ export interface PlaybookSemanticOutcomeSpec {
 }
 /**
  * The JSON value shape a compiled machine admits for one semantic-owned field
- * (DR-089). A field the machine admits as a string, or whose shape the
- * machine does not reveal, is `string`.
+ * (DR-089). A field the machine admits as a string is `string`; a field whose
+ * shape the machine does not reveal has none (DR-091).
  */
 export type PlaybookSemanticValueShape = 'string' | 'string-array' | 'number-array' | 'string-or-number-array' | 'number' | 'boolean';
 /**
- * Per outcome, the non-string shapes of its semantic-owned fields; a field
- * left out is a string.
+ * Per outcome, the shapes of its semantic-owned fields; a field left out has
+ * no revealed shape and takes any JSON value, the machine's own validator
+ * deciding it (DR-091).
  */
 export type PlaybookSemanticValueShapes = Readonly<Record<string, Readonly<Record<string, PlaybookSemanticValueShape>>>>;
 /** The words a judge prompt or validation error uses for one value shape. */
@@ -76,7 +77,8 @@ export interface PlaybookSemanticEvidenceInput {
     readonly runtimeFields?: unknown;
     /**
      * DR-089: the shape the compiled machine admits for each semantic-owned
-     * field, keyed by outcome; every field it leaves out is a string.
+     * field, keyed by outcome; a field it leaves out takes any JSON value
+     * (DR-091).
      */
     readonly semanticValueShapes?: PlaybookSemanticValueShapes;
 }

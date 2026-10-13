@@ -3273,8 +3273,9 @@ function snapshotOutcomeAuthority(
 // the machine's transition selection — guards only, no action runs — with
 // sample values, and the first combination of shapes whose arm carries that
 // outcome's accepted-outcome marker is the contract the judge is shown and the
-// reconciler enforces. A field whose shape the machine does not reveal, or
-// that it admits as a string, stays a string.
+// reconciler enforces. A field the machine admits as a string is recorded as
+// one; a field whose shape it does not reveal is recorded with none, so the
+// reconciler leaves its value to the machine's own validator (DR-091).
 // ---------------------------------------------------------------------------
 
 const SEMANTIC_SHAPE_SAMPLES: readonly (readonly [
@@ -3337,9 +3338,10 @@ function shapeCombinations(fieldCount: number): readonly number[][] {
 }
 
 /**
- * DR-089: the non-string JSON value shape the compiled machine admits for
- * each semantic-owned field of each governed outcome, keyed by state id and
- * then by outcome. Exported so linked machinery of an artifact's own reads
+ * DR-089: the JSON value shape the compiled machine admits for each
+ * semantic-owned field of each governed outcome, keyed by state id and then
+ * by outcome. A field, outcome, or state the probe reveals no shape for is
+ * left out (DR-091). Exported so linked machinery of an artifact's own reads
  * the same contract the shared factory enforces.
  */
 export function inferSemanticValueShapes(
@@ -3425,17 +3427,17 @@ export function inferSemanticValueShapes(
           values[field] = SEMANTIC_SHAPE_SAMPLES[combination[index]!]![1];
         });
         if (!admits(values)) continue;
+        // DR-091: an admitted string is recorded too, so only a field the
+        // probe revealed nothing for goes unrecorded.
         const shapes: Record<string, PlaybookSemanticValueShape> = {};
         semanticFields.forEach((field, index) => {
           let shape = SEMANTIC_SHAPE_SAMPLES[combination[index]!]![0];
           if (shape === 'string-array' && admits({ ...values, [field]: [1] })) {
             shape = 'string-or-number-array';
           }
-          if (shape !== 'string') shapes[field] = shape;
+          shapes[field] = shape;
         });
-        if (Object.keys(shapes).length > 0) {
-          stateShapes[guard] = Object.freeze(shapes);
-        }
+        stateShapes[guard] = Object.freeze(shapes);
         break;
       }
     }

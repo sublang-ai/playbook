@@ -997,12 +997,13 @@ function snapshotSemanticCandidate(value, outcomes, shapes) {
             (extra.length === 0 ? '' : `; extra or wrongly owned ${extra.join(', ')}`));
     }
     // DR-089: each semantic-owned field has the shape the compiled machine
-    // admits for it, a string unless the machine admits another.
+    // admits for it. DR-091: a field whose shape the machine did not reveal
+    // takes any JSON value, and the machine's own validator decides it.
     const outcomeShapes = shapes !== undefined && own(shapes, guard) ? shapes[guard] : undefined;
     for (const field of semanticFields) {
-        const shape = outcomeShapes !== undefined && own(outcomeShapes, field)
-            ? outcomeShapes[field]
-            : 'string';
+        if (outcomeShapes === undefined || !own(outcomeShapes, field))
+            continue;
+        const shape = outcomeShapes[field];
         if (!isPlaybookSemanticValueShape(detached[field], shape)) {
             semanticCandidateStructureError(shape === 'string'
                 ? `field ${JSON.stringify(field)} must be a string`

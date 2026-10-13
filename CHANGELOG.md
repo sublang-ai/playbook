@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A semantic field whose shape the machine does not reveal is left to the
+  machine.** Where the construction probe found no shape for a semantic
+  field — a guard that reads context its sample does not satisfy, or that
+  throws — the runtime enforced a string, refused a judge's list the
+  machine admits, corrected it into a string the machine refuses, and
+  failed the step after its commit stood. The probe now records every
+  shape it finds, a string included; a field it reveals nothing for takes
+  any JSON value, and the machine's own guard decides it, while a recorded
+  string is still enforced. `inferSemanticValueShapes` now lists admitted
+  string shapes too
+  ([DR-091](specs/decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md),
+  [[playbook-runtime-48](specs/packages/playbook-runtime.md#playbook-runtime-48)],
+  [[playbook-runtime-77](specs/packages/playbook-runtime.md#playbook-runtime-77)]).
+
 ## [17.8.1] - 2026-10-11
 
 ### Fixed

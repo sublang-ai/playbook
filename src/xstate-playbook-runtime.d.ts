@@ -565,9 +565,10 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  */
 export declare function terminalOutcomesFromMachine(machine: AnyStateMachine, label?: string): ReadonlyMap<string, 'success' | 'failure'>;
 /**
- * DR-089: the non-string JSON value shape the compiled machine admits for
- * each semantic-owned field of each governed outcome, keyed by state id and
- * then by outcome. Exported so linked machinery of an artifact's own reads
+ * DR-089: the JSON value shape the compiled machine admits for each
+ * semantic-owned field of each governed outcome, keyed by state id and then
+ * by outcome. A field, outcome, or state the probe reveals no shape for is
+ * left out (DR-091). Exported so linked machinery of an artifact's own reads
  * the same contract the shared factory enforces.
  */
 export declare function inferSemanticValueShapes(machine: AnyStateMachine, authority: XStateOutcomeAuthoritySpec): ReadonlyMap<string, PlaybookSemanticValueShapes>;

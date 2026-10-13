@@ -2175,7 +2175,10 @@ describe('semantic outcome reconciliation', () => {
         settledBy: 'candidate',
       },
     ],
-    ['a non-string semantic field', { guard: 'complete', irNumber: 48 }],
+    [
+      'a semantic field off its recorded string shape',
+      { guard: 'complete', irNumber: 48 },
+    ],
   ])('rejects %s as a structurally invalid candidate', (_label, candidate) => {
     expect(() =>
       reconcilePlaybookSemanticEvidence({
@@ -2183,8 +2186,32 @@ describe('semantic outcome reconciliation', () => {
         semanticCandidate: candidate,
         finalText: 'Complete.',
         receipt: unchangedReceipt,
+        semanticValueShapes: { complete: { irNumber: 'string' } },
       }),
     ).toThrow(PlaybookSemanticCandidateStructureError);
+  });
+
+  // DR-091: a field whose shape the machine revealed nothing for takes any
+  // JSON value; the machine's own validator decides it after delivery.
+  it('leaves a semantic field with no recorded shape to the machine', () => {
+    for (const semanticValueShapes of [
+      undefined,
+      { committed: { irTask: 'string' } } as const,
+    ]) {
+      expect(
+        reconcilePlaybookSemanticEvidence({
+          outcomes,
+          semanticCandidate: { guard: 'complete', irNumber: ['IR-048', 49] },
+          finalText: 'Complete.',
+          receipt: unchangedReceipt,
+          runtimeFields: { settledBy: 'runtime-transition' },
+          ...(semanticValueShapes === undefined ? {} : { semanticValueShapes }),
+        }),
+      ).toMatchObject({
+        status: 'resolved',
+        output: { guard: 'complete', irNumber: ['IR-048', 49] },
+      });
+    }
   });
 
   it('rejects accessor-backed semantic evidence before reading its value', () => {

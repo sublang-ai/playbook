@@ -1290,9 +1290,11 @@ output is delivered.
 That type is the value shape the compiled FSM's own validator admits for the
 field: the shared engine reads it once at construction by presenting each
 governed outcome's accepting arm with sample values of a closed set of shapes,
-a field whose shape the FSM admits as a string or does not reveal stays a
-string, and the judge prompt and validation error name every non-string shape
-([DR-089](../specs/decisions/089-judge-replies-take-the-machines-shapes.md)).
+a field whose shape the FSM admits as a string stays a string, a field whose
+shape it does not reveal takes any JSON value for the FSM's own guard to
+decide, and the judge prompt and validation error name every non-string shape
+([DR-089](../specs/decisions/089-judge-replies-take-the-machines-shapes.md),
+[DR-091](../specs/decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md)).
 The judge prompt shall render each governed outcome's description with its
 meaning verbatim and its `Output shall include` clause replaced by that reply
 contract — exactly `guard` plus the semantic-owned fields, each keeping its

@@ -1370,8 +1370,8 @@ export interface PlaybookSemanticOutcomeSpec {
 
 /**
  * The JSON value shape a compiled machine admits for one semantic-owned field
- * (DR-089). A field the machine admits as a string, or whose shape the
- * machine does not reveal, is `string`.
+ * (DR-089). A field the machine admits as a string is `string`; a field whose
+ * shape the machine does not reveal has none (DR-091).
  */
 export type PlaybookSemanticValueShape =
   | 'string'
@@ -1382,8 +1382,9 @@ export type PlaybookSemanticValueShape =
   | 'boolean';
 
 /**
- * Per outcome, the non-string shapes of its semantic-owned fields; a field
- * left out is a string.
+ * Per outcome, the shapes of its semantic-owned fields; a field left out has
+ * no revealed shape and takes any JSON value, the machine's own validator
+ * deciding it (DR-091).
  */
 export type PlaybookSemanticValueShapes = Readonly<
   Record<string, Readonly<Record<string, PlaybookSemanticValueShape>>>
@@ -1444,7 +1445,8 @@ export interface PlaybookSemanticEvidenceInput {
   readonly runtimeFields?: unknown;
   /**
    * DR-089: the shape the compiled machine admits for each semantic-owned
-   * field, keyed by outcome; every field it leaves out is a string.
+   * field, keyed by outcome; a field it leaves out takes any JSON value
+   * (DR-091).
    */
   readonly semanticValueShapes?: PlaybookSemanticValueShapes;
 }
@@ -1548,14 +1550,13 @@ function snapshotSemanticCandidate(
     );
   }
   // DR-089: each semantic-owned field has the shape the compiled machine
-  // admits for it, a string unless the machine admits another.
+  // admits for it. DR-091: a field whose shape the machine did not reveal
+  // takes any JSON value, and the machine's own validator decides it.
   const outcomeShapes =
     shapes !== undefined && own(shapes, guard) ? shapes[guard] : undefined;
   for (const field of semanticFields) {
-    const shape =
-      outcomeShapes !== undefined && own(outcomeShapes, field)
-        ? outcomeShapes[field]!
-        : 'string';
+    if (outcomeShapes === undefined || !own(outcomeShapes, field)) continue;
+    const shape = outcomeShapes[field]!;
     if (!isPlaybookSemanticValueShape(detached[field], shape)) {
       semanticCandidateStructureError(
         shape === 'string'

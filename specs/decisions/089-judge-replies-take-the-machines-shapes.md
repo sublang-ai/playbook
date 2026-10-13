@@ -8,6 +8,7 @@
 Accepted (2026-10-11).
 Amends [DR-025](025-resilient-captain-control-adjudication.md)'s consequence that the generic factory keeps single-call direct-Captain adjudication: it gains one corrective adjudication and a parked failure.
 Refines [DR-040](040-outcome-authority-effect-reconciliation.md) §3: a semantic field's schema is the value shape the compiled machine admits.
+Amended by [DR-091](091-an-unrevealed-shape-is-the-machines-to-judge.md) in §1's fallback: a field whose shape the machine does not reveal is left to the machine's own validator rather than enforced as a string.
 
 ## Context
 
