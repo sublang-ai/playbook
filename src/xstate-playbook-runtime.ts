@@ -1874,19 +1874,25 @@ export function renderGovernedOutcomeContract(
   for (const [field, authority] of Object.entries(outcome?.fields ?? {})) {
     if (authority === 'semantic') {
       const entry = authored.get(field);
-      // DR-089: the value has the shape the compiled machine admits.
+      // DR-089: the value has the shape the compiled machine admits; a
+      // shape the probe did not reveal is the machine's to judge, so the
+      // example asserts none (DR-091).
       const shape =
         shapes !== undefined && Object.prototype.hasOwnProperty.call(shapes, field)
           ? shapes[field]!
-          : 'string';
-      const words = describePlaybookSemanticValueShape(shape);
+          : undefined;
+      const words = shape === undefined ? undefined : describePlaybookSemanticValueShape(shape);
       replyMembers.push(
         `${JSON.stringify(field)}: ${
           entry?.placeholder ??
-          (shape === 'string' ? '<string>' : `<${words.replace(/^a /, '')}>`)
+          (shape === undefined
+            ? '<value>'
+            : shape === 'string'
+              ? '<string>'
+              : `<${words!.replace(/^a /, '')}>`)
         }`,
       );
-      if (shape !== 'string') valueShapes.push(`\`${field}\` is ${words}`);
+      if (shape !== undefined && shape !== 'string') valueShapes.push(`\`${field}\` is ${words}`);
       semanticAsAuthored.push(entry?.segment ?? `\`${field}\``);
     } else {
       runtimeSupplied.push(`\`${field}\` (${authority}-owned)`);

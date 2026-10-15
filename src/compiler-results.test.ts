@@ -212,6 +212,33 @@ describe.runIf(compiler !== undefined)(
   },
 );
 
+it("shows <value> for a bare-name semantic field with no recorded shape, <string> only for a recorded string", async () => {
+  const { renderGovernedOutcomeContract } = await import("./xstate-playbook-runtime.js");
+  // DR-091: a shape the probe did not reveal is the machine's to judge,
+  // so the example asserts none; a recorded string stays `<string>`.
+  const description =
+    "Coder committed the task as one new commit. Output shall include `latestCommit: <commit identity>`, `irNumber` identifying the IR and `irTask: <the implemented task>`.";
+  const outcome = {
+    fields: { latestCommit: "effect", irNumber: "semantic", irTask: "semantic" },
+    repositoryDisposition: "one-descendant-commit",
+  } as const;
+  const unrecorded = renderGovernedOutcomeContract("complete", description, outcome);
+  expect(unrecorded).toContain(
+    '  Reply exactly: { "guard": "complete", "irNumber": <value>, "irTask": <the implemented task> }',
+  );
+  expect(unrecorded.join("\n")).not.toContain("JSON value shape");
+  const asString = renderGovernedOutcomeContract("complete", description, outcome, { irNumber: "string" });
+  expect(asString).toContain(
+    '  Reply exactly: { "guard": "complete", "irNumber": <string>, "irTask": <the implemented task> }',
+  );
+  expect(asString.join("\n")).not.toContain("JSON value shape");
+  const asList = renderGovernedOutcomeContract("complete", description, outcome, { irNumber: "string-array" });
+  expect(asList).toContain(
+    '  Reply exactly: { "guard": "complete", "irNumber": <JSON array of strings>, "irTask": <the implemented task> }',
+  );
+  expect(asList.join("\n")).toContain("JSON value shape: `irNumber` is a JSON array of strings");
+});
+
 it("keeps a delegated Boss question framework-owned and confines output properties to consumed values", () => {
   const definition = readFileSync(
     new URL("../slc/text2gears.md", import.meta.url),

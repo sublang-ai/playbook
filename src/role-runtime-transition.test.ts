@@ -3390,7 +3390,7 @@ describe('DR-032 shared role runtime transition', () => {
     );
     expect(questionPrompt).toContain(
       '- `complete` — Coder committed the task as one new commit.\n' +
-        '  Reply exactly: { "guard": "complete", "irNumber": <string>, "irTask": <the implemented task> }\n' +
+        '  Reply exactly: { "guard": "complete", "irNumber": <value>, "irTask": <the implemented task> }\n' +
         '  Semantic fields as authored: `irNumber` identifying the IR; `irTask: <the implemented task>`\n' +
         '  Runtime-supplied, do not include: `summary` (presentation-owned), `latestCommit` (effect-owned)',
     );

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The judge prompt asserts no shape it does not know.** A semantic field with no authored placeholder and no recorded shape was shown as `<string>`, so a judge followed the example into a string the machine refuses; it now reads `<value>`, and `<string>` stands only for a recorded string shape ([DR-091](specs/decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md), [[playbook-runtime-49](specs/packages/playbook-runtime.md#playbook-runtime-49)]).
+
 ## [17.9.0] - 2026-10-12
 
 ### Added

@@ -19,7 +19,7 @@ Amends [DR-089](089-judge-replies-take-the-machines-shapes.md) §1 in its fallba
 
 - The probe records the shape it finds for every semantic field, a string included.
 - A field whose shape the probe does not reveal has no recorded shape: the reconciler admits any JSON value there, and the machine's own guard decides it after delivery.
-- A recorded shape, a string included, stays enforced with DR-089 §1's validation error and correction; the judge prompt names each recorded non-string shape and otherwise shows the authored placeholder.
+- A recorded shape, a string included, stays enforced with DR-089 §1's validation error and correction; the judge prompt names each recorded non-string shape and otherwise shows the authored placeholder, or `<value>` where none was authored and no shape is recorded, never `<string>` for a shape it does not know.
 
 ## Consequences
 
