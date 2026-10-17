@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Use the compiler's standard Boss-question description in CODE and keep its current-phase interpretation in the existing runtime adjudication rule. Source-authored domain outcomes still preserve their evidence qualifications; framework-owned questions no longer duplicate that contract.
+- **Saved CODE sessions:** this correction changes the result-description text captured in `sourceOutcomeSchema`. A retained governed CODE delivery or deferred Boss-question continuation recorded by an earlier version can fail the exact-schema check when resumed with the corrected artifact. Finish such sessions with their original Playbook version before upgrading, or start a new session; saved evidence is not rewritten.
+
 ## [17.10.1] - 2026-10-16
 
 ### Fixed

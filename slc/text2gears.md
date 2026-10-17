@@ -229,7 +229,7 @@ The annotation makes the field runtime-owned: the adjudicator selects the result
 A distinct typed field extracted from that response remains judge-authored even when a later prompt quotes its exact value; quoting a field does not turn it into the player's whole final response.
 One property name shall not be annotated as verbatim in one result contract and judge-authored in another; text2gears shall choose distinct properties or report that the Source cannot be represented by the current contract.
 
-A Source statement that qualifies an outcome's evidence — what affirmatively
+A Source statement that qualifies an authored domain outcome's evidence — what affirmatively
 supports it, what supports no outcome, such as "a progress report, status
 update, or promise of a later result supports no review outcome" — shall be
 carried in that outcome's result description, the only text the adjudicator
@@ -244,7 +244,10 @@ explicitly requires the acting agent to show that machine syntax to the user.
 It shall move Source's outcome contract into `Results:` while preserving the
 human domain instructions in the blockquote.
 It shall not emit the framework-owned `needsBossReply` result; gears2fsm adds
-that universal result for every Captain- or player-invoking state.
+that universal result with its standard description for every Captain- or player-invoking state.
+The framework-owned question is interpreted under the runtime's current-call
+adjudication rule; it is not an authored domain outcome whose description
+Source overrides.
 
 Where Source restricts an initial Captain to routing, text2gears shall preserve
 only the authored question and delegation outcomes and shall not infer a
@@ -255,7 +258,7 @@ outcome Source leaves unqualified carries no `Results:` label; downstream,
 [gears2fsm](gears2fsm.md#setup) gives its state the default single-outcome
 contract, so text2gears shall not invent a one-bullet `Results:` block for it.
 When a later item does consume its output, the produced-value rule above
-applies instead; when Source qualifies the one outcome's evidence — what
+applies instead; when Source qualifies the one authored domain outcome's evidence — what
 affirmatively supports it, what supports no outcome — the behavior carries
 exactly one `Results:` bullet naming that outcome and carrying the
 qualification, with an output property only where a consumer requires one,
