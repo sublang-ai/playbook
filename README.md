@@ -17,6 +17,11 @@ SubLang Playbook addresses both:
 - The companion [SLC compiler](https://github.com/sublang-ai/slc) turns plain-language procedures, such as a `SKILL.md`, into playbooks with deterministic state-machine control flow.
 - A playbook can assign different agents or LLMs to its steps and have them review and challenge one another, helping catch mistakes before delivery.
 
+<p align="center">
+  <img src="assets/social-preview.png" width="75%" alt="Playbook — reliability is all you need">
+</p>
+
+
 ![Venn diagram: Skill is flexible, Workflow is deterministic, and Playbook sits in the intersection as both.](docs/assets/playbook-venn.svg)
 
 Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you
