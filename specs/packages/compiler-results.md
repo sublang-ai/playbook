@@ -98,3 +98,7 @@ When the integration suite reads the shipped gears2fsm definition and each maint
 
 When the integration suite drives a question/reply workflow through the shared factory's closed acting-result contract, it shall verify that the semantic approval remains a guard-only result, a refusal remains distinct, and an added echo field is rejected rather than substituted for the canonical input [[compiler-results-17](#compiler-results-17)].
 The suite shall also verify that the shipped text2gears guidance preserves input-owned retention without an echo declaration [[compiler-results-17](#compiler-results-17)]; scripted judgments shall not claim model approval accuracy.
+
+### compiler-results-19
+
+When the conformance suite parses every published reference GEARS artifact and compares CODE's real FSM result maps with its GEARS, it shall verify that no GEARS result declares the framework-owned `needsBossReply`, that CODE's domain result maps equal its authored GEARS results, and that both compiled Coder states retain the Boss-question result [[compiler-results-5](#compiler-results-5)].

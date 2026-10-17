@@ -53,7 +53,6 @@ Results:
 - `irCommit`: Coder decomposed the new coding intent into a new IR, implemented no IR task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irNumber` identifying the created IR.
 - `moreTasks`: Coder continued an existing IR, implemented exactly its next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.
 - `finalTask`: Coder continued an existing IR, implemented its final unfinished task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.
-- `needsBossReply`: At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.
 
 ### CODE-2
 
@@ -113,7 +112,6 @@ When a later IR-task phase begins, Captain shall prompt Coder:
 Results:
 - `moreTasks`: Coder implemented exactly the IR's next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask` naming the implemented task.
 - `finalTask`: Coder implemented the IR's final unfinished task and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the IR, and `irTask` naming the implemented task.
-- `needsBossReply`: At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.
 
 ### CODE-4
 

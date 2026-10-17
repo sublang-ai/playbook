@@ -5,6 +5,23 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parseGearsContract } from "../scripts/check-slc-source-gears.mjs";
+
+const referenceGearsFiles = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    files: string[];
+  }
+).files.filter((path) => path.startsWith("reference/") && path.endsWith(".gears.md"));
+
+it.each(referenceGearsFiles)("%s reserves Boss-reply results for compiled state maps", (path) => {
+  const items = parseGearsContract(
+    readFileSync(new URL(`../${path}`, import.meta.url), "utf8"),
+  );
+  expect(items.length).toBeGreaterThan(0);
+  expect(items.flatMap((item) => item.results
+    .filter(({ guard }) => guard === "needsBossReply")
+    .map(() => item.id))).toEqual([]);
+});
 
 const compiler = process.env.PLAYBOOK_EXPERIMENT_COMPILER;
 const guidance = readFileSync(
