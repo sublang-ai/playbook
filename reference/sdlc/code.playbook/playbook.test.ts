@@ -565,6 +565,48 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     expect(config.players).toEqual([]);
   });
 
+  it('composes the native-skills fixture with config-relative sources and two workers', async () => {
+    const { skillsConfig } = await import(
+      new URL('../../../acceptance/live-config.ts', import.meta.url).href
+    );
+    const { skillsArtifactSource, skillsFixtureName } = await import(
+      new URL('../../../acceptance/live-fixtures.ts', import.meta.url).href
+    );
+    const root = await mkdtemp(join(tmpdir(), 'playbook-live-skills-'));
+    tempDirs.push(root);
+    const repo = join(root, 'repo');
+    await mkdir(repo);
+    const registryPath = join(repo, 'skills.playbook.mjs');
+    await writeFile(registryPath, skillsArtifactSource(), 'utf8');
+    const configPath = join(root, 'spex/config/playbook.config.yaml');
+    const skillRoot = (role: string) => join(root, 'native-skills', role, skillsFixtureName);
+    const { config, playbooks } = await composeGenericConfig(
+      parseYaml(skillsConfig(repo)),
+      (specifier: string) => import(specifier),
+      configPath,
+    );
+
+    expect(playbooks.map((p: any) => `${p.id} ${p.command}`)).toEqual([
+      'skills skills',
+    ]);
+    expect(config.captain.skills).toEqual([]);
+    expect(config.players).toEqual([
+      expect.objectContaining({
+        id: 'release.skills.claude', adapter: 'claude', skills: [skillRoot('claude')],
+      }),
+      expect.objectContaining({
+        id: 'release.skills.codex', adapter: 'codex', skills: [skillRoot('codex')],
+      }),
+    ]);
+    expect(config.captain.options.playbooks.skills.from).toBe(
+      pathToFileURL(registryPath).href,
+    );
+    expect(config.captain.options.playbooks.skills.roles).toMatchObject({
+      claude: { playerId: 'release.skills.claude' },
+      codex: { playerId: 'release.skills.codex' },
+    });
+  });
+
   it('composes the hermetic headless config with its real fixture module', async () => {
     const { hermeticConfig } = await import(
       new URL('../../../acceptance/live-config.ts', import.meta.url).href

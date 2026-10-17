@@ -591,6 +591,28 @@ export const exact: Exact = true;
 `,
   ),
   typeCapability(
+    'AgentCallSettings.skills',
+    'agent-call-settings-skills.ts',
+    'Complete settings preserve or explicitly clear readonly skill locators.',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'skills'> ? true : false>;
+type Exact = Assert<Equal<AgentCallSettings['skills'], readonly string[] | undefined>>;
+export const enabled: AgentCallSettings['skills'] = ['/skills/example'];
+export const disabled: AgentCallSettings['skills'] = [];
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.mcpServers',
     'agent-call-settings-mcp-servers.ts',
     'Complete settings admit explicit stdio and HTTP MCP servers with immutable configuration.',

@@ -51,6 +51,7 @@ The store shall encode a manifest as a closed schema-version-7 JSON object with 
 | `state: 'history-only'` | Nonempty string `reason`; no executable recovery fields |
 
 - uncertain `progress` stores the runtime-owned position and immutable step starts/results, validated against the preceding settled controller and current ledger [[recovery-18](recovery.md#recovery-18)];
+- configured skill locators remain mutable execution fields under [[playbook-cli-4](playbook-cli.md#playbook-cli-4)], with an omitted list interpreted as empty; persisted locators do not add skill content to the bundle;
 - executable fields preserve the structural/execution projections, uncertainty, settlement, snapshot and ledger relationships of the durable Captain contract [[playbook-cli-23](playbook-cli.md#playbook-cli-23)], in their token-free storage form [[session-storage-7](#session-storage-7)]; stored state never implies lease ownership.
 - these optional recovery extensions retain the current version numbers only under the coordinated host upgrade gate [[release-35](release.md#release-35)]; an older same-version host is unsupported and is not promised history or deletion support for them;
 - unknown manifest or nested recovery versions remain byte-for-byte unchanged; they allow history viewing and deletion with a lease, but no execution or silent downgrade.

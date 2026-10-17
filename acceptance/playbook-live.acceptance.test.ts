@@ -33,11 +33,14 @@ import {
   liveConfig,
   liveModels,
   liveRetuneOverlay,
+  skillsConfig,
 } from './live-config.js';
 import {
   checklistFixtureSource,
   hermeticArtifactSource,
   notesFixtureSource,
+  skillsArtifactSource,
+  skillsFixtureName,
 } from './live-fixtures.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1034,6 +1037,111 @@ describe.sequential('installed playbook live acceptance', () => {
     2 * liveTimeoutMs + 120_000,
   );
 
+  it(
+    'delivers a config-relative native skill to real Claude and Codex workers',
+    async () => {
+      const scenario = createScenario('skills');
+      const tokens = {
+        claude: `SKILL_ACCEPTANCE_${randomBytes(32).toString('hex').toUpperCase()}`,
+        codex: `SKILL_ACCEPTANCE_${randomBytes(32).toString('hex').toUpperCase()}`,
+      };
+      const skillFiles = Object.entries(tokens).map(([role, token]) => {
+        const skillRoot = join(scenario.root, 'native-skills', role, skillsFixtureName);
+        mkdirSync(skillRoot, { recursive: true });
+        const text = [
+          '---',
+          `name: ${skillsFixtureName}`,
+          'description: Return the release acceptance token when explicitly invoked.',
+          '---',
+          '',
+          `Reply with exactly "token: ${token}" and nothing else.`,
+          '',
+        ].join('\n');
+        const path = join(skillRoot, 'SKILL.md');
+        writeFileSync(path, text);
+        return { path, text };
+      });
+      let commandOutput = '';
+      try {
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
+        const result = await execLiveTextAsync(
+          candidateBin,
+          [
+            'run',
+            '--json',
+            '/skills Have both workers invoke their configured skill and report completion.',
+          ],
+          scenario.repo,
+          privateTmuxEnv({
+            SPEX_HOME: scenario.spexHome,
+            XDG_CONFIG_HOME: join(scenario.root, 'xdg-config'),
+            XDG_STATE_HOME: scenario.stateHome,
+            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+          }),
+        );
+        commandOutput =
+          `stdout:\n${diagnosticTail(result.stdout)}\n` +
+          `stderr:\n${diagnosticTail(result.stderr)}`;
+
+        const envelope = parseHeadlessEnvelope(result.stdout);
+        const record = readDurableSession(scenario, envelope.sessionId);
+        expectCanonicalEffectSession(record, [
+          { playbookId: 'skills', classification: 'unchanged' },
+        ]);
+        expect(record.state).toBe('settled');
+        const boundaries = record.effectLedger.boundaries.filter(
+          (boundary: any) => boundary.playbookId === 'skills',
+        );
+        expect(boundaries).toHaveLength(2);
+        for (const role of ['claude', 'codex'] as const) {
+          const token = tokens[role];
+          const boundary = boundaries.find(
+            (entry: any) => entry.sourceStateId === role,
+          );
+          expect(boundary).toMatchObject({
+            roleId: role,
+            semanticCandidate: { guard: 'done', token },
+            physicalReceipt: { classification: 'unchanged' },
+          });
+          // Check worker text as well as its adjudication: a Captain summary
+          // or invented judge field cannot pass without the worker's token.
+          expect(boundary.finalText).toContain(token);
+          expect(boundary.finalText).not.toContain(
+            tokens[role === 'claude' ? 'codex' : 'claude'],
+          );
+          expect(record.snapshot?.playerSessions?.[`release.skills.${role}`])
+            .toMatchObject({ adapter: role });
+          expect(sessionHints.get(record)?.players?.[`release.skills.${role}`])
+            .toEqual(expect.stringMatching(/\S/));
+        }
+        expectMarkersExactlyOnceInOrder(result.stderr, [
+          '◇ /skills started',
+          '◇ /skills finished',
+        ]);
+        expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
+        expect(gitStatus(scenario.repo)).toBe('');
+        for (const { path, text } of skillFiles) {
+          expect(readFileSync(path, 'utf8')).toBe(text);
+        }
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+      } catch (error) {
+        preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
+        writeFailureSnapshot(
+          scenario.root, undefined, undefined, detailed, scenario,
+        );
+        throw withArtifactPath(detailed, scenario.root);
+      }
+    },
+    liveTimeoutMs + 120_000,
+  );
+
   // RELEASE-25 fifth case (DR-029): one session, one durable conversation,
   // a real Claude Captain, and no rigged agent anywhere — every machine
   // outcome below comes from a DR-016 script actor whose failure is an
@@ -1043,7 +1151,7 @@ describe.sequential('installed playbook live acceptance', () => {
   // question moves nothing, and whether ordinary prose can switch an
   // engagement that is still active.
   //
-  // It lives in this file, after the four preceding cases, deliberately: the
+  // It lives in this file after the other installed cases deliberately: the
   // pack/install helpers are file-private and RELEASE-24/25 pin one pack and
   // one install per run, and `vitest.acceptance.config.ts` declares no
   // sequencer, so in-file source order under the serial runner is what puts
@@ -1872,7 +1980,7 @@ async function installGlobalCandidate(): Promise<string> {
 }
 
 function createScenario(
-  name: 'review' | 'code' | 'dev' | 'decide' | 'hermetic' | 'conversation',
+  name: 'review' | 'code' | 'dev' | 'decide' | 'hermetic' | 'conversation' | 'skills',
   options: { readonly reviewerInstruction?: string } = {},
 ): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
@@ -1885,12 +1993,12 @@ function createScenario(
   // PBCLI-36: headless REVIEW nests under the candidate consumer tree, while
   // the hermetic fixture stays outside every node_modules ancestry on
   // purpose.
-  // The conversational fixtures nest under the same consumer tree for the
+  // The conversational and skill fixtures nest under the same consumer tree for the
   // same reason: their registry modules import `xstate` and
   // `@sublang/playbook/xstate-runtime` by bare specifier, and the installed
   // candidate is what must satisfy those imports.
   const root =
-    name === 'review' || name === 'conversation'
+    name === 'review' || name === 'conversation' || name === 'skills'
       ? join(suiteRoot, 'candidate', 'fixtures', name)
       : join(suiteRoot, name);
   const repo = join(root, 'repo');
@@ -1995,6 +2103,15 @@ function createScenario(
       checklistFixtureSource(join(root, 'checklist.flag')),
     );
     writeFileSync(join(repo, 'notes.registry.mjs'), notesFixtureSource());
+  } else if (name === 'skills') {
+    writeFileSync(
+      join(spexHome, 'config/playbook.config.yaml'),
+      skillsConfig(repo),
+    );
+    writeFileSync(
+      join(repo, 'skills.playbook.mjs'),
+      skillsArtifactSource(),
+    );
   } else if (name === 'hermetic') {
     writeFileSync(
       join(spexHome, 'config/playbook.config.yaml'),

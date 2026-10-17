@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 import { randomUUID } from 'node:crypto';
+import { posix, win32 } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
@@ -2310,6 +2311,12 @@ function snapshotNonblankTuning(value, path) {
     }
     return value;
 }
+function snapshotSkillLocators(value, path) {
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.includes('\0') || !(posix.isAbsolute(item) || win32.isAbsolute(item)))) {
+        throw new Error(`${path} must be an array of absolute skill paths`);
+    }
+    return [...value];
+}
 function snapshotSessionAgent(value, path) {
     const agent = snapshotRecord(value, path);
     rejectSnapshotKeys(agent, [
@@ -2320,6 +2327,7 @@ function snapshotSessionAgent(value, path) {
         'subagentModel',
         'subagentEffort',
         'browser',
+        'skills',
         'instruction',
         'permissions',
     ], path);
@@ -2328,7 +2336,8 @@ function snapshotSessionAgent(value, path) {
         key !== 'fastMode' &&
         key !== 'subagentModel' &&
         key !== 'subagentEffort' &&
-        key !== 'browser')), path);
+        key !== 'browser' &&
+        key !== 'skills')), path);
     return {
         adapter: fixed.adapter,
         ...(fixed.instruction === undefined
@@ -2337,6 +2346,7 @@ function snapshotSessionAgent(value, path) {
         ...(fixed.permissions === undefined
             ? {}
             : { permissions: livePermissions(fixed.permissions) }),
+        ...(agent.skills === undefined ? {} : { skills: snapshotSkillLocators(agent.skills, `${path}.skills`) }),
         ...(agent.browser === undefined ? {} : { browser: snapshotFastMode(agent.browser, `${path}.browser`) }),
         model: snapshotTuningSelection(agent.model, `${path}.model`),
         effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
@@ -2372,6 +2382,7 @@ function callSettings(agent, tuning = agent) {
         model: tuning.model,
         effort: tuning.effort,
         browser: agent.browser ?? false,
+        skills: agent.skills === undefined ? [] : [...agent.skills],
         ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
         ...(tuning.subagentModel === undefined
             ? {}
@@ -2384,7 +2395,7 @@ function callSettings(agent, tuning = agent) {
     };
 }
 function controlCallSettings(agent) {
-    return { ...callSettings(agent), browser: false, mcpServers: {} };
+    return { ...callSettings(agent), browser: false, skills: [], mcpServers: {} };
 }
 function promptIdentity(binding) {
     return binding.model.kind === 'value'

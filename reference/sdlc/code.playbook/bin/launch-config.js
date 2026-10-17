@@ -48,6 +48,7 @@ const PLAYBOOK_LAUNCHER_KEYS = ["from", "command", "roles"];
 const HOST_CAPABILITIES_OPTION_KEY = "hostCapabilities";
 const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
   "captain",
+  "skills",
   "players",
   "playbooks",
   "layout",
@@ -419,9 +420,13 @@ export async function loadLaunchPlan({
     );
   }
   const currentPlaybookIds = addCurrentPlaybookIds(top);
+  if (selectedMembers !== undefined) top = projectSelectedLayer(top, validateSelectedMembers(selectedMembers), "config");
+  top = resolveSkillLocators(top, userConfigPath);
   for (const overlayPath of overlayPaths) {
-    const overlay = loadOverlayFragment(overlayPath);
+    let overlay = loadOverlayFragment(overlayPath);
     addCurrentPlaybookIds(overlay, currentPlaybookIds);
+    if (selectedMembers !== undefined) overlay = projectSelectedLayer(overlay, validateSelectedMembers(selectedMembers), "overlay");
+    overlay = resolveSkillLocators(overlay, overlayPath);
     top =
       selectedMembers === undefined
         ? mergeConfigs(top, overlay)
@@ -471,10 +476,12 @@ export async function loadSelectedLaunchPlanDataOnly({
     validateSelectedMembers(selectedMembers),
     "config",
   );
+  top = resolveSkillLocators(top, userConfigPath);
   for (const overlayPath of overlayPaths) {
-    const overlay = loadOverlayFragment(overlayPath);
+    let overlay = loadOverlayFragment(overlayPath);
     addCurrentPlaybookIds(overlay, currentPlaybookIds);
-    top = mergeSelectedConfigs(top, overlay, selectedMembers);
+    overlay = projectSelectedLayer(overlay, validateSelectedMembers(selectedMembers), "overlay");
+    top = mergeSelectedConfigs(top, resolveSkillLocators(overlay, overlayPath), selectedMembers);
   }
   return await normalizeSelectedLaunchPlanDataOnlyWith(
     top,
@@ -512,7 +519,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     }
   }
   top = projectSelectedMembers(top, expectedMembers);
-  top = cloneJson(top, "config");
+  top = resolveSkillLocators(cloneJson(top, "config"), configPath);
   assertNoRetiredProfiles(top, configPath);
   if (hasOwn(top, "run")) {
     throw new Error(
@@ -663,6 +670,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
       ? expectedMembers.playerIds.slice(0, 1)
       : initialVisible;
   const provisional = {
+    ...(top.skills === undefined ? {} : { skills: top.skills }),
     captain: { ...captain, from: PLAYBOOK_CAPTAIN_MODULE, options: {} },
     players: [
       ...expectedMembers.playerIds.map((id) => ({
@@ -694,14 +702,14 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     options: _captainOptions,
     ...normalizedCaptain
   } = normalizedHost.captain;
-  captain = sessionAgentFromHostAgent(normalizedCaptain, "captain");
+  captain = sessionAgentFromHostAgent(normalizedCaptain, "captain", normalizedHost.skills);
   const hostAgents = new Map(
     normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
   );
   const normalizedPlayerAgents = new Map(
     expectedMembers.playerIds.map((id) => [
       id,
-      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`),
+      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`, normalizedHost.skills),
     ]),
   );
 
@@ -857,7 +865,7 @@ async function normalizeLaunchPlanWith(
 ) {
   const importModule = loadModule ?? ((specifier) => import(specifier));
   top = projectSelectedMembers(top, selectedMembers);
-  top = cloneJson(top, "config");
+  top = resolveSkillLocators(cloneJson(top, "config"), configPath);
   assertNoRetiredProfiles(top, configPath);
   if (hasOwn(top, "run")) {
     throw new Error(
@@ -1060,6 +1068,7 @@ async function normalizeLaunchPlanWith(
       ? allPlayerIds.slice(0, 1)
       : provisionalVisible;
   const provisional = {
+    ...(top.skills === undefined ? {} : { skills: top.skills }),
     captain: {
       ...captain,
       from: PLAYBOOK_CAPTAIN_MODULE,
@@ -1099,14 +1108,14 @@ async function normalizeLaunchPlanWith(
     options: _captainOptions,
     ...normalizedCaptain
   } = normalizedHost.captain;
-  captain = sessionAgentFromHostAgent(normalizedCaptain, "captain");
+  captain = sessionAgentFromHostAgent(normalizedCaptain, "captain", normalizedHost.skills);
   const hostAgents = new Map(
     normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
   );
   const normalizedPlayerAgents = new Map(
     allPlayerIds.map((id) => [
       id,
-      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`),
+      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`, normalizedHost.skills),
     ]),
   );
 
@@ -1296,9 +1305,27 @@ async function normalizeLaunchPlanWith(
   );
 }
 
-// Run cligent's public explicit-config loader over an isolated projection so
-// generic launch planning tracks the installed host schema without importing
-// or duplicating cligent's private validators.
+// Resolve authored locators before the temporary host config changes their base.
+function resolveSkillLocators(top, configPath) {
+  if (!isObject(top)) return top;
+  const base = configPath === undefined ? process.cwd() : dirname(resolve(configPath));
+  const list = (value, path) => {
+    if (!Array.isArray(value) || value.some(item => typeof item !== "string" || item.trim().length === 0 || item.includes("\0"))) {
+      throw new Error(`${path} must be an array of nonblank skill paths`);
+    }
+    return value.map(item => resolve(base, item));
+  };
+  const agent = (value, path) => !isObject(value) || value.skills === undefined
+    ? value : { ...value, skills: list(value.skills, `${path}.skills`) };
+  return {
+    ...top,
+    ...(top.skills === undefined ? {} : { skills: list(top.skills, "skills") }),
+    ...(top.captain === undefined ? {} : { captain: agent(top.captain, "captain") }),
+    ...(isObject(top.players) ? { players: Object.fromEntries(Object.entries(top.players).map(([id, value]) => [id, agent(value, `players.${id}`)])) } : {}),
+  };
+}
+
+// Validate through the installed public loader before registry imports.
 export async function normalizeHostConfig(config) {
   const dir = mkdtempSync(join(tmpdir(), "playbook-host-config-"));
   const path = join(dir, "tmux-play.config.yaml");
@@ -1588,6 +1615,19 @@ function assertLegacyRelocationLocatorsSafe(
         });
       }
     }
+  }
+
+  const skillLists = [["skills", top.skills], ["captain.skills", isObject(top.captain) ? top.captain.skills : undefined]];
+  if (isObject(top.players)) for (const [id, agent] of Object.entries(top.players)) {
+    if (isObject(agent)) skillLists.push([`players.${id}.skills`, agent.skills]);
+  }
+  for (const [path, entries] of skillLists) {
+    if (!Array.isArray(entries)) continue;
+    entries.forEach((entry, index) => {
+      if (typeof entry !== "string" || entry.trim().length === 0 || isAbsolute(entry)) return;
+      const formerTarget = resolve(legacyDir, entry);
+      if (formerTarget !== resolve(canonicalDir, entry)) affected.push({ path: `${path}[${index}]`, replacement: formerTarget });
+    });
   }
 
   if (affected.length === 0) return;
@@ -2353,12 +2393,13 @@ function applyTuningOverrides(agent, binding) {
   return effective;
 }
 
-function sessionAgentFromHostAgent(agent, path) {
+function sessionAgentFromHostAgent(agent, path, defaultSkills) {
   if (!isObject(agent)) {
     throw new Error("installed cligent omitted a retained agent");
   }
   return {
     adapter: agent.adapter,
+    ...((agent.skills ?? defaultSkills) === undefined ? {} : { skills: [...(agent.skills ?? defaultSkills)] }),
     ...(agent.browser === undefined ? {} : { browser: fastModeSelection(agent.browser, `${path}.browser`) }),
     model: tuningSelection(agent.model, `${path}.model`),
     effort: tuningSelection(agent.effort, `${path}.effort`),
@@ -2397,6 +2438,7 @@ export function projectHostAgent(agent, path = "agent") {
   const normalized = cloneJson(agent, path);
   return {
     adapter: normalized.adapter,
+    ...(normalized.skills === undefined ? {} : { skills: normalized.skills }),
     ...(normalized.browser === undefined ? {} : { browser: fastModeSelection(normalized.browser, `${path}.browser`) }),
     ...(normalized.model?.kind === "value"
       ? { model: normalized.model.value }

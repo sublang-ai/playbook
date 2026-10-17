@@ -57,6 +57,7 @@ interface FixtureShape {
   readonly settingsInstruction?: string;
   readonly settingsPermissions?: string;
   readonly settingsBrowser?: string;
+  readonly settingsSkills?: string;
   readonly settingsMcpServers?: string;
   readonly rootAttachment?: string;
   readonly rootMcpServerConfig?: string;
@@ -140,6 +141,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsInstruction = 'readonly instruction?: string;',
     settingsPermissions = 'readonly permissions?: PermissionPolicy;',
     settingsBrowser = 'readonly browser?: boolean;',
+    settingsSkills = 'readonly skills?: readonly string[];',
     settingsMcpServers = 'readonly mcpServers?: McpServers;',
     rootAttachment = 'export interface Attachment { readonly path: string; readonly mimeType?: string; }',
     rootMcpServerConfig = `export type McpServerConfig = {
@@ -362,6 +364,7 @@ export interface AgentCallSettings {
   ${settingsInstruction}
   ${settingsPermissions}
   ${settingsBrowser}
+  ${settingsSkills}
   ${settingsMcpServers}
 }
 ${settingsError}
@@ -588,6 +591,7 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.instruction',
       'AgentCallSettings.permissions',
       'AgentCallSettings.browser',
+      'AgentCallSettings.skills',
       'AgentCallSettings.mcpServers',
       'AgentCallSettingsError',
       'isAgentCallSettingsError',
@@ -667,6 +671,17 @@ describe('the cligent release-capability guard', () => {
       `${kind} complete browser setting`,
       { settingsBrowser: declaration },
       'AgentCallSettings.browser',
+    ]),
+    ...[
+      ['absent', ''],
+      ['required', 'readonly skills: readonly string[];'],
+      ['mutable array', 'readonly skills?: string[];'],
+      ['narrowed', 'readonly skills?: readonly [];'],
+      ['widened', 'readonly skills?: readonly unknown[];'],
+    ].map(([kind, declaration]) => [
+      `${kind} complete skill setting`,
+      { settingsSkills: declaration },
+      'AgentCallSettings.skills',
     ]),
     ...[
       ['absent', ''],

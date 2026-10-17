@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { randomUUID } from 'node:crypto';
+import { posix, win32 } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 
@@ -69,6 +70,7 @@ import { QUOTED_EVIDENCE_LIMIT, workerReportExcerpt, workerReportBlock } from '.
 interface SessionAgent {
   /** Mutable next-turn execution capability; never structural identity. */
   readonly browser?: boolean;
+  readonly skills?: readonly string[];
   readonly adapter: string;
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
@@ -127,7 +129,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
   readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
 
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser'>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser' | 'skills'>>;
 
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 
@@ -4059,6 +4061,13 @@ function snapshotNonblankTuning(
   return value;
 }
 
+function snapshotSkillLocators(value: JsonValue, path: string): readonly string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.includes('\0') || !(posix.isAbsolute(item) || win32.isAbsolute(item)))) {
+    throw new Error(`${path} must be an array of absolute skill paths`);
+  }
+  return [...value] as string[];
+}
+
 function snapshotSessionAgent(
   value: JsonValue | undefined,
   path: string,
@@ -4074,6 +4083,7 @@ function snapshotSessionAgent(
       'subagentModel',
       'subagentEffort',
       'browser',
+      'skills',
       'instruction',
       'permissions',
     ],
@@ -4088,7 +4098,8 @@ function snapshotSessionAgent(
           key !== 'fastMode' &&
           key !== 'subagentModel' &&
           key !== 'subagentEffort' &&
-          key !== 'browser',
+          key !== 'browser' &&
+          key !== 'skills',
       ),
     ) as JsonValue,
     path,
@@ -4101,6 +4112,7 @@ function snapshotSessionAgent(
     ...(fixed.permissions === undefined
       ? {}
       : { permissions: livePermissions(fixed.permissions) }),
+    ...(agent.skills === undefined ? {} : { skills: snapshotSkillLocators(agent.skills, `${path}.skills`) }),
     ...(agent.browser === undefined ? {} : { browser: snapshotFastMode(agent.browser, `${path}.browser`) }),
     model: snapshotTuningSelection(agent.model, `${path}.model`),
     effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
@@ -4126,7 +4138,7 @@ function snapshotSessionAgent(
   };
 }
 
-function fixedAgent(agent: SessionAgent): Omit<SessionAgent, TuningKey | 'browser'> {
+function fixedAgent(agent: SessionAgent): Omit<SessionAgent, TuningKey | 'browser' | 'skills'> {
   return {
     adapter: agent.adapter,
     ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
@@ -4147,6 +4159,7 @@ function callSettings(
     model: tuning.model,
     effort: tuning.effort,
     browser: agent.browser ?? false,
+    skills: agent.skills === undefined ? [] : [...agent.skills],
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
     ...(tuning.subagentModel === undefined
       ? {}
@@ -4160,7 +4173,7 @@ function callSettings(
 }
 
 function controlCallSettings(agent: SessionAgent): AgentCallSettings {
-  return { ...callSettings(agent), browser: false, mcpServers: {} };
+  return { ...callSettings(agent), browser: false, skills: [], mcpServers: {} };
 }
 
 function promptIdentity(binding: EffectivePlayerBinding): string {

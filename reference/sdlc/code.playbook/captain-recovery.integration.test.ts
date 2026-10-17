@@ -71,6 +71,7 @@ class RecoveryAdapter implements AgentAdapter {
       if (RecoveryAdapter.questionReply === 'error') throw new Error('question check disconnected');
       result = RecoveryAdapter.questionReply ?? JSON.stringify({ instructionIndex: RecoveryAdapter.alreadyAnswered && RecoveryAdapter.calls.filter(({ kind }) => kind === 'question-check').length === 1 ? 0 : null });
     } else if (kind === 'prepare') {
+      expect(options?.skills).toEqual([join(RecoveryAdapter.cwd, 'recovery-skill')]);
       if (RecoveryAdapter.interruptPreparation) {
         const interrupt = RecoveryAdapter.interruptPreparation;
         RecoveryAdapter.interruptPreparation = undefined;
@@ -388,7 +389,7 @@ describe('Captain preparation through a durable session', () => {
         const configPath = join(dir, 'playbook.config.yaml');
         await writeFile(
           configPath,
-          `captain: { adapter: ${RecoveryAdapter.captainAdapter}, model: captain-model }\nplayers:\n  dev.coder: { adapter: claude, model: coder-model }\nplaybooks:\n  code:\n    from: mod://code\n    roles: { coder: dev.coder }\n  wrapper:\n    from: mod://wrapper\n    roles: {}\n`,
+          `captain: { adapter: ${RecoveryAdapter.captainAdapter}, model: captain-model, skills: [${JSON.stringify(join(cwd, 'recovery-skill'))}] }\nplayers:\n  dev.coder: { adapter: claude, model: coder-model }\nplaybooks:\n  code:\n    from: mod://code\n    roles: { coder: dev.coder }\n  wrapper:\n    from: mod://wrapper\n    roles: {}\n`,
         );
         const loadModule = async (specifier: string) => ({
           default:

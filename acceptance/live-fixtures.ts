@@ -514,3 +514,133 @@ export default {
 };
 `;
 }
+
+// Both players receive only the skill name. The gate alone knows the random
+// tokens; neither this artifact nor its prompts contain them or their source paths.
+export const skillsFixtureName = 'release-acceptance-token';
+
+export function skillsArtifactSource(): string {
+  return `// Native-skills acceptance fixture: two governed player boundaries.
+import { assign, fromPromise, setup } from 'xstate';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+
+const workerState = (role, next) => ({
+  id: role,
+  description: role + ' invokes the configured native skill.',
+  meta: { playbook: {
+    stateId: role,
+    description: role + ' invokes the configured native skill.',
+    role,
+  } },
+  tags: ['playbook.busy'],
+  invoke: {
+    src: 'player',
+    input: () => ({
+      stateId: role,
+      role,
+      sourceItem: 'SKILLS-' + role,
+      prompt: [
+        role === 'claude'
+          ? 'Use the Skill tool to invoke cligent:${skillsFixtureName}.'
+          : '$cligent:${skillsFixtureName} Follow the skill.',
+        'Follow its instructions and return its token. Do not modify any file.',
+        'Do not search for the skill outside the native skill discovery mechanism.',
+      ].join('\\n'),
+      result: {
+        done: 'Worker returned the skill token. Output shall include \`token: <the exact token text>\`.',
+      },
+    }),
+    onDone: [
+      {
+        guard: 'returnedToken',
+        target: next,
+        actions: [
+          {
+            type: 'playbook.acceptedOutcome',
+            params: { source: role, target: next, acceptedOutcome: 'done' },
+          },
+          assign({ [role + 'Token']: ({ event }) => event.output.token }),
+        ],
+      },
+      { target: 'failed' },
+    ],
+    onError: { target: 'failed' },
+  },
+});
+
+const machine = setup({
+  actors: { player: fromPromise(async () => {
+    throw new Error('player actor must be provided by the runner');
+  }) },
+  guards: {
+    returnedToken: ({ event }) =>
+      typeof event.output?.token === 'string' && event.output.token.length > 0,
+  },
+  actions: { 'playbook.acceptedOutcome': () => {} },
+}).createMachine({
+  id: 'skills',
+  initial: 'ready',
+  context: {},
+  states: {
+    ready: {
+      id: 'ready',
+      meta: { playbook: { stateId: 'ready', description: 'Waits for the Boss task.' } },
+      tags: ['playbook.parked'],
+      on: { START: 'claude' },
+    },
+    claude: workerState('claude', 'codex'),
+    codex: workerState('codex', 'done'),
+    failed: {
+      id: 'failed',
+      type: 'final',
+      meta: { playbook: {
+        stateId: 'failed', terminal: 'failure',
+        description: 'A worker failed to return its configured skill token.',
+      } },
+    },
+    done: {
+      id: 'done',
+      type: 'final',
+      meta: { playbook: {
+        stateId: 'done', terminal: 'success',
+        description: 'Both workers returned tokens from the configured native skill.',
+      } },
+    },
+  },
+  output: ({ context }) => ({
+    claudeToken: context.claudeToken,
+    codexToken: context.codexToken,
+  }),
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'SKILLS',
+  compat: { artifactSchema: 3, runtimeAbi: 1 },
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'task' },
+  roleStates: {
+    claude: { role: 'claude', label: 'claude invokes the configured native skill.' },
+    codex: { role: 'codex', label: 'codex invokes the configured native skill.' },
+  },
+  outcomeAuthority: {
+    governedPlayerStates: Object.fromEntries(['claude', 'codex'].map((role) => [
+      role, { done: { fields: { token: 'semantic' }, repositoryDisposition: 'unchanged' } },
+    ])),
+  },
+});
+
+export default {
+  id: 'skills',
+  command: 'skills',
+  intent: 'native skills through two real workers',
+  artifactSchema: 3,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
+  requiredRoleIds: ['claude', 'codex'],
+  concurrentRoleSets: [],
+  validateOptions(value) { return value ?? {}; },
+  createRuntime(configuredOptions, hostCapabilities) {
+    return createRuntime({ configuredOptions, hostCapabilities });
+  },
+};
+`;
+}

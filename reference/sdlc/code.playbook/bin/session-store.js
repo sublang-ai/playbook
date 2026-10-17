@@ -5580,6 +5580,7 @@ function validateCaptainSessionProjection(
             'subagentModel',
             'subagentEffort',
             'browser',
+            'skills',
           ],
       playerPath,
     );
@@ -5751,6 +5752,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
   if (!structural) {
     validateProjectedFastMode(agent, `${path}.fastMode`);
     if (agent.browser !== undefined && typeof agent.browser !== 'boolean') throw new Error(`${path}.browser must be a boolean`);
+    if (agent.skills !== undefined && (!Array.isArray(agent.skills) || agent.skills.some(item => typeof item !== 'string' || item.includes('\0') || !isRecordedAbsolutePath(item)))) throw new Error(`${path}.skills must be an array of absolute skill paths`);
     validateProjectedSubagentTuning(agent, path);
   }
   if (!hasId) {
@@ -5766,6 +5768,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
             'subagentModel',
             'subagentEffort',
             'browser',
+            'skills',
           ],
       path,
     );

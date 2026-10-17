@@ -17,7 +17,7 @@ file's directory with it when that leaves it empty, and leaves no compatibility
 alias, so running an older Spex host afterward could seed a second file at the
 path it still resolves.
 
-The current guard rejects relocation when a former relative `sessions` value
+The current guard rejects relocation when a former relative skill path, `sessions` value
 or relative filesystem `playbooks.<id>.from` would resolve differently below
 the new directory. It leaves the former file unchanged and names every
 target-preserving absolute replacement. Apply those replacements and retry;
@@ -277,6 +277,33 @@ Claude Code auth or `ANTHROPIC_API_KEY`; `codex` with local Codex CLI
 auth or `OPENAI_API_KEY`. A known adapter that is not ready blocks the
 launch and prints the help text.
 
+## Skills across agents
+
+Set a shared `skills` list to let working agents use the same native skill:
+
+```yaml
+skills:
+  - ../skills/project-conventions
+captain:
+  adapter: claude
+  skills: []
+players:
+  dev.coder: codex
+  dev.reviewer: claude
+```
+
+Entries name a skill directory or its `SKILL.md`. Relative entries resolve from
+whichever config or `--with` overlay file declares them. An agent's own list
+replaces the shared list; `[]` opts out. Playbook preserves absolute locators
+through interactive and headless launches, and Cligent stages them for the native
+agent without changing its permissions. Role bindings do not override skills.
+
+Reopening a settled session uses the current lists for the next turn. Recovery
+of an uncertain turn keeps its attempted lists. Skill sources remain external
+files, so keep their locations available for resumed runs. Ordinary Captain
+routing, judging and replies receive `skills: []`; bounded recovery preparation
+can use the Captain's configured skills.
+
 ## Browser capability
 
 A Captain or player agent block may set `browser: true` to make Cligent's managed
@@ -287,7 +314,7 @@ uses that attempt's recorded value. Agent permissions remain fixed and retain
 their native precedence.
 
 Ordinary Captain decisions, replies, question checks and judges always receive
-`browser: false` and an empty MCP configuration. Enabling Browser does not turn
+`browser: false`, `skills: []` and an empty MCP configuration. Enabling Browser does not turn
 them into working actors. A working player, or bounded recovery preparation when
 needed, can use the capability explicitly configured for its agent. An embedding
 application should use Cligent's capability and browser-preparation APIs before

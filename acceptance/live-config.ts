@@ -174,3 +174,38 @@ export function conversationConfig(repo: string): string {
     '',
   ].join('\n');
 }
+
+// This path resolves against spex/config, never the worker's cwd.
+export function skillsConfig(repo: string): string {
+  const { claude: claudeModel, codex: codexModel } = liveModels();
+  return [
+    'skills: ["../../native-skills/claude/release-acceptance-token"]',
+    'captain:',
+    '  adapter: claude',
+    `  model: ${JSON.stringify(claudeModel)}`,
+    '  effort: low',
+    '  skills: []',
+    '  permissions: { mode: auto }',
+    'notifications:',
+    '  player_finished: off',
+    '  turn_finished: off',
+    '  turn_aborted: off',
+    'players:',
+    '  release.skills.claude:',
+    '    adapter: claude',
+    `    model: ${JSON.stringify(claudeModel)}`,
+    '    effort: low',
+    '    permissions: { mode: auto }',
+    '  release.skills.codex:',
+    '    adapter: codex',
+    '    skills: ["../../native-skills/codex/release-acceptance-token"]',
+    `    model: ${JSON.stringify(codexModel)}`,
+    '    effort: low',
+    '    permissions: { mode: auto }',
+    'playbooks:',
+    '  skills:',
+    `    from: ${JSON.stringify(pathToFileURL(join(repo, 'skills.playbook.mjs')).href)}`,
+    '    roles: { claude: release.skills.claude, codex: release.skills.codex }',
+    '',
+  ].join('\n');
+}

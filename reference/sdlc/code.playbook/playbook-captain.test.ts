@@ -103,6 +103,7 @@ const ISOLATED_VISIBLE_CAPTAIN_OPTIONS = {
 
 const DEFAULT_AGENT_SETTINGS = {
   browser: false,
+  skills: [],
   model: { kind: 'provider-default' },
   effort: { kind: 'provider-default' },
 } as const;
@@ -1525,6 +1526,7 @@ interface TestSessionAgent {
   readonly fastMode?: boolean;
   readonly subagentModel?: string;
   readonly subagentEffort?: string;
+  readonly skills?: readonly string[];
   readonly instruction?: string;
   readonly permissions?: { readonly fileWrite?: 'allow' | 'ask' | 'deny' };
 }
@@ -4697,6 +4699,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           resume: false,
           settings: {
             browser: false,
+            skills: [],
             model: { kind: 'value', value: 'gpt-5.6-sol' },
             effort: { kind: 'value', value: 'high' },
             fastMode: false,
@@ -4766,18 +4769,21 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(context.playerCalls.map((call) => call.options?.settings)).toEqual([
       {
         browser: false,
+        skills: [],
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'role-subagents',
       },
       {
         browser: false,
+        skills: [],
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
       },
     ]);
     expect(context.captainCalls.at(-1)?.options?.settings).toEqual({
       browser: false,
+      skills: [],
       mcpServers: {},
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
@@ -4848,6 +4854,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(context.playerCalls.map((call) => call.options?.settings)).toEqual([
       {
         browser: false,
+        skills: [],
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'inherit',
@@ -4855,6 +4862,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       },
       {
         browser: false,
+        skills: [],
         model: { kind: 'provider-default' },
         effort: { kind: 'provider-default' },
         subagentModel: 'inherit',
@@ -4862,6 +4870,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     ]);
     expect(context.captainCalls.at(-1)?.options?.settings).toEqual({
       browser: false,
+      skills: [],
       mcpServers: {},
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
@@ -10268,6 +10277,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         resume: 'player-retained-token',
         settings: {
           browser: false,
+          skills: [],
           model: { kind: 'provider-default' },
           effort: { kind: 'value', value: 'high' },
           fastMode: false,
@@ -10405,6 +10415,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           resume: 'player-retained-token',
           settings: {
             browser: false,
+            skills: [],
             model: { kind: 'value', value: 'stable-model' },
             effort: { kind: 'value', value: 'high' },
             ...(roleSubagentModel === undefined
@@ -10417,6 +10428,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         resume: 'conversation-1',
         settings: {
           browser: false,
+          skills: [],
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'captain-subagents-b',
@@ -10545,6 +10557,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           resume: 'player-retained-token',
           settings: {
             browser: false,
+            skills: [],
             model: { kind: 'value', value: 'stable-model' },
             effort: { kind: 'value', value: 'high' },
             subagentModel: 'inherit',
@@ -10558,6 +10571,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         resume: 'conversation-1',
         settings: {
           browser: false,
+          skills: [],
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'inherit',
@@ -16534,7 +16548,7 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
       expect(shell.exportSnapshot()?.pendingAttachments).toBeUndefined();
       for (const call of delivered.captainCalls) {
         expect(call.options?.attachments).toBeUndefined();
-        expect(call.options?.settings).toMatchObject({ browser: false, mcpServers: {} });
+        expect(call.options?.settings).toMatchObject({ browser: false, skills: [], mcpServers: {} });
       }
       shell.setTurnAttachments([asset('b')]); await shell.handleBossTurn(turn('', 7), blank.context);
       await shell.handleBossTurn(turn('stop', 8), stubContext([captainJson({ action: 'dismiss' })]).context);

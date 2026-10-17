@@ -8,6 +8,7 @@ import type { SessionAssetRef } from './session-assets.js';
 interface SessionAgent {
     /** Mutable next-turn execution capability; never structural identity. */
     readonly browser?: boolean;
+    readonly skills?: readonly string[];
     readonly adapter: string;
     readonly model: TuningSelection;
     readonly effort: TuningSelection<Effort>;
@@ -44,7 +45,7 @@ interface PlaybookCaptainUnresolvedEffectSettlementInput {
     readonly rootPlaybookId: string;
     readonly unresolvedEffects: readonly PlaybookCaptainUnresolvedEffect[];
 }
-type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser'>>;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, TuningKey | 'browser' | 'skills'>>;
 type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface ProgressChange {
     snapshot?: PlaybookCaptainShellSnapshot | null;

@@ -2869,3 +2869,54 @@ describe('module locations supplied at launch (PBCLI-95)', () => {
     expect(Object.keys(selected.catalog)).toEqual(['code']);
   });
 });
+
+
+describe('skill configuration across host projections (DR-092)', () => {
+  it('anchors every declaring layer, inherits shared lists, replaces agent lists and reopens only selected members', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-skills-config-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'primary', 'playbook.yaml');
+    const overlayPath = join(root, 'overlay', 'override.yaml');
+    await mkdir(dirname(configPath), { recursive: true });
+    await mkdir(dirname(overlayPath), { recursive: true });
+    const original = JSON.stringify({ ...oneRoleConfig(), skills: ['./shared'], captain: { adapter: 'claude', skills: ['./captain/SKILL.md'] } });
+    await writeFile(configPath, original);
+    const loadModule = moduleLoader({ 'mod://code': entry('code', ['coder']) });
+    const initial = await launchConfig.loadLaunchPlan({ userConfigPath: configPath, loadModule });
+    expect(initial.captain.skills).toEqual([join(root, 'primary/captain/SKILL.md')]);
+    expect(initial.players[0].agent.skills).toEqual([join(root, 'primary/shared')]);
+    const projected = launchConfig.projectTmuxConfig(initial);
+    expect(projected.players[0].skills).toEqual(initial.players[0].agent.skills);
+    expect(projected.captain.options.sessionAgents.players['dev.coder'].skills).toEqual(initial.players[0].agent.skills);
+    expect(executionConfigFromPlan(initial).players[0].skills).toEqual(initial.players[0].agent.skills);
+    await writeFile(overlayPath, JSON.stringify({ skills: ['./changed'], captain: { skills: [] }, players: { ignored: { skills: 42 } } }));
+    const selected = await launchConfig.loadSelectedLaunchPlanDataOnly({ userConfigPath: configPath, overlayPaths: [overlayPath], structuralProjection: structuralProjection(initial) });
+    expect(selected.captain.skills).toEqual([]);
+    expect(selected.players[0].agent.skills).toEqual([join(root, 'overlay/changed')]);
+    await writeFile(overlayPath, JSON.stringify({ skills: ['./changed'], players: { 'dev.coder': { adapter: 'codex', skills: ['./own/SKILL.md'] } } }));
+    const overlaid = await launchConfig.loadLaunchPlan({ userConfigPath: configPath, overlayPaths: [overlayPath], loadModule });
+    expect(overlaid.captain.skills).toEqual(initial.captain.skills);
+    expect(overlaid.players[0].agent.skills).toEqual([join(root, 'overlay/own/SKILL.md')]);
+    expect(await readFile(configPath, 'utf8')).toBe(original);
+  });
+
+  it.each([null, 'path', [1], [''], ['a\0b']].map(skills => [skills]))('rejects malformed skill lists before registry imports: %j', async skills => {
+    const loadModule = vi.fn();
+    await expect(launchConfig.normalizeLaunchPlan({ ...oneRoleConfig(), skills }, { loadModule })).rejects.toThrow(/skills/);
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+});
+
+
+it('refuses config relocation that would retarget any shared or agent skill', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'playbook-skill-relocation-'));
+  tempDirs.push(root);
+  const oldPath = join(root, 'old', 'config.yaml');
+  const newPath = join(root, 'new', 'config.yaml');
+  await mkdir(dirname(oldPath), { recursive: true });
+  const source = JSON.stringify({ ...oneRoleConfig(), skills: ['./shared'], captain: { adapter: 'claude', skills: ['./captain'] }, players: { 'dev.coder': { adapter: 'codex', skills: ['./worker'] } } });
+  await writeFile(oldPath, source);
+  expect(() => launchConfig.relocateLegacyUserConfig(newPath, oldPath, () => {})).toThrow(/skills\[0\].*captain.skills\[0\].*players.dev.coder.skills\[0\]/);
+  expect(await readFile(oldPath, 'utf8')).toBe(source);
+  await expect(access(newPath)).rejects.toThrow();
+});

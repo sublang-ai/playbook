@@ -213,9 +213,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 33 ||
-            (declaredFloor[1] === 33 && declaredFloor[2] >= 2))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.33.2 floor using deterministic fresh Claude titles without an ancillary model and retaining live host approvals, native attachments and complete settings (RELEASE-14)`,
+          (declaredFloor[1] > 34 ||
+            (declaredFloor[1] === 34 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.34.0 floor carrying cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -238,9 +238,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 33 ||
-              (resolvedFloor[1] === 33 && resolvedFloor[2] >= 2))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.33.2 floor using deterministic fresh Claude titles without an ancillary model and retaining live host approvals, native attachments and complete settings (RELEASE-14)`,
+            (resolvedFloor[1] > 34 ||
+              (resolvedFloor[1] === 34 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.34.0 floor carrying cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
       ).toBe(true);
     }
   });
@@ -467,6 +467,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.instruction',
         'AgentCallSettings.permissions',
         'AgentCallSettings.browser',
+        'AgentCallSettings.skills',
         'AgentCallSettings.mcpServers',
         'AgentCallSettingsError',
         'isAgentCallSettingsError',

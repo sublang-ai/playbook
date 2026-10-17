@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.10.0] - 2026-10-16
+
+### Added
+
+- Configure one shared `skills` list or per-agent replacements for native working calls across agents. Relative paths follow their declaring config or overlay file, ordinary session reopening applies current lists, and uncertain recovery retains the attempted lists. Captain control calls explicitly disable skills ([DR-092](specs/decisions/092-skills-follow-working-agents.md)).
+- Verify the installed package with a real Claude/Codex workflow reading same-name external skills with shared inheritance and per-agent replacement, alongside configuration, session recovery and complete-call integration coverage.
+
+### Changed
+
+- Require Cligent 0.34.0 for its cross-agent skill configuration and complete-call contract.
+
 ### Fixed
 
 - **The judge prompt asserts no shape it does not know.** A semantic field with no authored placeholder and no recorded shape was shown as `<string>`, so a judge followed the example into a string the machine refuses; it now reads `<value>`, and `<string>` stands only for a recorded string shape ([DR-091](specs/decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md), [[playbook-runtime-49](specs/packages/playbook-runtime.md#playbook-runtime-49)]).
@@ -1010,7 +1021,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.9.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.10.0...HEAD
+[17.10.0]: https://github.com/sublang-ai/playbook/compare/v17.9.0...v17.10.0
 [17.9.0]: https://github.com/sublang-ai/playbook/compare/v17.8.1...v17.9.0
 [17.8.1]: https://github.com/sublang-ai/playbook/compare/v17.8.0...v17.8.1
 [17.8.0]: https://github.com/sublang-ai/playbook/compare/v17.7.0...v17.8.0
