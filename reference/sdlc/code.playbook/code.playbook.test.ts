@@ -516,7 +516,8 @@ describe('linked CODE runtime', () => {
       expect(prompt).toContain(finalText);
       expect(prompt).toContain("Classify the invoked role's current call");
       expect(prompt).toContain('a prerequisite only for a later workflow stage');
-      expect(prompt).toContain('At the end of this call, Coder has an unanswered clarifying question');
+      expect(prompt).toContain('A genuinely unanswered question needed to finish the current call remains outstanding.');
+      expect(prompt).toContain("The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone.");
       expect(host.playerCalls).toHaveLength(1);
       expect(host.judgePrompts).toHaveLength(1);
       expect(host.childRequests).toHaveLength(1);

@@ -23,7 +23,7 @@ The terminal-return requirement shall remain non-acting semantics outside prompt
 
 ### compiler-results-5
 
-When Source gives a direct-Captain or delegated-player behavior a Boss question that waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, the wait, and the answer-dependent continuation on the originating item [[playbook-runtime-11](playbook-runtime.md#playbook-runtime-11)] and shall declare no result for that question outside the decide-call-observe routing contract: the question is the framework-owned `needsBossReply` outcome that [gears2fsm's Boss-reply suspension](../../slc/gears2fsm.md#boss-reply-suspension) adds to every such state [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], and a second guard for the same wait would give the adjudicator two equivalent outcomes.
+When Source gives a direct-Captain or delegated-player behavior a Boss question that waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, the wait, and the answer-dependent continuation on the originating item [[playbook-runtime-11](playbook-runtime.md#playbook-runtime-11)] and shall declare no result for that question outside the decide-call-observe routing contract: the question is the framework-owned `needsBossReply` outcome that [gears2fsm's Boss-reply suspension](../../slc/gears2fsm.md#boss-reply-suspension) adds to every such state with its standard description [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], interpreted under the runtime's current-call adjudication rule [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], and a second guard for the same wait would give the adjudicator two equivalent outcomes.
 Where the behavior is Captain's routing decision under that contract, whose `question` and `followUpQuestion` results are fixed compiler vocabulary, text2gears shall declare the routing question's `question` output property in the annotated `question: <verbatim final text>` form [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], and the result name or prose alone shall not satisfy that declaration.
 
 ### compiler-results-9
@@ -36,7 +36,7 @@ Where a later prompt reads the commit an earlier call itself created through a S
 
 ### compiler-results-13
 
-When Source qualifies an outcome's evidence — what affirmatively supports it, or what supports no outcome — text2gears shall carry that qualification in the outcome's result description, which the hidden adjudicator reads when it selects the guard [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], rather than in the item's prose, which reaches no judge; a behavior with one qualified outcome therefore carries exactly one `Results:` bullet naming it, with an output property only where a consumer requires one.
+When Source qualifies an authored domain outcome's evidence — what affirmatively supports it, or what supports no outcome — text2gears shall carry that qualification in the outcome's result description, which the hidden adjudicator reads when it selects the guard [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], rather than in the item's prose, which reaches no judge; a behavior with one qualified outcome therefore carries exactly one `Results:` bullet naming it, with an output property only where a consumer requires one.
 
 ### compiler-results-15
 
@@ -88,7 +88,7 @@ When the integration suite reads the shipped definitions and the maintained CODE
 
 ### compiler-results-14
 
-When the integration suite reads the shipped text2gears definition, it shall verify that it directs an outcome's evidence qualification into the result description and names item prose as text the adjudicator never reads [[compiler-results-13](#compiler-results-13)].
+When the integration suite reads the shipped text2gears definition, it shall verify that it directs an authored domain outcome's evidence qualification into the result description, keeps the framework-owned Boss question under the compiler and runtime's shared rule [[compiler-results-5](#compiler-results-5)], and names item prose as text the adjudicator never reads [[compiler-results-13](#compiler-results-13)].
 
 ### compiler-results-16
 
@@ -101,4 +101,4 @@ The suite shall also verify that the shipped text2gears guidance preserves input
 
 ### compiler-results-19
 
-When the conformance suite parses every published reference GEARS artifact and compares CODE's real FSM result maps with its GEARS, it shall verify that no GEARS result declares the framework-owned `needsBossReply`, that CODE's domain result maps equal its authored GEARS results, and that both compiled Coder states retain the Boss-question result [[compiler-results-5](#compiler-results-5)].
+When the conformance suite parses every published reference GEARS artifact, compares CODE's real FSM result maps with its GEARS, and evaluates every maintained non-controller workflow's acting-state inputs, it shall verify that no GEARS result declares the framework-owned `needsBossReply`, that CODE's domain result maps equal its authored GEARS results, and that every acting state retains the compiler's exact standard Boss-question description [[compiler-results-5](#compiler-results-5)].

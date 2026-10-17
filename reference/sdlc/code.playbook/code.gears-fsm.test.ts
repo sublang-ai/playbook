@@ -137,7 +137,9 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       ).toEqual(
         item?.results.map(({ guard, description }) => [guard, description]),
       );
-      expect(input.result.needsBossReply).toContain('question:');
+      expect(input.result.needsBossReply).toBe(
+        "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+      );
     }
     // DR-065: the prefix pass moved each Coder item's relays after its last
     // instruction line; the layout itself records that rewrite.

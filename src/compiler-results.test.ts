@@ -5,6 +5,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { getInitialSnapshot, type AnyStateMachine } from "xstate";
+import { codeMachine } from "../reference/sdlc/code.playbook/code.fsm.js";
+import { reviewMachine } from "../reference/sdlc/review.playbook/review.fsm.js";
+import { decideMachine } from "../reference/sdlc/decide.playbook/decide.fsm.js";
+import { devMachine } from "../reference/sdlc/dev.playbook/dev.fsm.js";
+import { branchMachine } from "../reference/sdlc/branch.playbook/branch.fsm.js";
+import { prMachine } from "../reference/sdlc/pr.playbook/pr.fsm.js";
+import { inspectMachine } from "../reference/sdlc/inspect.playbook/inspect.fsm.js";
 import { parseGearsContract } from "../scripts/check-slc-source-gears.mjs";
 
 const referenceGearsFiles = (
@@ -22,6 +30,39 @@ it.each(referenceGearsFiles)("%s reserves Boss-reply results for compiled state 
     .filter(({ guard }) => guard === "needsBossReply")
     .map(() => item.id))).toEqual([]);
 });
+
+const workflowMachines: Readonly<Record<string, AnyStateMachine>> = {
+  code: codeMachine, review: reviewMachine, decide: decideMachine,
+  dev: devMachine, branch: branchMachine, pr: prMachine, inspect: inspectMachine,
+};
+const standardBossReplyDescription =
+  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
+
+it.each(referenceGearsFiles.filter(path => !path.includes("/captain.playbook/")))(
+  "%s uses the compiler's standard question contract in every acting state",
+  path => {
+    const workflow = path.split("/").at(-1)!.replace(".gears.md", "");
+    const machine = workflowMachines[workflow];
+    expect(machine, workflow).toBeDefined();
+    const { context } = getInitialSnapshot(machine, {});
+    const pending = [machine.config];
+    let actingStates = 0;
+    for (const state of pending) {
+      pending.push(...Object.values(state.states ?? {}));
+      for (const invoke of [state.invoke ?? []].flat()) {
+        if (invoke.src !== "player" && invoke.src !== "captain") continue;
+        const input = typeof invoke.input === "function"
+          ? invoke.input({ context, event: { type: "xstate.init" }, self: undefined as never })
+          : invoke.input;
+        expect(input.result.needsBossReply, `${workflow}:${input.stateId}`).toBe(standardBossReplyDescription);
+        actingStates++;
+      }
+    }
+    expect(actingStates).toBeGreaterThan(0);
+    expect(readFileSync(new URL("../slc/gears2fsm.md", import.meta.url), "utf8"))
+      .toContain(`\`\`\`text\n${standardBossReplyDescription}\n\`\`\``);
+  },
+);
 
 const compiler = process.env.PLAYBOOK_EXPERIMENT_COMPILER;
 const guidance = readFileSync(
@@ -301,7 +342,7 @@ it("keeps a created commit under latestCommit while the Source reads it through 
   }
 });
 
-it("carries an outcome's evidence qualification in the result description the judge reads", () => {
+it("carries domain evidence qualifications while preserving the framework question rule", () => {
   const definition = readFileSync(
     new URL("../slc/text2gears.md", import.meta.url),
     "utf8",
@@ -310,6 +351,10 @@ it("carries an outcome's evidence qualification in the result description the ju
     "shall be carried in that outcome's result description, the only text the adjudicator reads when it selects the guard",
   );
   expect(definition).toContain("left in the item's prose, it reaches no judge");
+  expect(definition).toContain("qualifies an authored domain outcome's evidence");
+  expect(definition).toContain("qualifies the one authored domain outcome's evidence");
+  expect(definition).toContain("The framework-owned question is interpreted under the runtime's current-call adjudication rule");
+  expect(definition).toContain("it is not an authored domain outcome whose description Source overrides");
   // A single qualified outcome still gets its one bullet (DECIDE-1's `proposed`).
   expect(definition).toContain(
     "the behavior carries exactly one `Results:` bullet naming that outcome and carrying the qualification",

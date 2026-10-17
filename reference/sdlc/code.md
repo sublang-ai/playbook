@@ -91,7 +91,6 @@ Every new-intent phase has two semantic outcomes: direct implementation and new 
 Every IR-task phase, including the first phase for an existing IR, identifies the IR and the implemented task, and has two semantic outcomes: more tasks and final task.
 The first phase therefore has four semantic outcomes — direct implementation, new IR, more tasks, and final task — plus the Boss question when the continued IR is ambiguous.
 Each semantic outcome requires affirmative support in Coder's result, but no phase transition shall depend on a fixed presentation format of Coder's reply.
-The Boss-question outcome means that, at the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome.
 A commit statement alone does not establish semantic completion, and contradictory or insufficient evidence supports no forced commit outcome.
 Captain shall use the repository-effect receipt as the authoritative identity of the phase's new commit.
 

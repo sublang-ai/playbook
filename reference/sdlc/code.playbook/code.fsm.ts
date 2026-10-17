@@ -326,7 +326,7 @@ const REVIEW_IR_TASK_PHASE_TEMPLATE = [
 ].join('\n');
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
-  "At the end of this call, Coder has an unanswered clarifying question for Boss whose answer is required to complete the current coding phase. Earlier interim questions resolved or superseded by later affirmative current-phase completion, and prerequisites only for later review, acceptance or release stages, do not establish this outcome. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
+  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const FIRST_PHASE_RESULT = {
   directCommit:
