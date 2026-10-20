@@ -304,6 +304,22 @@ files, so keep their locations available for resumed runs. Ordinary Captain
 routing, judging and replies receive `skills: []`; bounded recovery preparation
 can use the Captain's configured skills.
 
+Agents also find skills by themselves in their project and user skill folders,
+such as `.claude/skills` and `.agents/skills`. Captain routing, judging and
+replies turn that discovery off as far as the agent allows, so a skill
+installed there no longer steers them; what an agent keeps regardless stays,
+such as OpenCode's configuration-directory skills and plugin or extension
+skills. Kimi Code has no switch for this, so a Kimi Captain still reads those
+folders. Working players and recovery preparation keep them.
+
+A session whose Captain conversation began before Captain control turned this
+discovery off, with the Playbook release that requires Cligent 0.36.0, keeps the
+skill listings already in that conversation; start a new session for full
+isolation. A Captain whose agent offers the switch but cannot apply it where it
+runs now fails its control calls with an error, for example a Gemini CLI Captain
+under its native sandbox or run from the home directory, or a Codex Captain with
+an unreadable skill root.
+
 ## Browser capability
 
 A Captain or player agent block may set `browser: true` to make Cligent's managed

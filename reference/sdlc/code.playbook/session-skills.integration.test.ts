@@ -87,9 +87,14 @@ it.each(['continue', 'recover'] as const)('persists skill settings through %s an
     const workingCalls = calls.filter(call => call.options?.allowedTools === undefined);
     expect(workingCalls).toHaveLength(1);
     expect(workingCalls[0].options?.skills).toEqual([expected]);
+    // DR-093: native skill discovery stays on for working actors only.
+    expect(workingCalls[0].options?.nativeSkills).toBeUndefined();
     const controlCalls = calls.filter(call => call.options?.allowedTools?.length === 0);
     expect(controlCalls.length).toBeGreaterThan(0);
-    for (const call of controlCalls) expect(call.options?.skills).toEqual([]);
+    for (const call of controlCalls) {
+      expect(call.options?.skills).toEqual([]);
+      expect(call.options?.nativeSkills).toBe(false);
+    }
     const settled = await store.read(sessionId);
     expect(settled.state).toBe('settled');
     expect(settled.lastAppliedExecutionProjection.players[0].skills).toEqual([expected]);

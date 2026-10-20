@@ -108,11 +108,20 @@ const DEFAULT_AGENT_SETTINGS = {
   effort: { kind: 'provider-default' },
 } as const;
 
+// Decision, Judge and reporting calls additionally clear MCP servers and
+// turn native skill discovery off on these fixtures' Captain adapters
+// (playbook-captain-88).
+const CONTROL_AGENT_SETTINGS = {
+  ...DEFAULT_AGENT_SETTINGS,
+  mcpServers: {},
+  nativeSkills: false,
+} as const;
+
 const ISOLATED_HIDDEN_CAPTAIN_OPTIONS = {
   visibility: 'hidden',
   resume: false,
   allowedTools: [],
-  settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
+  settings: CONTROL_AGENT_SETTINGS,
 } as const;
 
 type HandleHook = (
@@ -2459,33 +2468,48 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
   // durable session-Captain, forwarded-empty, and hidden-judge calls. An empty
   // allowlist means "no tools" and is distinct from omission, which grants the
   // adapter's full native tool surface, so request it only where the adapter
-  // can enforce it.
+  // can enforce it. The same calls turn native skill discovery off only where
+  // Cligent reports the adapter can (playbook-captain-88).
   it.each([
-    { label: 'Claude', captainAdapter: 'claude', enforced: true },
-    { label: 'Gemini', captainAdapter: 'gemini', enforced: true },
+    {
+      label: 'Claude',
+      captainAdapter: 'claude',
+      enforced: true,
+      nativeSkillsOff: true,
+    },
+    {
+      label: 'Gemini',
+      captainAdapter: 'gemini',
+      enforced: true,
+      nativeSkillsOff: true,
+    },
     {
       label: 'an unrecognized adapter',
       captainAdapter: 'future-agent',
       enforced: true,
+      nativeSkillsOff: false,
     },
     {
       label: 'Codex without tool enforcement',
       captainAdapter: 'codex',
       enforced: false,
+      nativeSkillsOff: true,
     },
     {
       label: 'Kimi without tool enforcement',
       captainAdapter: 'kimi',
       enforced: false,
+      nativeSkillsOff: false,
     },
     {
       label: 'OpenCode without tool enforcement',
       captainAdapter: 'opencode',
       enforced: false,
+      nativeSkillsOff: true,
     },
   ])(
     'resolves the control-call tool posture for $label',
-    async ({ captainAdapter, enforced }) => {
+    async ({ captainAdapter, enforced, nativeSkillsOff }) => {
       const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
         if (!runtime.ports) throw new Error('runtime ports missing');
         await runtime.ports.callCaptain(
@@ -2520,19 +2544,27 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
           call.options !== undefined &&
             Object.hasOwn(call.options, 'allowedTools'),
         ).toBe(enforced);
+        expect(call.options?.settings?.nativeSkills).toBe(
+          nativeSkillsOff ? false : undefined,
+        );
       }
+      const settings = nativeSkillsOff
+        ? CONTROL_AGENT_SETTINGS
+        : // Kimi Code has no per-run lever and an unrecognized adapter has
+          // no published support, so both keep their native skills.
+          { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} };
       const sessionCall = context.captainCalls.find(({ prompt }) =>
         isClosingReplyPrompt(prompt),
       );
       expect(sessionCall?.options).toEqual(
         enforced
-          ? ISOLATED_HIDDEN_CAPTAIN_OPTIONS
+          ? { ...ISOLATED_HIDDEN_CAPTAIN_OPTIONS, settings }
           : // These Cligent adapters reject any tool list outright, so
             // requesting one would fail the control call before the model.
             {
               visibility: 'hidden',
               resume: false,
-              settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
+              settings,
             },
       );
       expect(
@@ -3046,7 +3078,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       visibility: 'hidden',
       resume: 'conversation-1',
       allowedTools: [],
-      settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} },
+      settings: CONTROL_AGENT_SETTINGS,
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'first task',
@@ -4785,6 +4817,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       browser: false,
       skills: [],
       mcpServers: {},
+      nativeSkills: false,
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
       subagentModel: 'captain-subagents',
@@ -4872,6 +4905,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       browser: false,
       skills: [],
       mcpServers: {},
+      nativeSkills: false,
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
       subagentModel: 'inherit',
@@ -5468,7 +5502,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       },
     ]);
     expect(nonSummaryCaptainCalls[2]?.options).toEqual(
-      { visibility: 'hidden', resume: false, allowedTools: [], settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} } },
+      { visibility: 'hidden', resume: false, allowedTools: [], settings: CONTROL_AGENT_SETTINGS },
     );
     expectHiddenJudgeEnvelope(
       nonSummaryCaptainCalls[2]?.prompt,
@@ -5535,7 +5569,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
     expect(judgeCalls(context)).toHaveLength(1);
     expect(judgeCalls(context)[0]?.options).toEqual(
-      { visibility: 'hidden', resume: false, allowedTools: [], settings: { ...DEFAULT_AGENT_SETTINGS, mcpServers: {} } },
+      { visibility: 'hidden', resume: false, allowedTools: [], settings: CONTROL_AGENT_SETTINGS },
     );
     expectHiddenJudgeEnvelope(judgeCalls(context)[0]?.prompt, runtimePrompt);
     expect(judgeReply).toBe('{"guard":"accepted"}');

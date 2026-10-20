@@ -746,7 +746,7 @@ shell did not author.
 #### playbook-captain-31
 
 Where the shell hosts the session Captain, every session-Captain call — the per-turn decision call, the result-phase closing-reply call, and a parse-resolved `respond` call — shall run hidden on the one durable conversation: the shell shall request `resume` with the pinned token, shall request a fresh conversation (`resume: false`) for the session's first call and for the [[playbook-captain-35](#playbook-captain-35)] reseed, shall use the retained token or `false` selected by that item's typed settings-preflight catch-up, and shall pin each returned `resumeToken` in place of the prior state.
-Once the Captain conversation is established, ordinary reopen shall require its configured adapter, instruction, and permissions to remain unchanged, pass `{ resume, settings: { model, effort, browser, skills, fastMode?, subagentModel?, subagentEffort?, instruction?, permissions? } }` with the complete effective settings on the next `context.callCaptain`, and preserve the prior pin without a fresh fallback when the provider rejects those settings.
+Once the Captain conversation is established, ordinary reopen shall require its configured adapter, instruction, and permissions to remain unchanged, pass `{ resume, settings: { model, effort, browser, skills, mcpServers, nativeSkills?, fastMode?, subagentModel?, subagentEffort?, instruction?, permissions? } }` with the complete effective settings, their capability members as [[playbook-captain-78](#playbook-captain-78)] and [[playbook-captain-88](#playbook-captain-88)] set them, on the next `context.callCaptain`, and preserve the prior pin without a fresh fallback when the provider rejects those settings.
 The shell shall preserve the runtime prompt as the exact host prompt,
 adding only the attachment-context suffix of [[playbook-captain-78](#playbook-captain-78)],
 and shall pass the original Boss text unchanged into the decision
@@ -764,6 +764,17 @@ the empty allowlist.
 The shell shall reject the call if the configured adapter is asked
 for the empty allowlist and cannot enforce it; the shared queue
 shall serialize these calls.
+
+#### playbook-captain-88
+
+When the shell builds a call's complete settings, it shall decide their `nativeSkills` member from the call's role and from Cligent's published native-skill support for the session Captain's adapter ([DR-093](../decisions/093-captain-control-turns-native-skills-off.md)):
+
+| Call | Session Captain adapter's support | `nativeSkills` |
+| --- | --- | --- |
+| Decision, Judge, or reporting call [[playbook-captain-78](#playbook-captain-78)], or a forwarded sub-runtime Captain call requesting an empty allowlist [[playbook-captain-10](#playbook-captain-10)] | `disableSupported: true` — `claude`, `codex`, `gemini`, and `opencode` | `false`, so the runtime's own skill discovery is off for that call as far as its adapter's levers reach |
+| Decision, Judge, or reporting call, or a forwarded sub-runtime Captain call requesting an empty allowlist | `disableSupported: false` — `kimi` — or no support published | omitted, so the Captain keeps its runtime's own skill discovery, a documented reduction rather than an equivalence |
+| Forwarded sub-runtime Captain call that omits `allowedTools` or names tools | any | omitted, so it keeps the Captain's configured skills and native discovery |
+| Working-player or bounded Captain recovery-preparation call | any | omitted, so the working actor keeps its runtime's own skills |
 
 #### playbook-captain-20
 
@@ -1548,7 +1559,7 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 
 Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless all three declare artifact schema `3` and expose shared-factory profiles each carrying its own factory's identical immutable compatibility record; schema-2, missing-schema, malformed-profile, unsupported-schema, shared-factory-disagreeing, and bespoke-disagreeing manifest fixtures shall reject before option validation or runtime construction; every imported manifest member is read once before later use; raw and validator-produced `hostCapabilities` reject before factory work; absent, extra, malformed, or artifact-authority-mismatched current-host capabilities reject before `createRuntime`; each real registry receives its exact capability as the distinct second factory argument while the first remains only configured options; CODE declares role `coder`; REVIEW and DECIDE declare `coder` and `reviewer`; CODE and REVIEW declare no concurrent role set; DECIDE declares exactly `[['coder', 'reviewer']]`; malformed concurrent sets reject; each normalized role map covers the exact required set; each current empty option schema is validated without constructing a runtime; each runtime init receives exact role bindings whose prompt identities use the concrete model value or the established adapter for `provider-default`; and each later player call reaches only its explicitly bound player id (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
 The suite shall reject an absent `sessionAgents` projection, a referenced player missing from it, or an extra unreferenced player before runtime construction (verifying [[playbook-captain-16](#playbook-captain-16)]).
-The suite shall also fail unless runtime Captain and judge calls preserve their visibility, resume, and optional tool-isolation selections through the shared single-flight Captain queue (verifying [[playbook-captain-9](#playbook-captain-9)] and [[playbook-captain-10](#playbook-captain-10)]).
+The suite shall also fail unless runtime Captain and judge calls preserve their visibility, resume, and optional tool-isolation selections through the shared single-flight Captain queue (verifying [[playbook-captain-9](#playbook-captain-9)] and [[playbook-captain-10](#playbook-captain-10)]), and unless a forwarded Captain call that omits `allowedTools` or names tools carries no `nativeSkills` under a Captain adapter whose published support sets `disableSupported` (verifying [[playbook-captain-88](#playbook-captain-88)]).
 
 #### playbook-captain-32
 
@@ -1755,7 +1766,7 @@ durable session-Captain call and hidden adjudication call while still
 resuming the pinned durable conversation on session-Captain calls,
 requesting fresh isolation on judge calls, and using the
 hidden-control envelope, and unless a shell built
-with an enforcing or unrecognized adapter requests `allowedTools: []` on those same calls (verifying [[playbook-captain-31](#playbook-captain-31)]).
+with an enforcing or unrecognized adapter requests `allowedTools: []` on those same calls, and unless every such call and a forwarded empty-allowlist sub-runtime Captain call carry `nativeSkills: false` under a Captain adapter whose published support sets `disableSupported` and no `nativeSkills` under `kimi` or an unrecognized adapter (verifying [[playbook-captain-31](#playbook-captain-31)], [[playbook-captain-88](#playbook-captain-88)]).
 
 #### playbook-captain-36
 
@@ -2161,3 +2172,7 @@ When integration tests submit attachment-only, clarified, nested and unrelated t
 The integration suite shall fail unless configured skills reach working-player calls and bounded recovery preparation, every Captain control call receives an empty list, durable ordinary reopening applies current lists, and uncertain retry retains the attempted lists while structural identity stays unchanged (verifying [[playbook-captain-78](#playbook-captain-78)]).
 
 When host integration drives inspection, nested work, interruption and a rejected repository effect, the suite shall verify substantive worker findings reach the Captain report with exact producing identity, quoted injection-like content cannot forge a host block, long content is marked as an excerpt while findings beyond introductory prose remain visible, aggregate overflow preserves latest reports with an omission marker, recovery reports saved findings without repeating work, repeated visits to one state cannot attribute an unacknowledged later result to an earlier accepted step, disposed adopted roots retain exact producing references, and no rejected receipt, hidden control or unrelated turn is reported as accepted completion [[playbook-captain-79](#playbook-captain-79)].
+
+#### playbook-captain-89
+
+When integration tests drive durable sessions and Captain recovery preparation through the shared host under each supported session Captain adapter, the suite shall fail unless every decision, Judge, and reporting call reaches the adapter with `nativeSkills: false` under the `claude`, `codex`, `gemini`, and `opencode` Captains and with no `nativeSkills` option under the `kimi` Captain, while every working-player and bounded recovery-preparation call reaches it with none (verifying [[playbook-captain-88](#playbook-captain-88)]).
