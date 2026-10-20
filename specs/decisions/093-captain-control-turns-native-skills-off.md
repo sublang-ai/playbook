@@ -40,5 +40,5 @@ A resumed conversation keeps the skill listings and bodies already in its histor
 
 [1]: https://github.com/sublang-ai/cligent/blob/v0.35.0/specs/decisions/037-per-run-native-skill-switch.md "Cligent DR-037: Per-Run Native Skill Switch"
 [2]: https://github.com/sublang-ai/spex/blob/main/specs/decisions/124-skills-reach-every-agent.md "Spex DR-124: Skills Reach Every Agent"
-[3]: https://github.com/sublang-ai/cligent/pull/83 "Cligent DR-038: tmux-play nativeSkills call setting"
+[3]: https://github.com/sublang-ai/cligent/blob/v0.36.0/specs/decisions/038-native-skills-in-tmux-play-call-settings.md "Cligent DR-038: Native Skills in tmux-play Call Settings"
 [4]: https://github.com/sublang-ai/cligent/blob/v0.35.0/specs/packages/skills.md#skills-11 "Cligent skills-11: native-skill support per adapter"
