@@ -307,8 +307,16 @@ can use the Captain's configured skills.
 Agents also find skills by themselves in their project and user skill folders,
 such as `.claude/skills` and `.agents/skills`. Captain routing, judging and
 replies turn that discovery off as far as the agent allows, so a skill
-installed there cannot steer them. Kimi Code has no switch for this, so a Kimi Captain still reads those
+installed there no longer steers them; what an agent keeps regardless stays,
+such as OpenCode's configuration-directory skills and plugin or extension
+skills. Kimi Code has no switch for this, so a Kimi Captain still reads those
 folders. Working players and recovery preparation keep them.
+
+A session whose Captain conversation began before this release keeps the skill
+listings already in that conversation; start a new session for full isolation.
+A Captain whose agent cannot apply the switch now fails its control calls with
+an error, for example a Gemini CLI Captain under its native sandbox or run from
+the home directory, or a Codex Captain with an unreadable skill root.
 
 ## Browser capability
 

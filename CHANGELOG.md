@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Captain decision, Judge and reporting calls turn off the skills an agent finds by itself in its project and user skill folders, so a skill installed there cannot steer routing or adjudication. A Kimi Code Captain keeps them, since Kimi offers no per-run switch; working players and recovery preparation are unchanged ([DR-093](specs/decisions/093-captain-control-turns-native-skills-off.md)).
+- Captain decision, Judge and reporting calls turn off, as far as each agent allows, the skills it finds by itself in the folders hosts install into (`.claude/skills`, `.agents/skills` and their home counterparts), so a skill installed there no longer steers routing or adjudication. What an agent keeps regardless stays, such as OpenCode's configuration-directory skills and plugin or extension skills. A Kimi Code Captain keeps all of them, since Kimi offers no per-run switch; working players and recovery preparation are unchanged ([DR-093](specs/decisions/093-captain-control-turns-native-skills-off.md)).
+- A session whose Captain conversation began before this release keeps the skill listings already in that conversation; start a new session for full isolation.
+- A Captain whose agent cannot apply the switch now fails its control calls with an error, for example a Gemini CLI Captain under its native sandbox or run from the home directory, or a Codex Captain with an unreadable skill root.
 - Require Cligent 0.36.0, whose tmux-play call settings carry the native-skill switch.
 
 ### Fixed

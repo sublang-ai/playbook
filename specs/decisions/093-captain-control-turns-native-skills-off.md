@@ -20,7 +20,7 @@ A resumed conversation keeps the skill listings and bodies already in its histor
 
 ## Decision
 
-- Every decision, Judge and reporting call carries `nativeSkills: false` where `getNativeSkillSupport` reports `disableSupported` for the session Captain's adapter.
+- Every decision, Judge and reporting call, and every forwarded sub-runtime Captain call requesting an empty allowlist, carries `nativeSkills: false` where `getNativeSkillSupport` reports `disableSupported` for the session Captain's adapter.
 - Where it does not — Kimi Code — or reports nothing, those calls omit `nativeSkills`, and the Captain keeps its runtime's own skill discovery.
   The owner chose this documented reduction over refusing a Kimi Captain, as DR-013 A1 accepts prompt-only tool isolation.
 - Working-player and bounded recovery-preparation calls omit it: they are working actors, which DR-092 already gives their configured skills.
@@ -30,10 +30,10 @@ A resumed conversation keeps the skill listings and bodies already in its histor
 
 ## Consequences
 
-- On every adapter except Kimi Code, skills installed in project and user skill folders no longer reach Captain control; the skills each runtime keeps regardless stay.
-- A durable Captain conversation established before adoption keeps the listings its history already holds until its next reseed; its new turns add none.
+- On every adapter except Kimi Code, skills installed in project and user skill folders no longer reach Captain control calls made after adoption, as far as each runtime's levers reach; the skills each runtime keeps regardless stay, such as OpenCode's configuration-directory skills and plugin or extension skills [[4]].
+- A durable Captain conversation pinned before adoption keeps the listings its history already holds for as long as it stays pinned; only a reseed ([[playbook-captain-35](../packages/playbook-captain.md#playbook-captain-35)]) clears them, and its new turns add none.
 - On Claude Code the switch also drops, for control calls, any plugin placed in a project or user skill folder with its agents, hooks, MCP servers and commands; Codex lists every disabled skill path in its process arguments [[4]].
-- A control call Cligent still rejects under the switch, such as Codex with an unreadable native skill root, fails like any other provider failure.
+- A control call Cligent still rejects under the switch fails like any other provider failure, so a Captain that worked before can now fail every control call: Codex with an unreadable native skill root or more disabled skill paths than its process arguments hold, or Gemini CLI whose per-run home cannot be built, as under its native sandbox or from the home directory [[4]].
 - A Kimi Captain still reads the skills in its project, user, configured and plugin skill folders.
 
 ## References

@@ -746,7 +746,7 @@ shell did not author.
 #### playbook-captain-31
 
 Where the shell hosts the session Captain, every session-Captain call — the per-turn decision call, the result-phase closing-reply call, and a parse-resolved `respond` call — shall run hidden on the one durable conversation: the shell shall request `resume` with the pinned token, shall request a fresh conversation (`resume: false`) for the session's first call and for the [[playbook-captain-35](#playbook-captain-35)] reseed, shall use the retained token or `false` selected by that item's typed settings-preflight catch-up, and shall pin each returned `resumeToken` in place of the prior state.
-Once the Captain conversation is established, ordinary reopen shall require its configured adapter, instruction, and permissions to remain unchanged, pass `{ resume, settings: { model, effort, browser, skills, fastMode?, subagentModel?, subagentEffort?, instruction?, permissions? } }` with the complete effective settings on the next `context.callCaptain`, and preserve the prior pin without a fresh fallback when the provider rejects those settings.
+Once the Captain conversation is established, ordinary reopen shall require its configured adapter, instruction, and permissions to remain unchanged, pass `{ resume, settings: { model, effort, browser, skills, mcpServers, nativeSkills?, fastMode?, subagentModel?, subagentEffort?, instruction?, permissions? } }` with the complete effective settings, their capability members as [[playbook-captain-78](#playbook-captain-78)] and [[playbook-captain-88](#playbook-captain-88)] set them, on the next `context.callCaptain`, and preserve the prior pin without a fresh fallback when the provider rejects those settings.
 The shell shall preserve the runtime prompt as the exact host prompt,
 adding only the attachment-context suffix of [[playbook-captain-78](#playbook-captain-78)],
 and shall pass the original Boss text unchanged into the decision
@@ -771,8 +771,9 @@ When the shell builds a call's complete settings, it shall decide their `nativeS
 
 | Call | Session Captain adapter's support | `nativeSkills` |
 | --- | --- | --- |
-| Decision, Judge, or reporting call [[playbook-captain-78](#playbook-captain-78)] | `disableSupported: true` — `claude`, `codex`, `gemini`, and `opencode` | `false`, so the runtime's own project and user skills stay out of the call |
-| Decision, Judge, or reporting call | `disableSupported: false` — `kimi` — or no support published | omitted, so the Captain keeps its runtime's own skill discovery, a documented reduction rather than an equivalence |
+| Decision, Judge, or reporting call [[playbook-captain-78](#playbook-captain-78)], or a forwarded sub-runtime Captain call requesting an empty allowlist [[playbook-captain-10](#playbook-captain-10)] | `disableSupported: true` — `claude`, `codex`, `gemini`, and `opencode` | `false`, so the runtime's own skill discovery is off for that call as far as its adapter's levers reach |
+| Decision, Judge, or reporting call, or a forwarded sub-runtime Captain call requesting an empty allowlist | `disableSupported: false` — `kimi` — or no support published | omitted, so the Captain keeps its runtime's own skill discovery, a documented reduction rather than an equivalence |
+| Forwarded sub-runtime Captain call that omits `allowedTools` or names tools | any | omitted, so it keeps the Captain's configured skills and native discovery |
 | Working-player or bounded Captain recovery-preparation call | any | omitted, so the working actor keeps its runtime's own skills |
 
 #### playbook-captain-20
@@ -1765,7 +1766,7 @@ durable session-Captain call and hidden adjudication call while still
 resuming the pinned durable conversation on session-Captain calls,
 requesting fresh isolation on judge calls, and using the
 hidden-control envelope, and unless a shell built
-with an enforcing or unrecognized adapter requests `allowedTools: []` on those same calls (verifying [[playbook-captain-31](#playbook-captain-31)]).
+with an enforcing or unrecognized adapter requests `allowedTools: []` on those same calls, and unless every such call and a forwarded empty-allowlist sub-runtime Captain call carry `nativeSkills: false` under a Captain adapter whose published support sets `disableSupported` and no `nativeSkills` under `kimi` or an unrecognized adapter (verifying [[playbook-captain-31](#playbook-captain-31)], [[playbook-captain-88](#playbook-captain-88)]).
 
 #### playbook-captain-36
 
