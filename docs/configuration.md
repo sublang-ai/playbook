@@ -312,11 +312,13 @@ such as OpenCode's configuration-directory skills and plugin or extension
 skills. Kimi Code has no switch for this, so a Kimi Captain still reads those
 folders. Working players and recovery preparation keep them.
 
-A session whose Captain conversation began before this release keeps the skill
-listings already in that conversation; start a new session for full isolation.
-A Captain whose agent cannot apply the switch now fails its control calls with
-an error, for example a Gemini CLI Captain under its native sandbox or run from
-the home directory, or a Codex Captain with an unreadable skill root.
+A session whose Captain conversation began before Captain control turned this
+discovery off, with the Playbook release that requires Cligent 0.36.0, keeps the
+skill listings already in that conversation; start a new session for full
+isolation. A Captain whose agent offers the switch but cannot apply it where it
+runs now fails its control calls with an error, for example a Gemini CLI Captain
+under its native sandbox or run from the home directory, or a Codex Captain with
+an unreadable skill root.
 
 ## Browser capability
 
