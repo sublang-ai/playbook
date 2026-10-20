@@ -468,11 +468,13 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.permissions',
         'AgentCallSettings.browser',
         'AgentCallSettings.skills',
+        'AgentCallSettings.nativeSkills',
         'AgentCallSettings.mcpServers',
         'AgentCallSettingsError',
         'isAgentCallSettingsError',
         'assertFastModeSupported',
         'assertSubagentModelSupported',
+        'getNativeSkillSupport',
         'launchManagedTmuxPlay signature',
         'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
         'runManagedTmuxPlaySession signature',
@@ -487,6 +489,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'assertSubagentModelSupported runtime semantics',
         'launchManagedTmuxPlay runtime export',
         'runManagedTmuxPlaySession runtime export',
+        'getNativeSkillSupport runtime semantics',
       ]);
       expect(result.ok).toBe(true);
     } finally {

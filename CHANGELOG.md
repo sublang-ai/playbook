@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Captain decision, Judge and reporting calls turn off the skills an agent finds by itself in its project and user skill folders, so a skill installed there cannot steer routing or adjudication. A Kimi Code Captain keeps them, since Kimi offers no per-run switch; working players and recovery preparation are unchanged ([DR-093](specs/decisions/093-captain-control-turns-native-skills-off.md)).
+
 ### Fixed
 
 - Use the compiler's standard Boss-question description in CODE and keep its current-phase interpretation in the existing runtime adjudication rule. Source-authored domain outcomes still preserve their evidence qualifications; framework-owned questions no longer duplicate that contract.

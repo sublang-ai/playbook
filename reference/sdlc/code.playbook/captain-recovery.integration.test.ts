@@ -64,6 +64,15 @@ class RecoveryAdapter implements AgentAdapter {
               ? 'judge'
               : 'player';
     RecoveryAdapter.calls.push({ kind, prompt, options });
+    // DR-093: decision, Judge and reporting calls turn native skills off
+    // where the Captain's adapter can; preparation and players never do. The
+    // sub-runtime Judge's envelope counts as a player call above.
+    const control =
+      kind !== 'prepare' &&
+      (kind !== 'player' || prompt.includes('hidden-control judge'));
+    expect(options?.nativeSkills, kind).toBe(
+      control && RecoveryAdapter.captainAdapter !== 'kimi' ? false : undefined,
+    );
     let result: string;
     if (prompt.includes('Check whether existing instructions already answer')) {
       RecoveryAdapter.calls.at(-1)!.kind = 'question-check';

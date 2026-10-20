@@ -613,6 +613,27 @@ export const exact: Exact = true;
 `,
   ),
   typeCapability(
+    'AgentCallSettings.nativeSkills',
+    'agent-call-settings-native-skills.ts',
+    'Captain control calls turn native skill discovery off in their complete settings (DR-093).',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<{} extends Pick<AgentCallSettings, 'nativeSkills'> ? true : false>;
+type Exact = Assert<Equal<AgentCallSettings['nativeSkills'], boolean | undefined>>;
+export const disabled: AgentCallSettings['nativeSkills'] = false;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.mcpServers',
     'agent-call-settings-mcp-servers.ts',
     'Complete settings admit explicit stdio and HTTP MCP servers with immutable configuration.',
@@ -689,6 +710,30 @@ declare const adapter: AgentType | 'claude';
 export function use(): void {
   assertSubagentModelSupported(adapter, 'configured subagentModel');
 }
+`,
+  ),
+  typeCapability(
+    'getNativeSkillSupport',
+    'get-native-skill-support.ts',
+    'Playbook asks Cligent which Captain adapters can turn native skill discovery off (DR-093).',
+    `import { getNativeSkillSupport } from '@sublang/cligent';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Lookup = ReturnType<typeof getNativeSkillSupport>;
+type Optional = Assert<undefined extends Lookup ? true : false>;
+type Exact = Assert<Equal<NonNullable<Lookup>['disableSupported'], boolean>>;
+export function use(adapter: string): boolean {
+  return getNativeSkillSupport(adapter)?.disableSupported === true;
+}
+export const optional: Optional = true;
+export const exact: Exact = true;
 `,
   ),
   typeCapability(
@@ -862,6 +907,7 @@ export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'assertSubagentModelSupported runtime semantics',
   'launchManagedTmuxPlay runtime export',
   'runManagedTmuxPlaySession runtime export',
+  'getNativeSkillSupport runtime semantics',
 ]);
 
 function formatDiagnostic(diagnostic) {
@@ -1276,6 +1322,61 @@ if (typeof runManagedTmuxPlaySession !== 'function') {
     id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[6],
     why: 'The installed public tmux-play entry point must expose the managed session runtime value used by the pane child.',
     runner: managedSessionExportRunner,
+    args: [],
+  });
+
+  const nativeSkillRunner = join(root, 'native-skill-support-runtime.mjs');
+  writeFileSync(
+    nativeSkillRunner,
+    `import {
+  NATIVE_SKILL_SUPPORT,
+  getNativeSkillSupport,
+} from '@sublang/cligent';
+
+if (typeof getNativeSkillSupport !== 'function') {
+  throw new Error('getNativeSkillSupport is not a runtime function');
+}
+if (
+  typeof NATIVE_SKILL_SUPPORT !== 'object' ||
+  NATIVE_SKILL_SUPPORT === null ||
+  Array.isArray(NATIVE_SKILL_SUPPORT)
+) {
+  throw new Error('NATIVE_SKILL_SUPPORT is not a runtime descriptor');
+}
+const entries = Object.entries(NATIVE_SKILL_SUPPORT);
+if (
+  entries.length === 0 ||
+  !entries.some(([, support]) => support?.disableSupported === true) ||
+  !entries.some(([, support]) => support?.disableSupported === false)
+) {
+  throw new Error('NATIVE_SKILL_SUPPORT lacks supported and unsupported cases');
+}
+for (const [adapter, support] of entries) {
+  if (typeof support?.disableSupported !== 'boolean') {
+    throw new Error('NATIVE_SKILL_SUPPORT carries an invalid disableSupported flag');
+  }
+  if (getNativeSkillSupport(adapter)?.disableSupported !== support.disableSupported) {
+    throw new Error(
+      'getNativeSkillSupport disagrees with NATIVE_SKILL_SUPPORT for ' + adapter,
+    );
+  }
+}
+const claudeSupport = NATIVE_SKILL_SUPPORT['claude-code'];
+if (typeof claudeSupport?.disableSupported !== 'boolean') {
+  throw new Error('NATIVE_SKILL_SUPPORT lacks the claude-code alias target');
+}
+if (getNativeSkillSupport('claude')?.disableSupported !== claudeSupport.disableSupported) {
+  throw new Error('the claude alias disagrees with claude-code native-skill support');
+}
+if (getNativeSkillSupport('playbook-unlisted-adapter') !== undefined) {
+  throw new Error('getNativeSkillSupport describes an unlisted adapter');
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[7],
+    why: 'Playbook asks the root runtime lookup which Captain adapters can turn native skill discovery off rather than keep its own table, and leaves an unlisted adapter its native skills (DR-093).',
+    runner: nativeSkillRunner,
     args: [],
   });
 

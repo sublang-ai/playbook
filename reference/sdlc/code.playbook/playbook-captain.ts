@@ -16,6 +16,7 @@ import {
   type PlayerAdapterName,
   type TuningSelection,
 } from '@sublang/cligent/tmux-play';
+import { getNativeSkillSupport } from '@sublang/cligent';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
@@ -4173,7 +4174,24 @@ function callSettings(
 }
 
 function controlCallSettings(agent: SessionAgent): AgentCallSettings {
-  return { ...callSettings(agent), browser: false, skills: [], mcpServers: {} };
+  return {
+    ...callSettings(agent),
+    browser: false,
+    skills: [],
+    mcpServers: {},
+    ...controlNativeSkills(agent.adapter),
+  };
+}
+
+// The native-skill half of a decision, Judge or reporting call's settings
+// (playbook-captain-88). Only an adapter Cligent reports can honor the switch
+// is asked to; tmux-play rejects `false` for any other, so a Kimi Captain
+// keeps its runtime's own skills rather than failing every control call
+// (DR-093). Working calls never carry it.
+function controlNativeSkills(adapter: string): { nativeSkills?: false } {
+  return getNativeSkillSupport(adapter)?.disableSupported === true
+    ? { nativeSkills: false }
+    : {};
 }
 
 function promptIdentity(binding: EffectivePlayerBinding): string {

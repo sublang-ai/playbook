@@ -58,6 +58,7 @@ interface FixtureShape {
   readonly settingsPermissions?: string;
   readonly settingsBrowser?: string;
   readonly settingsSkills?: string;
+  readonly settingsNativeSkills?: string;
   readonly settingsMcpServers?: string;
   readonly rootAttachment?: string;
   readonly rootMcpServerConfig?: string;
@@ -77,6 +78,9 @@ interface FixtureShape {
   readonly subagentModelAssertion?: string;
   readonly subagentModelAssertionRuntime?: boolean;
   readonly subagentModelAssertionSemantics?: boolean;
+  readonly nativeSkillLookup?: string;
+  readonly nativeSkillLookupRuntime?: boolean;
+  readonly nativeSkillLookupSemantics?: boolean;
   readonly launchManagedSignature?: string;
   readonly runManagedSignature?: string;
   readonly launchManagedRuntime?: boolean;
@@ -142,6 +146,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsPermissions = 'readonly permissions?: PermissionPolicy;',
     settingsBrowser = 'readonly browser?: boolean;',
     settingsSkills = 'readonly skills?: readonly string[];',
+    settingsNativeSkills = 'readonly nativeSkills?: boolean;',
     settingsMcpServers = 'readonly mcpServers?: McpServers;',
     rootAttachment = 'export interface Attachment { readonly path: string; readonly mimeType?: string; }',
     rootMcpServerConfig = `export type McpServerConfig = {
@@ -176,6 +181,14 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
       "export declare function assertSubagentModelSupported(agent: AgentType | 'claude', path?: string): void;",
     subagentModelAssertionRuntime = true,
     subagentModelAssertionSemantics = true,
+    nativeSkillLookup = `export interface NativeSkillSupport {
+  readonly folders: { readonly project: string; readonly user: string };
+  readonly disableSupported: boolean;
+  readonly notes: string;
+}
+export declare function getNativeSkillSupport(agent: string): NativeSkillSupport | undefined;`,
+    nativeSkillLookupRuntime = true,
+    nativeSkillLookupSemantics = true,
     launchManagedSignature =
       'export declare function launchManagedTmuxPlay(options: LaunchManagedTmuxPlayOptions): Promise<PreparedManagedTmuxPlayLaunch>;',
     runManagedSignature =
@@ -257,6 +270,23 @@ export function assertSubagentModelSupported(agent, path = 'subagentModel') {
 }
 `
         : ''
+    }${
+      nativeSkillLookupRuntime
+        ? `const folders = Object.freeze({ project: '.agents/skills', user: '~/.agents/skills' });
+export const NATIVE_SKILL_SUPPORT = Object.freeze({
+  'claude-code': Object.freeze({ folders, disableSupported: true, notes: '' }),
+  kimi: Object.freeze({ folders, disableSupported: false, notes: '' }),
+});
+export function getNativeSkillSupport(agent) {
+  ${
+    nativeSkillLookupSemantics
+      ? `const canonical = agent === 'claude' ? 'claude-code' : agent;
+  return Object.hasOwn(NATIVE_SKILL_SUPPORT, canonical) ? NATIVE_SKILL_SUPPORT[canonical] : undefined;`
+      : 'return NATIVE_SKILL_SUPPORT[agent];'
+  }
+}
+`
+        : ''
     }export {};
 `,
   );
@@ -266,6 +296,7 @@ export function assertSubagentModelSupported(agent, path = 'subagentModel') {
 export type AgentType = 'claude-code' | 'codex' | 'gemini' | 'kimi' | 'opencode';
 ${fastModeAssertion}
 ${subagentModelAssertion}
+${nativeSkillLookup}
 `,
   );
   write(
@@ -365,6 +396,7 @@ export interface AgentCallSettings {
   ${settingsPermissions}
   ${settingsBrowser}
   ${settingsSkills}
+  ${settingsNativeSkills}
   ${settingsMcpServers}
 }
 ${settingsError}
@@ -479,6 +511,8 @@ ${runManagedSignature}
   runManagedTmuxPlaySession: unknown;
   assertFastModeSupported: unknown;
   assertSubagentModelSupported: unknown;
+  nativeSkills: unknown;
+  getNativeSkillSupport: unknown;
   approvalHandler: unknown;
   invocationId: unknown;
   expiresAt: unknown;
@@ -519,6 +553,8 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'isAgentCallSettingsError',
   'assertFastModeSupported',
   'assertSubagentModelSupported',
+  'nativeSkills',
+  'getNativeSkillSupport',
   'signal',
   'beforeNativeAttach',
   'attach',
@@ -592,11 +628,13 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.permissions',
       'AgentCallSettings.browser',
       'AgentCallSettings.skills',
+      'AgentCallSettings.nativeSkills',
       'AgentCallSettings.mcpServers',
       'AgentCallSettingsError',
       'isAgentCallSettingsError',
       'assertFastModeSupported',
       'assertSubagentModelSupported',
+      'getNativeSkillSupport',
       'launchManagedTmuxPlay signature',
       'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
       'runManagedTmuxPlaySession signature',
@@ -611,6 +649,7 @@ describe('the cligent release-capability guard', () => {
       'assertSubagentModelSupported runtime semantics',
       'launchManagedTmuxPlay runtime export',
       'runManagedTmuxPlaySession runtime export',
+      'getNativeSkillSupport runtime semantics',
     ]);
     expect(result.ok).toBe(true);
     expect(result.specifier).toBe('@sublang/cligent/tmux-play');
@@ -682,6 +721,16 @@ describe('the cligent release-capability guard', () => {
       `${kind} complete skill setting`,
       { settingsSkills: declaration },
       'AgentCallSettings.skills',
+    ]),
+    ...[
+      ['absent', ''],
+      ['required', 'readonly nativeSkills: boolean;'],
+      ['narrowed', 'readonly nativeSkills?: false;'],
+      ['widened', "readonly nativeSkills?: boolean | 'off';"],
+    ].map(([kind, declaration]) => [
+      `${kind} complete native-skill setting`,
+      { settingsNativeSkills: declaration },
+      'AgentCallSettings.nativeSkills',
     ]),
     ...[
       ['absent', ''],
@@ -1061,6 +1110,37 @@ describe('the cligent release-capability guard', () => {
       'subagent-model runtime capability semantics',
       { subagentModelAssertionSemantics: false },
       'assertSubagentModelSupported runtime semantics',
+    ],
+    [
+      'native-skill support lookup',
+      { nativeSkillLookup: '' },
+      'getNativeSkillSupport',
+    ],
+    [
+      'optional native-skill support',
+      {
+        nativeSkillLookup:
+          'export declare function getNativeSkillSupport(agent: string): { readonly disableSupported: boolean };',
+      },
+      'getNativeSkillSupport',
+    ],
+    [
+      'boolean native-skill support flag',
+      {
+        nativeSkillLookup:
+          'export declare function getNativeSkillSupport(agent: string): { readonly disableSupported: boolean | string } | undefined;',
+      },
+      'getNativeSkillSupport',
+    ],
+    [
+      'native-skill support runtime lookup',
+      { nativeSkillLookupRuntime: false },
+      'getNativeSkillSupport runtime semantics',
+    ],
+    [
+      'native-skill support claude alias',
+      { nativeSkillLookupSemantics: false },
+      'getNativeSkillSupport runtime semantics',
     ],
     [
       'managed launch declaration',

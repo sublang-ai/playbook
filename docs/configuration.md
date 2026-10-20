@@ -304,6 +304,12 @@ files, so keep their locations available for resumed runs. Ordinary Captain
 routing, judging and replies receive `skills: []`; bounded recovery preparation
 can use the Captain's configured skills.
 
+Agents also find skills by themselves in their project and user skill folders,
+such as `.claude/skills` and `.agents/skills`. Captain routing, judging and
+replies turn that discovery off as far as the agent allows, so a skill
+installed there cannot steer them. Kimi Code has no switch for this, so a Kimi Captain still reads those
+folders. Working players and recovery preparation keep them.
+
 ## Browser capability
 
 A Captain or player agent block may set `browser: true` to make Cligent's managed
