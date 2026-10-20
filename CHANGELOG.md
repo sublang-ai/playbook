@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.11.0] - 2026-10-20
+
 ### Changed
 
 - Captain decision, Judge and reporting calls turn off, as far as each agent allows, the skills it finds by itself in the folders hosts install into (`.claude/skills`, `.agents/skills` and their home counterparts), so a skill installed there no longer steers routing or adjudication. What an agent keeps regardless stays, such as OpenCode's configuration-directory skills and plugin or extension skills. A Kimi Code Captain keeps all of them, since Kimi offers no per-run switch; working players and recovery preparation are unchanged ([DR-093](specs/decisions/093-captain-control-turns-native-skills-off.md)).
@@ -1039,7 +1041,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.10.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.11.0...HEAD
+[17.11.0]: https://github.com/sublang-ai/playbook/compare/v17.10.1...v17.11.0
 [17.10.1]: https://github.com/sublang-ai/playbook/compare/v17.10.0...v17.10.1
 [17.10.0]: https://github.com/sublang-ai/playbook/compare/v17.9.0...v17.10.0
 [17.9.0]: https://github.com/sublang-ai/playbook/compare/v17.8.1...v17.9.0
