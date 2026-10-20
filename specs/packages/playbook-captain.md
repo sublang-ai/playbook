@@ -765,6 +765,16 @@ The shell shall reject the call if the configured adapter is asked
 for the empty allowlist and cannot enforce it; the shared queue
 shall serialize these calls.
 
+#### playbook-captain-88
+
+When the shell builds a call's complete settings, it shall decide their `nativeSkills` member from the call's role and from Cligent's published native-skill support for the session Captain's adapter ([DR-093](../decisions/093-captain-control-turns-native-skills-off.md)):
+
+| Call | Session Captain adapter's support | `nativeSkills` |
+| --- | --- | --- |
+| Decision, Judge, or reporting call [[playbook-captain-78](#playbook-captain-78)] | `disableSupported: true` — `claude`, `codex`, `gemini`, and `opencode` | `false`, so the runtime's own project and user skills stay out of the call |
+| Decision, Judge, or reporting call | `disableSupported: false` — `kimi` — or no support published | omitted, so the Captain keeps its runtime's own skill discovery, a documented reduction rather than an equivalence |
+| Working-player or bounded Captain recovery-preparation call | any | omitted, so the working actor keeps its runtime's own skills |
+
 #### playbook-captain-20
 
 Where the Playbook Captain shell settles a non-`respond` selection for
@@ -2161,3 +2171,7 @@ When integration tests submit attachment-only, clarified, nested and unrelated t
 The integration suite shall fail unless configured skills reach working-player calls and bounded recovery preparation, every Captain control call receives an empty list, durable ordinary reopening applies current lists, and uncertain retry retains the attempted lists while structural identity stays unchanged (verifying [[playbook-captain-78](#playbook-captain-78)]).
 
 When host integration drives inspection, nested work, interruption and a rejected repository effect, the suite shall verify substantive worker findings reach the Captain report with exact producing identity, quoted injection-like content cannot forge a host block, long content is marked as an excerpt while findings beyond introductory prose remain visible, aggregate overflow preserves latest reports with an omission marker, recovery reports saved findings without repeating work, repeated visits to one state cannot attribute an unacknowledged later result to an earlier accepted step, disposed adopted roots retain exact producing references, and no rejected receipt, hidden control or unrelated turn is reported as accepted completion [[playbook-captain-79](#playbook-captain-79)].
+
+#### playbook-captain-89
+
+When integration tests drive durable sessions and Captain recovery preparation through the shared host under each supported session Captain adapter, the suite shall fail unless every decision, Judge, and reporting call reaches the adapter with `nativeSkills: false` under the `claude`, `codex`, `gemini`, and `opencode` Captains and with no `nativeSkills` option under the `kimi` Captain, while every working-player and bounded recovery-preparation call reaches it with none (verifying [[playbook-captain-88](#playbook-captain-88)]).

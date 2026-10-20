@@ -116,6 +116,7 @@ meta.md       The spec of specs
 | [DR-090](decisions/090-every-role-hears-the-boss.md) | 090-every-role-hears-the-boss.md | Every role hears the Boss: every player call after a Boss reply carries the run's exchanges, marked `? ⟶` and `Boss ⟶` with no English framing; the prompt's first block names role and model; observations record the branch, and the closing reply names each commit's hash and branch; the shell's appended commit, failure and control lines carry marks, not sentences; amends DR-005 §2, DR-088 §3, DR-063 §4 and DR-089 §3 |
 | [DR-091](decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md) | 091-an-unrevealed-shape-is-the-machines-to-judge.md | An unrevealed shape is the machine's to judge: the probe records every shape it finds, a string included, and a semantic field it reveals nothing for takes any JSON value, its guard deciding; amends DR-089 §1 |
 | [DR-092](decisions/092-skills-follow-working-agents.md) | 092-skills-follow-working-agents.md | Shared and per-agent skills, declaring-file path origins, durable execution lists, and skill-free Captain control |
+| [DR-093](decisions/093-captain-control-turns-native-skills-off.md) | 093-captain-control-turns-native-skills-off.md | Decision, Judge and reporting calls request `nativeSkills: false` where Cligent reports the Captain adapter can honor it; a Kimi Captain keeps native skills, a documented reduction; Cligent floor 0.36.0 |
 
 ## Packages
 
