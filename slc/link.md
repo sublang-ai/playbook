@@ -1099,7 +1099,7 @@ Before the composer's result it places, in order:
 - once the run has heard a Boss reply, the run's Boss exchanges so far, each a `? ⟶` line and the verbatim question, then a `Boss ⟶` line and the verbatim reply, whatever the role and whether or not the Source retains them, leaving out the one exchange the call's own continuation carries;
 - for a call after a Boss reply, the marked verbatim question, only for a fresh conversation, and the marked verbatim reply.
 
-A run begins at the entry event or a finished machine's restart, and its exchanges travel in the runtime snapshot as `bossExchanges`.
+A run begins at a deterministic entry or an event declared on the initial parked state itself, including a classified entry from recoverable failure, or at a finished machine's restart; a reply, global interrupt alone, or refused event starts no run. Its exchanges travel in the runtime snapshot as `bossExchanges`.
 
 The runtime chooses the compact prompt only after selecting a conversation token and carries the complete prompt as optional `PlayerCallOptions.freshPrompt`.
 A host starting fresh after a definite pre-execution token rejection uses `freshPrompt`, when supplied, instead of the compact prompt.
@@ -1181,6 +1181,15 @@ host's teardown resolution — and invokes no classifier judge call; the exact
 original text still rides only the runtime-owned textual payload field.
 All other non-empty turns shall use `callJudge` only to choose one of the FSM's
 event kinds and non-text routing fields, or no FSM action.
+An entry requiring a judge-selected routing field therefore omits deterministic
+`entryEvent` metadata and declares its exact fields through `bossEvents`.
+The shared engine derives that entry from the initial parked state's own
+transitions and resets the run's exchanges when it dispatches the entry.
+At a terminal state, the classifier uses those initial entry transitions and
+their guards under detached bound machine input. This evaluates pure context
+and assignment initialization under the supported FSM contract; it does not
+run returned executable actions or start actors. Global interrupts and reply
+events are not terminal entries.
 The classifier prompt shall include the exact, unmodified `turn.text` in a
 clearly labelled Boss-message block so the judge can make that choice. Omitting
 the message makes a parked-state classifier unable to distinguish an answer,
@@ -1849,9 +1858,9 @@ The `PlaybookRuntime` shall:
      cannot be recovered or validated, emit the one recovery status required
      by §Boss-event mapping, send no event, leave the actor unchanged, and
      return `no-action` after the ordinary settled boundary drains.
-  3. Only after classification produces a real event, if the actor is in a
+  3. Only after classification produces a valid initial entry event, if the actor is in a
      `final` state, dispose and reconstruct it — `final` is terminal and cannot
-     accept new events. `NO_ACTION`, classifier rejection, and malformed
+     accept new events. `NO_ACTION`, classifier rejection, invalid initial guards, and malformed
      classification shall leave a terminal actor untouched.
   4. Bind the active public-boundary signal and send the classified event to
      the actor.

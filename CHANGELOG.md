@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.11.1] - 2026-10-21
+
+### Fixed
+
+- Preserve classified initial-event routing and exact Boss text when restarting a finished workflow, and clear earlier run exchanges only for a valid new entry. Refused entries, replies, and global interrupts retain the current run.
+
 ## [17.11.0] - 2026-10-20
 
 ### Changed
@@ -1041,7 +1047,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.11.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.11.1...HEAD
+[17.11.1]: https://github.com/sublang-ai/playbook/compare/v17.11.0...v17.11.1
 [17.11.0]: https://github.com/sublang-ai/playbook/compare/v17.10.1...v17.11.0
 [17.10.1]: https://github.com/sublang-ai/playbook/compare/v17.10.0...v17.10.1
 [17.10.0]: https://github.com/sublang-ai/playbook/compare/v17.9.0...v17.10.0

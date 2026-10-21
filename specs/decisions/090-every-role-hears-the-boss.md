@@ -34,7 +34,7 @@ Considered and declined:
 ## Decision
 
 1. **Every player call hears the run's Boss exchanges.**
-   - A run begins when the runtime sends the artifact's entry event or restarts a finished machine.
+   - A run begins when the runtime sends the artifact's deterministic or classified initial entry event or restarts a finished machine. A classified entry from failure resets the exchanges; a reply, a global interrupt alone, or a refused event does not.
    - Each Boss reply the machine receives for a pending question appends one exchange: the question as asked and the reply verbatim.
    - Every player call after the run's first exchange carries every exchange so far, in order, after its role line and before its body, whatever its role and whatever its Source retains.
    - The asking role's continuation keeps its own question and reply blocks and reads that exchange there, not twice.

@@ -286,6 +286,8 @@ While one or more Boss questions are pending, the runtime shall call `callJudge`
 A question is pending here on the reply-wait terms of [[playbook-runtime-45](#playbook-runtime-45)]: outside an authored reply-wait state the classifier prompt shall carry no question context and offer no reply contract, however long the machine's context retains the answered question.
 The runtime shall accept an omitted `questionId` only when exactly one question is pending, attach the Boss text verbatim to the selected event, and clear pending context abandoned by an interrupt.
 The runtime shall parse the judge reply with the tolerance of [[playbook-runtime-10](#playbook-runtime-10)] and shall emit one status with no FSM event when the reply is malformed or invalid for the live state.
+Where an initial entry requires judge-selected routing fields, the runtime shall classify those fields under the artifact's declared contracts while attaching its textual fields verbatim, rather than treating the entry as deterministic.
+At a finished machine, classification shall use the initial parked state's own entry transitions and guards with the bound machine input, evaluating pure initialization on detached input without running returned executable actions, starting actors or discarding the finished actor; no-action, invalid or rejected classification shall preserve that actor.
 
 ### Player binding
 
@@ -311,7 +313,7 @@ When composing a player call after a Boss reply, the runtime shall select the cl
 
 While a run has heard a Boss reply, when composing a player call, the runtime shall place the run's Boss exchanges so far, in order, before the composed prompt, whatever the call's role and whether or not its Source retains them ([DR-090](../decisions/090-every-role-hears-the-boss.md) §1):
 
-- a run begins, with no exchange, when the runtime sends the artifact's entry event or restarts a finished machine;
+- a run begins, with no exchange, when the runtime sends a deterministic entry or an event declared on the initial parked state itself, including a classified entry from recoverable failure, or restarts a finished machine; a reply or a global interrupt alone is not an entry, and a refused event starts no run;
 - each `BOSS_REPLY` the runtime sends for a pending question appends one exchange — that question's text as asked and the Boss text verbatim — before the machine receives it, a deferred continuation only once its host has started it [[playbook-runtime-73](#playbook-runtime-73)];
 - each exchange reads as the marked question and reply blocks of [[playbook-runtime-92](#playbook-runtime-92)], after the role line of [[playbook-runtime-105](#playbook-runtime-105)] and before the call's own marked continuation;
 - a call whose input carries a question and reply omits the one exchange equal to them, which its own continuation blocks carry;
@@ -475,7 +477,7 @@ port emissions and return the matching `PlaybookRunResult`.
 When `handleBossInput` is called while the actor is in the
 terminal state, the runtime shall leave the actor untouched for empty input and shall
 dispose and reconstruct it only after a nonempty input produces the artifact's valid
-initial event, so that event starts from the idle state.
+initial event under [[playbook-runtime-7](#playbook-runtime-7)], so that event starts from the idle state.
 Under the Playbook Captain shell, final root engagements are
 disposed per [[playbook-captain-11](playbook-captain.md#playbook-captain-11)], so this
 item remains the direct-runtime behavior.
@@ -1371,6 +1373,8 @@ When the integration suite drives a fresh nonempty Boss turn through CODE, REVIE
 When a runtime is driven at its idle entry, its recoverable failure state, and its reconstructed terminal with nonempty ordinary or slash-prefixed text and with empty or whitespace-only text, the test suite shall fail unless every nonempty input enters through the artifact's deterministic event with no classifier call and every empty input produces only the received and settled trace pair (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-7](#playbook-runtime-7)]).
 The suite shall further fail unless an authored mid-workflow checkpoint — parked, no pending question, not one of the three entries, like the acceptance notes fixture's `outline` — classifies its nonempty ordinary and slash-prefixed text alike under its own Boss-event contracts, the classifier prompt carrying no pending-question context and offering no reply contract even while the machine's context retains an answered question, while empty or whitespace-only input there produces the same trace-only no-action as every state: no event, judge call, player call, status emission, or FSM transition (verifying [[playbook-runtime-7](#playbook-runtime-7)]).
 The suite shall further fail unless text delivered at the recoverable failure state a resumed player reached after an answered Boss question enters through the deterministic entry event with no classifier call — the retained question steering nothing — and replays the player under the delivered text (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-7](#playbook-runtime-7)]).
+When the integration suite drives a shared-factory machine whose initial event requires a classified mode through an actual Boss question, reply and failure, it shall fail unless a new valid entry clears the run's exchanges while a mid-workflow interrupt and refused classification retain them (verifying [[playbook-runtime-104](#playbook-runtime-104)]).
+When that machine finishes, the suite shall fail unless a valid classified entry restarts it with the exact text and chosen mode, while empty text, no-action, malformed fields, invalid initial guards, a global interrupt, classifier rejection and an already-aborted turn leave the finished actor and its history untouched without starting work (verifying [[playbook-runtime-7](#playbook-runtime-7)], [[playbook-runtime-12](#playbook-runtime-12)] and [[playbook-runtime-13](#playbook-runtime-13)]).
 
 #### playbook-runtime-26
 

@@ -806,6 +806,91 @@ const createWorkflowRuntime = (
     ),
   );
 
+function classifiedEntryFixture(
+  ports: PlaybookPorts,
+  overrides: Pick<
+    XStatePlaybookRuntimeSpec<WorkflowOptions>,
+    'classifyBossText' | 'machineInput'
+  > = {},
+) {
+  let readyEntries = 0;
+  const originalStates = workflowMachine.config.states!;
+  const entry = {
+    ...(originalStates.ready!.on!.START as object),
+    guard: ({ context, event }: {
+      context: { command: string };
+      event: { mode?: string };
+    }) => context.command === 'true' && event.mode === 'build',
+  };
+  const failedEntry = {
+    ...(originalStates.failed!.on!.START as object),
+    guard: entry.guard,
+  };
+  const implement = originalStates.implement!;
+  const invocation = implement.invoke as {
+    onDone: readonly Record<string, unknown>[];
+  };
+  const initialContext = workflowMachine.config.context as (args: {
+    input: { command?: string } | undefined;
+  }) => Record<string, unknown>;
+  const machine = createMachine({
+    ...workflowMachine.config,
+    context: ({ input }: { input: { command?: string } | undefined }) => ({
+      ...initialContext({ input }),
+      entryInput: input,
+    }),
+    states: {
+      ...originalStates,
+      ready: {
+        ...originalStates.ready,
+        entry: () => { readyEntries += 1; },
+        on: { START: entry },
+      },
+      failed: { ...originalStates.failed, on: { START: failedEntry } },
+      implement: {
+        ...implement,
+        invoke: {
+          ...invocation,
+          // Exercise the real player/judge boundary without spawning a script.
+          onDone: invocation.onDone.map((arm, index) => index === 1 ? {
+            ...arm,
+            target: 'done',
+            actions: [
+              assign({ command: () => 'finished' }),
+              {
+                type: 'playbook.acceptedOutcome',
+                params: {
+                  source: 'implement',
+                  target: 'done',
+                  acceptedOutcome: 'implemented',
+                },
+              },
+            ],
+          } : arm),
+        },
+      },
+    },
+  }, { actions: { 'playbook.acceptedOutcome': () => undefined } });
+  const factory = createXStatePlaybookRuntime(machine, {
+    ...workflowSpec,
+    ...overrides,
+    entryEvent: undefined,
+    bossEvents: [{
+      type: 'START',
+      fields: {
+        mode: {
+          source: 'judge',
+          required: true,
+          values: ['build', 'guard-refused'],
+        },
+        task: { source: 'text', required: true },
+      },
+    }],
+  });
+  const runtime = factory(governedRuntimeConstruction({}, 'factory-test'));
+  return { runtime, ports, readyEntries: () => readyEntries };
+}
+
 const createLedgerAdoptionWorkflowRuntimeFactory = createXStatePlaybookRuntime(
   workflowMachine,
   {
@@ -11748,4 +11833,187 @@ describe('every role hears the Boss (DR-090)', () => {
       ).rejects.toThrow(/bossExchanges/);
     }
   });
+});
+
+
+describe('classified entry lifecycle', () => {
+  it('restarts a finished classified workflow with required mode and exact text', async () => {
+    const prompts: string[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_id, prompt) => { prompts.push(prompt); return { status: 'ok', finalText: 'Complete.' }; },
+      callJudge: async (prompt) => prompt.includes('Classify the following Boss message')
+        ? '{"type":"START","mode":"build"}' : '{"guard":"implemented","summary":"complete"}',
+    });
+    const { runtime, readyEntries } = classifiedEntryFixture(ports);
+    await runtime.init(makeSession(ports));
+    try {
+      expect((await runtime.handleBossInput(turn('first'))).outcome).toBe('terminal');
+      expect((await runtime.handleBossInput(turn('  second\n'))).outcome).toBe('terminal');
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain('Implement this task:   second\n');
+      expect(readyEntries()).toBe(2);
+    } finally { await runtime.dispose(); }
+  });
+
+  it('starts a new classified run after failure without earlier Boss exchanges', async () => {
+    let playerCalls = 0;
+    let classification = '{"type":"START","mode":"build"}';
+    const prompts: string[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_id, prompt) => {
+        prompts.push(prompt);
+        playerCalls += 1;
+        if (playerCalls === 2 || playerCalls === 3) return { status: 'error', error: 'read-only fixture failure' };
+        return { status: 'ok', finalText: playerCalls === 1 ? 'Which database?' : 'Which new database?' };
+      },
+      callJudge: async (prompt) => prompt.includes('Classify the following Boss message')
+        ? classification : '{"guard":"needsBossReply"}',
+    });
+    const { runtime, readyEntries } = classifiedEntryFixture(ports);
+    await runtime.init(makeSession(ports));
+    try {
+      expect((await runtime.handleBossInput(turn('old task'))).state.stateId).toBe('awaitBossReply');
+      classification = '{"type":"BOSS_REPLY","questionId":"q-1"}';
+      expect((await runtime.handleBossInput(turn('use sqlite'))).state.stateId).toBe('failed');
+      const exchanges = [{ question: 'Which database?', reply: 'use sqlite' }];
+      expect(runtime.exportSnapshot!()!.bossExchanges).toEqual(exchanges);
+      classification = '{"type":"START","mode":"guard-refused"}';
+      expect((await runtime.handleBossInput(turn('refused new task'))).outcome).toBe('no-action');
+      expect(runtime.exportSnapshot!()!.bossExchanges).toEqual(exchanges);
+      classification = '{"type":"BOSS_INTERRUPT","targetId":"implement"}';
+      expect((await runtime.handleBossInput(turn('continue this run'))).state.stateId).toBe('failed');
+      expect(runtime.exportSnapshot!()!.bossExchanges).toEqual(exchanges);
+      expect(prompts[2]).toContain('use sqlite');
+      classification = '{"type":"START","mode":"build"}';
+      expect((await runtime.handleBossInput(turn('  new task\n'))).state.stateId).toBe('awaitBossReply');
+      expect(runtime.exportSnapshot!()!.bossExchanges).toBeUndefined();
+      expect(prompts[3]).toContain('Implement this task:   new task\n');
+      expect(prompts[3]).not.toContain('use sqlite');
+      expect(prompts[3]).not.toContain('Which database?');
+      expect(readyEntries()).toBe(1);
+    } finally { await runtime.dispose(); }
+  });
+
+  it('classifies a terminal restart against initial guards without starting work for refused input', async () => {
+    let classification = '{"type":"START","mode":"build"}';
+    let classifierFailure: Error | undefined;
+    let accepted = 0;
+    let needsReply = true;
+    const onAccepted = () => { accepted += 1; };
+    const prompts: string[] = [];
+    const classifierPrompts: string[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_id, prompt) => {
+        prompts.push(prompt);
+        return { status: 'ok', finalText: needsReply ? 'Which database?' : 'Complete without effects.' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierPrompts.push(prompt);
+          if (classifierFailure) throw classifierFailure;
+          return classification;
+        }
+        return needsReply ? '{"guard":"needsBossReply"}' : '{"guard":"implemented","summary":"complete"}';
+      },
+    });
+    const { runtime, readyEntries } = classifiedEntryFixture(ports);
+    await runtime.init(makeSession(ports));
+    try {
+      expect((await runtime.handleBossInput(turn('first task'))).state.stateId).toBe('awaitBossReply');
+      needsReply = false;
+      classification = '{"type":"BOSS_REPLY","questionId":"q-1"}';
+      expect((await runtime.handleBossInput(turn('use sqlite'))).outcome).toBe('terminal');
+      expect(prompts[1]).toContain('use sqlite');
+      for (const reply of [
+        '{"type":"NO_ACTION"}',
+        'not json',
+        '{"type":"START"}',
+        '{"type":"START","mode":"unknown"}',
+        '{"type":"START","mode":"guard-refused"}',
+        '{"type":"START","mode":"build","task":"injected"}',
+        '{"type":"BOSS_INTERRUPT","targetId":"implement"}',
+      ]) {
+        classification = reply;
+        const result = await runtime.handleBossInput({ ...turn('do not restart'), onAccepted });
+        expect(result.outcome, reply).toBe('no-action');
+        expect(result.state.stateId).toBe('done');
+        expect(readyEntries()).toBe(1);
+        expect(prompts).toHaveLength(2);
+        expect(accepted).toBe(0);
+      }
+      classifierFailure = new Error('classifier unavailable');
+      await expect(runtime.handleBossInput({ ...turn('failed classification'), onAccepted })).rejects.toBe(classifierFailure);
+      classifierFailure = undefined;
+      const classified = classifierPrompts.length;
+      expect((await runtime.handleBossInput({ ...turn('   '), onAccepted })).outcome).toBe('no-action');
+      const abort = new AbortController(); abort.abort();
+      expect((await runtime.handleBossInput({ text: 'aborted task', signal: abort.signal, onAccepted })).outcome).toBe('aborted');
+      expect(classifierPrompts).toHaveLength(classified);
+      expect(readyEntries()).toBe(1);
+      expect(prompts).toHaveLength(2);
+      expect(accepted).toBe(0);
+      classification = '{"type":"START","mode":"build"}';
+      expect((await runtime.handleBossInput({ ...turn('  second task\n'), onAccepted })).outcome).toBe('terminal');
+      expect(classifierPrompts.at(-1)).toContain('Current state: ready');
+      expect(prompts).toHaveLength(3);
+      expect(prompts[2]).toContain('Implement this task:   second task\n');
+      expect(prompts[2]).not.toContain('use sqlite');
+      expect(accepted).toBe(1);
+      expect(readyEntries()).toBe(2);
+    } finally { await runtime.dispose(); }
+  });
+
+  it('checks an overridden classifier against detached initial input before reconstructing', async () => {
+    const hostInput = { command: 'true', routing: { name: 'original' } };
+    const classifierSnapshots: unknown[] = [];
+    let mode = 'build';
+    let type = 'START';
+    let accepted = 0;
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: 'Complete.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"complete"}',
+    });
+    const { runtime, readyEntries } = classifiedEntryFixture(ports, {
+      machineInput: () => hostInput,
+      classifyBossText: async (text, _ports, _signal, snapshot) => {
+        classifierSnapshots.push(snapshot);
+        return { type, mode, task: text, targetId: 'implement' };
+      },
+    });
+    await runtime.init(makeSession(ports));
+    const onAccepted = () => { accepted += 1; };
+    try {
+      expect((await runtime.handleBossInput(turn('first'))).outcome).toBe('terminal');
+      for (const rejected of ['guard-refused', 'interrupt']) {
+        mode = rejected;
+        type = rejected === 'interrupt' ? 'BOSS_INTERRUPT' : 'START';
+        expect((await runtime.handleBossInput({ ...turn('refused'), onAccepted })).outcome).toBe('no-action');
+        const snapshot = classifierSnapshots.at(-1) as {
+          value: string;
+          context: { command: string; entryInput: typeof hostInput };
+        };
+        expect(snapshot.value).toBe('ready');
+        expect(snapshot.context.command).toBe('true');
+        expect(snapshot.context.entryInput).toEqual(hostInput);
+        expect(snapshot.context.entryInput).not.toBe(hostInput);
+        expect(snapshot.context.entryInput.routing).not.toBe(hostInput.routing);
+        expect(Object.isFrozen(snapshot.context.entryInput.routing)).toBe(true);
+        expect(hostInput.routing.name).toBe('original');
+        expect(readyEntries()).toBe(1);
+        expect(playerCalls).toBe(1);
+        expect(accepted).toBe(0);
+      }
+      mode = 'build';
+      type = 'START';
+      expect((await runtime.handleBossInput({ ...turn('second'), onAccepted })).outcome).toBe('terminal');
+      expect(readyEntries()).toBe(2);
+      expect(playerCalls).toBe(2);
+      expect(accepted).toBe(1);
+    } finally { await runtime.dispose(); }
+  });
+
 });

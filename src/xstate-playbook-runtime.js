@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
-import { createActor, fromPromise } from 'xstate';
+import { createActor, fromPromise, initialTransition } from 'xstate';
 import { ACCEPTED_OUTCOME_ACTION_TYPE, createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
 import { assertPlaybookFailureCause } from './runtime.js';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, attachPlaybookFailureCause, combineAbortSignals, createNestedPlaybookBridge, describePlaybookSemanticValueShape, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
@@ -2490,7 +2490,7 @@ function activeStateIdsOf(snapshotOrState) {
 }
 function makeDefaultClassifyBossText(machine, entryEvent, bossEvents, parallelProfile) {
     const contracts = defaultBossEventSpecs(machine, entryEvent, bossEvents);
-    return async (text, ports, signal, snapshotOrState, boundary) => {
+    return async (text, ports, signal, snapshotOrState, boundary, allowedEventTypes) => {
         const trimmed = text.trim();
         if (trimmed === '')
             return undefined;
@@ -2523,6 +2523,7 @@ function makeDefaultClassifyBossText(machine, entryEvent, bossEvents, parallelPr
         const severalPending = pendingQuestions.length > 1;
         const applicable = [...contracts.values()]
             .filter((contract) => configuredTypes.has(contract.type) &&
+            (allowedEventTypes === undefined || allowedEventTypes.has(contract.type)) &&
             (contract.type !== 'BOSS_REPLY' || pendingQuestions.length > 0))
             .map((contract) => contract.type === 'BOSS_REPLY' && severalPending
             ? {
@@ -2807,7 +2808,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
     // fail factory construction whether or not this spec overrides the
     // classifier that would have consumed the contracts.
     const derivedClassifyBossText = makeDefaultClassifyBossText(machine, spec.entryEvent, spec.bossEvents ?? [], parallelProfile);
-    const classifyBossText = spec.classifyBossText ?? derivedClassifyBossText;
+    // Initial-state-owned events describe new runs independently of whether
+    // their payload is deterministic. Root interrupts are deliberately absent.
+    const initialEntryEventTypes = new Set((machine.root.initial.target ?? []).flatMap((node) => Object.keys(node.config.on ?? {}).filter((type) => type !== 'BOSS_REPLY' && type !== 'NO_ACTION')));
     const normalizeTransitionEvent = spec.normalizeTransitionEvent ??
         makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
     const statusesForState = spec.statusesForState ??
@@ -3619,7 +3622,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
         }
         /** DR-090 §1: an entry event begins a new run, with no exchanges yet. */
         function beginRunIfEntry(event) {
-            if (spec.entryEvent !== undefined && event.type === spec.entryEvent.type) {
+            if ((event.type === spec.entryEvent?.type || initialEntryEventTypes.has(event.type)) &&
+                snapshotCan(actor?.getSnapshot(), event)) {
                 bossExchanges = [];
             }
         }
@@ -7780,7 +7784,31 @@ export function createXStatePlaybookRuntime(machine, spec) {
                                 };
                             }
                             else {
-                                event = await classifyBossText(text, runtimePorts, signal, snapshot, boundary, boundOptions);
+                                // Classify a finished run against its fresh entry context,
+                                // without starting/replacing an actor or running the returned
+                                // executable actions. Pure context/assign initialization is
+                                // evaluated under the supported FSM contract.
+                                // Detach the input so pure initialization cannot mutate the
+                                // current actor or the host's bound input through an alias.
+                                const input = terminal
+                                    ? machineInput(boundOptions, requireSession())
+                                    : undefined;
+                                const classificationSnapshot = terminal
+                                    ? initialTransition(machine, input === undefined
+                                        ? undefined
+                                        : snapshotJsonValue(input, 'initial classification input'))[0]
+                                    : snapshot;
+                                event = spec.classifyBossText !== undefined
+                                    ? await spec.classifyBossText(text, runtimePorts, signal, classificationSnapshot, boundary, boundOptions)
+                                    : await derivedClassifyBossText(text, runtimePorts, signal, classificationSnapshot, boundary, terminal ? initialEntryEventTypes : undefined);
+                                if (terminal &&
+                                    event !== undefined &&
+                                    (!initialEntryEventTypes.has(event.type) ||
+                                        (spec.classifyBossText !== undefined &&
+                                            !snapshotCan(classificationSnapshot, event)))) {
+                                    await runtimePorts.emitStatus('Classifier selected an invalid initial entry event');
+                                    event = undefined;
+                                }
                             }
                             signal.throwIfAborted();
                         }
