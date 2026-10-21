@@ -20,7 +20,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
-import { createActor, fromPromise } from 'xstate';
+import { createActor, fromPromise, initialTransition } from 'xstate';
 import type {
   AnyStateMachine,
   EventObject,
@@ -3915,9 +3915,10 @@ function makeDefaultClassifyBossText(
   signal: AbortSignal,
   snapshotOrState: unknown,
   boundary?: RuntimeBoundaryCalls,
+  allowedEventTypes?: ReadonlySet<string>,
 ) => Promise<EventObject | undefined> {
   const contracts = defaultBossEventSpecs(machine, entryEvent, bossEvents);
-  return async (text, ports, signal, snapshotOrState, boundary) => {
+  return async (text, ports, signal, snapshotOrState, boundary, allowedEventTypes) => {
     const trimmed = text.trim();
     if (trimmed === '') return undefined;
     const state = classifierState(snapshotOrState);
@@ -3959,6 +3960,7 @@ function makeDefaultClassifyBossText(
       .filter(
         (contract) =>
           configuredTypes.has(contract.type) &&
+          (allowedEventTypes === undefined || allowedEventTypes.has(contract.type)) &&
           (contract.type !== 'BOSS_REPLY' || pendingQuestions.length > 0),
       )
       .map((contract): XStateBossEventSpec =>
@@ -4407,9 +4409,15 @@ export function createXStatePlaybookRuntime<
     spec.bossEvents ?? [],
     parallelProfile,
   );
-  const classifyBossText: NonNullable<
-    XStatePlaybookRuntimeSpec<TOptions>['classifyBossText']
-  > = spec.classifyBossText ?? derivedClassifyBossText;
+  // Initial-state-owned events describe new runs independently of whether
+  // their payload is deterministic. Root interrupts are deliberately absent.
+  const initialEntryEventTypes = new Set(
+    (machine.root.initial.target ?? []).flatMap((node) =>
+      Object.keys(node.config.on ?? {}).filter(
+        (type) => type !== 'BOSS_REPLY' && type !== 'NO_ACTION',
+      ),
+    ),
+  );
   const normalizeTransitionEvent =
     spec.normalizeTransitionEvent ??
     makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
@@ -5558,7 +5566,10 @@ export function createXStatePlaybookRuntime<
 
     /** DR-090 §1: an entry event begins a new run, with no exchanges yet. */
     function beginRunIfEntry(event: EventObject): void {
-      if (spec.entryEvent !== undefined && event.type === spec.entryEvent.type) {
+      if (
+        (event.type === spec.entryEvent?.type || initialEntryEventTypes.has(event.type)) &&
+        snapshotCan(actor?.getSnapshot(), event)
+      ) {
         bossExchanges = [];
       }
     }
@@ -10991,14 +11002,52 @@ export function createXStatePlaybookRuntime<
                   [spec.entryEvent.textField]: text,
                 };
               } else {
-                event = await classifyBossText(
-                  text,
-                  runtimePorts!,
-                  signal,
-                  snapshot,
-                  boundary,
-                  boundOptions,
-                );
+                // Classify a finished run against its fresh entry context,
+                // without starting/replacing an actor or running the returned
+                // executable actions. Pure context/assign initialization is
+                // evaluated under the supported FSM contract.
+                // Detach the input so pure initialization cannot mutate the
+                // current actor or the host's bound input through an alias.
+                const input = terminal
+                  ? machineInput(boundOptions, requireSession())
+                  : undefined;
+                const classificationSnapshot = terminal
+                  ? initialTransition(
+                      machine,
+                      input === undefined
+                        ? undefined
+                        : snapshotJsonValue(input, 'initial classification input'),
+                    )[0]
+                  : snapshot;
+                event = spec.classifyBossText !== undefined
+                  ? await spec.classifyBossText(
+                      text,
+                      runtimePorts!,
+                      signal,
+                      classificationSnapshot,
+                      boundary,
+                      boundOptions,
+                    )
+                  : await derivedClassifyBossText(
+                      text,
+                      runtimePorts!,
+                      signal,
+                      classificationSnapshot,
+                      boundary,
+                      terminal ? initialEntryEventTypes : undefined,
+                    );
+                if (
+                  terminal &&
+                  event !== undefined &&
+                  (!initialEntryEventTypes.has(event.type) ||
+                    (spec.classifyBossText !== undefined &&
+                      !snapshotCan(classificationSnapshot, event)))
+                ) {
+                  await runtimePorts!.emitStatus(
+                    'Classifier selected an invalid initial entry event',
+                  );
+                  event = undefined;
+                }
               }
               signal.throwIfAborted();
             }

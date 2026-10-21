@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve classified initial-event routing and exact Boss text when restarting a finished workflow, and clear earlier run exchanges only for a valid new entry. Refused entries, replies, and global interrupts retain the current run.
+
 ## [17.11.0] - 2026-10-20
 
 ### Changed
