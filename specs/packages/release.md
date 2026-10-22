@@ -105,6 +105,7 @@ The scoped `@sublang/playbook` package shall be published with
 #### release-31
 
 When the normal repository test gate runs through `pnpm test`, its effective pnpm lifecycle shall execute the project-local `spex lint` command to successful completion before starting Vitest.
+The repository's normal Vitest configuration shall run at most two test-file workers concurrently so its real-process and durable-filesystem suites do not scale disk contention with CPU count; the individual operation and test deadlines shall remain unchanged.
 
 ### Install closure
 

@@ -38,6 +38,10 @@ export default defineConfig({
     },
   ],
   test: {
+    // These suites spawn real CLI/Git processes and sync durable storage.
+    // CPU-count parallelism oversubscribes their shared filesystem; retain
+    // parallel files without stretching any operation or test deadline.
+    maxWorkers: 2,
     // CLI and TypeScript subprocesses can exceed Vitest's five-second default
     // under CI contention. Individual operation deadlines remain unchanged.
     testTimeout: 30_000,
