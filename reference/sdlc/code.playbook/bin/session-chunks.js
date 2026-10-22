@@ -431,6 +431,13 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
   return Object.freeze({
     prepare,
     writeJson: (value) => writeOperation(() => writeJson(value)),
+    writeBytesAndJson: (bytes, makeJson) => writeOperation(async () => {
+      if (typeof makeJson !== 'function') throw new TypeError('session chunk JSON builder must be a function');
+      // This fixed dependency pair cannot return an acknowledged head until
+      // both files and the containing directory have been synced.
+      const content = await writeBytes(bytes);
+      return writeJson(makeJson(content));
+    }),
     readJson: (ref) => operation(() => loadJson(ref)),
     writeBytes: (bytes) => writeOperation(() => writeBytes(bytes)),
     readBytes: (ref) => operation(async () => Buffer.from(await readBytes(ref))),

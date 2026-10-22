@@ -242,6 +242,14 @@ describe('bounded immutable session chunks on real disk', () => {
     expect((await fs.readFile(join(directory,ref.sha256))).equals(expected)).toBe(true);
     expect(await store.readJson(ref)).toEqual(value);
   });
+  it('requires a synchronous JSON builder for a fixed byte dependency pair', async () => {
+    const { store } = await fixture();
+    const input = Buffer.from('dependency');
+    const ref = await store.writeBytesAndJson(input, (content: any) => ({ content }));
+    const value = await store.readJson(ref);
+    expect(await store.readBytes(value.content)).toEqual(input);
+    await expect(store.writeBytesAndJson(input, async (content: any) => ({ content }))).rejects.toThrow('plain acyclic JSON');
+  });
   it('rejects accessors, sparse arrays and cyclic/non-JSON input', async () => {
     const { store } = await fixture();
     const circular: any = {}; circular.self = circular;

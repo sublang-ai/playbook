@@ -40,6 +40,38 @@ describe('bounded replay on the real filesystem', () => {
     for (const file of await reopened.collectFiles()) expect((await fs.stat(join(sessionsDir, file.path))).size).toBe(file.byteLength);
   }, 30_000);
 
+  it('syncs append dependencies together and preserves the published replay if that sync fails', async () => {
+    let chunkDirectorySyncs = 0;
+    let chunkFileSyncs = 0;
+    let failDirectorySync = false;
+    const fsOps = { async open(path: string, ...args: any[]) {
+      const handle = await (fs.open as any)(path, ...args);
+      return new Proxy(handle, { get(target, key) {
+        if (key === 'sync') return async () => {
+          if (path.endsWith('.chunks')) {
+            chunkDirectorySyncs++;
+            if (failDirectorySync) throw new Error('injected dependency directory sync failure');
+          } else if (path.includes('.chunks/.write-')) chunkFileSyncs++;
+          await target.sync();
+        };
+        const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;
+      } });
+    } };
+    const { replay, chunks, sessionsDir } = await fixture(fsOps);
+    await chunks.prepare();
+    chunkDirectorySyncs = 0; chunkFileSyncs = 0;
+    const first = line(1, 'first');
+    await replay.appendBytes(first);
+    expect(chunkFileSyncs).toBe(2);
+    expect(chunkDirectorySyncs).toBe(1);
+    const published = await replay.rootBytes();
+    failDirectorySync = true;
+    await expect(replay.appendBytes(line(2, 'second'))).rejects.toThrow('dependency directory sync');
+    expect(chunkFileSyncs).toBe(4);
+    expect(await replay.rootBytes()).toEqual(published);
+    const reopened = await createBoundedReplay({ sessionId, sessionsDir });
+    expect(await reopened.readBytes()).toEqual(first);
+  });
   it('adds one immutable link without rewriting prior chunks, and serializes simultaneous appends', async () => {
     const { replay, chunksDir } = await fixture();
     const first = line(1, 'first');

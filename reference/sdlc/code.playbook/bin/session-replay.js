@@ -223,8 +223,7 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       await visitChain(snapshot);
       rememberProof(snapshot);
     }
-    const content = bytes.length ? await chunkStore.writeBytes(bytes) : null;
-    const head = content === null ? null : await chunkStore.writeJson({ previous: snapshot.root?.head ?? null, content, byteLength: bytes.length, totalBytes: byteLength });
+    const head = bytes.length ? await chunkStore.writeBytesAndJson(bytes, (content) => ({ previous: snapshot.root?.head ?? null, content, byteLength: bytes.length, totalBytes: byteLength })) : null;
     return publish(snapshot, { kind: 'captain-session-replay', schemaVersion: 1, sessionId, head, byteLength }, exclusive);
   };
   const readSnapshot = async () => {
