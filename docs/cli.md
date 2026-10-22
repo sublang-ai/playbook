@@ -364,7 +364,7 @@ been removed. See the [shared storage contract](https://github.com/sublang-ai/pl
 Stop every CLI and Spex writer sharing a store and snapshot its home before
 upgrading. Upgrade all hosts to the coordinated bounded-storage release before
 new writes. Earlier Playbook versions and direct file readers cannot use schema 8.
-The ordinary default migrates known legacy formats into `~/.spex/sessions`, retaining history even when recovery is unavailable; explicit store overrides remain isolated.
+When using the ordinary default, the CLI imports supported schema 2–6 sessions from the former `${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions` directory into `~/.spex/sessions`, retaining history even when recovery is unavailable. Explicit store overrides bypass this import; existing schema 7 sessions are not converted automatically.
 Migration retains original files under `local/migrations/` beside the destination sessions directory, validates the new bundle, then removes the former replay and manifest.
 Unknown or unsafe inputs stay in place with a diagnostic.
 
