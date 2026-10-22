@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
+import { createBoundedReplay } from './bin/session-replay.js';
 import {
   createCaptainSessionStore,
   sanitizeReplayRecord,
@@ -28,6 +29,7 @@ async function replayFixture() {
   tempDirs.push(root);
   const store = createCaptainSessionStore({
     sessionsDir: join(root, 'sessions'),
+    hostname: 'replay-observer-test',
   });
   return { store, lease: await store.acquire(sessionId) };
 }
@@ -38,12 +40,9 @@ async function unavailableReplayFixture() {
   const sessionsDir = join(root, 'sessions');
   await mkdir(sessionsDir, { mode: 0o700 });
   await chmod(sessionsDir, 0o700);
-  const streamPath = join(sessionsDir, `${sessionId}.records.jsonl`);
-  await writeFile(streamPath, '{"v":1,"seq":1,"record":[]}\n', {
-    mode: 0o600,
-  });
-  await chmod(streamPath, 0o600);
-  const store = createCaptainSessionStore({ sessionsDir });
+  const replay = await createBoundedReplay({ sessionsDir, sessionId });
+  await replay.initializeBytes(Buffer.from('{"v":1,"seq":1,"record":[]}\n'));
+  const store = createCaptainSessionStore({ sessionsDir, hostname: 'replay-observer-test' });
   return { store, lease: await store.acquire(sessionId) };
 }
 

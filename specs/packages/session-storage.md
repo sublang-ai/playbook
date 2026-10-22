@@ -6,7 +6,7 @@
 ## Intent
 
 This package defines the portable session format, local provider hints and lifecycle shared by interactive CLI, headless CLI and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
-A **session bundle** consists of a manifest, the replay stream matching its checkpoint digest, and its declared immutable asset files; all are required for portability.
+A **session bundle** consists of its physical manifest and replay representation, the complete referenced immutable chunks, and its declared immutable asset files; all are required for portability.
 **Closed** JSON objects permit only the declared fields.
 History requires neither a provider conversation nor an application's project registry.
 
@@ -22,8 +22,9 @@ The session store shall use these locations and files for each session's canonic
 
 | File | Contents | Portability |
 | --- | --- | --- |
-| `<id>.json` | Manifest [[session-storage-2](#session-storage-2)] | Portable |
-| `<id>.records.jsonl` | Replay [[session-storage-3](#session-storage-3)] | Portable |
+| `<id>.json` | Physical root of the logical manifest [[session-persistence-1](session-persistence.md#session-persistence-1)] | Portable |
+| `<id>.replay.json`, `<id>.chunks/` | Bounded replay root and immutable recovery/replay chunks [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-3](session-persistence.md#session-persistence-3)] | Portable |
+| `<id>.records.jsonl` | Legacy monolithic replay, retained until explicit migration [[session-persistence-5](session-persistence.md#session-persistence-5)] | Portable in legacy format |
 | `<id>.assets/` | Immutable content and descriptors [[session-storage-18](#session-storage-18)] | Portable |
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
@@ -37,7 +38,7 @@ The session store shall use these locations and files for each session's canonic
 
 ### session-storage-2
 
-The store shall encode a manifest as a closed schema-version-7 JSON object with these common fields and exactly one state variant:
+The store shall represent its logical manifest as a closed schema-version-7 JSON object with these common fields and exactly one state variant:
 
 | Field | Content |
 | --- | --- |
@@ -158,7 +159,7 @@ When opening a portable checkpoint on another device, the lifecycle shall allow 
 
 ### session-storage-10
 
-When migrating a stopped legacy store, the shared migrator shall hold the session lease and preserve source bytes outside the portable session namespace before publishing a validated schema-7 bundle:
+When migrating a stopped legacy store, the shared migrator shall hold the session lease and preserve source bytes outside the portable session namespace before publishing a validated logical schema-7 bundle in bounded physical schema 8 [[session-persistence-5](session-persistence.md#session-persistence-5)]:
 
 - source permission preparation uses the same verified tighten-only rules as opening, including legacy desktop sidecars [[session-storage-1](#session-storage-1)];
 - source-format and required working-directory checks precede lease acquisition, so unchanged refusals create no lease residue; publication requires rereading and revalidating the source under the lease, and changed source bytes or migration context may retry;
@@ -209,7 +210,7 @@ An absent assets member shall preserve legacy manifest/replay-only sessions unde
 
 ### session-storage-19
 
-When exporting a session bundle, the shared store shall return exact manifest bytes, exactly the replay prefix proven by its checkpoint, and verified relative content and descriptor entries for every declared asset, refusing incomplete checkpoints and retrying a concurrently changed manifest within a bounded operation.
+When exporting a session bundle, the shared store shall return exact physical manifest bytes, exactly the logical replay prefix proven by its checkpoint, verified relative content and descriptor entries for every declared asset, and the complete physical file inventory [[session-persistence-6](session-persistence.md#session-persistence-6)], refusing incomplete checkpoints and retrying a concurrently changed manifest within a bounded operation.
 When deleting a session under its management lease, the store shall validate and remove that session's asset entries and then its private asset directory before removing its manifest, without removing copies belonging to another owner:
 
 - regular non-link foreign files in that directory are removed with its asset entries;

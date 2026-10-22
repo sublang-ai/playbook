@@ -24,7 +24,7 @@ import {
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -328,7 +328,7 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(first.stderr)}`;
 
         const firstEnvelope = parseHeadlessEnvelope(first.stdout);
-        const firstRecord = readDurableSession(
+        const firstRecord = await readDurableSession(
           scenario,
           firstEnvelope.sessionId,
         );
@@ -457,7 +457,7 @@ describe.sequential('installed playbook live acceptance', () => {
           );
         }
         await expectLeaseRetired(scenario, firstEnvelope.sessionId, 2);
-        const continuedRecord = readDurableSession(
+        const continuedRecord = await readDurableSession(
           scenario,
           firstEnvelope.sessionId,
         );
@@ -527,7 +527,7 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(result.stderr)}`;
 
         const envelope = parseHeadlessEnvelope(result.stdout);
-        const record = readDurableSession(scenario, envelope.sessionId);
+        const record = await readDurableSession(scenario, envelope.sessionId);
         expectSettledSessionBoundary(record, scenario);
         expectCanonicalEffectSession(record, [
           {
@@ -607,7 +607,7 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(result.stderr)}`;
 
         const envelope = parseHeadlessEnvelope(result.stdout);
-        const record = readDurableSession(scenario, envelope.sessionId);
+        const record = await readDurableSession(scenario, envelope.sessionId);
         expectSettledSessionBoundary(record, scenario, [
           'acceptance.dev.analyst',
           'acceptance.dev.coder',
@@ -706,7 +706,7 @@ describe.sequential('installed playbook live acceptance', () => {
             },
           },
         );
-        const interactiveRecord = readDurableSession(
+        const interactiveRecord = await readDurableSession(
           scenario,
           observation.sessionId,
         );
@@ -804,7 +804,7 @@ describe.sequential('installed playbook live acceptance', () => {
         expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
         expect(existsSync(tmuxGuard.marker)).toBe(false);
         await expectLeaseRetired(scenario, observation.sessionId, 2);
-        const continuedRecord = readDurableSession(
+        const continuedRecord = await readDurableSession(
           scenario,
           observation.sessionId,
         );
@@ -977,7 +977,7 @@ describe.sequential('installed playbook live acceptance', () => {
         );
 
         const envelope = parseHeadlessEnvelope(first.stdout);
-        const firstRecord = readDurableSession(scenario, envelope.sessionId);
+        const firstRecord = await readDurableSession(scenario, envelope.sessionId);
         expectCanonicalEffectSession(firstRecord, [
           { playbookId: 'hermetic', classification: 'unchanged' },
         ]);
@@ -1003,7 +1003,7 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(second.stderr).not.toContain('provisioned');
         const secondEnvelope = parseHeadlessEnvelope(second.stdout);
         expect(secondEnvelope.sessionId).not.toBe(envelope.sessionId);
-        const secondRecord = readDurableSession(
+        const secondRecord = await readDurableSession(
           scenario,
           secondEnvelope.sessionId,
         );
@@ -1086,7 +1086,7 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(result.stderr)}`;
 
         const envelope = parseHeadlessEnvelope(result.stdout);
-        const record = readDurableSession(scenario, envelope.sessionId);
+        const record = await readDurableSession(scenario, envelope.sessionId);
         expectCanonicalEffectSession(record, [
           { playbookId: 'skills', classification: 'unchanged' },
         ]);
@@ -1434,13 +1434,21 @@ interface DurableSessionRecord {
 
 const sessionHints = new WeakMap<DurableSessionRecord, any>();
 
-function readDurableSession(
+async function readDurableSession(
   scenario: Scenario,
   sessionId: string,
-): DurableSessionRecord {
+): Promise<DurableSessionRecord> {
   const sessionsDir = join(scenario.spexHome, 'sessions');
   const bytes = readFileSync(join(sessionsDir, `${sessionId}.json`));
-  const record = JSON.parse(bytes.toString('utf8')) as DurableSessionRecord;
+  const physical = JSON.parse(bytes.toString('utf8'));
+  expect(physical).toMatchObject({ schemaVersion: 8, kind: 'captain-session-storage', sessionId });
+  expect(bytes.length).toBeLessThanOrEqual(8 * 1024 * 1024);
+  // Resolve the public facade from the packed candidate, so repository-only
+  // readers cannot make an incorrectly packaged installation pass this gate.
+  const facade = pathToFileURL(join(dirname(dirname(candidateBin)), '@sublang/playbook/reference/sdlc/code.playbook/session-store.js')).href;
+  const { createSessionStore } = await import(facade);
+  const store = createSessionStore({ sessionsDir });
+  const record = await store.readManifest(sessionId) as DurableSessionRecord;
   expect(record.schemaVersion).toBe(7);
   const hints = JSON.parse(readFileSync(join(sessionsDir, `${sessionId}.hints.json`), 'utf8'));
   expect(hints).toMatchObject({
@@ -1448,15 +1456,20 @@ function readDurableSession(
     checkpointSha256: createHash('sha256').update(bytes).digest('hex'),
   });
   sessionHints.set(record, hints);
-  const replay = readFileSync(join(sessionsDir, `${sessionId}.records.jsonl`));
+  const history = await store.readHistory(sessionId);
+  expect(history).toMatchObject({ missing: false, incomplete: false, pendingTail: false });
+  const entries: Array<{ seq: number; record: any }> = history.entries;
+  const bundle = await store.exportBundle(sessionId);
+  expect(Buffer.from(bundle.manifest)).toEqual(bytes);
+  const replay = Buffer.from(bundle.replay);
   const lines = replay.toString('utf8').split('\n');
   expect(lines.pop()).toBe('');
-  const entries = lines.map((line) => JSON.parse(line));
   expect(entries.map((entry) => entry.seq)).toEqual(entries.map((_, index) => index + 1));
   const checkpointSeq = record.replay?.seq ?? -1;
   expect(Number.isSafeInteger(checkpointSeq)).toBe(true);
   expect(checkpointSeq).toBeGreaterThanOrEqual(0);
   expect(checkpointSeq).toBeLessThanOrEqual(entries.length);
+  expect(lines.map((line) => JSON.parse(line))).toEqual(entries.slice(0, checkpointSeq));
   let prefixEnd = 0;
   for (let index = 0; index < checkpointSeq; index += 1) prefixEnd = replay.indexOf(0x0a, prefixEnd) + 1;
   expect(record.replay).toEqual({
@@ -1499,6 +1512,7 @@ function readDurableSession(
   for (const token of [hints.captain?.token, ...Object.values(hints.players ?? {})]) {
     if (typeof token !== 'string') continue;
     expect(bytes.toString('utf8')).not.toContain(token);
+    expect(JSON.stringify(record)).not.toContain(token);
     expect(structuredReplay).not.toContain(token);
   }
   return record;
@@ -1525,6 +1539,7 @@ function expectSettledSessionBoundary(
 ): void {
   const rosterIds = Object.keys(liveRosterPlayers).sort();
   expect(record.state).toBe('settled');
+  if (typeof record.cwd !== 'string') throw new Error('settled session has no recorded working directory');
   expect(realpathSync(record.cwd)).toBe(realpathSync(scenario.repo));
   expect(Object.keys(record.snapshot?.playerSessions ?? {}).sort()).toEqual(
     rosterIds,

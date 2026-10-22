@@ -321,19 +321,24 @@ Unsupported settings and ambiguous failures do not trigger that fallback
 
 ### Following replay history
 
-Beside each `<session-id>.json` manifest, both front ends tee every observed
-host record in order to `<session-id>.records.jsonl`. Each complete line is a
-version-1 envelope with a writer-assigned sequence contiguous from `1`, the
-opaque record, and an optional local playbook role where the trace establishes
-one unambiguously. The stream is a mode-`0600` regular non-symlink file inside
-the private sessions directory. Readers consume only the complete
-newline-terminated prefix; a final partial line is not presented as a record.
+Both front ends record observed host records in order through the shared store.
+New sessions use a small schema-8 `<session-id>.json` root, a
+`<session-id>.replay.json` root and immutable files in `<session-id>.chunks/`.
+Every generated root and chunk is at most 8 MiB. Equal content within a session
+is reused; one oversized record is split without discarding its contents.
+Use `readHistory()` or `readStream()` rather than opening a former
+`<session-id>.records.jsonl` file. Logical replay still contains version-1
+envelopes with contiguous writer-assigned sequences and optional local roles.
 
-Manifests use schema 7 and contain token-free recovery. The matching replay
-stream carries immutable configuration and graph records, so history does not
+The hydrated manifest remains logical schema 7 and contains token-free recovery.
+Replay carries immutable configuration and graph records, so history does not
 require installed modules. Provider continuation hints live separately in
 `<session-id>.hints.json` and stay local. A hint is consumed before use and
 accepted only for the exact checkpoint that created it.
+
+The file bound does not cap total disk usage or in-memory session size.
+Superseded chunks are retained for safe concurrent reads and recovery; they are
+removed with the session. This release does not automatically prune evidence.
 
 The manifest hashes its exact durable replay prefix. Missing or changed bytes,
 saved incompleteness, or unsupported required context block continuation while
@@ -346,7 +351,9 @@ history warning without authorizing a repeated action. Recovery and uncertainty
 remain durable; the incomplete marker persists across process restarts.
 Release retains the lease if that marker cannot be saved.
 
-Copy the manifest and matching replay together. Do not copy hints or leases.
+Copy the complete file inventory from `exportBundle().files`, including chunks
+and assets. Do not copy hints or leases, or serialize the hydrated manifest
+back into one large file.
 Continuation also requires matching working-directory/module paths and
 compatible runtimes; changed paths allow history only. Prompts, replies and
 tool content remain sensitive even after structured continuation fields have
@@ -354,18 +361,21 @@ been removed. See the [shared storage contract](https://github.com/sublang-ai/pl
 
 ### Migrating older sessions
 
-Stop old writers and snapshot Spex home and `${XDG_STATE_HOME:-$HOME/.local/state}/playbook` before upgrading.
+Stop every CLI and Spex writer sharing a store and snapshot its home before
+upgrading. Upgrade all hosts to the coordinated bounded-storage release before
+new writes. Earlier Playbook versions and direct file readers cannot use schema 8.
 The ordinary default migrates known legacy formats into `~/.spex/sessions`, retaining history even when recovery is unavailable; explicit store overrides remain isolated.
 Migration retains original files under `local/migrations/` beside the destination sessions directory, validates the new bundle, then removes the former replay and manifest.
 Unknown or unsafe inputs stay in place with a diagnostic.
 
-For an explicitly configured store, migrate each selected legacy session before continuing it:
+For each selected monolithic session, including logical schema 7, run explicit
+migration before continuing it. Use the same configuration that selects its store:
 
 ```sh
 playbook migrate-session <id> [--with <path>]...
 ```
 
-Schema 6 may retain execution; older CLI records and desktop sidecars lacking complete recovery remain readable history.
+Schema 7 retains its validated logical recovery and exact replay; schema 6 may retain execution; older CLI records and desktop sidecars lacking complete recovery remain readable history.
 Discovery skips these histories and unmigrated records with a reason; they do not block other sessions.
 
 ### Reconciling possible repository effects

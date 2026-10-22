@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdtemp, readFile, writeFile, mkdir, readdir, rm, stat, symlink, link, rename, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, mkdir, readdir, rm, stat, symlink, link, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
 import { discardSessionUncertain, openSessionHost } from './session-host.js';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
+import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, removeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, {recursive:true,force:true}))); });
@@ -18,13 +19,13 @@ async function fixture() {
  const store = createSessionStore({sessionsDir:join(root,'sessions')});
  const id = randomUUID(); const lease = await store.acquire(id);
  await lease.initializeSettledWithPredecessor(freshBoundary() as any);
- return { root, store, id, lease, file:join(store.sessionsDir, `${id}.json`), stream:join(store.sessionsDir,`${id}.records.jsonl`) };
+ return { root, store, id, lease, file:join(store.sessionsDir, `${id}.json`), stream:join(store.sessionsDir,`${id}.replay.json`) };
 }
 async function legacyDefaultFixture() {
  const source=await fixture();await source.lease.append({type:'legacy_notice',timestamp:7,text:'complete replay survives cutover'});
  const record=await source.lease.read();await source.lease.release();
  const sourceBytes=JSON.stringify(record);await writeFile(source.file,sourceBytes);
- const replayBytes=await readFile(source.stream);const xdg=join(source.root,'xdg');const sourceDir=join(xdg,'playbook','sessions');
+ const replayBytes=await readFixtureReplay(source.stream);const xdg=join(source.root,'xdg');const sourceDir=join(xdg,'playbook','sessions');
  await mkdir(dirname(sourceDir),{recursive:true});await rename(source.store.sessionsDir,sourceDir);
  const home=join(source.root,'home');const sessionsDir=join(home,'.spex','sessions');
  const options={sessionsDir,env:{XDG_STATE_HOME:xdg},homeDir:home};
@@ -201,7 +202,7 @@ describe('shared portable session lifecycle', () => {
   const prior=await lease.read();
   await lease.beginTurn({input:'next',attemptId:randomUUID(),attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});
   await lease.release();
-  const bytes=await readFile(stream,'utf8');const manifest=JSON.parse(await readFile(file,'utf8'));
+  const bytes=await readFixtureReplay(stream,'utf8');const manifest=await readFixtureManifest(file);
   expect(bytes).not.toContain('secret-provider-');
   expect(manifest.replay.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
   const history=await store.readHistory(id);
@@ -223,42 +224,42 @@ describe('shared portable session lifecycle', () => {
   const prior=await lease.read();await lease.beginTurn({input:'next',attemptId:randomUUID(),attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});await lease.release();
   const history=await store.readHistory(id);expect(delivered).toEqual(history.entries.slice(1));
   const {nativeSessionId,...retained}=payload;expect(history.entries[1]!.record.event.payload).toEqual(retained);
-  expect(await readFile(stream,'utf8')).not.toContain('secret-');
+  expect(await readFixtureReplay(stream,'utf8')).not.toContain('secret-');
   expect((await store.validate(id)).integrityValid).toBe(true);
  });
  it('refuses provider identities in an existing portable replay without changing its bytes',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
-  const original=await readFile(stream);const record={type:'captain_event',timestamp:1,event:{type:'init',agent:'claude-code',timestamp:1,sessionId:'secret-provider-existing',payload:{}}};
+  const original=await readFixtureReplay(stream);const record={type:'captain_event',timestamp:1,event:{type:'init',agent:'claude-code',timestamp:1,sessionId:'secret-provider-existing',payload:{}}};
   const bytes=Buffer.concat([original,Buffer.from(`${JSON.stringify({v:1,seq:2,record})}\n`)]);
-  await writeFile(stream,bytes);const manifest=JSON.parse(await readFile(file,'utf8'));
+  await writeFixtureReplay(stream,bytes);const manifest=await readFixtureManifest(file);
   manifest.replay={seq:2,sha256:createHash('sha256').update(bytes).digest('hex'),incomplete:false};
   await writeFile(file,JSON.stringify(manifest));const manifestBytes=await readFile(file);
   const result=await store.validate(id);
   expect(result).toMatchObject({integrityValid:false,resumable:false});
   expect(result.reasons).toContain('session replay contains provider continuation fields');
   expect(result.history.entries[1]!.record).toEqual(record);
-  expect(await readFile(stream)).toEqual(bytes);expect(await readFile(file)).toEqual(manifestBytes);
+  expect(await readFixtureReplay(stream)).toEqual(bytes);expect(await readFile(file)).toEqual(manifestBytes);
  });
  it('sanitizes legacy provider events while retaining original replay and clean line bytes',async()=>{
   const {root,store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();
   await writeFile(file,JSON.stringify(legacy));
-  const original=Buffer.concat([await readFile(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"nativeSessionId":"secret-provider-native","thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
-  await writeFile(stream,original);
+  const original=Buffer.concat([await readFixtureReplay(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"nativeSessionId":"secret-provider-native","thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
+  await writeFixtureReplay(stream,original);
   const result=await store.migrate(id);expect(result.migrated).toBe(true);
-  const migrated=await readFile(stream,'utf8');expect(migrated).not.toContain('secret-provider-');
+  const migrated=await readFixtureReplay(stream,'utf8');expect(migrated).not.toContain('secret-provider-');
   expect(migrated).toContain(' {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n');
   expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(original);
   expect((await store.validate(id)).integrityValid).toBe(true);
   expect((await store.readHistory(id)).entries[1]!.record).toEqual({type:'player_event',event:{payload:{thread:{}},type:'init'}});
  });
- it('writes exact schema7 checkpoints over byte-identical replay and context', async () => {
+ it('writes schema8 roots over exact schema7 recovery and byte-identical replay context', async () => {
   const {store,id,lease,file,stream}=await fixture();
   await lease.append({type:'captain_reply',timestamp:1,text:'hello'});
   const prior=await lease.read(); const attemptId=randomUUID();
   await lease.beginTurn({input:'next',attemptId,attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});
-  const manifest=JSON.parse(await readFile(file,'utf8'));
-  expect(manifest.schemaVersion).toBe(7);
-  expect(manifest.replay.sha256).toBe(createHash('sha256').update(await readFile(stream)).digest('hex'));
+  const manifest=await readFixtureManifest(file);
+  expect(manifest.schemaVersion).toBe(7);expect(JSON.parse(await readFile(file,'utf8')).schemaVersion).toBe(8);
+  expect(manifest.replay.sha256).toBe(createHash('sha256').update(await readFixtureReplay(stream)).digest('hex'));
   const history=await store.readHistory(id);
   expect(history.entries[0].record.type).toBe('session_context');
   expect(history.entries[1].record.contextSeq).toBe(1);
@@ -268,10 +269,10 @@ describe('shared portable session lifecycle', () => {
   await lease.release();
  });
  it('keeps later presentation outside the saved replay checkpoint',async()=>{
-  const {store,id,lease,file,stream}=await fixture();const checkpointBytes=await readFile(file);const prefix=await readFile(stream);
-  const checkpoint=JSON.parse(checkpointBytes.toString()).replay;
+  const {store,id,lease,file,stream}=await fixture();const checkpointBytes=await readFile(file);const prefix=await readFixtureReplay(stream);
+  const checkpoint=(await readFixtureManifest(file)).replay;
   await lease.append({type:'captain_telemetry',timestamp:1,topic:'playbook.trace',payload:{type:'session.disposed',sessionId:captainRuntimeId}});
-  await lease.release();const history=await store.readHistory(id);const bytes=await readFile(stream);
+  await lease.release();const history=await store.readHistory(id);const bytes=await readFixtureReplay(stream);
   expect(history.lastReadableSeq).toBe(checkpoint.seq+1);
   expect(bytes.subarray(0,prefix.length)).toEqual(prefix);
   expect(createHash('sha256').update(prefix).digest('hex')).toBe(checkpoint.sha256);
@@ -281,17 +282,17 @@ describe('shared portable session lifecycle', () => {
  });
  it('keeps valid opaque kinds and stops at damage without modifying history',async()=>{
   const {store,id,lease,stream}=await fixture(); await lease.release();
-  const before=await readFile(stream,'utf8');
-  await writeFile(stream,before+JSON.stringify({v:1,seq:2,record:{opaque:true}})+'\n'+JSON.stringify({v:1,seq:3,record:{type:'future'}})+'\n'+'{bad}\n',{mode:0o600});
-  const bytes=await readFile(stream);
+  const before=await readFixtureReplay(stream,'utf8');
+  await writeFixtureReplay(stream,before+JSON.stringify({v:1,seq:2,record:{opaque:true}})+'\n'+JSON.stringify({v:1,seq:3,record:{type:'future'}})+'\n'+'{bad}\n',{mode:0o600});
+  const bytes=await readFixtureReplay(stream);
   const history=await store.readHistory(id);
   expect(history.lastReadableSeq).toBe(3);expect(history.damage?.seq).toBe(4);
-  expect(await readFile(stream)).toEqual(bytes);
+  expect(await readFixtureReplay(stream)).toEqual(bytes);
   expect((await store.validate(id)).resumable).toBe(false);
  });
  it('detects changed bytes even when sequence boundaries are identical',async()=>{
   const {store,id,lease,stream}=await fixture();await lease.release();
-  const bytes=await readFile(stream,'utf8'); await writeFile(stream,bytes.replace('session_context','session_contexu'));
+  const bytes=await readFixtureReplay(stream,'utf8'); await writeFixtureReplay(stream,bytes.replace('session_context','session_contexu'));
   const report=await store.validate(id);expect(report.resumable).toBe(false);expect(report.reasons.some(r=>r.includes('digest'))).toBe(true);
  });
  it('projects tokens out of recovery and consumes exact-checkpoint hints durably',async()=>{
@@ -349,26 +350,26 @@ describe('shared portable session lifecycle', () => {
   const {store,id,lease,file,stream}=await fixture();await lease.release();
   await writeFile(join(store.sessionsDir,`${id}.hints.json`),'{}',{mode:0o600});
   await store.delete(id);await store.delete(id);
-  await expect(readFile(file)).rejects.toMatchObject({code:'ENOENT'});await expect(readFile(stream)).rejects.toMatchObject({code:'ENOENT'});
+  await expect(readFile(file)).rejects.toMatchObject({code:'ENOENT'});await expect(readFixtureReplay(stream)).rejects.toMatchObject({code:'ENOENT'});
   expect((await readdir(store.sessionsDir)).some(name=>name.startsWith(`.${id}.lock.retired.`))).toBe(true);
  });
  it('management leases protect unsupported and absent sessions without reading or rewriting them',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
-  await writeFile(file,'{"schemaVersion":99}');await writeFile(stream,'opaque unsafe history');const bytes=await readFile(stream);
+  await writeFile(file,'{"schemaVersion":99}');await writeFixtureReplay(stream,'opaque unsafe history');const bytes=await readFixtureReplay(stream);
   const management=await store.acquireManagement(id);await expect(store.acquireManagement(id)).rejects.toMatchObject({code:'PLAYBOOK_SESSION_LEASE_ACTIVE'});await management.release();
-  expect(await readFile(stream)).toEqual(bytes);await store.delete(id);
+  expect(await readFixtureReplay(stream)).toEqual(bytes);await store.delete(id);
   const missing=await store.acquireManagement(randomUUID());await missing.release();
  });
  it('keeps unknown manifests inspectable without interpreting or rewriting recovery',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
   const unknown={schemaVersion:99,sessionId:id,recovery:{future:true}};
-  const bytes=JSON.stringify(unknown);await writeFile(file,bytes);const replayBytes=await readFile(stream);
+  const bytes=JSON.stringify(unknown);await writeFile(file,bytes);const replayBytes=await readFixtureReplay(stream);
   const validation=await store.validate(id);
   expect(validation.manifest).toEqual(unknown);expect(validation.resumable).toBe(false);
   expect(validation.reasons).toEqual(['unsupported session schema 99']);
   expect(validation.history.entries.length).toBeGreaterThan(0);
-  expect(await readFile(file,'utf8')).toBe(bytes);expect(await readFile(stream)).toEqual(replayBytes);
-  await unlink(stream);const missing=await store.validate(id);
+  expect(await readFile(file,'utf8')).toBe(bytes);expect(await readFixtureReplay(stream)).toEqual(replayBytes);
+  await removeFixtureReplay(stream);const missing=await store.validate(id);
   expect(missing.manifest).toEqual(unknown);expect(missing.integrityValid).toBe(false);expect(missing.resumable).toBe(false);
   expect(missing.reasons).toContain('unsupported session schema 99');
   expect(await readFile(file,'utf8')).toBe(bytes);await store.delete(id);
@@ -376,12 +377,12 @@ describe('shared portable session lifecycle', () => {
  });
  it('tightens a real Git checkout created under umask022 without changing bytes',async()=>{
   const {store,id,lease,root,file,stream}=await fixture();await lease.release();
-  execFileSync('git',['init','-q',root]);execFileSync('git',['-C',root,'add','sessions/'+id+'.json','sessions/'+id+'.records.jsonl']);
+  execFileSync('git',['init','-q',root]);execFileSync('git',['-C',root,'add','sessions/'+id+'.json','sessions/'+id+'.replay.json','sessions/'+id+'.chunks']);
   execFileSync('git',['-C',root,'-c','commit.gpgsign=false','-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','fixture']);
-  const before=[await readFile(file),await readFile(stream)];await rm(file);await rm(stream);
+  const before=[await readFile(file),await readFixtureReplay(stream)];await rm(file);await removeFixtureReplay(stream);
   execFileSync('sh',['-c','umask 022; git checkout -- sessions'],{cwd:root});await chmod(store.sessionsDir,0o755);
   expect((await stat(file)).mode&0o777).toBe(0o644);expect((await openSessionStore(store.sessionsDir).list()).sessions).toHaveLength(1);
-  expect((await stat(store.sessionsDir)).mode&0o777).toBe(0o700);expect((await stat(file)).mode&0o777).toBe(0o600);expect([await readFile(file),await readFile(stream)]).toEqual(before);
+  expect((await stat(store.sessionsDir)).mode&0o777).toBe(0o700);expect((await stat(file)).mode&0o777).toBe(0o600);expect([await readFile(file),await readFixtureReplay(stream)]).toEqual(before);
  });
  it.each(['symlink','hardlink','owner-bits'])('refuses unsafe permission preparation: %s',async(kind)=>{
   const {store,lease,file,root}=await fixture();await lease.release();
@@ -399,7 +400,7 @@ describe('shared portable session lifecycle', () => {
  });
  it('migrates validated schema6 through retained exact inputs and is idempotent',async()=>{
   const {store,id,lease,file,stream,root}=await fixture();const legacy=await lease.read();await lease.release();
-  const source=JSON.stringify(legacy);await writeFile(file,source);await rm(stream);
+  const source=JSON.stringify(legacy);await writeFile(file,source);await removeFixtureReplay(stream);
   const migrated=await store.migrate(id);expect(migrated.manifest.schemaVersion).toBe(7);expect(migrated.manifest.state).toBe('settled');
   expect(await readFile(join(root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
   expect((await store.migrate(id)).migrated).toBe(false);expect((await store.validate(id)).resumable).toBe(true);
@@ -413,7 +414,7 @@ describe('shared portable session lifecycle', () => {
   expect(await readFile(identityPath,'utf8')).toBe(identityBytes);expect(await readdir(dirname(f.sourceDir))).toContain('sessions');
   const manifest=await f.target.readManifest(f.id);expect(manifest.schemaVersion).toBe(7);
   expect((await f.target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFile(join(f.target.sessionsDir,`${f.id}.records.jsonl`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
+  const replay=await readFixtureReplay(join(f.target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
   const inputs=join(dirname(f.target.sessionsDir),'local','migrations',f.id,'inputs');
   expect(await readFile(join(inputs,'0'),'utf8')).toBe(f.sourceBytes);expect(await readFile(join(inputs,'1'))).toEqual(f.replayBytes);
   await expect(readFile(f.sourcePath)).rejects.toMatchObject({code:'ENOENT'});await expect(readFile(f.sourceReplay)).rejects.toMatchObject({code:'ENOENT'});
@@ -434,7 +435,7 @@ describe('shared portable session lifecycle', () => {
   const target=createSessionStore({...f.options,fsOps:{async rename(from,to){if(phase==='destination-publication'&&fail&&to===destination){fail=false;throw new Error('publication interrupted');}return rename(from,to);},async unlink(path){if(phase==='source-cleanup'&&fail&&path===f.sourcePath){fail=false;throw new Error('cleanup interrupted');}return unlink(path);}}});
   await expect(target.migrateLegacyDefault()).rejects.toThrow(/interrupted/);expect(await readFile(f.sourcePath,'utf8')).toBe(f.sourceBytes);
   const report=await f.target.migrateLegacyDefault();expect(report.migrated).toEqual([f.id]);expect((await f.target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFile(join(f.target.sessionsDir,`${f.id}.records.jsonl`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
+  const replay=await readFixtureReplay(join(f.target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
   await expect(readFile(f.sourcePath)).rejects.toMatchObject({code:'ENOENT'});
  });
  it('reports unsupported old-default inputs unchanged and leaves absent defaults absent',async()=>{
@@ -443,9 +444,9 @@ describe('shared portable session lifecycle', () => {
   const missing=join(f.root,'missing-home');const other=createSessionStore({homeDir:missing,env:{}});expect((await other.migrateLegacyDefault()).migrated).toEqual([]);await expect(stat(missing)).rejects.toMatchObject({code:'ENOENT'});
  });
  it('reads foreign-platform checkpoints as intact history and refuses native continuation',async()=>{
-  const {store,id,lease,file,stream}=await fixture();await lease.release();const base=JSON.parse(await readFile(file,'utf8'));const replay=await readFile(stream);
+  const {store,id,lease,file,stream}=await fixture();await lease.release();const base=await readFixtureManifest(file);const replay=await readFixtureReplay(stream);
   for(const cwd of ['/another/device/project',String.raw`C:\Users\owner\project`,String.raw`\\server\share\project`]){
-   await writeFile(file,JSON.stringify({...base,cwd}));const validation=await store.validate(id,{cwd:process.cwd()});expect(validation.integrityValid).toBe(true);expect(validation.resumable).toBe(false);expect((await store.readSummary(id)).cwd).toBe(cwd);expect(await readFile(stream)).toEqual(replay);
+   await writeFile(file,JSON.stringify({...base,cwd}));const validation=await store.validate(id,{cwd:process.cwd()});expect(validation.integrityValid).toBe(true);expect(validation.resumable).toBe(false);expect((await store.readSummary(id)).cwd).toBe(cwd);expect(await readFixtureReplay(stream)).toEqual(replay);
   }
   for(const cwd of ['relative',String.raw`C:relative`,String.raw`\rooted`,String.raw`C:\a\..\b`,'/a/../b'])expect(()=>validateSessionManifest({...base,cwd})).toThrow('identity');
  });
@@ -461,12 +462,12 @@ describe('shared portable session lifecycle', () => {
   const sidecar=join(sourceDir,`${id}.spex.json`);const stream=join(sourceDir,`${id}.records.jsonl`);
   const source=JSON.stringify({v:1,session:{id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[]}});
   const replay=JSON.stringify({v:1,seq:1,record:{type:'captain_reply',timestamp:2,text:'desktop history'}})+'\n';
-  await writeFile(sidecar,source,{mode:0o644});await writeFile(stream,replay,{mode:0o644});await chmod(sourceDir,0o755);
+  await writeFile(sidecar,source,{mode:0o644});await writeFixtureReplay(stream,replay,{mode:0o644});await chmod(sourceDir,0o755);
   const result=await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});expect(result.manifest.state).toBe('history-only');
   expect((await stat(sourceDir)).mode&0o777).toBe(0o700);expect((await stat(join(target,`${id}.json`))).mode&0o777).toBe(0o600);
   expect(await readFile(join(root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
   expect(await readFile(join(root,'local','migrations',id,'inputs','1'),'utf8')).toBe(replay);
-  expect(await readFile(join(target,`${id}.records.jsonl`),'utf8')).toBe(replay);
+  expect(await readFixtureReplay(join(target,`${id}.replay.json`),'utf8')).toBe(replay);
  });
  it.each(['symlink','hardlink','owner-read-only'])('refuses unsafe %s desktop migration sources',async(kind)=>{
   const root=await mkdtemp(join(tmpdir(),'desktop-unsafe-'));roots.push(root);const sessionsDir=join(root,'sessions');await mkdir(sessionsDir,{mode:0o700});
@@ -479,11 +480,11 @@ describe('shared portable session lifecycle', () => {
  });
  it.each([false,true])('retains a valid unterminated legacy replay record (external=%s)',async(external)=>{
   const f=await fixture();const legacy=await f.lease.read();await f.lease.release();await writeFile(f.file,JSON.stringify(legacy));
-  const prefix=await readFile(f.stream);const tail=JSON.stringify({v:1,seq:2,record:{type:'captain_reply',timestamp:7,text:'last complete record'}});
-  const original=Buffer.concat([prefix,Buffer.from(tail)]);await writeFile(f.stream,original);
+  const prefix=await readFixtureReplay(f.stream);const tail=JSON.stringify({v:1,seq:2,record:{type:'captain_reply',timestamp:7,text:'last complete record'}});
+  const original=Buffer.concat([prefix,Buffer.from(tail)]);await writeFixtureReplay(f.stream,original);
   const target=external?createSessionStore({sessionsDir:join(f.root,'destination')}):f.store;
   const result=await target.migrate(f.id,{sourcePath:f.file});expect(result.manifest.state).toBe('settled');expect((await target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFile(join(target.sessionsDir,`${f.id}.records.jsonl`));expect(replay.subarray(0,original.length+1)).toEqual(Buffer.concat([original,Buffer.from('\n')]));
+  const replay=await readFixtureReplay(join(target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,original.length+1)).toEqual(Buffer.concat([original,Buffer.from('\n')]));
   expect(await readFile(join(f.root,'local','migrations',f.id,'inputs','1'))).toEqual(original);
   expect((await target.readHistory(f.id)).entries[1].record.text).toBe('last complete record');
  });
@@ -500,9 +501,9 @@ describe('shared portable session lifecycle', () => {
   await f.store.delete(f.id);await f.store.delete(record.sessionId);await expect(f.store.latest()).rejects.toThrow('no resumable Captain session exists');
  });
  it.each(['digest','incomplete','context','path'])('refuses %s before embedding host imports or reconciliation',async(kind)=>{
-  const f=await fixture();await f.lease.release();const manifest=JSON.parse(await readFile(f.file,'utf8'));
+  const f=await fixture();await f.lease.release();const manifest=await readFixtureManifest(f.file);
   if(kind==='digest')manifest.replay.sha256='0'.repeat(64);else if(kind==='incomplete')manifest.replay.incomplete=true;
-  else if(kind==='context'){const entry=JSON.parse(await readFile(f.stream,'utf8'));entry.record.contextVersion=99;const bytes=JSON.stringify(entry)+'\n';await writeFile(f.stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');}
+  else if(kind==='context'){const entry=JSON.parse(await readFixtureReplay(f.stream,'utf8'));entry.record.contextVersion=99;const bytes=JSON.stringify(entry)+'\n';await writeFixtureReplay(f.stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');}
   else manifest.cwd=String.raw`C:\Users\other\project`;
   await writeFile(f.file,JSON.stringify(manifest));let imports=0,hosts=0;
   await expect(openSessionHost({store:f.store,sessionId:f.id,mode:'continue',loadModule:async()=>{imports++;throw new Error('must not import');},createHostRuntime:async()=>{hosts++;throw new Error('must not start');}} as any)).rejects.toThrow();
@@ -519,38 +520,38 @@ describe('shared portable session lifecycle', () => {
  it('recovers a migration interrupted between replay and manifest publication', async () => {
   const {store,id,lease,file,stream,root}=await fixture();
   const legacy=await lease.read();await lease.release();
-  const original=JSON.stringify(legacy);await writeFile(file,original);const originalReplay=await readFile(stream);
+  const original=JSON.stringify(legacy);await writeFile(file,original);const originalReplay=await readFixtureReplay(stream);
   let fail=true;
   const interrupted=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async rename(from,to){if(fail&&to===file){fail=false;throw new Error('manifest publication interrupted');}return rename(from,to);}}});
   await expect(interrupted.migrate(id)).rejects.toThrow('manifest publication interrupted');
   expect(await readFile(file,'utf8')).toBe(original);
   expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(originalReplay);
-  const stagedReplay=await readFile(stream);
+  const stagedReplay=await readFixtureReplay(stream);
   await store.migrate(id);
-  expect(await readFile(stream)).toEqual(stagedReplay);
+  expect(await readFixtureReplay(stream)).toEqual(stagedReplay);
   expect((await store.validate(id)).resumable).toBe(true);
  });
  it('refuses divergent migration output and preserves malformed source bytes',async()=>{
   const {store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();await writeFile(file,JSON.stringify(legacy));
   const interrupted=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async rename(from,to){if(to===file)throw new Error('stop publication');return rename(from,to);}}});
   await expect(interrupted.migrate(id)).rejects.toThrow('stop publication');
-  const changed=Buffer.from('divergent replay\n');await writeFile(stream,changed);
-  await expect(store.migrate(id)).rejects.toThrow('diverged');expect(await readFile(stream)).toEqual(changed);
+  const changed=Buffer.from('divergent replay\n');await writeFixtureReplay(stream,changed);
+  await expect(store.migrate(id)).rejects.toThrow('diverged');expect(await readFixtureReplay(stream)).toEqual(changed);
   const malformed='{"schemaVersion":6,"broken":true}';await writeFile(file,malformed);
   await expect(store.migrate(id)).rejects.toThrow();expect(await readFile(file,'utf8')).toBe(malformed);
  });
  it('retains damaged legacy replay verbatim while publishing readable history only',async()=>{
   const {store,id,lease,file,stream,root}=await fixture();const legacy=await lease.read();await lease.release();await writeFile(file,JSON.stringify(legacy));
-  const prefix=await readFile(stream);const damaged=Buffer.concat([prefix,Buffer.from([0xff,0x0a])]);await writeFile(stream,damaged);
+  const prefix=await readFixtureReplay(stream);const damaged=Buffer.concat([prefix,Buffer.from([0xff,0x0a])]);await writeFixtureReplay(stream,damaged);
   const migrated=await store.migrate(id);expect(migrated.manifest.state).toBe('history-only');expect(migrated.manifest.replay.incomplete).toBe(true);
   expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(damaged);
-  expect(await readFile(stream)).toEqual(prefix);
+  expect(await readFixtureReplay(stream)).toEqual(prefix);
  });
  it('keeps the manifest until interrupted deletion can finish',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();const hint=join(store.sessionsDir,`${id}.hints.json`);await writeFile(hint,'{}',{mode:0o600});
   const interrupted=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async unlink(path){if(path===hint)throw new Error('hint removal interrupted');return unlink(path);}}});
   await expect(interrupted.delete(id)).rejects.toThrow('hint removal interrupted');
-  expect(await readFile(file)).toBeDefined();await expect(readFile(stream)).rejects.toMatchObject({code:'ENOENT'});expect((await store.validate(id)).integrityValid).toBe(false);
+  expect(await readFile(file)).toBeDefined();expect((await readFixtureReplay(stream)).length).toBeGreaterThan(0);expect((await store.validate(id)).integrityValid).toBe(true);
   await store.delete(id);await expect(readFile(file)).rejects.toMatchObject({code:'ENOENT'});
  });
  it('preserves incompleteness across leases and retains ownership when its save fails',async()=>{
@@ -558,13 +559,13 @@ describe('shared portable session lifecycle', () => {
   const failing=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async rename(from,to){if(fail&&to===file)throw new Error('incomplete save failed');return rename(from,to);}}});
   const writer=await failing.acquire(id);const cyclic:any={};cyclic.self=cyclic;await expect(writer.append(cyclic)).rejects.toThrow("JSON cycle");fail=true;
   await expect(writer.release()).rejects.toThrow('incomplete save failed');await expect(store.acquireManagement(id)).rejects.toMatchObject({code:'PLAYBOOK_SESSION_LEASE_ACTIVE'});
-  fail=false;await writer.release();expect(JSON.parse(await readFile(file,'utf8')).replay.incomplete).toBe(true);
+  fail=false;await writer.release();expect((await readFixtureManifest(file)).replay.incomplete).toBe(true);
   const next=await store.acquire(id);await expect(next.assertContinuable()).rejects.toThrow('incomplete');await next.release();expect((await store.readManifest(id)).replay.incomplete).toBe(true);
  });
  it('keeps unsupported context history readable and refuses a mismatched supported context',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
-  const manifest=JSON.parse(await readFile(file,'utf8'));const entry=JSON.parse(await readFile(stream,'utf8'));
-  const publish=async()=>{const bytes=JSON.stringify(entry)+'\n';await writeFile(stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');await writeFile(file,JSON.stringify(manifest));};
+  const manifest=await readFixtureManifest(file);const entry=JSON.parse(await readFixtureReplay(stream,'utf8'));
+  const publish=async()=>{const bytes=JSON.stringify(entry)+'\n';await writeFixtureReplay(stream,bytes);manifest.replay.sha256=createHash('sha256').update(bytes).digest('hex');await writeFile(file,JSON.stringify(manifest));};
   entry.record.contextVersion=99;await publish();const future=await store.validate(id);expect(future.integrityValid).toBe(true);expect(future.resumable).toBe(false);expect(future.history.entries).toHaveLength(1);
   entry.record.contextVersion=1;entry.record.captainId=randomUUID();await publish();const mismatch=await store.validate(id);expect(mismatch.integrityValid).toBe(false);expect(mismatch.reasons).toContain('required session context differs from checkpoint recovery');
  });
@@ -573,19 +574,19 @@ describe('shared portable session lifecycle', () => {
   const {store,id,lease,file,stream}=await fixture();const legacy:any=structuredClone(await lease.read());await lease.release();
   legacy.snapshot=shellSnapshot(executionProjection(),2);
   legacy.snapshot.journal=[{seq:1,turnId:1,kind:'boss',payload:'first'},{seq:2,turnId:1,kind:'reply',payload:'first reply'},{seq:3,turnId:2,kind:'boss',payload:'second'},{seq:4,turnId:2,kind:'reply',payload:'second reply'}];legacy.snapshot.sequences.journal=4;
-  const bytes=JSON.stringify(legacy);await writeFile(file,bytes);await rm(stream);
+  const bytes=JSON.stringify(legacy);await writeFile(file,bytes);await removeFixtureReplay(stream);
   const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.missing).toBe(true);expect(history.entries.map(e=>e.record.type)).toEqual(['turn_started','captain_reply','turn_finished','turn_started','captain_reply','turn_finished']);
-  expect(await readFile(file,'utf8')).toBe(bytes);await expect(readFile(stream)).rejects.toMatchObject({code:'ENOENT'});expect((await store.validate(id)).resumable).toBe(false);
+  expect(await readFile(file,'utf8')).toBe(bytes);await expect(readFixtureReplay(stream)).rejects.toMatchObject({code:'ENOENT'});expect((await store.validate(id)).resumable).toBe(false);
  });
 
  it('presents legacy journal-only records without granting recovery',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();const legacy={schemaVersion:3,kind:'captain-session',sessionId:id,updatedAt:new Date(0).toISOString(),snapshot:{journal:[{turnId:1,kind:'boss',payload:'old request'},{turnId:1,kind:'reply',payload:'old reply'},{turnId:'invalid',kind:'boss',payload:'skip'}]}};
-  await writeFile(file,JSON.stringify(legacy));await rm(stream);const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.entries).toHaveLength(3);await expect(store.read(id)).rejects.toThrow();
+  await writeFile(file,JSON.stringify(legacy));await removeFixtureReplay(stream);const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.entries).toHaveLength(3);await expect(store.read(id)).rejects.toThrow();
  });
  it('temporarily refuses an unfinished replay tail without saving damage',async()=>{
-  const {store,id,lease,file,stream}=await fixture();await lease.release();const before=await readFile(file);const entry=JSON.stringify({v:1,seq:2,record:{opaque:true}});await writeFile(stream,(await readFile(stream,'utf8'))+entry);
+  const {store,id,lease,file,stream}=await fixture();await lease.release();const before=await readFile(file);const entry=JSON.stringify({v:1,seq:2,record:{opaque:true}});await writeFixtureReplay(stream,(await readFixtureReplay(stream,'utf8'))+entry);
   const pending=await store.validate(id);expect(pending.integrityValid).toBe(true);expect(pending.resumable).toBe(false);expect(pending.history.pendingTail).toBe(true);expect(await readFile(file)).toEqual(before);
-  await writeFile(stream,(await readFile(stream,'utf8'))+'\n');expect((await store.validate(id)).resumable).toBe(true);expect(await readFile(file)).toEqual(before);
+  await writeFixtureReplay(stream,(await readFixtureReplay(stream,'utf8'))+'\n');expect((await store.validate(id)).resumable).toBe(true);expect(await readFile(file)).toEqual(before);
  });
 
  it('delivers internal replay records without gaps or callback deadlock',async()=>{
@@ -671,14 +672,16 @@ it('checkpoints asset-only accepted input, exports its exact prefix and preserve
  const snapshot:any=shellSnapshot(executionProjection(),1);snapshot.pendingAttachments=[reference];snapshot.journal[0].payload={text:'',attachments:[reference]};
  await lease.settle({attemptId,snapshot,unresolvedEffects:[]});
  const manifest=await store.readManifest(id);expect(manifest).toHaveProperty('assets',{version:1,entries:[reference]});
- const provenReplay=await readFile(stream);await lease.append({type:'later_uncheckpointed',timestamp:2});
+ const provenReplay=await readFixtureReplay(stream);await lease.append({type:'later_uncheckpointed',timestamp:2});
  const bundle=await store.exportBundle(id);
  expect(Buffer.from(bundle.manifest)).toEqual(await readFile(file));expect(Buffer.from(bundle.replay)).toEqual(provenReplay);
  expect(bundle.assets).toEqual([{assetId:reference.assetId,path:reference.assetId.slice(7),metadataPath:`${reference.assetId.slice(7)}.json`,byteLength:bytes.length}]);
  const copied=createSessionStore({sessionsDir:join(root,'copied')});await mkdir(copied.sessionsDir,{mode:0o700});await copied.prepare();
- await writeFile(join(copied.sessionsDir,`${id}.json`),bundle.manifest,{mode:0o600});
- await writeFile(join(copied.sessionsDir,`${id}.records.jsonl`),bundle.replay,{mode:0o600});
- const destination=join(copied.sessionsDir,`${id}.assets`);await mkdir(destination,{mode:0o755});
+ for (const entry of bundle.files) {
+  const target=join(copied.sessionsDir,entry.path);await mkdir(dirname(target),{recursive:true,mode:0o700});
+  await writeFile(target,await readFile(join(store.sessionsDir,entry.path)),{mode:0o644});
+ }
+ const destination=join(copied.sessionsDir,`${id}.assets`);await mkdir(destination,{recursive:true,mode:0o755});await chmod(destination,0o755);
  for(const entry of bundle.assets) for(const relative of [entry.path,entry.metadataPath]) await writeFile(join(destination,relative),await readFile(join(store.sessionsDir,`${id}.assets`,relative)),{mode:0o644});
  await copied.prepare();expect((await copied.validate(id)).resumable).toBe(true);
  const reader=await copied.openAsset(id,reference);expect(Buffer.from(await reader.read({offset:9,length:6}))).toEqual(bytes.subarray(9,15));await reader.close();
@@ -707,7 +710,7 @@ it('refuses undeclared, absent and corrupt session assets without discarding rea
  const attemptId=randomUUID();await lease.beginTurn({input:'read evidence',attachments:[reference],attemptId,attemptedExecutionProjection:executionProjection()});
  await lease.append({type:'playbook_evidence',timestamp:1,turnId:1,callId:'call',origin:{kind:'player',actorId:'dev.coder'},asset:reference});
  await lease.settle({attemptId,snapshot:shellSnapshot(executionProjection(),1),unresolvedEffects:[]});await lease.release();
- const saved=await readFile(file,'utf8');const manifest=JSON.parse(saved);delete manifest.assets;await writeFile(file,JSON.stringify(manifest));
+ const saved=await readFile(file,'utf8');const manifest=await readFixtureManifest(file);delete manifest.assets;await writeFile(file,JSON.stringify(manifest));
  expect((await store.validate(id)).reasons.join()).toContain('inventory');await expect(store.exportBundle(id)).rejects.toThrow('inventory');
  await writeFile(file,saved);const path=join(store.sessionsDir,`${id}.assets`,reference.assetId.slice(7));await writeFile(path,'corrupt');
  expect((await store.validate(id)).resumable).toBe(false);await expect(store.exportBundle(id)).rejects.toThrow('integrity');

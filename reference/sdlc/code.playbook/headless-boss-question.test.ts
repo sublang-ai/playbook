@@ -5,6 +5,7 @@
 
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFixtureManifest } from './test-support/session-persistence.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -263,12 +264,7 @@ describe('headless Boss-question settlement', () => {
     expect(stderr.text()).not.toContain('exportable session snapshot');
     expect(result.code).toBe(0);
     expect(stdout.text()).toContain('Coder needs a Boss answer');
-    const record = JSON.parse(
-      await readFile(
-        join(sessionsDir, '90000000-0000-4000-8000-000000000001.json'),
-        'utf8',
-      ),
-    );
+    const record = await readFixtureManifest(join(sessionsDir, '90000000-0000-4000-8000-000000000001.json'));
     expect(record.state).toBe('settled');
     const frames = record.snapshot?.frames ?? [];
     expect(frames).toHaveLength(1);

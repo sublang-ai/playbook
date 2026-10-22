@@ -200,6 +200,33 @@ function installedPackageRoot(prefix) {
   return join(prefix, 'lib', 'node_modules', '@sublang', 'playbook');
 }
 
+// Read logical recovery through the installed public facade, while asserting
+// the packed writer actually produced the bounded physical representation.
+function readPackedSessionManifest(prefix, sessionsDir, sessionId) {
+  const physicalPath = join(sessionsDir, `${sessionId}.json`);
+  const physical = readJson(physicalPath);
+  const expectedKeys = ['createdAt', 'cwd', 'kind', 'root', 'schemaVersion', 'sessionId', 'state', 'updatedAt'];
+  if (
+    physical.schemaVersion !== 8 ||
+    physical.kind !== 'captain-session-storage' ||
+    physical.sessionId !== sessionId ||
+    JSON.stringify(Object.keys(physical).sort()) !== JSON.stringify(expectedKeys) ||
+    lstatSync(physicalPath).size > 8 * 1024 * 1024
+  ) fail('the installed CLI did not write a bounded schema-8 session root', JSON.stringify(physical));
+  const facade = pathToFileURL(join(installedPackageRoot(prefix), 'reference/sdlc/code.playbook/session-store.js')).href;
+  const source = [
+    `import { createSessionStore } from ${JSON.stringify(facade)};`,
+    `const store = createSessionStore({ sessionsDir: ${JSON.stringify(sessionsDir)} });`,
+    `const sessionId = ${JSON.stringify(sessionId)};`,
+    'const manifest = await store.readManifest(sessionId);',
+    'const history = await store.readHistory(sessionId);',
+    "if (history.missing || history.incomplete || history.pendingTail) throw new Error('packed session history is missing or damaged');",
+    'process.stdout.write(JSON.stringify(manifest));',
+  ].join('\n');
+  const result = run(process.execPath, ['--input-type=module', '--eval', source]);
+  return JSON.parse(result.stdout);
+}
+
 function nestedCligentRoot(prefix) {
   return join(installedPackageRoot(prefix), 'node_modules', '@sublang', 'cligent');
 }
@@ -1832,8 +1859,7 @@ function stepHermetic(root, state) {
   assertProvisionedEngineTree(repo, state.optinPrefix);
   const firstEnvelope = parseExactHeadlessReply(first.stdout, smokeToken);
   const sessionsDir = join(env.SPEX_HOME, 'sessions');
-  const sessionPath = join(sessionsDir, `${firstEnvelope.sessionId}.json`);
-  const firstRecord = readJson(sessionPath);
+  const firstRecord = readPackedSessionManifest(state.optinPrefix, sessionsDir, firstEnvelope.sessionId);
   const frozenCwd = realpathSync(repo);
   const firstPlayerIds = firstRecord.structuralProjection?.players?.map(
     (player) => player.id,
@@ -1892,7 +1918,7 @@ function stepHermetic(root, state) {
     smokeContinuedReply,
     firstEnvelope.sessionId,
   );
-  const secondRecord = readJson(sessionPath);
+  const secondRecord = readPackedSessionManifest(state.optinPrefix, sessionsDir, firstEnvelope.sessionId);
   if (
     secondRecord.state !== 'settled' ||
     secondRecord.cwd !== frozenCwd ||
@@ -1940,7 +1966,7 @@ function stepHermetic(root, state) {
   );
   expectOneOrderedLifecycle(laneB.stderr, 'lanes');
   parseExactHeadlessReply(laneB.stdout, smokeToken, firstEnvelope.sessionId);
-  const finalRecord = readJson(sessionPath);
+  const finalRecord = readPackedSessionManifest(state.optinPrefix, sessionsDir, firstEnvelope.sessionId);
   const finalHints = readJson(join(sessionsDir, `${firstEnvelope.sessionId}.hints.json`));
   const finalExecution = finalRecord.lastAppliedExecutionProjection;
   const finalPlayers = Object.fromEntries(
@@ -2059,7 +2085,7 @@ function stepHermetic(root, state) {
     smokeToken,
   );
   const recoverPath = join(sessionsDir, `${recoverEnvelope.sessionId}.json`);
-  const parkedRecover = readJson(recoverPath);
+  const parkedRecover = readPackedSessionManifest(state.optinPrefix, sessionsDir, recoverEnvelope.sessionId);
   const parkedFrame = parkedRecover.snapshot?.frames?.[0];
   if (
     parkedRecover.state !== 'settled' ||
@@ -2098,7 +2124,7 @@ function stepHermetic(root, state) {
     smokeToken,
     recoverEnvelope.sessionId,
   );
-  const recoveredRecord = readJson(recoverPath);
+  const recoveredRecord = readPackedSessionManifest(state.optinPrefix, sessionsDir, recoverEnvelope.sessionId);
   const recoverCalls = readFileSync(env.PLAYBOOK_SMOKE_AGENT_LOG, 'utf8')
     .trimEnd()
     .split('\n')
@@ -2309,7 +2335,7 @@ function stepEffectReconciliation(root, state) {
     }
   };
   const sessionsDir = join(env.SPEX_HOME, 'sessions');
-  const sessionRecord = (id) => readJson(join(sessionsDir, `${id}.json`));
+  const sessionRecord = (id) => readPackedSessionManifest(state.optinPrefix, sessionsDir, id);
 
   const resolvedBaseline = head();
   const resolvedRun = run(process.execPath, [driverPath, 'run', '--json'], {
@@ -3060,7 +3086,7 @@ function stepPackedSessionStore(root, state) {
   if (fixture === undefined) {
     fail('the installed CLI produced no session-store smoke fixture');
   }
-  const oldManifest = readJson(fixture.oldSessionPath);
+  const oldManifest = readPackedSessionManifest(state.optinPrefix, fixture.sessionsDir, fixture.oldSessionId);
   if (
     oldManifest.schemaVersion !== 7 ||
     oldManifest.sessionId !== fixture.oldSessionId
@@ -3203,8 +3229,19 @@ try {
 await rm(copied.directory, { recursive: true, force: true });
 assert.deepEqual(new Uint8Array(await store.readAsset(sessionId, sessionAsset)), original, 'session owns an independent copy');
 const bundle = await store.exportBundle(sessionId);
-const manifest = JSON.parse(Buffer.from(bundle.manifest).toString('utf8'));
+const physicalManifest = JSON.parse(Buffer.from(bundle.manifest).toString('utf8'));
+assert.equal(physicalManifest.schemaVersion, 8);
+assert.equal(physicalManifest.kind, 'captain-session-storage');
+const manifest = await store.readManifest(sessionId);
 assert.ok(manifest.assets.entries.some((entry) => entry.assetId === sessionAsset.assetId));
+assert.ok(bundle.files.some((entry) => entry.path === sessionId + '.json'));
+assert.ok(bundle.files.some((entry) => entry.path === sessionId + '.replay.json'));
+assert.ok(bundle.files.some((entry) => entry.path.startsWith(sessionId + '.chunks/')));
+for (const entry of bundle.files) {
+  const stored = await stat(join(sessionsDir, entry.path));
+  assert.equal(stored.size, entry.byteLength);
+  assert.ok(stored.size <= 8 * 1024 * 1024);
+}
 assert.ok(bundle.assets.some((entry) => entry.assetId === sessionAsset.assetId && entry.byteLength === original.length && entry.path === sessionAsset.assetId.slice(7)));
 assert.ok(Buffer.from(bundle.replay).toString('utf8').includes(sessionAsset.assetId));
 const reopened = createSessionStore({ sessionsDir });

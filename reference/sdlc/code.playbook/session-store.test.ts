@@ -4,6 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
+import { readFixtureManifest, decodeFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile } from './test-support/session-persistence.js';
 import {
   chmod,
   link,
@@ -233,7 +234,7 @@ function observedReplayMutationFs(
       async open(path: string, flags: string | number, mode?: number) {
         if (path.endsWith('/owner.json')) ownerOpens += 1;
         const handle = await open(path, flags as any, mode);
-        if (path === streamPath) {
+        if (path === streamPath || path.startsWith(join(sessionsDir, `.${sessionId}.replay-`))) {
           replayOpens += 1;
           return new Proxy(handle as any, {
             get(target, property) {
@@ -276,7 +277,7 @@ function observedReplayMutationFs(
             },
           });
         }
-        if (path === sessionsDir && flags === 'r') {
+        if (path === sessionsDir) {
           return new Proxy(handle as any, {
             get(target, property) {
               if (property === 'sync') {
@@ -778,9 +779,9 @@ async function writeRecordFixture(
   const context = contextFromRecovery(validated);
   context.timestamp = Date.parse(validated.updatedAt);
   const stream = `${JSON.stringify({v:1,seq:1,record:context})}\n`;
-  await writeFile(replayStreamPath(sessionsDir,validated.sessionId), stream, {mode:0o600});
+  await writeFixtureReplay(join(sessionsDir,`${validated.sessionId}.replay.json`), stream);
   const manifest = manifestFromRecovery(validated, {seq:1,sha256:createHash('sha256').update(stream).digest('hex'),incomplete:false},1);
-  await writeFile(path, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+  await writeFixtureFile(path, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);
   return path;
 }
@@ -1151,7 +1152,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       await firstLease.release();
 
       const recordPath = join(sessionsDir, `${sessionId}.json`);
-      const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
+      const persisted = await readFixtureManifest(recordPath);
       const legacyBytes = `${JSON.stringify(
         legacyRecord(persisted, schemaVersion),
       )}\n`;
@@ -2209,21 +2210,27 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const { sessionsDir } = await fixtureDir();
     const recordPath = join(sessionsDir, `${sessionId}.json`);
     let directorySyncFailures = 0;
+    let recordPublished = false;
     const store = fixedStore(sessionsDir, tokenO, {
       fsOps: {
+        async rename(from: string, to: string) {
+          await rename(from, to);
+          if (to === recordPath && directorySyncFailures > 0) recordPublished = true;
+        },
         async open(path: string, flags: string, mode?: number) {
           const handle = await open(path, flags, mode);
           if (path !== sessionsDir) return handle;
-          return {
-            async sync() {
-              if (directorySyncFailures > 0) {
+          return new Proxy(handle, { get(target, property) {
+            if (property === 'sync') return async () => {
+              if (recordPublished && directorySyncFailures > 0) {
                 directorySyncFailures -= 1;
                 throw new Error('synthetic record directory sync failure');
               }
-              await handle.sync();
-            },
-            close: () => handle.close(),
-          };
+              await target.sync();
+            };
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          } });
         },
       },
     });
@@ -2913,8 +2920,8 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       firstSettled.retainedGenerations,
     );
     await secondLease.discard({ attemptId: attempt3 });
-    const restored = JSON.parse(await readFile(recordPath, 'utf8'));
-    const original = JSON.parse(settledBytes);
+    const restored = await readFixtureManifest(recordPath);
+    const original = await decodeFixtureManifest(settledBytes, recordPath);
     expect({ ...restored, replay: original.replay }).toEqual(original);
     expect(restored.replay.seq).toBeGreaterThan(original.replay.seq);
     await secondLease.release();
@@ -2928,7 +2935,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         freshBoundary(initialExecution),
       ),
     ).rejects.toThrow(/already exists/);
-    expect(JSON.parse(await readFile(recordPath, 'utf8'))).toEqual(restored);
+    expect(await readFixtureManifest(recordPath)).toEqual(restored);
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await collisionLease.release();
@@ -3556,6 +3563,50 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
+  it('keeps monolithic schema-7 history readable while skipping it for continuation and adoption', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const olderId = adoptionSessionId(70);
+    const legacyId = adoptionSessionId(71);
+    const targetId = adoptionSessionId(72);
+    const olderPath = await writeRecordFixture(sessionsDir, retainedSettledRecord({
+      id: olderId, updatedAt: '2026-08-11T21:00:00.020Z',
+    }));
+    const legacyPath = await writeRecordFixture(sessionsDir, retainedSettledRecord({
+      id: legacyId, updatedAt: '2026-08-11T21:00:00.060Z',
+    }));
+    const manifest = await readFixtureManifest(legacyPath);
+    const replay = await readFixtureReplay(join(sessionsDir, `${legacyId}.replay.json`));
+    await writeFile(legacyPath, JSON.stringify(manifest), { mode: 0o600 });
+    await writeFile(join(sessionsDir, `${legacyId}.records.jsonl`), replay, { mode: 0o600 });
+    await unlink(join(sessionsDir, `${legacyId}.replay.json`));
+    await rm(join(sessionsDir, `${legacyId}.chunks`), { recursive: true });
+    const legacyBytes = await readFile(legacyPath);
+    const olderBytes = await readFile(olderPath);
+    const store = sequencedStore(sessionsDir, 70);
+    expect((await store.read(legacyId)).retainedGenerations).not.toEqual({});
+    expect(await store.validate(legacyId)).toMatchObject({ integrityValid: true, resumable: false,
+      reasons: [expect.stringMatching(/explicit migration/)] });
+    const skipped: any[] = [];
+    expect((await store.latest({ onLegacyRecord: (value: any) => skipped.push(value) })).sessionId).toBe(olderId);
+    expect(skipped).toEqual([expect.objectContaining({ sessionId: legacyId, schemaVersion: 7, reason: expect.stringMatching(/explicit migration/) })]);
+    const target = freshAdoptionTargetRecord({ id: targetId });
+    const lease = await store.acquire(targetId);
+    try {
+      skipped.length = 0;
+      const initialized = await lease.initializeSettledWithPredecessor({
+        cwd: target.cwd, structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection, snapshot: target.snapshot,
+        onLegacyRecord: (value: any) => skipped.push(value),
+      });
+      expect(initialized.retainedGenerations).toEqual({});
+      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(Date.parse(manifest.updatedAt));
+      expect(skipped).toHaveLength(1);
+      expect(await readFile(legacyPath)).toEqual(legacyBytes);
+      expect(await readFile(join(sessionsDir, `${legacyId}.records.jsonl`))).toEqual(replay);
+      expect(await readFile(olderPath)).toEqual(olderBytes);
+    } finally { await lease.release(); }
+  });
+
   it.each(['malformed', 'unknown schema', 'unsafe'] as const)(
     'reports a %s canonical record and declines older adoption during fresh discovery',
     async (shape) => {
@@ -4169,14 +4220,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
 
       const sourceAfterBytes = await readFile(sourcePath, 'utf8');
       const sourceAfter = validateCaptainSessionRecord(
-        JSON.parse(sourceAfterBytes),
+        await decodeFixtureManifest(sourceAfterBytes, sourcePath),
       );
       let targetAfter;
       let targetAfterBytes;
       try {
         targetAfterBytes = await readFile(targetPath, 'utf8');
         targetAfter = validateCaptainSessionRecord(
-          JSON.parse(targetAfterBytes),
+          await decodeFixtureManifest(targetAfterBytes, targetPath),
         );
       } catch (error: any) {
         expect(error).toMatchObject({ code: 'ENOENT' });
@@ -4726,7 +4777,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       }),
     ).rejects.toThrow(/synthetic record rename failure/);
     expect(await readFile(recordPath, 'utf8')).toBe(before);
-    expect(JSON.parse(before)).toMatchObject({
+    expect(await decodeFixtureManifest(before, recordPath)).toMatchObject({
       state: 'uncertain',
       snapshot: { sequences: { turn: 1 } },
       retainedGenerations: {
@@ -4883,7 +4934,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const store = fixedStore(sessionsDir, tokenR);
     expect((await store.latest()).sessionId).toBe(secondSessionId);
     const secondPath = join(sessionsDir, `${secondSessionId}.json`);
-    const wrongEmbeddedId = JSON.parse(await readFile(secondPath, 'utf8'));
+    const wrongEmbeddedId = await readFixtureManifest(secondPath);
     await writeFile(
       secondPath,
       `${JSON.stringify({ ...wrongEmbeddedId, sessionId })}\n`,
@@ -5637,129 +5688,50 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
 });
 
 describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
-  it('seeds from byte zero and repairs each torn-tail branch exactly', async () => {
+  function boundedStreamPath(sessionsDir: string) {
+    return join(sessionsDir, `${sessionId}.replay.json`);
+  }
+  async function writeBoundedReplay(sessionsDir: string, bytes: string) {
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await chmod(sessionsDir, 0o700);
+    const path = boundedStreamPath(sessionsDir);
+    await writeFixtureReplay(path, bytes);
+    return path;
+  }
+
+  it('refuses legacy mutation and opens bounded snapshots without repairing their bytes', async () => {
     const empty = await fixtureDir();
-    const emptyLease = await fixedStore(
-      empty.sessionsDir,
-      tokenO,
-    ).acquire(sessionId);
-    expect(emptyLease.streamStatus()).toEqual({
-      lastReadableSeq: 0,
-      lastDurableSeq: 0,
-      incomplete: false,
-    });
+    const emptyLease = await fixedStore(empty.sessionsDir, tokenO).acquire(sessionId);
+    expect(emptyLease.streamStatus()).toEqual({ lastReadableSeq: 0, lastDurableSeq: 0, incomplete: false });
     await emptyLease.release();
-
-    const retained = await fixtureDir();
-    const retainedLine = replayLine(
-      replayEnvelope(1, { type: 'complete-prefix' }),
-    );
-    await writeReplayStream(retained.sessionsDir, retainedLine);
-    const retainedLease = await fixedStore(
-      retained.sessionsDir,
-      tokenO,
-    ).acquire(sessionId);
-    expect(retainedLease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
-      lastDurableSeq: 1,
-      incomplete: false,
-    });
-    expect(await readFile(replayStreamPath(retained.sessionsDir), 'utf8'))
-      .toBe(retainedLine);
-    await retainedLease.release();
-
-    const valid = await fixtureDir();
     const first = replayLine(replayEnvelope(1, { type: 'retained' }));
-    const validTail =
-      '{ "record": {"type":"valid-tail","bytes":"\u2603"}, "seq":2, "v":1, "role":"coder" }';
-    const validPath = await writeReplayStream(
-      valid.sessionsDir,
-      `${first}${validTail}`,
-    );
-    const validFs = observedReplayMutationFs(
-      valid.sessionsDir,
-      validPath,
-    );
-    const validLease = await fixedStore(valid.sessionsDir, tokenO, {
-      fsOps: validFs.fsOps,
-    }).acquire(sessionId);
-    expect(await readFile(validPath, 'utf8')).toBe(`${first}${validTail}\n`);
-    expect(validFs.counts().replaySyncs).toBe(1);
-    expect(validLease.streamStatus()).toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 2,
-      incomplete: false,
-    });
-    await expect(validLease.append({ type: 'after-valid-tail' })).resolves
-      .toBeUndefined();
-    expect(validLease.streamStatus()).toEqual({
-      lastReadableSeq: 3,
-      lastDurableSeq: 2,
-      incomplete: false,
-    });
-    await expect(validLease.release()).resolves.toEqual({
-      lastReadableSeq: 3,
-      lastDurableSeq: 3,
-      incomplete: false,
-    });
-    expect(
-      (await fixedStore(valid.sessionsDir, tokenN).readStream(sessionId))
-        .entries.map(({ seq }: any) => seq),
-    ).toEqual([1, 2, 3]);
-    const validSuccessor = await fixedStore(
-      valid.sessionsDir,
-      tokenN,
-    ).acquire(sessionId);
-    expect(validSuccessor.streamStatus()).toEqual({
-      lastReadableSeq: 3,
-      lastDurableSeq: 3,
-      incomplete: false,
-    });
-    await validSuccessor.append({ type: 'clean-successor' });
-    await expect(validSuccessor.release()).resolves.toEqual({
-      lastReadableSeq: 4,
-      lastDurableSeq: 4,
-      incomplete: false,
-    });
-    expect(
-      (await fixedStore(valid.sessionsDir, tokenR).readStream(sessionId))
-        .entries.map(({ seq }: any) => seq),
-    ).toEqual([1, 2, 3, 4]);
-
-    for (const [name, prefix, tail, expectedSeq] of [
-      [
-        'after-prefix',
-        first,
-        '{"v":1,"seq":2,"record":{"type":"partial"',
-        1,
-      ],
-      ['after-empty', '', '{"v":1,"seq":1,"record":', 0],
-    ] as const) {
-      const fixture = await fixtureDir();
-      const path = await writeReplayStream(
-        fixture.sessionsDir,
-        `${prefix}${tail}`,
-      );
-      const observed = observedReplayMutationFs(fixture.sessionsDir, path);
-      const lease = await fixedStore(fixture.sessionsDir, tokenO, {
-        fsOps: observed.fsOps,
-      }).acquire(sessionId);
-      expect(await readFile(path, 'utf8'), name).toBe(prefix);
-      expect(observed.counts().replaySyncs, name).toBe(1);
-      expect(lease.streamStatus(), name).toEqual({
-        lastReadableSeq: expectedSeq,
-        lastDurableSeq: expectedSeq,
-        incomplete: false,
-      });
-      await lease.append({ type: `after-${name}` });
-      expect(
-        (await lease.readStream()).entries.map(({ seq }: any) => seq),
-        name,
-      ).toEqual([
-        ...Array.from({ length: expectedSeq }, (_, i) => i + 1),
-        expectedSeq + 1,
-      ]);
-      await lease.release();
+    const validTail = '{ "record": {"type":"valid-tail","bytes":"\\u2603"}, "seq":2, "v":1, "role":"coder" }';
+    for (const bytes of [first, `${first}${validTail}`, `${first}{"v":1,"seq":2,"record":`, '{"v":1,"seq":1,"record":']) {
+      const legacy = await fixtureDir();
+      const path = await writeReplayStream(legacy.sessionsDir, bytes);
+      await expect(fixedStore(legacy.sessionsDir, tokenO).acquire(sessionId)).rejects.toThrow(/legacy.*migration/);
+      expect(await readFile(path, 'utf8')).toBe(bytes);
+    }
+    const complete = await fixtureDir();
+    const completePath = await writeBoundedReplay(complete.sessionsDir, `${first}${validTail}\n`);
+    const lease = await fixedStore(complete.sessionsDir, tokenO).acquire(sessionId);
+    expect(lease.streamStatus()).toEqual({ lastReadableSeq: 2, lastDurableSeq: 2, incomplete: false });
+    expect(await readFixtureReplay(completePath, 'utf8')).toBe(`${first}${validTail}\n`);
+    await lease.append({ type: 'successor' });
+    expect((await lease.readStream()).entries.map(({seq}: any) => seq)).toEqual([1,2,3]);
+    await expect(lease.release()).resolves.toEqual({ lastReadableSeq: 3, lastDurableSeq: 3, incomplete: false });
+    for (const bytes of [`${first}${validTail}`, `${first}{"v":1,"seq":2,"record":`]) {
+      const damaged = await fixtureDir();
+      const path = await writeBoundedReplay(damaged.sessionsDir, bytes);
+      const held = await fixedStore(damaged.sessionsDir, tokenO).acquire(sessionId);
+      expect(held.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
+      await held.append({ type: 'suppressed' });
+      await expect(held.readStream()).rejects.toThrow();
+      await held.release();
+      expect(await readFixtureReplay(path, 'utf8')).toBe(bytes);
+      const history = await fixedStore(damaged.sessionsDir, tokenN).readHistory(sessionId);
+      expect(history.entries.map(({seq}: any) => seq)).toEqual([1]);
+      expect(history.pendingTail).toBe(true);
     }
   });
 
@@ -5768,10 +5740,10 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     const valid = replayLine(replayEnvelope(1, { type: 'valid' }));
     const invalid = replayLine(replayEnvelope(2, { type: 'other' }));
     expect(Buffer.byteLength(invalid)).toBe(Buffer.byteLength(valid));
-    const streamPath = await writeReplayStream(sessionsDir, valid);
+    const streamPath = await writeBoundedReplay(sessionsDir, valid);
     const store = fixedStore(sessionsDir, tokenO);
     await store.readStream(sessionId);
-    await writeFile(streamPath, invalid, 'utf8');
+    await writeFixtureReplay(streamPath, invalid);
 
     const lease = await store.acquire(sessionId);
     expect(lease.streamStatus()).toEqual({
@@ -5790,7 +5762,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       lastDurableSeq: null,
       incomplete: true,
     });
-    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+    expect(await readFixtureReplay(streamPath, 'utf8')).toBe(invalid);
 
     const successor = await fixedStore(sessionsDir, tokenN).acquire(sessionId);
     expect(successor.streamStatus()).toEqual({
@@ -5803,12 +5775,12 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       lastDurableSeq: null,
       incomplete: true,
     });
-    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+    expect(await readFixtureReplay(streamPath, 'utf8')).toBe(invalid);
   });
 
   it('advances readability on append and durability on settlement and release', async () => {
     const { sessionsDir } = await fixtureDir();
-    const streamPath = replayStreamPath(sessionsDir);
+    const streamPath = boundedStreamPath(sessionsDir);
     const observed = observedReplayMutationFs(sessionsDir, streamPath);
     const store = fixedStore(sessionsDir, tokenO, {
       fsOps: observed.fsOps,
@@ -5829,7 +5801,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
         'coder',
       ),
     ).resolves.toBeUndefined();
-    expect(observed.counts().sessionsSyncs).toBe(
+    expect(observed.counts().sessionsSyncs).toBeGreaterThan(
       directorySyncsBeforePublication,
     );
     expect(lease.streamStatus()).toEqual({
@@ -5879,37 +5851,30 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
   });
 
-  it('reuses one writer handle and one owner read per steady append', async () => {
+  it('publishes one private bounded root for each steady append', async () => {
     const { sessionsDir } = await fixtureDir();
-    const streamPath = replayStreamPath(sessionsDir);
+    const streamPath = boundedStreamPath(sessionsDir);
     const observed = observedReplayMutationFs(sessionsDir, streamPath);
-    const lease = await fixedStore(sessionsDir, tokenO, {
-      fsOps: observed.fsOps,
-    }).acquire(sessionId);
-    await lease.append({ type: 'publish-and-retain-handle' });
-
+    const lease = await fixedStore(sessionsDir, tokenO, { fsOps: observed.fsOps }).acquire(sessionId);
+    await lease.append({ type: 'first-publication' });
+    const before = await stat(streamPath);
     observed.reset();
-    await expect(lease.append({ type: 'steady-state' })).resolves
-      .toBeUndefined();
-    expect(observed.counts()).toEqual({
-      replayWrites: 1,
-      replaySyncs: 0,
-      sessionsSyncs: 0,
-      ownerOpens: 1,
-      replayOpens: 0,
-      replayPathStats: 0,
-      replayHandleStats: 1,
-      replayCloses: 0,
-      sessionsDirStats: 0,
-    });
-
-    await lease.release();
-    expect(observed.counts().replayCloses).toBe(1);
+    await lease.append({ type: 'steady-state' });
+    expect(observed.counts().replayWrites).toBe(1);
+    expect(observed.counts().replaySyncs).toBe(1);
+    expect(observed.counts().sessionsSyncs).toBeGreaterThan(0);
+    expect(observed.counts().ownerOpens).toBeGreaterThan(0);
+    const after = await stat(streamPath);
+    expect(after.ino).not.toBe(before.ino);
+    expect(after.nlink).toBe(1);
+    expect(after.mode & 0o777).toBe(0o600);
+    expect((await lease.readStream()).entries.map(({seq}: any) => seq)).toEqual([1,2]);
+    await expect(lease.release()).resolves.toEqual({ lastReadableSeq: 2, lastDurableSeq: 2, incomplete: false });
   });
 
   it('detects canonical stream replacement at the next checkpoint', async () => {
     const { sessionsDir } = await fixtureDir();
-    const streamPath = replayStreamPath(sessionsDir);
+    const streamPath = boundedStreamPath(sessionsDir);
     const displacedPath = `${streamPath}.displaced`;
     const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
     await lease.append({ type: 'held-inode' });
@@ -5929,7 +5894,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
 
   it('serializes overlapping appends and makes release an admission barrier', async () => {
     const { sessionsDir } = await fixtureDir();
-    const streamPath = replayStreamPath(sessionsDir);
+    const streamPath = boundedStreamPath(sessionsDir);
     const entered = deferred();
     const unblock = deferred();
     const observed = observedReplayMutationFs(sessionsDir, streamPath, {
@@ -5981,7 +5946,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
 
   it('drains admitted work after a held pre-byte append failure', async () => {
     const { sessionsDir } = await fixtureDir();
-    const streamPath = replayStreamPath(sessionsDir);
+    const streamPath = boundedStreamPath(sessionsDir);
     const entered = deferred();
     const fail = deferred();
     const observed = observedReplayMutationFs(sessionsDir, streamPath, {
@@ -6060,10 +6025,12 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       ['date', new Date('2026-08-11T21:00:00.000Z')],
       ['cycle', cyclic],
       ['nested callable', { type: 'callable', nested: () => undefined }],
+      ['throw undefined', new Proxy({ type: 'invalid-enumeration' }, { ownKeys() { throw undefined; } })],
     ] as const) {
       const { sessionsDir } = await fixtureDir();
       const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-      await expect(lease.append(value), name).rejects.toThrow();
+      if (name === 'throw undefined') await expect(lease.append(value), name).rejects.toBeUndefined();
+      else await expect(lease.append(value), name).rejects.toThrow();
       expect(lease.streamStatus(), name).toEqual({
         lastReadableSeq: 0,
         lastDurableSeq: 0,
@@ -6097,16 +6064,17 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     }
   });
 
-  it('isolates publication, visible-write, checkpoint, and repair failures', async () => {
+  it('isolates publication, staging-write, checkpoint, and release failures', async () => {
     const publication = await fixtureDir();
-    const publicationPath = replayStreamPath(publication.sessionsDir);
+    const publicationPath = boundedStreamPath(publication.sessionsDir);
     let failPublication = false;
     const publicationFs = observedReplayMutationFs(
       publication.sessionsDir,
       publicationPath,
       {
-        beforeSessionsSync() {
+        async beforeSessionsSync() {
           if (failPublication) {
+            try { await lstat(publicationPath); } catch (error: any) { if (error.code === 'ENOENT') return; throw error; }
             failPublication = false;
             throw new Error('synthetic replay publication sync failure');
           }
@@ -6137,7 +6105,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     });
 
     const visible = await fixtureDir();
-    const visiblePath = replayStreamPath(visible.sessionsDir);
+    const visiblePath = boundedStreamPath(visible.sessionsDir);
     let failAfterWrite = false;
     const visibleFs = observedReplayMutationFs(
       visible.sessionsDir,
@@ -6157,33 +6125,34 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await expect(visibleLease.append({ type: 'complete-but-failed' })).rejects
       .toThrow(/post-write replay failure/);
     expect(visibleLease.streamStatus()).toEqual({
-      lastReadableSeq: 1,
+      lastReadableSeq: 0,
       lastDurableSeq: 0,
       incomplete: true,
     });
     expect(await visibleLease.readStream()).toEqual({
-      entries: [replayEnvelope(1, { type: 'complete-but-failed' })],
-      lastReadableSeq: 1,
+      entries: [],
+      lastReadableSeq: 0,
       lastDurableSeq: 0,
       incomplete: true,
     });
     expect(
       await fixedStore(visible.sessionsDir, tokenN).readStream(sessionId),
     ).toEqual({
-      entries: [replayEnvelope(1, { type: 'complete-but-failed' })],
-      lastReadableSeq: 1,
+      entries: [],
+      lastReadableSeq: 0,
     });
     await visibleLease.release();
 
     const checkpoint = await fixtureDir();
-    const checkpointPath = replayStreamPath(checkpoint.sessionsDir);
+    const checkpointPath = boundedStreamPath(checkpoint.sessionsDir);
     let failCheckpoint = false;
     const checkpointFs = observedReplayMutationFs(
       checkpoint.sessionsDir,
       checkpointPath,
       {
-        beforeReplaySync() {
+        beforeSessionsSync() {
           if (failCheckpoint) {
+            failCheckpoint = false;
             throw new Error('synthetic replay checkpoint failure');
           }
         },
@@ -6225,14 +6194,15 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     expect(checkpointFs.counts().replaySyncs).toBe(checkpointSyncs);
 
     const release = await fixtureDir();
-    const releasePath = replayStreamPath(release.sessionsDir);
+    const releasePath = boundedStreamPath(release.sessionsDir);
     let failRelease = false;
     const releaseFs = observedReplayMutationFs(
       release.sessionsDir,
       releasePath,
       {
-        beforeReplaySync() {
+        beforeSessionsSync() {
           if (failRelease) {
+            failRelease = false;
             throw new Error('synthetic replay release checkpoint failure');
           }
         },
@@ -6249,51 +6219,6 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       incomplete: true,
     });
 
-    const repair = await fixtureDir();
-    const repairFirst = replayLine(replayEnvelope(1, { type: 'first' }));
-    const repairTail = JSON.stringify(
-      replayEnvelope(2, { type: 'repaired-but-unsynced' }),
-    );
-    const repairPath = await writeReplayStream(
-      repair.sessionsDir,
-      `${repairFirst}${repairTail}`,
-    );
-    const repairFs = observedReplayMutationFs(
-      repair.sessionsDir,
-      repairPath,
-      {
-        beforeReplaySync() {
-          throw new Error('synthetic replay repair sync failure');
-        },
-      },
-    );
-    const repairLease = await fixedStore(repair.sessionsDir, tokenO, {
-      fsOps: repairFs.fsOps,
-    }).acquire(sessionId);
-    expect(await readFile(repairPath, 'utf8')).toBe(
-      `${repairFirst}${repairTail}\n`,
-    );
-    expect(repairLease.streamStatus()).toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 1,
-      incomplete: true,
-    });
-    await repairLease.append({ type: 'suppressed' });
-    await expect(repairLease.release()).resolves.toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 1,
-      incomplete: true,
-    });
-    const repairSuccessor = await fixedStore(
-      repair.sessionsDir,
-      tokenN,
-    ).acquire(sessionId);
-    expect(repairSuccessor.streamStatus()).toEqual({
-      lastReadableSeq: 2,
-      lastDurableSeq: 2,
-      incomplete: false,
-    });
-    await repairSuccessor.release();
   });
 
   it('refuses replay mutation without exact canonical ownership', async () => {

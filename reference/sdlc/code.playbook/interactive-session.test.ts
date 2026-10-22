@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFixtureManifest, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
@@ -13,7 +14,6 @@ import {
   rm,
   stat,
   symlink,
-  writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -759,7 +759,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
       fixture.sessionsDir,
       `${predecessorSessionId}.json`,
     );
-    const canonical = JSON.parse(await readFile(predecessorPath, 'utf8'));
+    const canonical = await readFixtureManifest(predecessorPath);
     const olderPredecessor = {
       ...structuredClone(canonical),
       sessionId: olderPredecessorSessionId,
@@ -778,6 +778,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
     await writeFile(olderPredecessorPath, olderPredecessorBytes, {
       mode: 0o600,
     });
+    const olderPredecessorStoredBytes = await readFile(olderPredecessorPath, 'utf8');
     const preCutoverBytes = `${JSON.stringify(
       preUnresolvedEffectsRecord(canonical),
     )}\n`;
@@ -819,7 +820,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
     );
     expect(await readFile(predecessorPath, 'utf8')).toBe(preCutoverBytes);
     expect(await readFile(olderPredecessorPath, 'utf8')).toBe(
-      olderPredecessorBytes,
+      olderPredecessorStoredBytes,
     );
     expect(
       (await fixture.store.read(olderPredecessorSessionId))

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import {
@@ -13,7 +14,6 @@ import {
   readlink,
   rm,
   symlink,
-  writeFile,
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -3246,11 +3246,11 @@ describe('former-default interactive migration', () => {
     expect(stderr.text()).toContain(`migrated 1 sessions from ${f.sourceDir}`);
     const destination = join(f.home, '.spex', 'sessions');
     expect(descriptor).toMatchObject({ sessionId: f.id, sessionsDir: destination });
-    const manifest = JSON.parse(await readFile(join(destination, `${f.id}.json`), 'utf8'));
+    const manifest = await readFixtureManifest(join(destination, `${f.id}.json`));
     expect(manifest).toMatchObject({ schemaVersion: 7, state: 'settled' });
     expect(manifest.snapshot.sequences.turn).toBe(1);
     expect(JSON.stringify(manifest)).not.toContain('legacy-provider-token');
-    const replay = await readFile(join(destination, `${f.id}.records.jsonl`));
+    const replay = await readFixtureReplay(join(destination, `${f.id}.records.jsonl`));
     expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
     expect(existsSync(f.sourcePath)).toBe(false);
     expect(existsSync(join(f.sourceDir, `${f.id}.records.jsonl`))).toBe(false);

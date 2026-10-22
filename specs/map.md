@@ -117,6 +117,7 @@ meta.md       The spec of specs
 | [DR-091](decisions/091-an-unrevealed-shape-is-the-machines-to-judge.md) | 091-an-unrevealed-shape-is-the-machines-to-judge.md | An unrevealed shape is the machine's to judge: the probe records every shape it finds, a string included, and a semantic field it reveals nothing for takes any JSON value, its guard deciding; amends DR-089 §1 |
 | [DR-092](decisions/092-skills-follow-working-agents.md) | 092-skills-follow-working-agents.md | Shared and per-agent skills, declaring-file path origins, durable execution lists, and skill-free Captain control |
 | [DR-093](decisions/093-captain-control-turns-native-skills-off.md) | 093-captain-control-turns-native-skills-off.md | Decision, Judge and reporting calls request `nativeSkills: false` where Cligent reports the Captain adapter can honor it; a Kimi Captain keeps native skills, a documented reduction; Cligent floor 0.36.0 |
+| [DR-094](decisions/094-bounded-session-persistence.md) | 094-bounded-session-persistence.md | Bounded session-owned immutable evidence and replay, versioned physical roots, explicit migration and coordinated hosts |
 
 ## Packages
 
@@ -145,6 +146,7 @@ meta.md       The spec of specs
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the machine identity and its facade, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [session-assets.md](packages/session-assets.md) | Immutable owner assets and portable attachment/evidence contracts |
+| [session-persistence.md](packages/session-persistence.md) | Bounded physical session roots, chunks, replay, migration and export |
 | [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |
 | [recovery.md](packages/recovery.md) | Captain preparation and durable interrupted-step recovery |
 | [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |

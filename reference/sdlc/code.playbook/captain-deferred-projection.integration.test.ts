@@ -4,6 +4,7 @@
 // Real CODE/REVIEW, durable host/store and Git; only provider replies are scripted.
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFixtureReplay } from './test-support/session-persistence.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -80,7 +81,7 @@ it('keeps a checkpoint-mismatched deferred wait durable through restoration and 
     const originalBoundaries = structuredClone(first.effectLedger.boundaries);
     const originalQuestion = first.snapshot.pendingBossQuestions;
     const recordsPath = join(sessionsDir, `${controller.sessionId}.records.jsonl`);
-    const recordsBefore = await readFile(recordsPath);
+    const recordsBefore = await readFixtureReplay(recordsPath);
     await writeFile(join(cwd, 'incoming.txt'), 'actual new upstream input\n');
     const mismatch = await controller.handleBossTurn('Use the received synthetic destination.');
     expect(mismatch.state).toBe('settled');
@@ -118,14 +119,14 @@ it('keeps a checkpoint-mismatched deferred wait durable through restoration and 
     expect(reconciled.effectLedger.boundaries).toEqual(originalBoundaries);
     expect(reconciled.effectLedger.logicalOperations[0]).toEqual(originalOperation);
     expect(coderCalls).toBe(1);
-    expect((await readFile(recordsPath)).subarray(0, recordsBefore.length)).toEqual(recordsBefore);
+    expect((await readFixtureReplay(recordsPath)).subarray(0, recordsBefore.length)).toEqual(recordsBefore);
     const done = await controller.handleBossTurn('Use the exact approved synthetic destination.');
     expect(coderCalls).toBe(2);
     expect(calls.filter(c => c === 'reviewer')).toHaveLength(1);
     expect(done.snapshot.mode).toBe('chat');
     expect(done.effectLedger.logicalOperations[0].logicalReceipt?.classification).toBe('one-descendant-commit');
     expect(await git('status', '--porcelain=v1')).toBe('');
-    expect((await readFile(recordsPath)).subarray(0, recordsBefore.length)).toEqual(recordsBefore);
+    expect((await readFixtureReplay(recordsPath)).subarray(0, recordsBefore.length)).toEqual(recordsBefore);
   } finally {
     await controller?.dispose();
     await rm(dir, { recursive: true, force: true });

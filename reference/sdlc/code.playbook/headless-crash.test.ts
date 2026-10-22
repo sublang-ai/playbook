@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFixtureManifest, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { execFile, fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
@@ -9,7 +10,6 @@ import {
   readFile,
   readdir,
   rm,
-  writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -189,7 +189,7 @@ describe('headless Captain process-crash recovery (PBCLI-24)', () => {
       .toMatchObject({ input: exactInput, mode: 'crash' });
 
     const recordPath = join(paths.sessionsDir, `${sessionId}.json`);
-    const uncertain = JSON.parse(await readFile(recordPath, 'utf8'));
+    const uncertain = await readFixtureManifest(recordPath);
     expect(uncertain).toMatchObject({
       state: 'uncertain',
       uncertain: { input: exactInput, attemptId, attemptNumber: 1 },
@@ -225,7 +225,7 @@ describe('headless Captain process-crash recovery (PBCLI-24)', () => {
     const [code, signal] = await waitForExit(crashing.child);
     expect(code).toBeNull();
     expect(signal).toBe('SIGKILL');
-    expect(JSON.parse(await readFile(recordPath, 'utf8')).state).toBe(
+    expect((await readFixtureManifest(recordPath)).state).toBe(
       'uncertain',
     );
 
@@ -234,7 +234,7 @@ describe('headless Captain process-crash recovery (PBCLI-24)', () => {
     expect(result.result.code, retry.stderr()).toBe(0);
     expect(result.events).toEqual(['captain-runtime']);
     await waitForExit(retry.child);
-    const settled = JSON.parse(await readFile(recordPath, 'utf8'));
+    const settled = await readFixtureManifest(recordPath);
     expect(settled.state).toBe('settled');
     expect(settled).not.toHaveProperty('uncertain');
     expect(settled.effectLedger.boundaries).toMatchObject([
@@ -266,7 +266,7 @@ describe('headless Captain process-crash recovery (PBCLI-24)', () => {
     ).toMatchObject({ input: exactInput, mode: 'crash-delta' });
 
     const recordPath = join(paths.sessionsDir, `${sessionId}.json`);
-    const beforeRecovery = JSON.parse(await readFile(recordPath, 'utf8'));
+    const beforeRecovery = await readFixtureManifest(recordPath);
     expect(beforeRecovery).toMatchObject({
       state: 'uncertain',
       uncertain: { attemptId, attemptNumber: 1, input: exactInput },
@@ -288,7 +288,7 @@ describe('headless Captain process-crash recovery (PBCLI-24)', () => {
     expect(retry.stdout()).not.toBe('');
     await waitForExit(retry.child);
 
-    const recovered = JSON.parse(await readFile(recordPath, 'utf8'));
+    const recovered = await readFixtureManifest(recordPath);
     expect(recovered).toMatchObject({
       state: 'settled',
       snapshot: { mode: 'chat', lastSettlementStatus: 'ok' },
