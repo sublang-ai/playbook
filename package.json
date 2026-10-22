@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "17.11.1",
+  "version": "18.0.0",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT workflows driven by GEARS specs.",
   "license": "Apache-2.0",
@@ -92,6 +92,9 @@
     "reference/sdlc/code.playbook/bin/replay-observer.js",
     "reference/sdlc/code.playbook/bin/session-store.js",
     "reference/sdlc/code.playbook/bin/private-paths.js",
+    "reference/sdlc/code.playbook/bin/session-chunks.js",
+    "reference/sdlc/code.playbook/bin/session-replay.js",
+    "reference/sdlc/code.playbook/bin/storage-manifest.js",
     "reference/sdlc/code.playbook/bin/machine-identity.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",

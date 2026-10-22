@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFixtureManifest, readFixtureReplay, writeFixtureFile, writeFixtureReplay } from './test-support/session-persistence.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -78,7 +79,7 @@ describe('real CLI over an application-owned home',()=>{
   it('migrates an explicitly configured directory through the executable without provider work',async()=>{
     const f=await fixture();const target=join(f.root,'override');await mkdir(target,{mode:0o700});const id=randomUUID();
     const legacy=await f.store.read(f.id);const source=JSON.stringify({...legacy,sessionId:id});await writeFile(join(target,`${id}.json`),source,{mode:0o644});
-    await writeFile(join(target,`${id}.records.jsonl`),await readFile(join(f.store.sessionsDir,`${f.id}.records.jsonl`)),{mode:0o644});
+    await writeFile(join(target,`${id}.records.jsonl`),await readFixtureReplay(join(f.store.sessionsDir,`${f.id}.records.jsonl`)),{mode:0o644});
     const overlay=join(f.root,'overlay.yaml');await writeFile(overlay,`sessions: ${JSON.stringify(target)}\n`);
     const result=await f.invoke(['migrate-session',id,'--with',overlay]);expect(result.code,result.stderr).toBe(0);expect(result.stdout).toContain(`migrated session ${id} in ${target}`);
     const migrated=createSessionStore({sessionsDir:target});expect((await migrated.validate(id)).resumable).toBe(true);
@@ -87,12 +88,12 @@ describe('real CLI over an application-owned home',()=>{
     expect((await f.store.readManifest(f.id)).schemaVersion).toBe(7);
   });
   it.each(['digest','incomplete','context','path','module'])('rejects %s before either CLI imports registry code',async(kind)=>{
-    const f=await fixture();const file=join(f.store.sessionsDir,`${f.id}.json`);const stream=join(f.store.sessionsDir,`${f.id}.records.jsonl`);
-    const manifest=JSON.parse(await readFile(file,'utf8'));
+    const f=await fixture();const file=join(f.store.sessionsDir,`${f.id}.json`);const stream=join(f.store.sessionsDir,`${f.id}.replay.json`);
+    const manifest=await readFixtureManifest(file);
     if(kind==='digest')manifest.replay.sha256='0'.repeat(64);else if(kind==='incomplete')manifest.replay.incomplete=true;
     else if(kind==='path')manifest.cwd=String.raw`C:\Users\other\repo`;
-    else if(kind==='context'){const lines=(await readFile(stream,'utf8')).trimEnd().split('\n');const entry=JSON.parse(lines[manifest.contextSeq-1]);entry.record.contextVersion=99;lines[manifest.contextSeq-1]=JSON.stringify(entry);const bytes=lines.join('\n')+'\n';await writeFile(stream,bytes);manifest.replay.sha256=createHash('sha256').update(lines.slice(0,manifest.replay.seq).join('\n')+'\n').digest('hex');}
-    await writeFile(file,JSON.stringify(manifest));
+    else if(kind==='context'){const lines=(await readFixtureReplay(stream,'utf8')).trimEnd().split('\n');const entry=JSON.parse(lines[manifest.contextSeq-1]);entry.record.contextVersion=99;lines[manifest.contextSeq-1]=JSON.stringify(entry);const bytes=lines.join('\n')+'\n';await writeFixtureReplay(stream,bytes);manifest.replay.sha256=createHash('sha256').update(lines.slice(0,manifest.replay.seq).join('\n')+'\n').digest('hex');}
+    await writeFixtureFile(file,JSON.stringify(manifest));
     const marker=join(f.root,'imported');const trap=join(f.root,'trap.mjs');await writeFile(trap,`import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},'imported');throw Error('registry imported before validation');`);
     const overlay=join(f.root,'trap.yaml');await writeFile(overlay,`playbooks:\n  code:\n    from: ${JSON.stringify(trap)}\n`);
     for(const args of [['run','--session',f.id,'--with',overlay,'must refuse'],['--session',f.id,'--with',overlay]]) {

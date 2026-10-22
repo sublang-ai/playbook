@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
@@ -13,7 +14,6 @@ import {
   rename,
   rm,
   stat,
-  writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -809,8 +809,8 @@ function uuidSequence() {
 }
 
 async function readReplayEntries(sessionsDir: string, sessionId: string) {
-  const text = await readFile(
-    join(sessionsDir, `${sessionId}.records.jsonl`),
+  const text = await readFixtureReplay(
+    join(sessionsDir, `${sessionId}.replay.json`),
     'utf8',
   );
   expect(text.endsWith('\n')).toBe(true);
@@ -873,10 +873,10 @@ describe('former-default headless migration', () => {
     expect(calls[0].resume).toBeUndefined();
     expect(calls[0].prompt).toContain('remember the original task');
     const destination = join(f.home, '.spex', 'sessions');
-    const record = JSON.parse(await readFile(join(destination, `${f.id}.json`), 'utf8'));
+    const record = (await readFixtureManifest(join(destination, `${f.id}.json`)));
     expect(record).toMatchObject({ schemaVersion: 7, state: 'settled' });
     expect(record.snapshot.sequences.turn).toBe(2);
-    const replay = await readFile(join(destination, `${f.id}.records.jsonl`));
+    const replay = await readFixtureReplay(join(destination, `${f.id}.replay.json`));
     expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
     await expect(stat(f.sourcePath)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(join(f.sourceDir, `${f.id}.records.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -933,7 +933,7 @@ describe('headless sessions locator (PBCLI-78/81)', () => {
       configuredSessionsDir,
       `${first.result.sessionId}.json`,
     );
-    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    const record = (await readFixtureManifest(recordPath));
     expect(record.structuralProjection).not.toHaveProperty('sessions');
     expect(record.lastAppliedExecutionProjection).not.toHaveProperty(
       'sessions',
@@ -1236,9 +1236,9 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
     await mkdir(sessionsDir, { mode: 0o700 });
-    const streamPath = join(sessionsDir, `${replaySessionId}.records.jsonl`);
+    const streamPath = join(sessionsDir, `${replaySessionId}.replay.json`);
     const invalid = '{"v":1,"seq":1,"record":[]}\n';
-    await writeFile(streamPath, invalid, { mode: 0o600 });
+    await writeFixtureReplay(streamPath, invalid);
     let turns = 0;
     const out = await headlessHarness(['run', 'cannot record context'], {
       sessionsDir,
@@ -1252,7 +1252,7 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
     expect(out.stdout).toBe('');
     expect(out.stderr).toContain('cannot persist session execution context');
     expect(turns).toBe(0);
-    expect(await readFile(streamPath, 'utf8')).toBe(invalid);
+    expect(await readFixtureReplay(streamPath, 'utf8')).toBe(invalid);
   });
 
   it('keeps a sanitizer failure outside dispatch and swallows warning failure', async () => {
@@ -2068,15 +2068,10 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       );
       if (phase !== 'setup') {
         expect(
-          JSON.parse(
-            await readFile(
-              join(
+          (await readFixtureManifest(join(
                 sessionsDir,
                 '90000000-0000-4000-8000-000000000091.json',
-              ),
-              'utf8',
-            ),
-          ).state,
+              ))).state,
         ).toBe('uncertain');
       }
       await expect(
@@ -2304,7 +2299,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect(first.result.code).toBe(0);
     const preCutoverPath = join(sessionsDir, `${firstId}.json`);
-    const canonical = JSON.parse(await readFile(preCutoverPath, 'utf8'));
+    const canonical = (await readFixtureManifest(preCutoverPath));
     const preCutoverBytes = `${JSON.stringify(
       preUnresolvedEffectsSessionRecord(canonical),
     )}\n`;
@@ -2397,9 +2392,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(lifecycle.adopts).toBe(0);
     expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-      ).retainedGenerations,
+      (await readFixtureManifest(join(sessionsDir, `${secondId}.json`))).retainedGenerations,
     ).toEqual({});
   });
 
@@ -2460,7 +2453,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(out.result.code).toBe(0);
     expect(disposals).toBe(0);
     const path = join(out.sessionsDir, `${firstId}.json`);
-    const record = JSON.parse(await readFile(path, 'utf8'));
+    const record = (await readFixtureManifest(path));
     expect(order).toEqual([
       'persisted',
       'released',
@@ -2603,9 +2596,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       ],
     });
     expect(FakeAdapter.options.at(-1)?.model).toBe('captain-next');
-    const record = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const record = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(record.createdAt).toBe('2026-08-11T20:10:00.000Z');
     expect(record.updatedAt).toBe('2026-08-11T20:10:00.005Z');
     expect(record.cwd).toBe(frozenCwd);
@@ -2727,9 +2718,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       createLogicalSessionId: () => firstId,
     });
     expect(out.result.code).toBe(0);
-    const record = JSON.parse(
-      await readFile(join(out.sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const record = (await readFixtureManifest(join(out.sessionsDir, `${firstId}.json`)));
     expect(record.snapshot).toMatchObject({
       mode: 'chat',
       lastAction: 'start',
@@ -2797,9 +2786,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       createEffectLedgerWriteAhead,
     });
     expect(first.result.code).toBe(0);
-    const parked = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const parked = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(parked.snapshot).toMatchObject({
       mode: 'engaged.parked',
       frames: [
@@ -2886,9 +2873,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       );
     }
     expect(second.stderr).not.toContain('/review called by /code');
-    const settled = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const settled = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     const settledProjection = JSON.stringify(settled);
     for (const key of [
       'hostCapabilities',
@@ -2941,9 +2926,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       mode: 'chat',
       lastAction: 'dismiss',
     });
-    const retained = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const retained = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(retained).toMatchObject({
       state: 'settled',
       snapshot: { mode: 'chat' },
@@ -3027,9 +3010,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       lastAction: 'respond',
     });
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-      ).retainedGenerations,
+      (await readFixtureManifest(join(sessionsDir, `${firstId}.json`))).retainedGenerations,
     ).toHaveProperty('code');
 
     const resumePrompts: string[] = [];
@@ -3143,14 +3124,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       frames: [{ playbookId: 'code' }],
     });
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-      ).retainedGenerations,
+      (await readFixtureManifest(join(sessionsDir, `${firstId}.json`))).retainedGenerations,
     ).toEqual({});
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-      ).retainedGenerations,
+      (await readFixtureManifest(join(sessionsDir, `${secondId}.json`))).retainedGenerations,
     ).toHaveProperty('code');
   });
 
@@ -3255,9 +3232,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect([first.result.code, second.result.code]).toEqual([0, 0]);
     const legacyPath = join(sessionsDir, `${thirdId}.json`);
     const memberlessSchema3Path = join(sessionsDir, `${fourthId}.json`);
-    const settledRecord = JSON.parse(
-      await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-    );
+    const settledRecord = (await readFixtureManifest(join(sessionsDir, `${secondId}.json`)));
     await writeFile(
       legacyPath,
       `${JSON.stringify({
@@ -3464,7 +3439,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect(first.result.code).toBe(0);
     const recordPath = join(first.sessionsDir, `${firstId}.json`);
-    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    const record = (await readFixtureManifest(recordPath));
     mutate(record);
     await writeFile(recordPath, `${JSON.stringify(record)}\n`, 'utf8');
 
@@ -3659,9 +3634,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(hosts).toBe(0);
     expect(raced.stderr).toContain('will not be replayed automatically');
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-      ).state,
+      (await readFixtureManifest(join(sessionsDir, `${firstId}.json`))).state,
     ).toBe('uncertain');
   });
 
@@ -3806,7 +3779,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(output).toBe('');
     expect(disposals).toBe(1);
     expect(failed.stderr).toContain('synthetic settlement rename failure');
-    expect(JSON.parse(await readFile(recordPath, 'utf8')).state).toBe(
+    expect((await readFixtureManifest(recordPath)).state).toBe(
       'uncertain',
     );
   });
@@ -3879,15 +3852,10 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(out.stderr).not.toContain(
       'Captain turn settled without an exportable session settlement',
     );
-    const record = JSON.parse(
-      await readFile(
-        join(
+    const record = (await readFixtureManifest(join(
           out.sessionsDir,
           '90000000-0000-4000-8000-000000000001.json',
-        ),
-        'utf8',
-      ),
-    );
+        )));
     expect(record).toMatchObject({
       state: 'settled',
       snapshot: { mode: 'chat' },
@@ -3964,9 +3932,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(output).toBe('');
     expect(disposals).toBe(1);
     expect(failed.stderr).toContain('synthetic post-rename sync failure');
-    const record = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const record = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(record.state).toBe('settled');
     expect(record.snapshot.sequences.turn).toBe(1);
   });
@@ -3985,9 +3951,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         const host = await createTmuxPlayRuntime(options);
         return {
           async runBossTurn() {
-            markerDuringTurn = JSON.parse(
-              await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-            );
+            markerDuringTurn = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
             throw new Error('synthetic crash after first effect boundary');
           },
           dispose: () => host.dispose(),
@@ -4054,9 +4018,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           const host = await createTmuxPlayRuntime(options);
           return {
             async runBossTurn(input: string) {
-              retryMarker = JSON.parse(
-                await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-              );
+              retryMarker = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
               await host.runBossTurn(input);
             },
             dispose: () => host.dispose(),
@@ -4085,9 +4047,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(Date.parse(retryMarker.updatedAt)).toBeGreaterThan(
       Date.parse(markerDuringTurn.updatedAt),
     );
-    const settled = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const settled = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(settled.state).toBe('settled');
     expect(settled).not.toHaveProperty('uncertain');
     expect(settled.lastAppliedExecutionProjection).toEqual(
@@ -4709,9 +4669,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           const host = await createTmuxPlayRuntime(options);
           return {
             async runBossTurn() {
-              markerB = JSON.parse(
-                await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-              );
+              markerB = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
               throw new Error('synthetic configuration B crash');
             },
             dispose: () => host.dispose(),
@@ -4793,9 +4751,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       ],
     });
     expect(retried.result.config).toEqual(attemptedB);
-    const settled = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const settled = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(settled.state).toBe('settled');
     expect(settled).not.toHaveProperty('uncertain');
     expect(settled.lastAppliedExecutionProjection).toEqual(attemptedB);
@@ -4851,9 +4807,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(bossTurns).toBe(0);
     expect(out.stderr).toContain('owned by a different token');
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-      ).state,
+      (await readFixtureManifest(join(sessionsDir, `${firstId}.json`))).state,
     ).toBe('uncertain');
   });
 
@@ -4888,7 +4842,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     expect(failed.result.code).toBe(2);
     expect(
-      JSON.parse(await readFile(path, 'utf8')).state,
+      (await readFixtureManifest(path)).state,
     ).toBe('uncertain');
 
     const calls = { stdin: 0, load: 0, probe: 0, host: 0 };
@@ -4962,18 +4916,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(freshDiscarded.stdout).toBe('');
     expect(freshCalls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-      ),
+      (await readFixtureManifest(join(sessionsDir, `${secondId}.json`))),
     ).toMatchObject({
       state: 'settled',
       snapshot: { sequences: { turn: 0 } },
       retainedGenerations: {},
     });
 
-    const settledTurnZero = JSON.parse(
-      await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-    );
+    const settledTurnZero = (await readFixtureManifest(join(sessionsDir, `${secondId}.json`)));
     const {
       retainedGenerations: _retainedGenerations,
       ...legacyNeverSettled
@@ -5145,9 +5095,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(stdout.text()).toBe('');
     expect(killed).toEqual([]);
     expect(processLike.listenerCount('SIGTERM')).toBe(0);
-    const record = JSON.parse(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    );
+    const record = (await readFixtureManifest(join(sessionsDir, `${firstId}.json`)));
     expect(record.state).toBe('uncertain');
     const store = createCaptainSessionStore({ sessionsDir });
     const lease = await store.acquire(firstId);
@@ -5205,9 +5153,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(out.stdout).toBe('');
     expect(out.stderr).toContain('reply withheld');
     expect(
-      JSON.parse(
-        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-      ).state,
+      (await readFixtureManifest(join(sessionsDir, `${firstId}.json`))).state,
     ).toBe('settled');
     const probe = await baseStore.acquire(firstId);
     await probe.release();
@@ -5219,7 +5165,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect(first.result.code).toBe(0);
     const originalPath = join(first.sessionsDir, `${firstId}.json`);
-    const record = JSON.parse(await readFile(originalPath, 'utf8'));
+    const record = (await readFixtureManifest(originalPath));
     const internalId = record.snapshot.captain.sessionId;
     record.sessionId = internalId;
     await writeFile(
@@ -5244,7 +5190,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(hosts).toBe(0);
     expect(rejected.inputs).toEqual([]);
 
-    const pathShaped = JSON.parse(await readFile(originalPath, 'utf8'));
+    const pathShaped = (await readFixtureManifest(originalPath));
     pathShaped.sessionId = secondId;
     pathShaped.structuralProjection.catalog.code.from = '../rewired.js';
     pathShaped.lastAppliedExecutionProjection.catalog.code.from = '../rewired.js';
@@ -5262,7 +5208,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(unsafe.stderr).toContain('must be a canonical module specifier');
     expect(unsafe.inputs).toEqual([]);
 
-    const malformedRecord = JSON.parse(await readFile(originalPath, 'utf8'));
+    const malformedRecord = (await readFixtureManifest(originalPath));
     malformedRecord.sessionId = thirdId;
     malformedRecord.snapshot.mode = 'corrupt';
     await writeFile(
@@ -5690,7 +5636,7 @@ describe('portable CLI provider hints', () => {
         mode === 'missing' ? [undefined] : mode === 'rejected' ? [hints.captain.token, undefined] : [hints.captain.token],
       );
       if (mode !== 'ambiguous') expect(calls.at(-1)?.prompt).toContain('remember the original task');
-      const manifest = JSON.parse(await readFile(join(sessionsDir, `${id}.json`), 'utf8'));
+      const manifest = (await readFixtureManifest(join(sessionsDir, `${id}.json`)));
       expect(manifest.schemaVersion).toBe(7);
       expect(manifest.snapshot.captain.conversation).toEqual({ kind: 'needsSeeding' });
       expect(JSON.stringify(manifest)).not.toContain(hints.captain.token);

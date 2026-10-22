@@ -9,6 +9,8 @@ export interface SessionBundle {
   readonly manifest: Uint8Array;
   readonly replay: Uint8Array;
   readonly assets: readonly AssetFile[];
+  /** Verified physical bundle files relative to sessionsDir; replay is a logical prefix. */
+  readonly files: readonly { readonly path: string; readonly byteLength: number }[];
 }
 
 export declare const RECORDS_STREAM_VERSION: 1;

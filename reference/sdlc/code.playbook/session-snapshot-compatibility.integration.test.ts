@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFixtureManifest, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEvent } from '@sublang/cligent';
@@ -78,7 +79,7 @@ it.each(['SDK continue', 'CLI session', 'CLI continue', 'CLI retry', 'SDK recove
 
       // Simulate the supported older shape without changing the replay stream.
       const manifestPath = join(store.sessionsDir, `${sessionId}.json`);
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      const manifest = await readFixtureManifest(manifestPath);
       delete manifest.snapshot.presentedEffectPrefix;
       if (manifest.uncertain?.progress?.snapshot) delete manifest.uncertain.progress.snapshot.presentedEffectPrefix;
       await writeFile(manifestPath, JSON.stringify(manifest));

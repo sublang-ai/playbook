@@ -22,6 +22,7 @@ import {
   validateCaptainSessionRecord,
 } from './bin/session-store.js';
 import * as facadeModule from './session-store.js';
+import { readFixtureManifest, readFixtureReplay, writeFixtureReplay } from './test-support/session-persistence.js';
 
 const tempDirs: string[] = [];
 const sessionId = '94000000-0000-4000-8000-000000000001';
@@ -47,7 +48,7 @@ async function fixtureDir() {
 }
 
 function streamPath(sessionsDir: string, id = sessionId) {
-  return join(sessionsDir, `${id}.records.jsonl`);
+  return join(sessionsDir, `${id}.replay.json`);
 }
 
 function deferred() {
@@ -199,7 +200,7 @@ async function publishCredentialManifest(sessionsDir: string) {
   privateLease.acknowledgeHint('dev.coder','player-resume-secret');
   await privateLease.settle({attemptId,snapshot:credentialSnapshot(execution),unresolvedEffects:[]});
   await privateLease.release();
-  return JSON.parse(await readFile(join(sessionsDir,`${sessionId}.json`),'utf8'));
+  return readFixtureManifest(join(sessionsDir,`${sessionId}.json`));
 
 }
 
@@ -411,7 +412,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
         sessionId: skippedSessionId,
       })}\n`,
     );
-    const streamOnlyPath = streamPath(sessionsDir, streamOnlySessionId);
+    const streamOnlyPath = join(sessionsDir, `${streamOnlySessionId}.records.jsonl`);
     const streamOnlyBytes = `${JSON.stringify({
       v: 1,
       seq: 1,
@@ -805,7 +806,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
 
     const failureId = '94300000-0000-4000-8000-000000000001';
     const failurePath = streamPath(sessionsDir, failureId);
-    await writePrivateFile(failurePath, '');
+    await writeFixtureReplay(failurePath, '');
     const failedLease = await store.acquire(failureId);
     const failedHead = failedLease.append({ type: 'fails-before-bytes' });
     const queued = failedLease.append({ type: 'queued-after-failure' });
@@ -835,7 +836,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
       if (unavailable) {
         await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
         await chmod(sessionsDir, 0o700);
-        await writePrivateFile(
+        await writeFixtureReplay(
           streamPath(sessionsDir),
           '{"v":2,"seq":1,"record":{"type":"future"}}\n',
         );
@@ -897,7 +898,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
       mode: 0o700,
     });
     await chmod(unavailableFixture.sessionsDir, 0o700);
-    await writePrivateFile(
+    await writeFixtureReplay(
       streamPath(unavailableFixture.sessionsDir),
       '{"v":9,"seq":1,"record":{"type":"future"}}\n',
     );
@@ -925,7 +926,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
     });
     await chmod(writeFailureFixture.sessionsDir, 0o700);
     const failedPath = streamPath(writeFailureFixture.sessionsDir);
-    await writePrivateFile(failedPath, '');
+    await writeFixtureReplay(failedPath, '');
     const failedStore = facadeModule.openSessionStore(
       writeFailureFixture.sessionsDir,
     );
@@ -945,7 +946,7 @@ describe('published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80)', () => 
       lastDurableSeq: 0,
       incomplete: true,
     });
-    expect(await readFile(failedPath, 'utf8')).toBe('');
+    expect(await readFixtureReplay(failedPath, 'utf8')).toBe('');
 
     expect(stdout).not.toHaveBeenCalled();
     expect(stderr).not.toHaveBeenCalled();

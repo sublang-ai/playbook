@@ -201,7 +201,8 @@ remain isolated. Child return, frame disposal, and a later root engagement do
 not clear the session ledger.
 
 Runtime and complete shell snapshots are schema 4. The shared store projects
-provider continuations out of nested snapshots and writes schema-7 manifests.
+provider continuations out of nested snapshots and writes logical schema-7
+manifests inside bounded physical schema-8 roots.
 Local hints may rehydrate the current checkpoint; retained generations never
 restore provider tokens. Use the shared migrator for older records instead of
 guessing identity or effect evidence. On a compatible
@@ -472,7 +473,16 @@ only when `isUncertainTurnDiscardable(record)` returns true: no abandonment, no 
 clearly marked synthetic projection when a validated legacy journal has no
 stream. `validate()` separates byte integrity from resumability.
 `readManifest()` may return an older or unknown object; use
-`validateSessionManifest()` before interpreting schema-7 recovery.
+`validateSessionManifest()` before interpreting logical schema-7 recovery.
+The store hydrates schema-8 roots transparently; do not parse the physical root
+as a recovery snapshot. `exportBundle().manifest` contains the exact physical
+root bytes, and `exportBundle().files` lists its verified portable file closure
+relative to `sessionsDir`. Copy that closure as one session unit. The
+`replay` result remains its checkpoint-proven logical prefix.
+
+Every new storage root and chunk is at most 8 MiB; total retained disk usage and
+hydrated memory are not capped. Stop all old writers and upgrade the CLI and
+embedded host together before creating new sessions or migrating old ones.
 `migrate()` preserves original inputs before conversion. `delete()` removes the
 bundle under the shared lease, with the manifest last. Management needs no
 playbook module. A coordination-only `acquireManagement()` lease reserves even

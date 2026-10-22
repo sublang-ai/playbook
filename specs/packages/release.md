@@ -105,6 +105,7 @@ The scoped `@sublang/playbook` package shall be published with
 #### release-31
 
 When the normal repository test gate runs through `pnpm test`, its effective pnpm lifecycle shall execute the project-local `spex lint` command to successful completion before starting Vitest.
+The repository's normal Vitest configuration shall run at most two test-file workers concurrently so its real-process and durable-filesystem suites do not scale disk contention with CPU count; the individual operation and test deadlines shall remain unchanged.
 
 ### Install closure
 
@@ -421,7 +422,7 @@ After the attached DECIDE turn settles and its pane child retires the lease, a h
 It shall additionally run the hermetic global-only case ([DR-024](../decisions/024-runtime-engine-provisioning.md) §7): install the packed candidate globally into an isolated npm prefix, enable a compiled thin fixture registry importing `xstate` and `@sublang/playbook/xstate-runtime` in the shared config of a fresh repository with no project-local packages anywhere, and invoke its slash command through the installed headless Captain.
 The Boss task shall explicitly request both the token and a brief Captain explanation of whether the worker returned it exactly and the request completed.
 The fixture shall mechanically reject a worker result that does not equal the repository token before it can enter its final state; the case shall assert automatic engine provisioning triggers exactly once, both runs return only `{sessionId, reply}`, each reply grounds the fixture's published terminal meaning that the exact token was returned and the request completed, and a repeated fresh run provisions nothing further.
-Across the successful REVIEW, CODE, DEV, DECIDE, and hermetic cases, the installed candidate shall persist canonical token-free Captain manifest schema `7` with digest-bound replay and local hints [[session-storage-2](session-storage.md#session-storage-2)] [[session-storage-6](session-storage.md#session-storage-6)], complete shell and internal-Captain runtime snapshot schema `4`, schema-3 catalog entries, an authoritative effect ledger exactly mirrored by the shell snapshot, an empty `unresolvedEffects` list, and complete receipts covering REVIEW `unchanged` plus `one-descendant-commit`, CODE `one-descendant-commit`, DEV `unchanged`, DECIDE `unchanged` plus `one-descendant-commit`, and hermetic `unchanged` as applicable ([[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)], [[playbook-captain-41](playbook-captain.md#playbook-captain-41)], [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]).
+Across the successful REVIEW, CODE, DEV, DECIDE, and hermetic cases, the installed candidate shall persist canonical token-free logical Captain manifest schema `7` inside bounded physical schema `8` [[session-persistence-1](session-persistence.md#session-persistence-1)] with digest-bound replay and local hints [[session-storage-2](session-storage.md#session-storage-2)] [[session-storage-6](session-storage.md#session-storage-6)], complete shell and internal-Captain runtime snapshot schema `4`, schema-3 catalog entries, an authoritative effect ledger exactly mirrored by the shell snapshot, an empty `unresolvedEffects` list, and complete receipts covering REVIEW `unchanged` plus `one-descendant-commit`, CODE `one-descendant-commit`, DEV `unchanged`, DECIDE `unchanged` plus `one-descendant-commit`, and hermetic `unchanged` as applicable ([[playbook-runtime-67](playbook-runtime.md#playbook-runtime-67)], [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)], [[playbook-captain-41](playbook-captain.md#playbook-captain-41)], [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]).
 The same-id REVIEW and DECIDE status continuations shall preserve the complete effect ledger byte-for-byte while starting no governed repository boundary ([[playbook-cli-23](playbook-cli.md#playbook-cli-23)], [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)]).
 Documentation shall drop the project-local install and `npx`
 consumption story only after this case passes.
@@ -496,6 +497,12 @@ Before releasing the first version whose leases and claims carry the machine ide
 
 - a store written by concurrent old and new writers shall not be a supported release configuration;
 - an old reader refusing a tagged owner as foreign is the expected effect of that configuration, not a defect to release around.
+
+#### release-39
+
+Before releasing bounded session persistence, the maintainer shall verify that the CLI and supported Spex SDK use the schema-8 shared store and that both preserve complete session families through reads, migration, copy, Sync and deletion [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-5](session-persistence.md#session-persistence-5)] [[session-persistence-6](session-persistence.md#session-persistence-6)] [[session-persistence-7](session-persistence.md#session-persistence-7)].
+Upgrade instructions shall require stopping every writer that shares the store, upgrading all hosts before new writes, and explicitly migrating selected monolithic sessions with retained original inputs; older writers and direct file readers are incompatible with the new physical format.
+The release shall state that the per-file bound does not limit total retained disk usage or the memory needed to hydrate logical recovery and replay.
 
 ## Verification
 
@@ -880,7 +887,7 @@ duplicate the automatic gate.
 
 #### release-36
 
-When the recovery release gate is audited, the audit shall record the exact CLI and embedded SDK versions and their shared-store recovery checks, verify the documented coordinated upgrade, and block publication while any supported writer remains incompatible [[release-35](#release-35)]; the first machine-identity release is audited the same way, its instructions naming the stop of every writer sharing a store and the legacy-owner recovery [[release-38](#release-38)].
+When the recovery release gate is audited, the audit shall record the exact CLI and embedded SDK versions and their shared-store recovery checks, verify the documented coordinated upgrade, and block publication while any supported writer remains incompatible [[release-35](#release-35)]; the bounded-format coordinated upgrade is verified through copied large-session CLI and Spex integration coverage [[release-39](#release-39)]; the first machine-identity release is audited the same way, its instructions naming the stop of every writer sharing a store and the legacy-owner recovery [[release-38](#release-38)].
 
 ### Hosted release workflow
 

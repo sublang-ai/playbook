@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.0.0] - 2026-10-22
+
+### Changed
+
+- **Coordinated storage upgrade:** new sessions use schema-8 physical roots and immutable per-session chunks, each at most 8 MiB. Repeated JSON evidence is deduplicated and oversized individual records are split without discarding contents. Logical recovery and replay semantics remain unchanged.
+- Stop every CLI and Spex writer sharing a store and upgrade all hosts before new writes. Older writers and direct physical-file readers cannot consume the new format. Read history through the shared store and copy its complete `exportBundle().files` inventory.
+- Existing monolithic sessions remain readable. Run `playbook migrate-session <id>` with the same store configuration before continuing them; migration retains original inputs and validates the new representation before retiring legacy files.
+- Recovery objects and replay still hydrate in memory. This release bounds individual files, not total disk or memory usage, and retains superseded chunks until session deletion.
+
+### Fixed
+
+- Preserve complete session evidence through interrupted migration retries, copied-bundle restoration and manifest-last deletion; reject missing or changed dependencies before recovery.
+
 ## [17.11.1] - 2026-10-21
 
 ### Fixed
@@ -1047,7 +1060,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v17.11.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.0...HEAD
+[18.0.0]: https://github.com/sublang-ai/playbook/compare/v17.11.1...v18.0.0
 [17.11.1]: https://github.com/sublang-ai/playbook/compare/v17.11.0...v17.11.1
 [17.11.0]: https://github.com/sublang-ai/playbook/compare/v17.10.1...v17.11.0
 [17.10.1]: https://github.com/sublang-ai/playbook/compare/v17.10.0...v17.10.1

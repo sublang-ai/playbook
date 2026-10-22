@@ -4,8 +4,9 @@
 // failure state must offer that recovery to the next process, so
 // `playbook run --continue` can retry it in place instead of dismissing it.
 
+import { readFixtureManifest, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -322,9 +323,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
       stderr: writer(),
     });
     expect(first.code).toBe(0);
-    const parked = JSON.parse(
-      await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
-    );
+    const parked = await readFixtureManifest(join(sessionsDir, `${sessionId}.json`));
     expect(parked.state).toBe('settled');
     expect(parked.snapshot.frames[0].runtime.state.stateId).toBe('failed');
     expect(ScriptedAdapter.playerCalls).toBe(1);
@@ -354,9 +353,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
 
     // The retry moved the real machine off its failure state, in place: the
     // engagement is still CODE, on the same logical session.
-    const recovered = JSON.parse(
-      await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
-    );
+    const recovered = await readFixtureManifest(join(sessionsDir, `${sessionId}.json`));
     expect(recovered.state).toBe('settled');
     expect(recovered.snapshot.frames[0].playbookId).toBe('code');
     expect(recovered.snapshot.frames[0].runtime.state.stateId).toBe(
@@ -413,7 +410,7 @@ describe('headless failure retry across a continued session (DR-034)', () => {
       },
     });
     const record = async () =>
-      JSON.parse(await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'));
+      await readFixtureManifest(join(sessionsDir, `${sessionId}.json`));
 
     // Process one: the coder asks a question and CODE parks on it.
     const first = await runPlaybookCli({
