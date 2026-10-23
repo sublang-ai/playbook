@@ -5,7 +5,7 @@
 
 ## Intent
 
-This project-local package specifies and verifies versioning, changelog, packaging, public surfaces, and release gates for `@sublang/playbook`.
+This project-local package specifies and verifies versioning, changelog, packaging, public surfaces, the gate every merge into `main` passes, and release gates for `@sublang/playbook`.
 
 ## External Behavior
 
@@ -106,6 +106,33 @@ The scoped `@sublang/playbook` package shall be published with
 
 When the normal repository test gate runs through `pnpm test`, its effective pnpm lifecycle shall execute the project-local `spex lint` command to successful completion before starting Vitest.
 The repository's normal Vitest configuration shall run at most two test-file workers concurrently so its real-process and durable-filesystem suites do not scale disk contention with CPU count; the individual operation and test deadlines shall remain unchanged.
+
+### Merging into main
+
+#### release-40
+
+When a pull request into `main` is ready, the maintainer shall ask GitHub to merge it on green, and the repository shall merge it with a merge commit once every job of the CI workflow has passed on the pull request's head, requiring no job to be re-run for a later move of `main` ([DR-095](../decisions/095-merge-on-green.md)):
+
+- `main` is a protected branch whose required status checks are exactly the jobs the CI workflow runs for a pull request, with the branch not required to be up to date;
+- a conflicting pull request merges only once its branch merges `main` and its checks pass again on that head;
+- a base branch is never deleted while a pull request still targets it.
+
+#### release-41
+
+When a push reaches a pull request's branch, the CI workflow shall cancel the run of the head that push supersedes and run the new head once, cancelling no run of a push to `main` ([DR-095](../decisions/095-merge-on-green.md)).
+
+#### release-42
+
+When the developer/agent is about to push, they shall run `npm run prepush`, which refuses a tree holding a conflict marker and then runs `spex lint` and the type check, pushing only once it passes ([DR-095](../decisions/095-merge-on-green.md)).
+
+#### release-43
+
+When a change adds or changes a test, that test shall be deterministic by construction ([DR-095](../decisions/095-merge-on-green.md)):
+
+- an order it reads from a tool's listing, such as Git's, or from a directory listing is sorted on both sides of the comparison, or read from the source whose order its subject promises;
+- a step is bounded by the event the behavior names, never by wall-clock time;
+- a tool's calls are asserted by where they went, never by their exact count;
+- a scripted fault outlasts every call that may consume it before the call under test.
 
 ### Install closure
 
@@ -671,6 +698,16 @@ root to non-empty files (verifying [[release-22](#release-22)]).
 #### release-32
 
 The test suite shall fail unless the effective `pnpm test` lifecycle, in `pretest`, `test`, and `posttest` order, places a fail-fast `spex lint` command before its first Vitest command (verifying [[release-31](#release-31)]).
+
+### Merge Gate Coverage
+
+#### release-44
+
+When the merge-gate audit reads the CI workflow and runs the pre-push check over a tree holding a conflict marker, it shall assert that the workflow's concurrency groups a pull request's runs by its number and cancels the run in progress for a pull request and not for a push to `main` [[release-41](#release-41)], that the required-check list it holds is exactly the check names of the jobs the workflow runs for a pull request [[release-40](#release-40)], and that `npm run prepush` refuses that tree, naming the file [[release-42](#release-42)].
+
+#### release-45
+
+When a change adding or changing a test is reviewed, the review shall assert that the test sorts every listing order it compares or reads it from the source its subject promises, bounds no step by wall-clock time, asserts a tool's calls by where they went rather than by their count, and scripts each fault to outlast every call that may consume it before the call under test [[release-43](#release-43)].
 
 ### Public Surface Coverage
 
