@@ -118,6 +118,7 @@ meta.md       The spec of specs
 | [DR-092](decisions/092-skills-follow-working-agents.md) | 092-skills-follow-working-agents.md | Shared and per-agent skills, declaring-file path origins, durable execution lists, and skill-free Captain control |
 | [DR-093](decisions/093-captain-control-turns-native-skills-off.md) | 093-captain-control-turns-native-skills-off.md | Decision, Judge and reporting calls request `nativeSkills: false` where Cligent reports the Captain adapter can honor it; a Kimi Captain keeps native skills, a documented reduction; Cligent floor 0.36.0 |
 | [DR-094](decisions/094-bounded-session-persistence.md) | 094-bounded-session-persistence.md | Bounded session-owned immutable evidence and replay, versioned physical roots, explicit migration and coordinated hosts |
+| [DR-095](decisions/095-merge-on-green.md) | 095-merge-on-green.md | Merge on green: `main` protected with the CI workflow's jobs as required checks and auto-merge, one run per pull-request head, base branches kept while targeted, a pre-push check, deterministic tests; the Linux-only matrix kept |
 
 ## Packages
 
@@ -149,4 +150,4 @@ meta.md       The spec of specs
 | [session-persistence.md](packages/session-persistence.md) | Bounded physical session roots, chunks, replay, migration and export |
 | [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |
 | [recovery.md](packages/recovery.md) | Captain preparation and durable interrupted-step recovery |
-| [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |
+| [release.md](packages/release.md) | Versioning, package surfaces, the merge gate into `main`, release workflow, smoke, and live acceptance |

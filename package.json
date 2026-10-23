@@ -276,6 +276,7 @@
     "test:acceptance": "node scripts/run-live-acceptance.mjs",
     "smoke:release": "node scripts/release-smoke.mjs",
     "check:links": "node scripts/check-links.mjs",
+    "prepush": "bash scripts/prepush.sh",
     "playbook": "node reference/sdlc/code.playbook/bin/playbook.js"
   },
   "publishConfig": {
