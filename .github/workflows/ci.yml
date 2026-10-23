@@ -8,6 +8,12 @@ on:
     branches: [main]
   pull_request:
 
+# One run per pull-request head: a push cancels the run it supersedes;
+# a push to main cancels nothing (release-41).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   playbook:
     name: playbook (Node ${{ matrix.node-version }})
