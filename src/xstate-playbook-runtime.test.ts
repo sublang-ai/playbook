@@ -8894,8 +8894,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(view.actions[0]).toEqual({
       id: 'retry:START_CODE',
       label:
-        'Retry: Coder runs the first coding phase: a direct ' +
-        'implementation, a new IR, or the next task of an existing IR.',
+        'Retry: Coder runs the first phase: a direct change, a new IR, ' +
+        'or an existing IR\'s next unfinished task.',
       standing: 'ready',
     });
     // The root Boss interrupt into the first phase is live (the request is

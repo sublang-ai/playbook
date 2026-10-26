@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.0.1] - 2026-10-25
+
+### Fixed
+
+- Require Cligent 0.36.1 for its bounded browser-readiness retry and patched dependency graph.
+- CODE treats standalone documentation or status maintenance as new change work when it implements no identified unfinished IR task, including updates to an IR with no unfinished task: one-commit changes use the existing direct phase, larger changes use a new IR, and every phase still requires receipt-bound REVIEW of its exact commit.
+- Saved CODE deliveries and deferred continuations retain their original outcome-description schema; finish them with their original Playbook version or start a new run after upgrading. This correction does not rewrite retained evidence.
+
 ## [18.0.0] - 2026-10-22
 
 ### Changed
@@ -1060,7 +1068,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.1...HEAD
+[18.0.1]: https://github.com/sublang-ai/playbook/compare/v18.0.0...v18.0.1
 [18.0.0]: https://github.com/sublang-ai/playbook/compare/v17.11.1...v18.0.0
 [17.11.1]: https://github.com/sublang-ai/playbook/compare/v17.11.0...v17.11.1
 [17.11.0]: https://github.com/sublang-ai/playbook/compare/v17.10.1...v17.11.0

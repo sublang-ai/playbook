@@ -10,14 +10,14 @@ Roles:
 
 The caller supplies a coding request together with any relevant context.
 
-A new coding intent follows either one direct implementation phase or an IR sequence consisting of a new-IR phase followed by one phase for each IR task.
+A new change intent, including standalone documentation or status maintenance that does not implement an identified unfinished IR task, follows either one direct implementation phase or an IR sequence consisting of a new-IR phase followed by one phase for each IR task.
 An existing IR follows one IR-task phase for each remaining unfinished task, starting with its next unfinished task.
 Each completed phase ends with one new Coder commit (owned by `code`).
 After each `code`-owned commit, Captain shall call the `review` playbook and wait until it passes with no unsettled findings.
 Playbook `review` owns every review round and every review-fix commit.
 Do not rewrite any existing commit.
 
-When `review` passes a direct implementation phase, `code` is complete.
+When `review` passes a direct phase, `code` is complete.
 When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.
 When `review` passes the final IR-task phase, `code` is complete.
 When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
@@ -29,15 +29,18 @@ At the start of the first phase, Captain shall relay to Coder the complete calle
 > Run results: <run-results>
 
 ```markdown
-First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.
+First determine whether the request starts a new change intent or continues an existing IR with unfinished work.
 If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.
 
-For a new coding intent, assess whether it can be completed well in one commit.
+Treat standalone documentation or status maintenance that does not implement an identified unfinished IR task as a new change intent, even when it refers to an IR with no unfinished task.
+Do not invent or reopen an IR task, claim unperformed work complete, or infer an owner decision not supplied by the caller.
+
+For a new change intent, assess whether it can be completed well in one commit.
 If it can, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.
 If it cannot, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.
 Plan affected spec updates before, with, or after their corresponding code changes, either as standalone IR tasks or as explicit work within related tasks.
 
-For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
+For an existing IR with unfinished work, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.
 Do not implement a later task in this phase.
 Mark the IR's progress and deliverables when relevant.
 After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.
