@@ -51,9 +51,11 @@ async function fixture() {
   const host=await openSessionHost({store,mode:'new',cwd,config,adapterImports:{claude:async()=>FixtureAdapter,codex:async()=>FixtureAdapter}} as any);
   await host.handleBossTurn('Create an application-owned conversation.');
   const id=host.sessionId;await host.dispose();
-  const env={PATH:process.env.PATH,HOME:join(root,'home'),SPEX_HOME:spex,ANTHROPIC_API_KEY:'fixture',OPENAI_API_KEY:'fixture',PLAYBOOK_TEST_PROVIDER_LOG:join(root,'provider.jsonl')};
-  const invoke=async(args:string[])=>{
-    try {const value=await exec(process.execPath,['--import',preload,cli,...args],{cwd,env,timeout:30000});return{code:0,...value};}
+  // The CLI seeds its own config here; one credential seeds the template's
+  // lineup, the one the application session above ran (playbook-cli-11).
+  const env={PATH:process.env.PATH,HOME:join(root,'home'),SPEX_HOME:spex,ANTHROPIC_API_KEY:'fixture',PLAYBOOK_TEST_PROVIDER_LOG:join(root,'provider.jsonl')};
+  const invoke=async(args:string[],extra:Record<string,string>={})=>{
+    try {const value=await exec(process.execPath,['--import',preload,cli,...args],{cwd,env:{...env,...extra},timeout:30000});return{code:0,...value};}
     catch(cause:any){return{code:cause.code,stdout:cause.stdout??'',stderr:cause.stderr??''};}
   };
   return {root,cwd,spex,store,config,id,invoke,env};
@@ -75,6 +77,19 @@ describe('real CLI over an application-owned home',()=>{
     const fresh=await f.invoke(['run','--json','Create another session.']);expect(fresh.code,fresh.stderr).toBe(0);expect(JSON.parse(fresh.stdout).sessionId).not.toBe(f.id);
     const refused=await f.invoke(['run','--session',legacyId,'Cannot resume before migration.']);expect(refused.code).toBe(1);expect(refused.stderr).toContain(`playbook migrate-session ${legacyId}`);
     expect(JSON.parse(await readFile(legacyPath,'utf8')).schemaVersion).toBe(6);
+  });
+  it('seeds a mixed lineup under both credentials and continues its own session',async()=>{
+    // DR-096: both credentials seed the Reviewer on Codex and the rest on
+    // Claude; a session started on that seed continues on it.
+    const f=await fixture();const both={OPENAI_API_KEY:'fixture'};
+    const started=await f.invoke(['run','--json','Start on the mixed seed.'],both);expect(started.code,started.stderr).toBe(0);
+    const seeded=await readFile(join(f.spex,'config','playbook.config.yaml'),'utf8');
+    expect(seeded).toMatch(/dev\.reviewer:\n\s+adapter: codex\n\s+model: gpt-6-sol/);expect(seeded).toMatch(/dev\.coder:\n\s+adapter: claude/);
+    const id=JSON.parse(started.stdout).sessionId;expect(id).not.toBe(f.id);
+    const continued=await f.invoke(['run','--session',id,'--json','Continue on the mixed seed.'],both);
+    expect(continued.code,continued.stderr).toBe(0);expect(JSON.parse(continued.stdout)).toEqual({sessionId:id,reply:'Portable CLI answer.'});
+    expect((await f.store.read(id)).snapshot.sequences.turn).toBe(2);
+    const calls=(await readFile(f.env.PLAYBOOK_TEST_PROVIDER_LOG,'utf8')).trim().split('\n').map(line=>JSON.parse(line));expect(calls.at(-1).resume).toBe('fixture-continuation');
   });
   it('migrates an explicitly configured directory through the executable without provider work',async()=>{
     const f=await fixture();const target=join(f.root,'override');await mkdir(target,{mode:0o700});const id=randomUUID();

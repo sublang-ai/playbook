@@ -374,18 +374,19 @@ Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
 config shall enable CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT with their `playbooks.<id>.from` values set to the matching public registry modules.
 The starter shall define players `dev.coder`, `dev.reviewer`, `dev.analyst`, and `inspect.inspector`; CODE shall bind `coder` to `dev.coder`, REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`, DEV shall bind `analyst` to `dev.analyst` ([DR-044](../decisions/044-dev-planning-workflow.md)), and BRANCH and PR shall each bind `coder` to that same `dev.coder` with no player added, so the Coder that reads the issue and names the branch makes the commits and then describes them in the pull request ([DR-050](../decisions/050-pull-request-delivery.md)). INSPECT shall bind `inspector` to the separate `inspect.inspector` player, preserving inspection conversation isolation from implementation ([DR-077](../decisions/077-portable-assets-and-inspection.md)).
-The seeded lineup shall take one adapter for every seeded agent, chosen when the
+The seeded lineup shall be chosen when the
 file is written from the adapters the credential check of
 [[playbook-cli-12](playbook-cli.md#playbook-cli-12)] already sees, by this fixed
-order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md)):
+order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md); [DR-096](../decisions/096-a-second-adapter-reviews.md)):
 
 | Order | Adapter | Model |
 | --- | --- | --- |
 | 1 | `claude` | `claude-opus-5-5` |
 | 2 | `codex` | `gpt-6-sol` |
 
-- the first ready adapter in that order supplies every seeded agent, so one
-  seeded config names one provider;
+- the first ready adapter in that order supplies every seeded agent, except
+  that where both listed adapters are ready, `dev.reviewer` alone takes the
+  second row;
 - Captain, Coder, and Inspector shall take reasoning effort `high`, Reviewer and Analyst
   `xhigh`, for whichever adapter is chosen;
 - where no listed adapter is ready, the first row shall be seeded and the
@@ -401,7 +402,7 @@ Every seeded agent — the Captain and the four players — shall set
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
 codex to on-request + auto_review) without routine in-session approval
 prompts.
-Where the chosen adapter is `codex`, every seeded agent shall additionally
+Every seeded agent on `codex` shall additionally
 carry `permissions.writablePaths: ['.git']` so it can write git metadata under
 that adapter's sandbox; `claude` needs no such grant under its auto mode.
 The starter config shall set top-level
@@ -417,9 +418,15 @@ Where either shared front end runs the readiness gate
 [[playbook-cli-6](playbook-cli.md#playbook-cli-6)]), the command shall collect
 the declared `adapter` values from the normalized launch plan — the
 `captain.adapter` and every referenced player's `adapter` — and treat
-`claude` as ready when `ANTHROPIC_API_KEY` is set or `$HOME/.claude/`
-exists, and `codex` as ready when `OPENAI_API_KEY` is set or
-`$HOME/.codex/` exists.
+each adapter as ready when any of its environment forms is set or its
+sign-in folder exists, reading no form's value
+([DR-097](../decisions/097-readiness-reads-each-agents-token-forms.md)):
+
+| Adapter | Environment forms | Folder |
+| --- | --- | --- |
+| `claude` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` | `$HOME/.claude/` |
+| `codex` | `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` | `$HOME/.codex/` |
+
 When any declared adapter with a known readiness predicate is not
 ready, the command shall block the launch per
 [[playbook-cli-6](playbook-cli.md#playbook-cli-6)].
@@ -472,6 +479,27 @@ the adapters of the composed config, alongside the
 reported together before returning the non-`127` readiness exit code.
 Where `playbook run` hosts a new Captain turn ([[playbook-cli-20](#playbook-cli-20)]), the probe shall run over the same normalized Captain and player adapter values as interactive mode, after installed-cligent config validation and complete catalog preparation/import but before host construction, so no agent call or turn work precedes it.
 A failure shall exit with the argument exit code and the same named remedy, with stdout empty.
+
+#### playbook-cli-100
+
+The package shall expose `@sublang/playbook/seed-config` as a public, semver-stable subpath backed by committed `.js` and `.d.ts` artifacts listed in `files` and mapped under `exports['./seed-config']` (`types` and `default`), with exactly the JavaScript named export `seedConfigText` and no default export, backed by a self-contained declaration that imports nothing and assigns it this exact signature ([DR-096](../decisions/096-a-second-adapter-reviews.md)):
+
+```ts
+export interface SeedConfigOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}
+export interface SeedConfigText {
+  readonly text: string;
+  readonly anyReady: boolean;
+}
+export declare function seedConfigText(options?: SeedConfigOptions): SeedConfigText;
+```
+
+- `text` is exactly the starter text `playbook` seeds [[playbook-cli-11](#playbook-cli-11)] under that environment and home, from the same implementation;
+- `anyReady` is false exactly where no listed adapter is ready and the none-ready notice would print;
+- `env` defaults to `process.env` and `homeDir` to that environment's `HOME`, otherwise the process home directory;
+- the call is synchronous, reads only the bundled template and the credential inputs of [[playbook-cli-12](#playbook-cli-12)], and writes nothing.
 
 ### Non-interactive Run Host
 
@@ -1202,14 +1230,19 @@ shall fail unless the command creates that file from the bundled starter config,
 | --- | --- | --- |
 | claude only | every agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
 | codex only | every agent on `codex` / `gpt-6-sol`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
-| both | every agent on `claude` / `claude-opus-5-5`, the fixed order deciding | the resolved path alone |
+| both | `dev.reviewer` on `codex` / `gpt-6-sol` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
 | neither | every agent on `claude` / `claude-opus-5-5` | the resolved path, plus one line naming that no adapter probed ready |
 
 - Captain and `dev.coder` take effort `high` and `dev.reviewer` and `dev.analyst` `xhigh` in every row;
 - each row shall be driven by an injected home directory and an explicit environment, so no case depends on the machine running the suite;
-- seeding twice in one invocation shall write one file and select one lineup.
+- seeding twice in one invocation shall write one file and select one lineup;
+- a session `playbook run` starts on the both row's seed shall continue through `run --session` on that seed, its turn count advancing and its provider resumed [[playbook-cli-11](#playbook-cli-11)].
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed.
+
+#### playbook-cli-101
+
+When the seed-config suite seeds through `playbook` and through `@sublang/playbook/seed-config` under each credential row of [[playbook-cli-13](#playbook-cli-13)] with one injected home and environment, it shall fail unless the facade's `text` equals the file `playbook` wrote byte for byte and `anyReady` is false only in the none-ready row [[playbook-cli-100](#playbook-cli-100)], and unless the dry-packed candidate maps `./seed-config` to its listed artifacts with exactly the declared named export and declaration [[playbook-cli-100](#playbook-cli-100)].
 
 ### Config relocation
 
@@ -1250,7 +1283,10 @@ the test suite shall fail unless: a config whose adapters all have
 credentials present launches tmux-play; a config with a missing
 `claude` or `codex` credential blocks the launch, prints the help
 content plus every failing adapter id to stderr, and exits non-zero
-with a status distinct from `127`; and a declared adapter with no
+with a status distinct from `127`; each environment form of
+[[playbook-cli-12](#playbook-cli-12)] alone, with no sign-in folder,
+counts its adapter as ready both for the gate and for the seeded lineup of
+[[playbook-cli-11](#playbook-cli-11)] (`CODEX_ACCESS_TOKEN` alone seeding every agent on `codex`); and a declared adapter with no
 known predicate produces one stderr warning without blocking launch (verifying [[playbook-cli-1](#playbook-cli-1)], [[playbook-cli-12](#playbook-cli-12)]).
 An unreferenced top-level player's unavailable or uncredentialed adapter shall not enter either readiness result (verifying [[playbook-cli-12](#playbook-cli-12)]).
 

@@ -880,10 +880,77 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(onlyCodex.stderrText).not.toContain('no adapter probed ready');
   });
 
-  it('prefers the first ready adapter by fixed order, not by probe order', async () => {
+  it('seeds the reviewer alone on the second adapter when both are ready', async () => {
+    // DR-096: review comes from the other provider; everything else keeps
+    // the first row exactly as the template writes it.
     const both = await seedUnder({ ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' });
-    expect(both.seeded.captain.adapter).toBe('claude');
+    expect(both.seeded.captain).toEqual({
+      adapter: 'claude',
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      permissions: { mode: 'auto' },
+    });
+    expect(both.seeded.players['dev.reviewer']).toEqual({
+      adapter: 'codex',
+      model: 'gpt-6-sol',
+      effort: 'xhigh',
+      permissions: { mode: 'auto', writablePaths: ['.git'] },
+    });
+    for (const id of ['dev.coder', 'dev.analyst', 'inspect.inspector']) {
+      expect(both.seeded.players[id].adapter).toBe('claude');
+      expect(both.seeded.players[id].permissions).toEqual({ mode: 'auto' });
+    }
     expect(both.stderrText).not.toContain('no adapter probed ready');
+  });
+
+  it('counts every token form alone, for the seed and the gate', async () => {
+    // DR-097 / PBCLI-12, PBCLI-16: a machine signed in by tokens alone has
+    // no sign-in folder, yet its agent is ready.
+    for (const [name, adapter] of [
+      ['ANTHROPIC_AUTH_TOKEN', 'claude'],
+      ['CLAUDE_CODE_OAUTH_TOKEN', 'claude'],
+      ['CODEX_API_KEY', 'codex'],
+      ['CODEX_ACCESS_TOKEN', 'codex'],
+    ] as const) {
+      const seeded = await seedUnder({ [name]: 't' });
+      expect(seeded.seeded.captain.adapter, name).toBe(adapter);
+      expect(seeded.seeded.players['dev.reviewer'].adapter, name).toBe(adapter);
+      expect(seeded.stderrText, name).not.toContain('no adapter probed ready');
+      expect(seeded.stderrText, name).not.toContain('Adapters not ready:');
+    }
+    const both = await seedUnder({ CLAUDE_CODE_OAUTH_TOKEN: 't', CODEX_ACCESS_TOKEN: 't' });
+    expect(both.seeded.captain.adapter).toBe('claude');
+    expect(both.seeded.players['dev.reviewer'].adapter).toBe('codex');
+  });
+
+  it('publishes the exact seed through @sublang/playbook/seed-config', async () => {
+    // playbook-cli-101: the facade returns the bytes the launcher wrote.
+    const { seedConfigText } = await import('@sublang/playbook/seed-config');
+    for (const env of [
+      { ANTHROPIC_API_KEY: 'a' },
+      { OPENAI_API_KEY: 'o' },
+      { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      {},
+    ] as Record<string, string>[]) {
+      const home = await makeTempHome();
+      const configPath = resolveUserConfigPath({}, home);
+      const spawn = fakeSpawn();
+      await runPlaybookCli({
+        argv: [],
+        env,
+        homeDir: home,
+        stderr: writer(),
+        stdout: writer(),
+        spawn: spawn.fn,
+        launchManagedTmuxPlay: fakeManagedLaunch(spawn),
+        tmuxPlayBin: '/tmp/tmux-play.js',
+        probeAdapterSdk: async () => true,
+      });
+      const written = await readFile(configPath, 'utf8');
+      const seeded = seedConfigText({ env, homeDir: home });
+      expect(seeded.text).toBe(written);
+      expect(seeded.anyReady).toBe(Object.keys(env).length > 0);
+    }
   });
 
   it('seeds the documented default and says so when nothing is ready', async () => {
@@ -903,7 +970,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
 
     const result = await runPlaybookCli({
       argv: [],
-      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      env: { ANTHROPIC_API_KEY: 'a' },
       homeDir: home,
       stderr,
       stdout: writer(),

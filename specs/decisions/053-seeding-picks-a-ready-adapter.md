@@ -8,6 +8,8 @@
 Accepted.
 Amends [DR-044](044-dev-planning-workflow.md)'s seeded-lineup consequence in one scope: the seeded agents' adapter and model are selected at seed time rather than fixed, while the players, their role bindings, and everything else that consequence settles stand.
 Model-currency scope amended by [DR-074](074-seeds-name-the-latest-models.md): the fixed per-adapter table names the latest model of each adapter's line and moves together with the Cligent floor that serves it; selection, precedence, efforts, and the none-ready notice stand.
+Amended by [DR-096](096-a-second-adapter-reviews.md): where both adapters are ready, the seeded `dev.reviewer` takes the second adapter; the selection is a public export, so the desktop app's diverging copy recorded below ends once that host seeds through it.
+Credential scope amended by [DR-097](097-readiness-reads-each-agents-token-forms.md): an adapter's credential is any of its agent's documented environment forms or its sign-in folder.
 
 ## Context
 

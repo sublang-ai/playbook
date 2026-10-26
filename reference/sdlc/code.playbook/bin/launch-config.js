@@ -1438,23 +1438,36 @@ export function adaptersFromComposedConfig(config) {
   return [...adapters];
 }
 
+// DR-097: each agent's documented environment forms, any one of which, or the
+// agent's sign-in folder, counts it as ready. No value is read.
+const CREDENTIAL_FORMS = {
+  claude: {
+    names: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
+    folder: ".claude",
+  },
+  codex: {
+    names: ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"],
+    folder: ".codex",
+  },
+};
+
 export function checkReadiness(adapters, env = process.env, home = homedir()) {
   const failingAdapters = [];
   const unknownAdapters = [];
   for (const adapter of adapters) {
-    if (adapter === "claude") {
-      if (!env.ANTHROPIC_API_KEY && !existsSync(join(home, ".claude"))) {
-        failingAdapters.push(adapter);
-      }
+    const forms = Object.hasOwn(CREDENTIAL_FORMS, adapter)
+      ? CREDENTIAL_FORMS[adapter]
+      : undefined;
+    if (!forms) {
+      unknownAdapters.push(adapter);
       continue;
     }
-    if (adapter === "codex") {
-      if (!env.OPENAI_API_KEY && !existsSync(join(home, ".codex"))) {
-        failingAdapters.push(adapter);
-      }
-      continue;
+    if (
+      !forms.names.some((name) => env[name]) &&
+      !existsSync(join(home, forms.folder))
+    ) {
+      failingAdapters.push(adapter);
     }
-    unknownAdapters.push(adapter);
   }
   return { failingAdapters, unknownAdapters };
 }
@@ -1651,9 +1664,14 @@ const SEED_LINEUP = Object.freeze([
   Object.freeze({ adapter: "codex", model: "gpt-6-sol" }),
 ]);
 
+// DR-096: where both adapters are ready, this player alone takes the
+// second row, so review comes from a different provider than the work.
+const SECOND_ADAPTER_PLAYER = "dev.reviewer";
+
 /**
  * PBCLI-11: the lineup a seed would write here, and whether anything
- * actually probed ready.
+ * actually probed ready. `reviewer` is the row `dev.reviewer` takes;
+ * every other agent takes `lineup`.
  *
  * Only the credential check participates. The SDK probe constructs an
  * adapter and awaits `isAvailable()`, which reads whatever happens to
@@ -1666,7 +1684,12 @@ export function selectSeedLineup(env = process.env, home = homedir()) {
     (entry) =>
       checkReadiness([entry.adapter], env, home).failingAdapters.length === 0,
   );
-  return { lineup: ready[0] ?? SEED_LINEUP[0], anyReady: ready.length > 0 };
+  const lineup = ready[0] ?? SEED_LINEUP[0];
+  return {
+    lineup,
+    reviewer: ready.length > 1 ? ready[1] : lineup,
+    anyReady: ready.length > 0,
+  };
 }
 
 /**
@@ -1675,9 +1698,7 @@ export function selectSeedLineup(env = process.env, home = homedir()) {
  * byte copy it always was. A different adapter rewrites the agent
  * scalars in place, which the Document API carries comments through.
  */
-function seedTextForLineup(templatePath, lineup) {
-  const template = readFileSync(templatePath, "utf8");
-  if (lineup.adapter === SEED_LINEUP[0].adapter) return template;
+function seedTextForLineup(template, { lineup, reviewer }) {
   const doc = parseYamlDocument(template);
   const players = doc.getIn(["players"]);
   const agentPaths = [
@@ -1687,18 +1708,35 @@ function seedTextForLineup(templatePath, lineup) {
       String(pair.key),
     ]),
   ];
+  let changed = false;
   for (const path of agentPaths) {
-    doc.setIn([...path, "adapter"], lineup.adapter);
-    doc.setIn([...path, "model"], lineup.model);
+    const entry = path[1] === SECOND_ADAPTER_PLAYER ? reviewer : lineup;
+    if (entry.adapter === SEED_LINEUP[0].adapter) continue;
+    changed = true;
+    doc.setIn([...path, "adapter"], entry.adapter);
+    doc.setIn([...path, "model"], entry.model);
     // A codex agent writes git metadata under its sandbox; claude's
     // auto mode needs no grant, so the key exists for one adapter only.
-    if (lineup.adapter === "codex") {
-      doc.setIn([...path, "permissions", "writablePaths"], [".git"]);
-    } else {
-      doc.deleteIn([...path, "permissions", "writablePaths"]);
-    }
+    doc.setIn([...path, "permissions", "writablePaths"], [".git"]);
   }
-  return String(doc);
+  return changed ? String(doc) : template;
+}
+
+/**
+ * PBCLI-100: the starter text a seed writes under this environment and
+ * home. The public `seed-config` facade and the launcher both call it,
+ * so every host seeding through it selects the same agent settings.
+ */
+export function seedConfigText(
+  templatePath,
+  env = process.env,
+  homeDir = env.HOME ?? homedir(),
+) {
+  const selection = selectSeedLineup(env, homeDir);
+  return {
+    text: seedTextForLineup(readFileSync(templatePath, "utf8"), selection),
+    anyReady: selection.anyReady,
+  };
 }
 
 function seedUserConfigIfMissing(
@@ -1710,21 +1748,13 @@ function seedUserConfigIfMissing(
 ) {
   if (existsSync(userConfigPath)) return;
   mkdirSync(dirname(userConfigPath), { recursive: true });
-  const { lineup, anyReady } = selectSeedLineup(env, homeDir);
-  if (lineup.adapter === SEED_LINEUP[0].adapter && anyReady) {
-    // Unchanged default path: one exclusive create of the template bytes.
-    copyFileSync(templatePath, userConfigPath, constants.COPYFILE_EXCL);
-  } else {
-    // Still one exclusive create, so two seeding calls cannot disagree.
-    writeFileSync(userConfigPath, seedTextForLineup(templatePath, lineup), {
-      encoding: "utf8",
-      flag: "wx",
-    });
-  }
+  const { text, anyReady } = seedConfigText(templatePath, env, homeDir);
+  // One exclusive create, so two seeding calls cannot disagree.
+  writeFileSync(userConfigPath, text, { encoding: "utf8", flag: "wx" });
   onNotice(`playbook: created config at ${userConfigPath}\n`);
   if (!anyReady) {
     onNotice(
-      `playbook: no adapter probed ready; seeded ${lineup.adapter}\n`,
+      `playbook: no adapter probed ready; seeded ${SEED_LINEUP[0].adapter}\n`,
     );
   }
 }

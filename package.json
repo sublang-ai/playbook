@@ -83,6 +83,8 @@
     "reference/sdlc/code.playbook/host-capabilities.d.ts",
     "reference/sdlc/code.playbook/machine-identity.js",
     "reference/sdlc/code.playbook/machine-identity.d.ts",
+    "reference/sdlc/code.playbook/seed-config.js",
+    "reference/sdlc/code.playbook/seed-config.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
@@ -211,6 +213,10 @@
     "./machine-identity": {
       "types": "./reference/sdlc/code.playbook/machine-identity.d.ts",
       "default": "./reference/sdlc/code.playbook/machine-identity.js"
+    },
+    "./seed-config": {
+      "types": "./reference/sdlc/code.playbook/seed-config.d.ts",
+      "default": "./reference/sdlc/code.playbook/seed-config.js"
     },
     "./slc/*": "./slc/*",
     "./review/playbook": {
