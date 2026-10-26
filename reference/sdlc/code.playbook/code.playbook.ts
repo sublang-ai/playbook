@@ -123,7 +123,7 @@ const runtimeSpec = {
   "roleStates": {
     "firstPhase": {
       "role": "coder",
-      "label": "Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR."
+      "label": "Coder runs the first phase: a direct change, a new IR, or an existing IR's next unfinished task."
     },
     "irTaskPhase": {
       "role": "coder",

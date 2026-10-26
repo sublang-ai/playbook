@@ -48,7 +48,7 @@ interface RawReviewState {
 // sentences (playbook-1 lets an outcome attach to its corresponding item).
 const CODE_2_OUTCOMES = [
   'A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
-  'When `review` passes a direct implementation phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
+  'When `review` passes a direct phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
   'When `review` passes a new-IR phase, Captain continues with the next unfinished IR-task phase.',
   'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.',
   'When the nested `review` call fails outside that authored result contract, `code` parks as failed and retains the control-plane error instead of reporting an authored review outcome.',
@@ -144,7 +144,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     // DR-065: the prefix pass moved each Coder item's relays after its last
     // instruction line; the layout itself records that rewrite.
     expect(byId.get('CODE-1')?.prompt[0]).toBe(
-      'First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.',
+      'First determine whether the request starts a new change intent or continues an existing IR with unfinished work.',
     );
     expect(byId.get('CODE-1')?.prompt.slice(-2)).toEqual([
       '> Original request: <caller-input>',
@@ -197,7 +197,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
 
   it('pins every authored post-REVIEW outcome to its compiled route', () => {
     for (const clause of [
-      'When `review` passes a direct implementation phase, `code` is complete.',
+      'When `review` passes a direct phase, `code` is complete.',
       'When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.',
       'When `review` passes the final IR-task phase, `code` is complete.',
       'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.',

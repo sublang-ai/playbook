@@ -434,7 +434,7 @@ describe('linked CODE runtime', () => {
     // DR-065: the prompt leads with its instructions after the role line
     // (DR-090 §3); the relayed request follows the last instruction line.
     expect(host.playerCalls[0]?.prompt).toMatch(
-      /^Role: coder · Model: GPT-5\.6 Sol\n\nFirst determine whether the coding request starts a new coding intent/,
+      /^Role: coder · Model: GPT-5\.6 Sol\n\nFirst determine whether the request starts a new change intent/,
     );
     expect(host.playerCalls[0]?.prompt).toContain(
       'Credit every AI that contributed to this commit: Coder GPT-5.6 Sol.\n\n' +

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, type StatOptions } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
 import { readFixtureManifest, decodeFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile } from './test-support/session-persistence.js';
@@ -126,16 +126,16 @@ function observedReplayFs(
 ) {
   let readNumber = 0;
   return {
-    async lstat(path: string) {
+    async lstat(path: string, options?: StatOptions) {
       hooks.onPath?.('lstat', path);
-      return lstat(path);
+      return lstat(path, options);
     },
     async open(path: string, flags: string | number, mode?: number) {
       hooks.onPath?.('open', path);
       const handle = await open(path, flags as any, mode);
       if (path !== streamPath) return handle;
       return {
-        stat: () => handle.stat(),
+        stat: (options?: StatOptions) => handle.stat(options),
         async read(
           buffer: Buffer,
           offset: number,
@@ -226,10 +226,10 @@ function observedReplayMutationFs(
       sessionsDirStats = 0;
     },
     fsOps: {
-      async lstat(path: string) {
+      async lstat(path: string, options?: StatOptions) {
         if (path === streamPath) replayPathStats += 1;
         if (path === sessionsDir) sessionsDirStats += 1;
-        return lstat(path);
+        return lstat(path, options);
       },
       async open(path: string, flags: string | number, mode?: number) {
         if (path.endsWith('/owner.json')) ownerOpens += 1;

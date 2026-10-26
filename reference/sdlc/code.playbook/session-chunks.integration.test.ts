@@ -214,7 +214,14 @@ describe('bounded immutable session chunks on real disk', () => {
       lstat: (path: string) => fs.lstat(path),
       open: async (path: string, ...args: any[]) => {
         if (/\/[0-9a-f]{64}$/.test(path)) opens++;
-        return (fs.open as any)(path,...args);
+        const handle = await (fs.open as any)(path,...args);
+        // This fixture deliberately has no nanosecond stats. Keep both
+        // path and handle observations numeric, as one coherent API.
+        return new Proxy(handle, { get(target, property) {
+          if (property === 'stat') return () => target.stat();
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        } });
       },
     });
     const ref = await store.writeBytes(Buffer.from('uncached proof'));

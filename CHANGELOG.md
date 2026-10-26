@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **With both Claude and Codex configured, the seed reviews on Codex.** A fresh config on a machine with both credentials sets `dev.reviewer` to `codex` / `gpt-6-sol` with `permissions.writablePaths: ['.git']`; the Captain and every other player stay on `claude` / `claude-opus-5-5`. One configured adapter, or none, seeds as before, and existing configs are untouched ([DR-096](specs/decisions/096-a-second-adapter-reviews.md)).
 - **Readiness counts each agent's token forms.** `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` count for Claude, and `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` for Codex, beside the API keys and sign-in folders. A machine signed in by tokens alone, such as a team server or CI runner, now seeds and launches on that agent ([DR-097](specs/decisions/097-readiness-reads-each-agents-token-forms.md)).
 
+## [18.0.1] - 2026-10-25
+
+### Fixed
+
+- Require Cligent 0.36.1 for its bounded browser-readiness retry and patched dependency graph.
+- CODE treats standalone documentation or status maintenance as new change work when it implements no identified unfinished IR task, including updates to an IR with no unfinished task: one-commit changes use the existing direct phase, larger changes use a new IR, and every phase still requires receipt-bound REVIEW of its exact commit.
+- Saved CODE deliveries and deferred continuations retain their original outcome-description schema; finish them with their original Playbook version or start a new run after upgrading. This correction does not rewrite retained evidence.
+
 ## [18.0.0] - 2026-10-22
 
 ### Changed
@@ -1069,7 +1077,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.1...HEAD
+[18.0.1]: https://github.com/sublang-ai/playbook/compare/v18.0.0...v18.0.1
 [18.0.0]: https://github.com/sublang-ai/playbook/compare/v17.11.1...v18.0.0
 [17.11.1]: https://github.com/sublang-ai/playbook/compare/v17.11.0...v17.11.1
 [17.11.0]: https://github.com/sublang-ai/playbook/compare/v17.10.1...v17.11.0
