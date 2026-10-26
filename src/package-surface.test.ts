@@ -1199,6 +1199,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./inspect/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
     expect(manifest.exports).toHaveProperty('./machine-identity');
+    expect(manifest.exports).toHaveProperty('./seed-config');
     expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
@@ -1353,6 +1354,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'machineIdentityPath',
       'resolveMachineIdentity',
     ],
+    // DR-096 / playbook-cli-100: the seed-config facade.
+    './seed-config': ['seedConfigText'],
     './review/playbook': ['_internal', 'default', 'validateOptions'],
     './review/registry': [
       'default',
@@ -1752,6 +1755,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'machineIdentityPath',
       'resolveMachineIdentity',
     ],
+    // DR-096 / playbook-cli-100: the seed-config facade.
+    './seed-config': ['SeedConfigOptions', 'SeedConfigText', 'seedConfigText'],
     // DR-046: the worktree host-capability facade. Its ledger, receipt,
     // observation, and question types are re-declared name for name from
     // `./runtime` so the declaration stays self-contained.
@@ -2990,6 +2995,8 @@ void inspectCapabilities;
       `${CODE_BASE}machine-identity.js`,
       `${CODE_BASE}machine-identity.d.ts`,
       `${CODE_BASE}bin/machine-identity.js`,
+      `${CODE_BASE}seed-config.js`,
+      `${CODE_BASE}seed-config.d.ts`,
       `${CODE_BASE}bin/private-paths.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,

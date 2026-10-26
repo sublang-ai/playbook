@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`@sublang/playbook/seed-config` publishes the starter seed.** `seedConfigText({ env, homeDir })` returns the exact text `playbook` seeds under those credentials and that home, plus whether any adapter was ready, so an embedding host seeds the same Captain and player settings as the CLI ([DR-096](specs/decisions/096-a-second-adapter-reviews.md)).
+
+### Changed
+
+- **With both Claude and Codex configured, the seed reviews on Codex.** A fresh config on a machine with both credentials sets `dev.reviewer` to `codex` / `gpt-6-sol` with `permissions.writablePaths: ['.git']`; the Captain and every other player stay on `claude` / `claude-opus-5-5`. One configured adapter, or none, seeds as before, and existing configs are untouched ([DR-096](specs/decisions/096-a-second-adapter-reviews.md)).
+- **Readiness counts each agent's token forms.** `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` count for Claude, and `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` for Codex, beside the API keys and sign-in folders. A machine signed in by tokens alone, such as a team server or CI runner, now seeds and launches on that agent ([DR-097](specs/decisions/097-readiness-reads-each-agents-token-forms.md)).
+
 ## [18.0.0] - 2026-10-22
 
 ### Changed

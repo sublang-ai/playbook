@@ -64,16 +64,23 @@ one; see [Modules supplied at launch](#modules-supplied-at-launch). Every
 manifest role must be present exactly once. The launcher injects the rest — you do not write host wiring by
 hand.
 
-The launcher seeds one adapter for the Captain and all stable players from
-locally visible credentials: Claude first, then Codex. It uses Claude Opus 5.5
-for Claude or GPT-6 Sol for Codex, with Captain and Coder at `high` effort
-and Reviewer and Analyst at `xhigh`. If neither adapter is configured, it
-seeds Claude and prints a notice. Credentials do not prove SDK availability
-or remaining quota; launch still checks the configured adapter. Existing
-configs are left unchanged.
+The launcher seeds the Captain and all stable players from locally visible
+credentials (an API key in the environment, or `~/.claude` / `~/.codex`):
 
-The Claude default is shown below. A Codex seed also adds
-`permissions.writablePaths: ['.git']` to each agent:
+| Credentials | Seeded agents |
+| --- | --- |
+| Claude only, or neither | every agent on Claude Opus 5.5 (with a notice when neither is configured) |
+| Codex only | every agent on GPT-6 Sol |
+| both | `dev.reviewer` on GPT-6 Sol, every other agent on Claude Opus 5.5 |
+
+Captain, Coder, and Inspector run at `high` effort and Reviewer and Analyst at
+`xhigh`. Credentials do not prove SDK availability or remaining quota; launch
+still checks the configured adapter. Existing configs are left unchanged.
+Embedding hosts seed the same agent settings through
+`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`.
+
+The Claude default is shown below. Each Codex agent also carries
+`permissions.writablePaths: ['.git']`:
 
 ```yaml
 captain:
@@ -273,9 +280,12 @@ It may not finish the specialist’s task or invent a decision; discarding work 
 Preparation has a 150-second limit.
 
 Adapter readiness is intentionally light: `claude` is ready with local
-Claude Code auth or `ANTHROPIC_API_KEY`; `codex` with local Codex CLI
-auth or `OPENAI_API_KEY`. A known adapter that is not ready blocks the
-launch and prints the help text.
+Claude Code auth, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or
+`CLAUDE_CODE_OAUTH_TOKEN`; `codex` with local Codex CLI auth,
+`OPENAI_API_KEY`, `CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN`. Only presence
+counts; no token is checked. A known adapter that is not ready blocks the
+launch and prints the help text. The same check picks the starter config's
+lineup.
 
 ## Skills across agents
 
