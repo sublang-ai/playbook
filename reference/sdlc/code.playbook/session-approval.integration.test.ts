@@ -18,7 +18,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it('keeps live approval ownership out of durable state and denies a closing host before draining its lease', async () => {
+it.each([
+  { scenario: 'reopen', name: 'preserves approval identity and archival across allow and deny reopens' },
+  { scenario: 'dispose', name: 'denies pending and later approvals before disposal drains its lease' },
+  { scenario: 'handler-errors', name: 'retains invalid and failed approval handler classification across reopens' },
+] as const)('$name', async ({ scenario }) => {
   const root = await mkdtemp(join(tmpdir(), 'playbook-approval-host-'));
   const cwd = join(root, 'repo');
   const requests: TmuxPlayApprovalRequest[] = [];
@@ -30,6 +34,16 @@ it('keeps live approval ownership out of durable state and denies a closing host
   const failedSignals: AbortSignal[] = [];
   let nativeEffects = 0;
   let controller: SessionHostController | undefined;
+  let pendingTurn: Promise<unknown> | undefined;
+  let closing: Promise<void> | undefined;
+  let cleanup: Promise<void> | undefined;
+  const runTurn = (input: string) => pendingTurn = controller!.handleBossTurn(input);
+  const drain = () => cleanup ??= (async () => {
+    const disposal = controller?.dispose();
+    lateAnswer.resolve('deny');
+    await Promise.allSettled([pendingTurn, closing, disposal]);
+    await rm(root, { recursive: true, force: true });
+  })();
   // The host, tmux runtime, Cligent and Claude permission bridge are real;
   // only the SDK peer is controlled, and it acts only on native allowance.
   class Adapter extends ClaudeCodeAdapter {
@@ -89,48 +103,57 @@ it('keeps live approval ownership out of durable state and denies a closing host
       if (mode === 'invalid') { failedSignals.push(signal); return 'allow_always' as ApprovalDecision; }
       return mode === 'allow' ? 'allow_once' : 'deny';
     } });
-    controller = await open(); sessionId = controller.sessionId;
-    await controller.handleBossTurn('Inspect first.');
-    await controller.dispose(); controller = undefined;
-    mode = 'deny'; controller = await open();
-    await controller.handleBossTurn('Inspect again.');
-    await controller.dispose(); controller = undefined;
-    expect(requests.map(request => [request.turnId, request.actorId])).toEqual([[1, 'worker'], [2, 'worker']]);
-    expect(new Set(requests.map(request => request.invocationId)).size).toBe(2);
-    expect(nativeDecisions).toEqual(['allow_once', 'deny']);
-    const durable = await store.readStream(sessionId);
-    const archived = durable.entries.flatMap(entry => entry.record.type === 'player_event' ? [entry.record as any] : []).filter(record => record.event.type.startsWith('approval_'));
-    expect(archived.map(record => [record.turnId, record.event.type])).toEqual([[1, 'approval_request'], [1, 'approval_response'], [2, 'approval_request'], [2, 'approval_response']]);
-    expect(JSON.stringify(durable)).not.toContain('approvalHandler');
-    expect(JSON.stringify(await store.read(sessionId))).not.toContain('approvalHandler');
-
-    mode = 'wait'; controller = await open();
-    const turn = controller.handleBossTurn('Inspect with a pending approval.');
-    const signal = await entered.promise;
-    const closing = controller.dispose();
-    await Promise.all([turn, closing]); controller = undefined;
-    expect(signal.aborted).toBe(true);
-    expect(nativeDecisions).toEqual(['allow_once', 'deny', 'deny', 'deny']);
-    expect(requests.at(-1)?.turnId).toBe(3);
-    expect(requests).toHaveLength(3);
-    lateAnswer.resolve('allow_once'); await Promise.resolve();
-    expect(nativeDecisions).toEqual(['allow_once', 'deny', 'deny', 'deny']);
-    const lease = await store.acquire(sessionId); await lease.release();
-    for (const failure of ['error', 'invalid'] as const) {
-      mode = failure; controller = await open();
-      await controller.handleBossTurn('Inspect with an invalid approval handler.');
+    if (scenario === 'reopen') {
+      controller = await open(); sessionId = controller.sessionId;
+      await runTurn('Inspect first.');
       await controller.dispose(); controller = undefined;
+      mode = 'deny'; controller = await open();
+      await runTurn('Inspect again.');
+      await controller.dispose(); controller = undefined;
+      expect(requests.map(request => [request.turnId, request.actorId])).toEqual([[1, 'worker'], [2, 'worker']]);
+      expect(new Set(requests.map(request => request.invocationId)).size).toBe(2);
+      expect(nativeDecisions).toEqual(['allow_once', 'deny']);
+      const durable = await store.readStream(sessionId);
+      const archived = durable.entries.flatMap(entry => entry.record.type === 'player_event' ? [entry.record as any] : []).filter(record => record.event.type.startsWith('approval_'));
+      expect(archived.map(record => [record.turnId, record.event.type])).toEqual([[1, 'approval_request'], [1, 'approval_response'], [2, 'approval_request'], [2, 'approval_response']]);
+      expect(JSON.stringify(durable)).not.toContain('approvalHandler');
+      expect(JSON.stringify(await store.read(sessionId))).not.toContain('approvalHandler');
+      expect(nativeEffects).toBe(1);
+      expect(records.filter(record => record.type === 'turn_finished')).toHaveLength(2);
+    } else if (scenario === 'dispose') {
+      mode = 'wait'; controller = await open(); sessionId = controller.sessionId;
+      const turn = runTurn('Inspect with a pending approval.');
+      const signal = await Promise.race([entered.promise, turn.then(() => {
+        throw new Error('The turn ended before requesting its pending approval');
+      })]);
+      closing = controller.dispose();
+      expect(signal.aborted).toBe(true);
+      await Promise.all([turn, closing]); controller = undefined;
+      expect(nativeDecisions).toEqual(['deny', 'deny']);
+      expect(requests.at(-1)?.turnId).toBe(1);
+      expect(requests).toHaveLength(1);
+      lateAnswer.resolve('allow_once'); await Promise.resolve();
+      expect(nativeDecisions).toEqual(['deny', 'deny']);
+      expect(nativeEffects).toBe(0);
+      const lease = await store.acquire(sessionId); await lease.release();
+      expect(records.filter(record => record.type === 'turn_finished')).toHaveLength(1);
+    } else {
+      for (const failure of ['error', 'invalid'] as const) {
+        mode = failure; controller = await open(); sessionId = controller.sessionId;
+        await runTurn('Inspect with an invalid approval handler.');
+        await controller.dispose(); controller = undefined;
+      }
+      expect(failedSignals.map(signal => signal.aborted)).toEqual([true, true]);
+      expect(nativeDecisions).toEqual(['deny', 'deny']);
+      expect(nativeEffects).toBe(0);
+      const failures = records.filter(record => record.type === 'player_event' && record.event.type === 'approval_response');
+      expect(failures).toHaveLength(2);
+      expect(failures.map(record => record.event.payload)).toEqual([
+        { requestId: requests[0]!.request.id, decision: 'deny', source: 'error' },
+        { requestId: requests[1]!.request.id, decision: 'deny', source: 'error' },
+      ]);
+      expect(records.filter(record => record.type === 'turn_finished')).toHaveLength(2);
     }
-    expect(failedSignals.map(signal => signal.aborted)).toEqual([true, true]);
-    expect(nativeDecisions).toEqual(['allow_once', 'deny', 'deny', 'deny', 'deny', 'deny']);
-    expect(nativeEffects).toBe(1);
-    const failures = records.filter(record => record.type === 'player_event' && record.event.type === 'approval_response' && record.turnId >= 4);
-    expect(failures).toHaveLength(2);
-    expect(failures.map(record => record.event.payload)).toEqual([
-      { requestId: requests[3]!.request.id, decision: 'deny', source: 'error' },
-      { requestId: requests[4]!.request.id, decision: 'deny', source: 'error' },
-    ]);
-    expect(records.filter(record => record.type === 'turn_finished')).toHaveLength(5);
     expect(execFileSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' })).toBe('');
-  } finally { lateAnswer.resolve('deny'); await controller?.dispose(); await rm(root, { recursive: true, force: true }); }
+  } finally { await drain(); }
 }, 20_000);

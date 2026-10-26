@@ -127,6 +127,7 @@ describe('immutable owner assets (session-assets-6, session-assets-7)', () => {
     const ref = await store.importAsset({ bytes: Buffer.from('kept'), mimeType: 'text/plain' });
     await writeFile(join(directory, '.DS_Store'), 'finder', { mode: 0o600 });
     await writeFile(join(directory, 'notes.txt'), 'editor', { mode: 0o644 });
+    if (process.platform !== 'win32') await chmod(join(directory, 'notes.txt'), 0o644);
     await mkdir(join(directory, 'nested'), { mode: 0o755 });
     await store.prepare();
     expect(await store.listAssets()).toEqual([{ assetId: ref.assetId, path: ref.assetId.slice(7), metadataPath: `${ref.assetId.slice(7)}.json`, byteLength: 4 }]);

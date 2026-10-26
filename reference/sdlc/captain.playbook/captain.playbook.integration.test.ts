@@ -2646,7 +2646,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [code, review],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('First determine whether the coding request')) {
+          if (prompt.includes('First determine whether the request starts a new change intent')) {
             return {
               status: 'ok',
               finalText: 'Committed after the answer.\nCommit: abc123',
@@ -2726,7 +2726,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (!prompt.includes('First determine whether the coding request')) {
+          if (!prompt.includes('First determine whether the request starts a new change intent')) {
             throw new Error(`unexpected source player prompt: ${prompt}`);
           }
           return {
@@ -2876,7 +2876,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('First determine whether the coding request')) {
+          if (prompt.includes('First determine whether the request starts a new change intent')) {
             return {
               status: 'ok',
               finalText: 'Implemented the change.\nCommit: abc123',
@@ -3053,7 +3053,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     ]);
     expect(target.playerPrompts).not.toEqual(
       expect.arrayContaining([
-        expect.stringContaining('First determine whether the coding request'),
+        expect.stringContaining('First determine whether the request starts a new change intent'),
       ]),
     );
     expect(target.playerPrompts[1]).toContain(
@@ -3131,7 +3131,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       [sourceCode, sourceReview],
       {
         players: (_playerId, prompt) => {
-          if (prompt.includes('First determine whether the coding request')) {
+          if (prompt.includes('First determine whether the request starts a new change intent')) {
             return {
               status: 'ok',
               finalText: 'Implemented the change.\nCommit: abc123',
@@ -3433,7 +3433,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     await harness.turn('/code continue IR-036 task 4', 1);
     expect(harness.statuses).toContain('START_CODE');
     expect(harness.statuses).toContain(
-      '⤷ coder: Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR.',
+      '⤷ coder: Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
     );
     expect(harness.statuses).toContain(
       '◆ workflow failed; awaiting Boss recovery.',
@@ -3501,7 +3501,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       'Last error: {"name":"Error","message":"coder exploded"}',
     );
     expect(decision!.prompt).toContain(
-      '- retry:START_CODE: Retry: Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR.',
+      '- retry:START_CODE: Retry: Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
     );
     // The healthy path carries no journal-derived recap.
     expect(decision!.prompt).not.toContain('[Conversation recap]');
@@ -3611,7 +3611,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // the same label, as the process that reached the failure.
     const decision = continued.decisionPrompts().at(-1) ?? '';
     expect(decision).toContain(
-      '- retry:START_CODE: Retry: Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR.',
+      '- retry:START_CODE: Retry: Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
     );
     // And it was applied for real: the coder ran again in this process, once.
     expect(continued.playerCalls).toHaveLength(1);
@@ -3806,10 +3806,10 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       '',
       '',
       '✕ player-failed · coder',
-      '▸ Retry: Coder runs the first coding phase: a direct ' +
-        'implementation, a new IR, or the next task of an existing IR.',
-      '▸ Resume from: Coder runs the first coding phase: a direct ' +
-        'implementation, a new IR, or the next task of an existing IR.',
+      '▸ Retry: Coder runs the first phase: a direct change, a new IR, ' +
+        'or an existing IR\'s next unfinished task.',
+      '▸ Resume from: Coder runs the first phase: a direct change, a new IR, ' +
+        'or an existing IR\'s next unfinished task.',
       '▸ Stop /code',
     ].join('\n');
     expect(harness.surfaced.slice(-2)).toEqual([
@@ -4638,7 +4638,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     // phase, so the prompt-reading controller selects `respond`.
     const digest = harness.decisionPrompts().at(-1) ?? '';
     expect(digest).toContain(
-      '- retry:START_CODE: Retry: Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR.',
+      '- retry:START_CODE: Retry: Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
     );
     expect(digest).toContain('- jump:firstPhase: ');
     expect(digest).not.toContain('jump:irTaskPhase');
@@ -4647,10 +4647,10 @@ describe('CAPTAIN-38 validated actions and command table', () => {
         'Only the advertised retry is available for this run.',
         '',
         '✕ player-failed · coder',
-        '▸ Retry: Coder runs the first coding phase: a direct ' +
-          'implementation, a new IR, or the next task of an existing IR.',
-        '▸ Resume from: Coder runs the first coding phase: a direct ' +
-          'implementation, a new IR, or the next task of an existing IR.',
+        '▸ Retry: Coder runs the first phase: a direct change, a new IR, ' +
+          'or an existing IR\'s next unfinished task.',
+        '▸ Resume from: Coder runs the first phase: a direct change, a new IR, ' +
+          'or an existing IR\'s next unfinished task.',
         '▸ Stop /code',
       ].join('\n'),
     );

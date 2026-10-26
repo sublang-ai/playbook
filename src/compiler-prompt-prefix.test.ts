@@ -419,7 +419,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
     // Moving them between two instruction paragraphs matches neither layout.
     const inside = prefixed
       .replace(relays, '')
-      .replace('>\n> For a new coding intent', `${relays}>\n> For a new coding intent`);
+      .replace('>\n> For a new change intent', `${relays}>\n> For a new change intent`);
     expect(inside).not.toBe(prefixed);
     expect(checkSourceGearsContract(source, inside)).toEqual([
       'source instruction fragment at line 31 was dropped or changed',

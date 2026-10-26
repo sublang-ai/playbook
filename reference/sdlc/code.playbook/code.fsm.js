@@ -14,15 +14,18 @@ const REVIEW_PLAYBOOK_ID = 'review';
 // Prompts and result contracts (verbatim from code.gears.md)
 // ---------------------------------------------------------------------------
 const FIRST_PHASE_PROMPT = [
-    'First determine whether the coding request starts a new coding intent or continues an existing IR with unfinished work.',
+    'First determine whether the request starts a new change intent or continues an existing IR with unfinished work.',
     'If the request may continue an existing IR but does not identify it unambiguously, ask Boss before changing files.',
     '',
-    'For a new coding intent, assess whether it can be completed well in one commit.',
+    'Treat standalone documentation or status maintenance that does not implement an identified unfinished IR task as a new change intent, even when it refers to an IR with no unfinished task.',
+    'Do not invent or reopen an IR task, claim unperformed work complete, or infer an owner decision not supplied by the caller.',
+    '',
+    'For a new change intent, assess whether it can be completed well in one commit.',
     'If it can, implement and test it, update the affected specs, and ensure @specs/map.md remains accurate.',
     'If it cannot, decompose it into tasks sized to exactly one commit each, add a new IR under @specs/intents, and do not implement any IR task in this phase.',
     'Plan affected spec updates before, with, or after their corresponding code changes, either as standalone IR tasks or as explicit work within related tasks.',
     '',
-    'For an existing IR, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
+    'For an existing IR with unfinished work, read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
     'Do not implement a later task in this phase.',
     "Mark the IR's progress and deliverables when relevant.",
     "After implementing an IR task, identify it and state whether any IR task still has unfinished Coder work; if so identify the next unfinished task, otherwise state this was the final IR task's Coder work.",
@@ -86,8 +89,8 @@ const REVIEW_IR_TASK_PHASE_TEMPLATE = [
 ].join('\n');
 const NEEDS_BOSS_REPLY_DESCRIPTION = "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 const FIRST_PHASE_RESULT = {
-    directCommit: "Coder completed the new coding intent as one direct implementation phase and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
-    irCommit: "Coder decomposed the new coding intent into a new IR, implemented no IR task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irNumber` identifying the created IR.",
+    directCommit: "Coder completed the new change intent, including standalone documentation or status maintenance that does not implement an identified unfinished IR task (even when it refers to an IR with no unfinished task), as one direct implementation phase and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
+    irCommit: "Coder decomposed the new change intent into a new IR, implemented no IR task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irNumber` identifying the created IR.",
     moreTasks: "Coder continued an existing IR, implemented exactly its next unfinished task, made its one new commit, and at least one IR task remains unfinished; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.",
     finalTask: "Coder continued an existing IR, implemented its final unfinished task, and made its one new commit; Coder's result affirmatively supports this outcome, and no fixed presentation format of the reply is required. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber` identifying the continued IR, and `irTask` naming the implemented task.",
     needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
@@ -99,8 +102,8 @@ const IR_TASK_PHASE_RESULT = {
 };
 const STATE_DESCRIPTIONS = {
     ready: 'Waiting for a coding request.',
-    firstPhase: 'Coder runs the first coding phase: a direct implementation, a new IR, or the next task of an existing IR.',
-    reviewNewIntentPhase: 'REVIEW examines the commit of the direct implementation or new-IR phase.',
+    firstPhase: 'Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
+    reviewNewIntentPhase: 'REVIEW examines the commit of the direct or new-IR phase.',
     irTaskPhase: "Coder implements the identified IR's next unfinished task.",
     reviewIrTaskPhase: 'REVIEW examines the commit of the IR-task phase.',
     awaitBossReply: "Waiting for Boss to answer the acting agent's question.",

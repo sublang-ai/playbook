@@ -19,7 +19,30 @@ import { openSessionHost, type SessionHostController } from './session-host.js';
 const exec = promisify(execFile);
 const git = async (cwd: string, ...args: string[]) =>
   (await exec('git', ['-c', 'commit.gpgsign=false', ...args], { cwd })).stdout.trim();
-type Scenario = 'pass' | 'restore' | 'stale' | 'transport-failed' | 'malformed-child';
+type Scenario = 'pass' | 'restore' | 'stale' | 'transport-failed' | 'malformed-child' | 'record-maintenance';
+const COMPLETED_IR = 'specs/intents/001-completed.md';
+const COMPLETED_IR_TEXT = `# IR-001: Completed Work
+
+## Status
+
+Coder work complete; owner acceptance pending.
+
+## Intent
+
+Deliver the requested fixture behavior.
+
+## Deliverables
+
+- [x] Implement the requested behavior.
+
+## Tasks
+
+1. Implement the requested behavior.
+
+## Verification
+
+Completed Coder work is recorded in the fixture baseline.
+`;
 
 interface Evidence {
   cwd: string; scenario: Scenario; marker: string; scopeCommit?: string; reviewRevision?: string;
@@ -49,7 +72,12 @@ function adapterFor(evidence: Evidence) {
       } else if (prompt.includes('Classify the following Boss message')) {
         result = '{"type":"BOSS_REPLY"}';
       } else if (prompt.includes('This is hidden control work.')) {
+        if (evidence.marker === 'DIRECT') {
+          expect(prompt).toContain('standalone documentation or status maintenance that does not implement an identified unfinished IR task');
+          expect(prompt).toContain('IR with no unfinished task');
+        }
         const outcomes: Record<string, unknown> = {
+          DIRECT: { guard: 'directCommit' },
           FIRST: { guard: 'moreTasks', irNumber: '040', irTask: 'Task 1: implement the reviewed feature.' },
           FINDINGS: { guard: 'hasFindings' },
           FIXED: { guard: 'committed' },
@@ -61,7 +89,12 @@ function adapterFor(evidence: Evidence) {
       } else if (options?.model === 'synthetic-reviewer') {
         evidence.reviewers++;
         if (evidence.scenario === 'transport-failed') throw new Error('Injected Reviewer transport failure');
-        evidence.marker = evidence.reviewers === 1 ? 'FINDINGS' : 'CLEAN';
+        if (evidence.scenario === 'record-maintenance') {
+          expect(prompt).toContain(evidence.scopeCommit);
+          expect(await git(evidence.cwd, 'rev-parse', 'HEAD')).toBe(evidence.scopeCommit);
+          expect(await readFile(join(evidence.cwd, COMPLETED_IR), 'utf8')).toContain('Owner acceptance recorded from the caller.');
+        }
+        evidence.marker = evidence.scenario !== 'record-maintenance' && evidence.reviewers === 1 ? 'FINDINGS' : 'CLEAN';
         result = evidence.marker === 'FINDINGS'
           ? 'One material finding: the committed feature says broken; fix it.'
           : 'Review complete. No unsettled findings remain for the exact supplied committed scope.';
@@ -74,6 +107,23 @@ function adapterFor(evidence: Evidence) {
         result = 'Accepted and fixed the material finding in one review-fix commit.';
       } else if (body.startsWith('First determine whether')) {
         evidence.coderPrompts.push(prompt);
+        if (evidence.scenario === 'record-maintenance') {
+          expect(prompt).toContain('Treat standalone documentation or status maintenance that does not implement an identified unfinished IR task as a new change intent');
+          expect(prompt).toContain('For a new change intent, assess whether it can be completed well in one commit.');
+          expect(prompt).toContain('Do not invent or reopen an IR task');
+          const path = join(evidence.cwd, COMPLETED_IR);
+          expect(await readFile(path, 'utf8')).toBe(COMPLETED_IR_TEXT);
+          await writeFile(path, COMPLETED_IR_TEXT.replace('Coder work complete; owner acceptance pending.', 'Owner acceptance recorded from the caller.'));
+          await git(evidence.cwd, 'add', COMPLETED_IR);
+          await git(evidence.cwd, 'commit', '-qm', 'docs: record owner acceptance');
+          evidence.scopeCommit = await git(evidence.cwd, 'rev-parse', 'HEAD');
+          evidence.marker = 'DIRECT';
+          result = 'Recorded the caller\'s owner acceptance of completed IR-001 in one status-only commit. No IR task was invented or implemented; the requested record update is complete and awaits independent REVIEW.';
+          yield createEvent('done', this.agent, {
+            status: 'success', result, resumeToken: 'deterministic-conversation', usage: { toolUses: 0 }, durationMs: 1,
+          }, 'transport:success');
+          return;
+        }
         await writeFile(join(evidence.cwd, 'feature.txt'), 'broken\n');
         await writeFile(join(evidence.cwd, 'intent.md'), 'IR-040 task 1 complete; bound independent review pending.\nTask 2 needs a new owner target decision.\n');
         await git(evidence.cwd, 'add', 'feature.txt', 'intent.md');
@@ -125,7 +175,11 @@ async function fixture(scenario: Scenario, run: (f: {
   await git(cwd, 'config', 'user.name', 'Fixture');
   await git(cwd, 'config', 'user.email', 'fixture@example.invalid');
   await writeFile(join(cwd, 'base.txt'), 'baseline\n');
-  await git(cwd, 'add', 'base.txt'); await git(cwd, 'commit', '-qm', 'baseline');
+  if (scenario === 'record-maintenance') {
+    await mkdir(join(cwd, 'specs', 'intents'), { recursive: true });
+    await writeFile(join(cwd, COMPLETED_IR), COMPLETED_IR_TEXT);
+  }
+  await git(cwd, 'add', '--all'); await git(cwd, 'commit', '-qm', 'baseline');
   const evidence: Evidence = { cwd, scenario, marker: '', coderPrompts: [], reviewers: 0, subsequentCalls: 0, records: [] };
   const loadModule = async (specifier: string) => {
     const entry = specifier.includes('/code/') ? codeEntry : reviewEntry;
@@ -167,6 +221,27 @@ async function fixture(scenario: Scenario, run: (f: {
 }
 
 describe('model-free prior-review relay through real CODE and REVIEW', () => {
+  it('reviews a requested status-only update to a completed IR as a direct phase', async () => {
+    await fixture('record-maintenance', async ({ controller, evidence }) => {
+      const result = await controller.handleBossTurn('/code Record my owner acceptance of completed IR-001; update only its status.');
+      expect(result.snapshot.frames ?? []).toEqual([]);
+      expect(evidence.subsequentCalls).toBe(0);
+      const head = await git(evidence.cwd, 'rev-parse', 'HEAD');
+      expect(evidence.reviewRevision).toBe(head);
+      expect(head).toBe(evidence.scopeCommit);
+      expect(codeTerminal(evidence)).toMatchObject({
+        outcome: 'terminal', state: { stateId: 'done' },
+        output: { status: 'complete', lastCodeCommit: head, finalEvaluatedRevision: head, allReviewsPassed: true },
+      });
+      expect(result.effectLedger.boundaries).toEqual(expect.arrayContaining([expect.objectContaining({
+        sourceStateId: 'firstPhase',
+        physicalReceipt: expect.objectContaining({ classification: 'one-descendant-commit', commitOid: head }),
+      })]));
+      expect(await git(evidence.cwd, 'diff', 'HEAD^', 'HEAD', '--name-only')).toBe(COMPLETED_IR);
+      expect(await readFile(join(evidence.cwd, COMPLETED_IR), 'utf8')).toBe(COMPLETED_IR_TEXT.replace('Coder work complete; owner acceptance pending.', 'Owner acceptance recorded from the caller.'));
+      expect(await git(evidence.cwd, 'status', '--porcelain=v1')).toBe('');
+    });
+  });
   it('relays exact scope/task and review-fix descendant while retaining independent final review', async () => {
     await fixture('pass', async ({ controller, evidence }) => {
       const result = await controller.handleBossTurn('/code continue existing IR-040, task one then the final task');
