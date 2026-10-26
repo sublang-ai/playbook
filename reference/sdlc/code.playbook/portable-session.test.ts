@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { createHash, randomUUID } from 'node:crypto';
+import type { StatOptions } from 'node:fs';
 import { chmod, lstat, mkdtemp, readFile, mkdir, readdir, rm, stat, symlink, link, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -798,9 +799,9 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
   const {root,store,id,lease,file}=await fixture();const legacy=await lease.read();await lease.release();
   const original=JSON.stringify(legacy);await writeFile(file,original);
   const inputs=join(root,'local','migrations',id,'inputs');const moved=`${root}.moved`;roots.push(moved);let vanished=false;
-  const strict=createSessionStore({sessionsDir:store.sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any){
+  const strict=createSessionStore({sessionsDir:store.sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any,options?:StatOptions){
    if(!vanished&&path===inputs){vanished=true;await rename(root,moved);}
-   return lstat(path);
+   return lstat(path,options);
   }}});
   const failure=await strict.migrate(id).then(()=>undefined,(error)=>error);
   expect(vanished).toBe(true);expect(failure).toBeInstanceOf(AggregateError);
@@ -810,9 +811,9 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
 
  it('reports a deletion failure past the failed lease release once the directory disappears',async()=>{
   const {clone,sessionsDir}=await prepared();const id=randomUUID();const leaseDir=join(sessionsDir,`.${id}.lock`);let vanished=false;
-  const store=createSessionStore({sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any){
+  const store=createSessionStore({sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any,options?:StatOptions){
    if(!vanished&&path===leaseDir&&new Error().stack?.includes('assertOwner')){vanished=true;await rm(clone,{recursive:true});}
-   return lstat(path);
+   return lstat(path,options);
   }}});
   const failure=await store.delete(id).then(()=>undefined,(error)=>error);
   expect(vanished).toBe(true);expect(failure).toBeInstanceOf(AggregateError);
@@ -823,10 +824,10 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
   const {clone,sessionsDir}=await prepared();const id=randomUUID();const assetOwner=randomUUID();
   let vanishAtRecordWrite=false;let ownerChecks=-1;
   const ownerFile=join(sessionsDir,`.${assetOwner}.lock`,'owner.json');
-  const store=createSessionStore({sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any){
+  const store=createSessionStore({sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any,options?:StatOptions){
    // The record writer's directory check is the await held here.
    if(vanishAtRecordWrite&&path===sessionsDir&&new Error().stack?.includes('ensurePrivateDirectory')){vanishAtRecordWrite=false;await rm(clone,{recursive:true});}
-   const result=await lstat(path);
+   const result=await lstat(path,options);
    // The asset import's owner check ends with the second owner-file check.
    if(ownerChecks>=0&&path===ownerFile&&++ownerChecks===2){ownerChecks=-1;await rm(clone,{recursive:true});}
    return result;
