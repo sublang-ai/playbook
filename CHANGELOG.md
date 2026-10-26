@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.1.0] - 2026-10-26
+
 ### Added
 
 - **`@sublang/playbook/seed-config` publishes the starter seed.** `seedConfigText({ env, homeDir })` returns the exact text `playbook` seeds under those credentials and that home, plus whether any adapter was ready, so an embedding host seeds the same Captain and player settings as the CLI ([DR-096](specs/decisions/096-a-second-adapter-reviews.md)).
@@ -1077,7 +1079,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.0.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.0...HEAD
+[18.1.0]: https://github.com/sublang-ai/playbook/compare/v18.0.1...v18.1.0
 [18.0.1]: https://github.com/sublang-ai/playbook/compare/v18.0.0...v18.0.1
 [18.0.0]: https://github.com/sublang-ai/playbook/compare/v17.11.1...v18.0.0
 [17.11.1]: https://github.com/sublang-ai/playbook/compare/v17.11.0...v17.11.1
