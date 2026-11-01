@@ -3,6 +3,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
+import { mkdirPrivate, privatePermissions } from './bin/private-paths.js';
 import { link, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
@@ -64,21 +65,21 @@ export async function externalizeAgentEvent(store, event) {
 function assertOwner(stat, label) {
   if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error(`${label} is not owned by the current user`);
 }
-function assertDirectory(stat) {
+function assertDirectory(stat, path) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
   assertOwner(stat, 'asset owner directory');
-  if (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o700) throw new Error('asset owner directory must have private 0700 permissions');
+  if (!privatePermissions(stat, 0o700, path)) throw new Error('asset owner directory must have private 0700 permissions');
 }
-function assertFile(stat, label) {
+function assertFile(stat, label, path) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error(`${label} must be a single-link regular file`);
   assertOwner(stat, label);
-  if (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o600) throw new Error(`${label} must have private 0600 permissions`);
+  if (!privatePermissions(stat, 0o600, path)) throw new Error(`${label} must have private 0600 permissions`);
 }
 function sameFile(a, b) { return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs; }
 async function syncDirectory(directory) {
   if (process.platform === 'win32') return;
   const handle = await open(directory, constants.O_RDONLY | noFollow);
-  try { assertDirectory(await handle.stat()); await handle.sync(); } finally { await handle.close(); }
+  try { assertDirectory(await handle.stat(), directory); await handle.sync(); } finally { await handle.close(); }
 }
 
 /** One immutable owner. A session host holds its ordinary lease around mutations. */
@@ -93,10 +94,10 @@ export function createAssetStore(options) {
   let importTail = Promise.resolve();
   const ensureDirectory = async (create) => {
     if (create) {
-      try { await mkdir(directory, { recursive: createAncestors, mode: 0o700 }); }
+      try { await mkdirPrivate(directory, { mkdir, lstat }, { recursive: createAncestors }); }
       catch (error) { if (createAncestors || error.code !== 'EEXIST') throw error; }
     }
-    assertDirectory(await lstat(directory));
+    assertDirectory(await lstat(directory), directory);
   };
   const prepare = async () => {
     let before;
@@ -104,9 +105,10 @@ export function createAssetStore(options) {
     if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
     assertOwner(before, 'asset owner directory');
     if (process.platform !== 'win32' && (before.mode & 0o700) !== 0o700) throw new Error('asset owner directory has insufficient owner permissions');
-    const directoryHandle = await open(directory, constants.O_RDONLY | noFollow);
+    const directoryHandle = process.platform === 'win32' ? undefined : await open(directory, constants.O_RDONLY | noFollow);
     try {
-      const opened = await directoryHandle.stat();
+      const opened = directoryHandle ? await directoryHandle.stat() : await lstat(directory);
+      if (process.platform === 'win32') assertDirectory(opened, directory);
       if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('asset owner directory changed during preparation');
       // fchmod always moves ctime, which verified readers pin: change only modes that differ.
       if (process.platform !== 'win32' && (opened.mode & 0o777) !== 0o700) await directoryHandle.chmod(0o700);
@@ -123,25 +125,25 @@ export function createAssetStore(options) {
           const pinned = await handle.stat();
           if (!sameFile(stat, pinned)) throw new Error('asset entry changed during preparation');
           if (process.platform !== 'win32' && (pinned.mode & 0o777) !== 0o600) await handle.chmod(0o600);
-          assertFile(await handle.stat(), 'asset entry');
+          assertFile(await handle.stat(), 'asset entry', path);
           const final = await lstat(path);
           if (final.dev !== pinned.dev || final.ino !== pinned.ino || final.nlink !== 1) throw new Error('asset entry changed during preparation');
         } finally { await handle.close(); }
       }
       const final = await lstat(directory);
       if (final.dev !== opened.dev || final.ino !== opened.ino || final.isSymbolicLink()) throw new Error('asset owner directory changed during preparation');
-      assertDirectory(await directoryHandle.stat());
-    } finally { await directoryHandle.close(); }
+      assertDirectory(directoryHandle ? await directoryHandle.stat() : await lstat(directory), directory);
+    } finally { await directoryHandle?.close(); }
   };
   const checkedOpen = async (filename, label) => {
     await ensureDirectory(false);
     const path = join(directory, filename);
     const before = await lstat(path);
-    assertFile(before, label);
+    assertFile(before, label, path);
     const handle = await open(path, constants.O_RDONLY | noFollow);
     try {
       const after = await handle.stat();
-      assertFile(after, label);
+      assertFile(after, label, path);
       if (!sameFile(before, after)) throw new Error(`${label} changed while opening`);
       return { handle, stat: after };
     } catch (error) { await handle.close(); throw error; }

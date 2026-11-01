@@ -12,7 +12,7 @@ import { constants } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
+import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate } from './private-paths.js';
 
 export const MACHINE_IDENTITY_TAG_PREFIX = 'machine-id:v1:';
 export const PLAYBOOK_MACHINE_IDENTITY_UNAVAILABLE =
@@ -150,7 +150,7 @@ async function prepareDirectory(directory, path, fs) {
       throw new MachineIdentityUnavailableError(path, `its directory cannot be read: ${errorMessage(cause)}`);
     }
     try {
-      await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+      await mkdirPrivate(directory, fs, { recursive: true });
       await fs.chmod(directory, 0o700);
       stat = await fs.lstat(directory);
     } catch (creation) {

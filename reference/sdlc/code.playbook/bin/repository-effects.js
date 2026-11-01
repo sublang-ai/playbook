@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { privatePermissions, mkdirPrivate } from "./private-paths.js";
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -242,6 +243,7 @@ async function runGitText(cwd, args, options = {}) {
 }
 
 async function syncDirectory(path) {
+  if (process.platform === 'win32') return;
   let directory;
   try {
     directory = await open(path, 'r');
@@ -1167,7 +1169,7 @@ async function assertPrivateDirectory(path, label) {
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(`${label} is not a private directory`);
   }
-  if ((info.mode & 0o7777) !== 0o700) {
+  if (!privatePermissions(info, 0o700, path)) {
     throw new Error(`${label} permissions must be 0700`);
   }
   return info;
@@ -1176,7 +1178,7 @@ async function assertPrivateDirectory(path, label) {
 async function ensureClaimRoot(path) {
   let created = false;
   try {
-    await mkdir(path, { mode: 0o700 });
+    await mkdirPrivate(path, { mkdir, lstat });
     created = true;
   } catch (error) {
     if (errorCode(error) !== 'EEXIST') throw error;
@@ -1199,7 +1201,7 @@ async function readClaimOwner(activePath) {
   if (
     !pathInfo.isFile() ||
     pathInfo.isSymbolicLink() ||
-    (pathInfo.mode & 0o7777) !== 0o600
+    !privatePermissions(pathInfo, 0o600, filePath)
   ) {
     throw new Error('repository claim owner is not a private regular file');
   }
@@ -1213,7 +1215,7 @@ async function readClaimOwner(activePath) {
     const info = await handle.stat();
     if (
       !info.isFile() ||
-      (info.mode & 0o7777) !== 0o600 ||
+      !privatePermissions(info, 0o600, filePath) ||
       info.dev !== pathInfo.dev ||
       info.ino !== pathInfo.ino
     ) {
@@ -1234,7 +1236,7 @@ async function readClaimOwner(activePath) {
 
 async function createClaimStage(root, owner) {
   const stagePath = join(root, `.stage-${owner.ownerToken}`);
-  await mkdir(stagePath, { mode: 0o700 });
+  await mkdirPrivate(stagePath, { mkdir, lstat });
   await chmod(stagePath, 0o700);
   let handle;
   try {

@@ -8,7 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { constants } from 'node:fs';
 import * as nativeFs from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { sameFileIdentity, tightenPrivateEntry, verifyPrivateEntry } from './private-paths.js';
+import { sameFileIdentity, tightenPrivateEntry, verifyPrivateEntry, mkdirPrivate, privatePermissions } from './private-paths.js';
 
 export const MAX_SESSION_CHUNK_BYTES = 8 * 1024 * 1024;
 const INLINE_BYTES = 16 * 1024;
@@ -28,14 +28,14 @@ function reference(value) {
       value.byteLength < 1 || value.byteLength > MAX_SESSION_CHUNK_BYTES) fail();
   return value;
 }
-function privateStat(stat, directory) {
+function privateStat(stat, directory, path) {
   if (typeof stat.mode === 'bigint') {
     const original = stat;
     stat = { ...stat, mode: Number(stat.mode), uid: Number(stat.uid), nlink: Number(stat.nlink),
       isFile: () => original.isFile(), isDirectory: () => original.isDirectory(), isSymbolicLink: () => original.isSymbolicLink() };
   }
-  verifyPrivateEntry(stat, directory, 'session chunk');
-  if ((stat.mode & 0o7777) !== (directory ? 0o700 : 0o600)) throw new Error('session chunk permissions must be private');
+  verifyPrivateEntry(stat, directory, 'session chunk', undefined, path);
+  if (!privatePermissions(stat, directory ? 0o700 : 0o600, path)) throw new Error('session chunk permissions must be private');
 }
 function unchanged(before, after) {
   const precise = before.mtimeNs !== undefined && after.mtimeNs !== undefined;
@@ -64,7 +64,7 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     while (cachedBytes > CACHE_BYTES || verified.size > CACHE_NODES) forget(verified.keys().next().value);
   };
   const operations = new AsyncLocalStorage();
-  const freshDirectory = async () => { const stat = await fs.lstat(directory); privateStat(stat, true); return stat; };
+  const freshDirectory = async () => { const stat = await fs.lstat(directory); privateStat(stat, true, directory); return stat; };
   const checkDirectory = async () => {
     const context = operations.getStore();
     if (context?.owner) return context.owner;
@@ -80,12 +80,17 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     }
   });
   const sync = async (path, expected) => {
+    if (process.platform === 'win32') {
+      const current = await fs.lstat(path); privateStat(current, true, path);
+      if (expected && !sameFileIdentity(expected, current)) throw new Error('session chunk directory changed');
+      return;
+    }
     const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
     try {
-      const opened = await handle.stat(); privateStat(opened, true);
+      const opened = await handle.stat(); privateStat(opened, true, path);
       if (expected && !sameFileIdentity(expected, opened)) throw new Error('session chunk directory changed');
       await handle.sync();
-      const current = await fs.lstat(path); privateStat(current, true);
+      const current = await fs.lstat(path); privateStat(current, true, path);
       if (!sameFileIdentity(opened, current)) throw new Error('session chunk directory changed');
     } finally { await handle.close(); }
   };
@@ -95,8 +100,8 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     try { stat = await fs.lstat(directory); }
     catch (error) {
       if (error.code !== 'ENOENT' || !createDirectory) throw error;
-      const parent = await fs.lstat(dirname(directory)); privateStat(parent, true);
-      try { await fs.mkdir(directory, { mode: 0o700 }); }
+      const parent = await fs.lstat(dirname(directory)); privateStat(parent, true, dirname(directory));
+      try { await mkdirPrivate(directory, fs); }
       catch (cause) { if (cause.code !== 'EEXIST') throw cause; }
       stat = await fs.lstat(directory);
       await sync(dirname(directory), parent);
@@ -113,12 +118,12 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
       if (!match) continue;
       const path = join(directory, name);
       const temporary = await fs.lstat(path);
-      if (temporary.nlink === 1) privateStat(temporary, false);
+      if (temporary.nlink === 1) privateStat(temporary, false, path);
       else {
         // A crash between exclusive link publication and alias removal may
         // leave precisely these two names for one private store-owned inode.
         if (temporary.isSymbolicLink() || !temporary.isFile() || temporary.nlink !== 2 ||
-            (process.getuid && temporary.uid !== process.getuid()) || (temporary.mode & 0o7777) !== 0o600) throw new Error('unsafe interrupted session chunk publication');
+            (process.getuid && temporary.uid !== process.getuid()) || !privatePermissions(temporary, 0o600, path)) throw new Error('unsafe interrupted session chunk publication');
         const destination = await fs.lstat(join(directory, match[1]));
         if (!unchanged(temporary, destination) || destination.isSymbolicLink()) throw new Error('session chunk temporary alias differs from publication');
         pendingAliases.set(match[1], temporary);
@@ -144,7 +149,7 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     reference(ref);
     const owner = await checkDirectory();
     const path = join(directory, ref.sha256);
-    const before = await fs.lstat(path, { bigint: true }); privateStat(before, false);
+    const before = await fs.lstat(path, { bigint: true }); privateStat(before, false, path);
     if (BigInt(before.size) !== BigInt(ref.byteLength)) throw new Error('session chunk length mismatch');
     const cached = verified.get(ref.sha256);
     if (!operations.getStore()?.force && cached && before.mtimeNs !== undefined &&
@@ -155,7 +160,7 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     forget(ref.sha256);
     const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     try {
-      const opened = await handle.stat({ bigint: true }); privateStat(opened, false);
+      const opened = await handle.stat({ bigint: true }); privateStat(opened, false, path);
       if (!unchanged(before, opened)) throw new Error('session chunk changed before read');
       // Read the proven bounded length, rather than readFile on a growing file.
       const bytes = Buffer.alloc(ref.byteLength);
@@ -165,8 +170,8 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
         if (!bytesRead) throw new Error('session chunk truncated during read');
         offset += bytesRead;
       }
-      const after = await handle.stat({ bigint: true }); privateStat(after, false);
-      const current = await fs.lstat(path, { bigint: true }); privateStat(current, false);
+      const after = await handle.stat({ bigint: true }); privateStat(after, false, path);
+      const current = await fs.lstat(path, { bigint: true }); privateStat(current, false, path);
       if (!unchanged(opened, after) || !unchanged(after, current) || !sameFileIdentity(owner, await checkDirectory())) throw new Error('session chunk changed during read');
       if (hash(bytes) !== ref.sha256) throw new Error('session chunk digest mismatch');
       if ([before, opened, after, current].every((stat) => stat.mtimeNs !== undefined && stat.ctimeNs !== undefined)) remember(ref.sha256, bytes, current, owner);
@@ -202,10 +207,10 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     try {
       handle = await fs.open(temporary, 'wx', 0o600);
       await handle.chmod(0o600);
-      const opened = await handle.stat(); privateStat(opened, false);
+      const opened = await handle.stat(); privateStat(opened, false, temporary);
       await handle.writeFile(bytes); await handle.sync();
-      const after = await handle.stat(); privateStat(after, false);
-      const current = await fs.lstat(temporary); privateStat(current, false);
+      const after = await handle.stat(); privateStat(after, false, temporary);
+      const current = await fs.lstat(temporary); privateStat(current, false, temporary);
       if (!sameFileIdentity(opened, after) || !unchanged(after, current) || after.size !== bytes.length || !sameFileIdentity(owner, await checkDirectory())) throw new Error('session chunk changed during write');
       await handle.close(); handle = undefined;
       // link is exclusive publication; remove its temporary alias before any
@@ -384,9 +389,9 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
         const temporary = /^\.write-([0-9a-f]{64})-[0-9a-f-]{36}\.tmp$/.exec(name);
         if (temporary && stat.nlink === 2) {
           if (stat.isSymbolicLink() || !stat.isFile() ||
-              (process.getuid && stat.uid !== process.getuid()) || (stat.mode & 0o7777) !== 0o600 ||
+              (process.getuid && stat.uid !== process.getuid()) || !privatePermissions(stat, 0o600, path) ||
               !unchanged(stat, await fs.lstat(join(directory, temporary[1])))) throw new Error('unsafe interrupted session chunk publication');
-        } else privateStat(stat, false);
+        } else privateStat(stat, false, join(directory, name));
         continue;
       }
       if (stat.size > MAX_SESSION_CHUNK_BYTES) throw new Error('session chunk exceeds file bound');
@@ -409,10 +414,10 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     const names = await fs.readdir(directory);
     // Validate every candidate before removing any; links and subdirectories
     // are never followed or recursively removed.
-    for (const name of names) privateStat(await fs.lstat(join(directory, name)), false);
+    for (const name of names) privateStat(await fs.lstat(join(directory, name)), false, join(directory, name));
     for (const name of names) {
       if (!sameFileIdentity(owner, await checkDirectory())) throw new Error('session chunk directory changed during deletion');
-      const path = join(directory, name); privateStat(await fs.lstat(path), false); await fs.unlink(path);
+      const path = join(directory, name); privateStat(await fs.lstat(path), false, path); await fs.unlink(path);
     }
     await sync(directory, owner);
     await fs.rmdir(directory);

@@ -11,18 +11,55 @@
 // applies it to its state directory and file (playbook-cli-97).
 
 import { constants } from 'node:fs';
+import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
+// POSIX hosts retain the existing Node floor and never load the optional
+// Windows mechanism. Native Windows requires Node 22.19 or newer.
+const windowsPermissions = process.platform === 'win32'
+  ? createRequire(import.meta.url)('@openclaw/fs-safe/permissions') : undefined;
+
+// The library owns Windows descriptor inspection and creation. This is the
+// store's admission policy, deliberately conservative even for unusual ACEs.
+export function privatePermissions(stat, mode, path) {
+  if (process.platform !== 'win32') return (Number(stat.mode) & 0o7777) === mode;
+  if (!path) throw new Error('private Windows permission checks require the entry path');
+  const facts = windowsPermissions.readOwnerAndDacl(path);
+  if (facts.status !== 'supported' || !facts.complete || !facts.isLocal || !facts.daclPresent || facts.unsupportedAceTypes.length) return false;
+  const trusted = new Set([facts.currentUserSid, 's-1-5-18', 's-1-5-32-544']);
+  return trusted.has(facts.ownerSid) && facts.aces.every(ace =>
+    ace.aceType === 'deny' || ace.mask === 0 || trusted.has(ace.sid));
+}
+
+export async function mkdirPrivate(path, fs, options = {}) {
+  if (process.platform !== 'win32') return fs.mkdir(path, { ...options, mode: 0o700 });
+  if (options.recursive) {
+    try { await fs.lstat(dirname(path)); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await mkdirPrivate(dirname(path), fs, { recursive: true });
+    }
+  }
+  try { await windowsPermissions.createPrivateDirectory(path); }
+  catch (error) {
+    if (error.code !== 'EEXIST' || !options.recursive) throw error;
+  }
+  const stat = await fs.lstat(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory() || !privatePermissions(stat, 0o700, path)) {
+    throw new Error('private Windows directory permission verification failed');
+  }
+}
 
 export function sameFileIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.()) {
+export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.(), path) {
   const required = directory ? 0o700 : 0o600;
   if (
     stat.isSymbolicLink() ||
     (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) ||
     (uid !== undefined && stat.uid !== uid) ||
-    (stat.mode & required) !== required
+    (process.platform === 'win32' ? !privatePermissions(stat, required, path) : (stat.mode & required) !== required)
   ) {
     throw new Error(`${label} refuses unsafe ownership, links, type, or owner access`);
   }
@@ -30,7 +67,15 @@ export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?
 
 export async function tightenPrivateEntry(path, before, directory, fs, label) {
   const uid = process.getuid?.();
-  verifyPrivateEntry(before, directory, label, uid);
+  verifyPrivateEntry(before, directory, label, uid, path);
+  // Node cannot open directory descriptors on Windows. Admission uses the
+  // library's native owner/DACL inspection and retains both identity fences.
+  if (process.platform === 'win32' && directory) {
+    const current = await fs.lstat(path);
+    verifyPrivateEntry(current, true, label, uid, path);
+    if (!sameFileIdentity(before, current)) throw new Error(`${label}: the entry changed during permission preparation`);
+    return current;
+  }
   const handle = await fs.open(
     path,
     constants.O_RDONLY |
@@ -40,20 +85,20 @@ export async function tightenPrivateEntry(path, before, directory, fs, label) {
   );
   try {
     const opened = await handle.stat();
-    verifyPrivateEntry(opened, directory, label, uid);
+    verifyPrivateEntry(opened, directory, label, uid, path);
     if (!sameFileIdentity(before, opened)) {
       throw new Error(`${label}: the entry changed during permission preparation`);
     }
     const mode = directory ? 0o700 : 0o600;
-    if ((opened.mode & 0o7777) !== mode) await handle.chmod(mode);
+    if (process.platform !== 'win32' && (opened.mode & 0o7777) !== mode) await handle.chmod(mode);
     const after = await handle.stat();
-    verifyPrivateEntry(after, directory, label, uid);
+    verifyPrivateEntry(after, directory, label, uid, path);
     const current = await fs.lstat(path);
-    verifyPrivateEntry(current, directory, label, uid);
+    verifyPrivateEntry(current, directory, label, uid, path);
     if (
       !sameFileIdentity(after, current) ||
-      (after.mode & 0o7777) !== mode ||
-      (current.mode & 0o7777) !== mode
+      !privatePermissions(after, mode, path) ||
+      !privatePermissions(current, mode, path)
     ) {
       throw new Error(`${label}: permission tightening could not be verified`);
     }
@@ -64,6 +109,7 @@ export async function tightenPrivateEntry(path, before, directory, fs, label) {
 }
 
 export async function syncDirectory(path, fs) {
+  if (process.platform === 'win32') return;
   let directory;
   try {
     directory = await fs.open(path, 'r');

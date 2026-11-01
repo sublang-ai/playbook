@@ -121,6 +121,7 @@ meta.md       The spec of specs
 | [DR-095](decisions/095-merge-on-green.md) | 095-merge-on-green.md | Merge on green: `main` protected with the CI workflow's jobs as required checks and auto-merge, one run per pull-request head, base branches kept while targeted, a pre-push check, deterministic tests; the Linux-only matrix kept |
 | [DR-096](decisions/096-a-second-adapter-reviews.md) | 096-a-second-adapter-reviews.md | A second adapter reviews: with both adapters ready only `dev.reviewer` seeds on Codex; the selection ships as `@sublang/playbook/seed-config` so every host seeds the same agent settings; amends DR-053 |
 | [DR-097](decisions/097-readiness-reads-each-agents-token-forms.md) | 097-readiness-reads-each-agents-token-forms.md | Readiness reads each agent's token forms: `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` count beside the API keys and sign-in folders, for the seed and the launch gate alike; amends DR-053 |
+| [DR-098](decisions/098-native-windows-private-storage.md) | 098-native-windows-private-storage.md | Native Windows private storage via fs-safe, conservative ACL admission and unchanged portable evidence |
 
 ## Packages
 
