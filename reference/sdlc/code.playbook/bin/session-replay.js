@@ -84,15 +84,11 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
     const stat = await fs.lstat(sessionsDir); privateStat(stat, true, sessionsDir); return stat;
   };
   const syncDirectory = async (expected) => {
-    if (process.platform === 'win32') {
-      if (!sameFileIdentity(expected, await directory())) throw new Error('session replay directory changed');
-      return;
-    }
     const handle = await fs.open(sessionsDir, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
     try {
       const stat = await handle.stat(); privateStat(stat, true, sessionsDir);
       if (!sameFileIdentity(expected, stat)) throw new Error('session replay directory changed');
-      await handle.sync();
+      if (process.platform !== 'win32') await handle.sync();
       if (!sameFileIdentity(stat, await directory())) throw new Error('session replay directory changed');
     } finally { await handle.close(); }
   };

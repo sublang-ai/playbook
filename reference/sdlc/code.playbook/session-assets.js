@@ -68,12 +68,12 @@ function assertOwner(stat, label) {
 function assertDirectory(stat, path) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
   assertOwner(stat, 'asset owner directory');
-  if (!privatePermissions(stat, 0o700, path)) throw new Error('asset owner directory must have private 0700 permissions');
+  if (process.platform === 'win32' ? !privatePermissions(stat, 0o700, path) : (stat.mode & 0o777) !== 0o700) throw new Error('asset owner directory must have private 0700 permissions');
 }
 function assertFile(stat, label, path) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error(`${label} must be a single-link regular file`);
   assertOwner(stat, label);
-  if (!privatePermissions(stat, 0o600, path)) throw new Error(`${label} must have private 0600 permissions`);
+  if (process.platform === 'win32' ? !privatePermissions(stat, 0o600, path) : (stat.mode & 0o777) !== 0o600) throw new Error(`${label} must have private 0600 permissions`);
 }
 function sameFile(a, b) { return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs; }
 async function syncDirectory(directory) {
@@ -105,9 +105,9 @@ export function createAssetStore(options) {
     if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
     assertOwner(before, 'asset owner directory');
     if (process.platform !== 'win32' && (before.mode & 0o700) !== 0o700) throw new Error('asset owner directory has insufficient owner permissions');
-    const directoryHandle = process.platform === 'win32' ? undefined : await open(directory, constants.O_RDONLY | noFollow);
+    const directoryHandle = await open(directory, constants.O_RDONLY | noFollow);
     try {
-      const opened = directoryHandle ? await directoryHandle.stat() : await lstat(directory);
+      const opened = await directoryHandle.stat();
       if (process.platform === 'win32') assertDirectory(opened, directory);
       if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('asset owner directory changed during preparation');
       // fchmod always moves ctime, which verified readers pin: change only modes that differ.
@@ -132,8 +132,8 @@ export function createAssetStore(options) {
       }
       const final = await lstat(directory);
       if (final.dev !== opened.dev || final.ino !== opened.ino || final.isSymbolicLink()) throw new Error('asset owner directory changed during preparation');
-      assertDirectory(directoryHandle ? await directoryHandle.stat() : await lstat(directory), directory);
-    } finally { await directoryHandle?.close(); }
+      assertDirectory(await directoryHandle.stat(), directory);
+    } finally { await directoryHandle.close(); }
   };
   const checkedOpen = async (filename, label) => {
     await ensureDirectory(false);

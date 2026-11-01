@@ -80,16 +80,11 @@ export function createSessionChunks({ directory, fsOps, createDirectory = true }
     }
   });
   const sync = async (path, expected) => {
-    if (process.platform === 'win32') {
-      const current = await fs.lstat(path); privateStat(current, true, path);
-      if (expected && !sameFileIdentity(expected, current)) throw new Error('session chunk directory changed');
-      return;
-    }
     const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
     try {
       const opened = await handle.stat(); privateStat(opened, true, path);
       if (expected && !sameFileIdentity(expected, opened)) throw new Error('session chunk directory changed');
-      await handle.sync();
+      if (process.platform !== 'win32') await handle.sync();
       const current = await fs.lstat(path); privateStat(current, true, path);
       if (!sameFileIdentity(opened, current)) throw new Error('session chunk directory changed');
     } finally { await handle.close(); }

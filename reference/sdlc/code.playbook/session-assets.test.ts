@@ -91,6 +91,25 @@ describe('immutable owner assets (session-assets-6, session-assets-7)', () => {
     expect(await readFile(outside, 'utf8')).toBe('source');
   });
 
+  it.skipIf(process.platform === 'win32')('preserves POSIX asset permission semantics with special mode bits', async () => {
+    const { store, directory } = await fixture();
+    await mkdir(directory, { mode: 0o700 });
+    await chmod(directory, 0o1700);
+    const ref = await store.importAsset({ bytes: Buffer.from('private evidence'), mimeType: 'text/plain' });
+    const content = join(directory, ref.assetId.slice(7));
+    await chmod(content, 0o1600);
+    await store.prepare();
+    expect(Buffer.from(await store.readAsset(ref)).toString()).toBe('private evidence');
+    expect((await stat(directory)).mode & 0o7777).toBe(0o1700);
+    expect((await stat(content)).mode & 0o7777).toBe(0o1600);
+    expect(await store.listAssets()).toHaveLength(1);
+    await chmod(directory, 0o1755);
+    await expect(store.listAssets()).rejects.toThrow('0700');
+    await store.prepare();
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    expect(Buffer.from(await store.readAsset(ref)).toString()).toBe('private evidence');
+  });
+
   it('prepares a Git-restored owner without changing bytes or granting missing permissions', async () => {
     const { store, directory } = await fixture();
     const ref = await store.importAsset({ bytes: Buffer.from('checkout'), mimeType: 'text/plain' });

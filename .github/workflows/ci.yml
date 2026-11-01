@@ -308,3 +308,25 @@ jobs:
             || { echo "::error::re-run omitted the missing SDK"; exit 1; }
           echo "$OUT" | grep -q 'playbook \.\.\.' \
             && { echo "::error::re-run still carries a literal placeholder"; exit 1; } || true
+
+  windows-storage:
+    name: Windows storage (Node 22.19)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Drop dev-only workspace override
+        shell: pwsh
+        run: if (Test-Path pnpm-workspace.yaml) { Remove-Item pnpm-workspace.yaml }
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Check native Windows storage and directory handles
+        run: pnpm exec vitest run reference/sdlc/code.playbook/windows-storage.integration.test.ts reference/sdlc/code.playbook/private-paths.integration.test.ts

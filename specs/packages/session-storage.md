@@ -29,7 +29,7 @@ The session store shall use these locations and files for each session's canonic
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
 
-- on Windows, private entries use the verified local owner/DACL policy of [DR-098](../decisions/098-native-windows-private-storage.md), refusing unsafe or unverified ACLs without changing their contents or ownership;
+- on Windows, private entries retain opened-handle identity checks without directory `fchmod` or directory `fsync` and use the verified local owner/DACL policy of [DR-098](../decisions/098-native-windows-private-storage.md), refusing unsafe or unverified ACLs without changing their contents or ownership;
 - manifests and hints use the same private regular-file and atomic writing rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; opening prepares permissions before strict reads or granting a lease:
   - on POSIX, only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
   - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening, and a store that met a block prepares again at its next operation; preparation changes no content, ownership or lease metadata;
@@ -285,6 +285,11 @@ When the integration suite migrates legacy CLI/desktop fixtures and opens their 
 ### session-storage-20
 
 When integration tests import assets under a real session lease, checkpoint, reopen, export and delete the session, they shall verify complete descriptors, exact replay-prefix export, independent owner copies, preparation, acquisition and deletion past foreign asset-directory entries, and refusal of missing or corrupt bytes without unsafe cleanup [[session-storage-18](#session-storage-18)] [[session-storage-19](#session-storage-19)].
+
+### session-storage-25
+
+When private directory preparation runs on real storage, verification shall assert that an opened directory is closed on success or pathname-replacement refusal, with Windows omitting directory `fchmod` while preserving handle/path identity checks [[session-storage-1](#session-storage-1)] ([integration checks](../../reference/sdlc/code.playbook/private-paths.integration.test.ts)).
+
 
 ## References
 

@@ -68,14 +68,8 @@ export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?
 export async function tightenPrivateEntry(path, before, directory, fs, label) {
   const uid = process.getuid?.();
   verifyPrivateEntry(before, directory, label, uid, path);
-  // Node cannot open directory descriptors on Windows. Admission uses the
-  // library's native owner/DACL inspection and retains both identity fences.
-  if (process.platform === 'win32' && directory) {
-    const current = await fs.lstat(path);
-    verifyPrivateEntry(current, true, label, uid, path);
-    if (!sameFileIdentity(before, current)) throw new Error(`${label}: the entry changed during permission preparation`);
-    return current;
-  }
+  // Keep descriptor identity checks on both platforms; Windows admits ACLs
+  // without attempting POSIX fchmod on the opened directory.
   const handle = await fs.open(
     path,
     constants.O_RDONLY |
