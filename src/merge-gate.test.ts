@@ -26,6 +26,7 @@ const REQUIRED_CHECKS = [
   'playbook (Node 22)',
   'SPDX headers (LIC-3, LIC-4)',
   'Smoke install (global tarball)',
+  'Windows storage (Node 22.19)',
 ];
 
 type Matrix = Record<string, unknown> & {
