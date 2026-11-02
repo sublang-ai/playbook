@@ -14,7 +14,7 @@ export function liveModels(): { claude: string; codex: string } {
   return {
     claude:
       process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-5-5',
-    codex: process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6-sol',
+    codex: process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6.1-sol',
   };
 }
 

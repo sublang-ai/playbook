@@ -84,7 +84,7 @@ describe('real CLI over an application-owned home',()=>{
     const f=await fixture();const both={OPENAI_API_KEY:'fixture'};
     const started=await f.invoke(['run','--json','Start on the mixed seed.'],both);expect(started.code,started.stderr).toBe(0);
     const seeded=await readFile(join(f.spex,'config','playbook.config.yaml'),'utf8');
-    expect(seeded).toMatch(/dev\.reviewer:\n\s+adapter: codex\n\s+model: gpt-6-sol/);expect(seeded).toMatch(/dev\.coder:\n\s+adapter: claude/);
+    expect(seeded).toMatch(/dev\.reviewer:\n\s+adapter: codex\n\s+model: gpt-6\.1-sol/);expect(seeded).toMatch(/dev\.coder:\n\s+adapter: claude/);
     const id=JSON.parse(started.stdout).sessionId;expect(id).not.toBe(f.id);
     const continued=await f.invoke(['run','--session',id,'--json','Continue on the mixed seed.'],both);
     expect(continued.code,continued.stderr).toBe(0);expect(JSON.parse(continued.stdout)).toEqual({sessionId:id,reply:'Portable CLI answer.'});

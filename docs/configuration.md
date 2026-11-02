@@ -70,11 +70,11 @@ credentials (an API key in the environment, or `~/.claude` / `~/.codex`):
 | Credentials | Seeded agents |
 | --- | --- |
 | Claude only, or neither | every agent on Claude Opus 5.5 (with a notice when neither is configured) |
-| Codex only | every agent on GPT-6 Sol |
-| both | `dev.reviewer` on GPT-6 Sol, every other agent on Claude Opus 5.5 |
+| Codex only | every agent on GPT-6.1 Sol |
+| both | `dev.reviewer` on GPT-6.1 Sol, every other agent on Claude Opus 5.5 |
 
-Captain, Coder, and Inspector run at `high` effort and Reviewer and Analyst at
-`xhigh`. Credentials do not prove SDK availability or remaining quota; launch
+Every agent runs at `medium` effort, except a `dev.reviewer` seeded on Codex
+beside Claude agents, which runs at `high`. Credentials do not prove SDK availability or remaining quota; launch
 still checks the configured adapter. Existing configs are left unchanged.
 Embedding hosts seed the same agent settings through
 `seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`.
@@ -86,7 +86,7 @@ The Claude default is shown below. Each Codex agent also carries
 captain:
   adapter: claude
   model: claude-opus-5-5
-  effort: high
+  effort: medium
   permissions:
     mode: auto # protected auto mode for the Claude Captain
 
@@ -94,28 +94,28 @@ players:
   dev.coder:
     adapter: claude
     model: claude-opus-5-5
-    effort: high
+    effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Coder
 
   dev.reviewer:
     adapter: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Reviewer
 
   dev.analyst:
     adapter: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Analyst
 
   inspect.inspector:
     adapter: claude
     model: claude-opus-5-5
-    effort: high
+    effort: medium
     permissions:
       mode: auto
 
@@ -247,7 +247,7 @@ second top-level player and change only its binding:
 players:
   review.coder:
     adapter: codex
-    model: gpt-6-sol
+    model: gpt-6.1-sol
     effort: ultra
     permissions:
       mode: auto
@@ -521,7 +521,7 @@ playbooks:
     from: '@sublang/playbook/review/registry'
     players:
       coder: { adapter: claude, model: claude-opus-5-5 }
-      reviewer: { adapter: codex, model: gpt-6-sol }
+      reviewer: { adapter: codex, model: gpt-6.1-sol }
 ```
 
 Move each provider agent into the flat top-level map, choose stable IDs, and
@@ -530,7 +530,7 @@ bind the local roles explicitly:
 ```yaml
 players:
   dev.coder: { adapter: claude, model: claude-opus-5-5 }
-  dev.reviewer: { adapter: codex, model: gpt-6-sol }
+  dev.reviewer: { adapter: codex, model: gpt-6.1-sol }
 
 playbooks:
   code:

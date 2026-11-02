@@ -37,7 +37,7 @@
 captain:
   adapter: claude
   model: claude-opus-5-5
-  effort: high
+  effort: medium
   permissions:
     mode: auto
 
@@ -54,7 +54,7 @@ players:
   dev.coder:
     adapter: claude
     model: claude-opus-5-5
-    effort: high
+    effort: medium
     # Adapter-scoped fast mode is validated by the installed Cligent contract;
     # omitting it takes the provider default.
     permissions:
@@ -63,7 +63,7 @@ players:
   dev.reviewer:
     adapter: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: medium
     permissions:
       mode: auto
 
@@ -73,7 +73,7 @@ players:
   dev.analyst:
     adapter: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: medium
     permissions:
       mode: auto
 
@@ -81,7 +81,7 @@ players:
   inspect.inspector:
     adapter: claude
     model: claude-opus-5-5
-    effort: high
+    effort: medium
     permissions:
       mode: auto
 
