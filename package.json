@@ -290,7 +290,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@sublang/cligent": "^0.36.2",
+    "@sublang/cligent": "^0.37.0",
     "@sublang/spex": "^3.0.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
@@ -298,7 +298,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.284",
-    "@openai/codex-sdk": "^0.159.0",
+    "@openai/codex-sdk": "^0.159.1",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"

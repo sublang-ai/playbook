@@ -213,9 +213,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 36 ||
-            (declaredFloor[1] === 36 && declaredFloor[2] >= 1))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.36.1 floor carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+          declaredFloor[1] >= 37),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -238,9 +237,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 36 ||
-              (resolvedFloor[1] === 36 && resolvedFloor[2] >= 1))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.36.1 floor carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+            resolvedFloor[1] >= 37),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
       ).toBe(true);
     }
   });
