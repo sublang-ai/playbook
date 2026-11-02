@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Seeds run at medium effort.** The starter seeds the Captain and every player at effort `medium`; a `dev.reviewer` seeded on Codex beside Claude agents runs at `high` ([DR-099](specs/decisions/099-seeds-run-at-medium-effort.md)).
+- **The Codex seed names `gpt-6.1-sol`**, the latest Sol model, ([DR-074](specs/decisions/074-seeds-name-the-latest-models.md), [DR-099](specs/decisions/099-seeds-run-at-medium-effort.md)); the Cligent floor and the Codex SDK development floor rise with the Cligent release whose Codex floor is `0.159.1`.
+
 ## [18.1.1] - 2026-11-02
 
 ### Changed

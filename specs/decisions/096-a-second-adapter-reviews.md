@@ -8,6 +8,7 @@
 Accepted (2026-10-26).
 Amends [DR-053](053-seeding-picks-a-ready-adapter.md) in two scopes: where both adapters are ready, the seeded `dev.reviewer` takes the second adapter instead of the first; and the selection becomes a public export, so its consequence that the desktop app copies the template and may seed a different lineup no longer holds once that host adopts the export.
 The credential-only readiness test, the fixed order, the per-adapter table of [DR-074](074-seeds-name-the-latest-models.md), the efforts, the none-ready notice, and the one exclusive create stand.
+Amended by [DR-099](099-seeds-run-at-medium-effort.md): the second-adapter Reviewer takes effort `high`.
 
 ## Context
 

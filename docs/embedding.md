@@ -82,7 +82,7 @@ const roleBindings = {
   },
   reviewer: {
     playerId: 'team.reviewer',
-    promptIdentity: 'gpt-6-sol',
+    promptIdentity: 'gpt-6.1-sol',
   },
 } satisfies Readonly<Record<string, PlaybookRoleBinding>>;
 

@@ -280,7 +280,7 @@ jobs:
                 mode: auto
             dev.reviewer:
               adapter: codex
-              model: gpt-6-sol
+              model: gpt-6.1-sol
               effort: high
               permissions:
                 mode: auto

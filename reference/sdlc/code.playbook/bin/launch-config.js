@@ -1661,12 +1661,15 @@ function assertLegacyRelocationLocatorsSafe(
 // the first row's model, because the default seed is its byte copy.
 const SEED_LINEUP = Object.freeze([
   Object.freeze({ adapter: "claude", model: "claude-opus-5-5" }),
-  Object.freeze({ adapter: "codex", model: "gpt-6-sol" }),
+  Object.freeze({ adapter: "codex", model: "gpt-6.1-sol" }),
 ]);
 
 // DR-096: where both adapters are ready, this player alone takes the
 // second row, so review comes from a different provider than the work.
 const SECOND_ADAPTER_PLAYER = "dev.reviewer";
+// DR-099: that reviewer runs at this effort; every other agent keeps
+// the template's.
+const SECOND_ADAPTER_EFFORT = "high";
 
 /**
  * PBCLI-11: the lineup a seed would write here, and whether anything
@@ -1710,11 +1713,13 @@ function seedTextForLineup(template, { lineup, reviewer }) {
   ];
   let changed = false;
   for (const path of agentPaths) {
-    const entry = path[1] === SECOND_ADAPTER_PLAYER ? reviewer : lineup;
+    const second = path[1] === SECOND_ADAPTER_PLAYER && reviewer !== lineup;
+    const entry = second ? reviewer : lineup;
     if (entry.adapter === SEED_LINEUP[0].adapter) continue;
     changed = true;
     doc.setIn([...path, "adapter"], entry.adapter);
     doc.setIn([...path, "model"], entry.model);
+    if (second) doc.setIn([...path, "effort"], SECOND_ADAPTER_EFFORT);
     // A codex agent writes git metadata under its sandbox; claude's
     // auto mode needs no grant, so the key exists for one adapter only.
     doc.setIn([...path, "permissions", "writablePaths"], [".git"]);

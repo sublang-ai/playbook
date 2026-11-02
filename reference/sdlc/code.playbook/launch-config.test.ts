@@ -1798,7 +1798,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.players['dev.analyst']).toEqual({
       adapter: 'claude',
       model: 'claude-opus-5-5',
-      effort: 'xhigh',
+      effort: 'medium',
       permissions: { mode: 'auto' },
     });
     // DR-050: BRANCH and PR bind Coder to the same dev.coder player as CODE
@@ -1807,7 +1807,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.inspect.roles).toEqual({ inspector: 'inspect.inspector' });
-    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-opus-5-5', effort: 'high', permissions: { mode: 'auto' } });
+    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-opus-5-5', effort: 'medium', permissions: { mode: 'auto' } });
     expect(Object.keys(template.playbooks)).toEqual([
       'code',
       'review',
