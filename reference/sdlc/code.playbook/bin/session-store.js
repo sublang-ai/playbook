@@ -28,7 +28,7 @@ import {
   unlink,
 } from 'node:fs/promises';
 import { homedir, hostname as systemHostname } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedEffort } from '@sublang/cligent';
@@ -51,7 +51,7 @@ import {
   lazyMachineIdentity,
   resolveMachineIdentity,
 } from './machine-identity.js';
-import { sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
+import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate, privatePermissions } from './private-paths.js';
 import { createSessionChunks } from './session-chunks.js';
 import { createBoundedReplay } from './session-replay.js';
 import { decodeStoredManifest, encodeStoredManifest, SESSION_STORAGE_VERSION } from './storage-manifest.js';
@@ -309,7 +309,7 @@ export function sanitizeReplayRecord(value) {
 // Bounded physical replay preserves the public readable/durable distinction.
 // A failed append latches history incompleteness; recovery writes remain open.
 async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, readStream, chunks }) {
-  const sessionId = path.slice(path.lastIndexOf('/') + 1, -'.records.jsonl'.length);
+  const sessionId = basename(path, '.records.jsonl');
   const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, assertOwner, chunks });
   let lastReadableSeq = null, lastDurableSeq = null, incomplete = true, closed = false;
   let tail = Promise.resolve();
@@ -895,7 +895,7 @@ export function createCaptainSessionStore(options = {}) {
       ownsTemporary = true;
       await handle.chmod(0o600);
       const tempStat = await handle.stat();
-      if (!tempStat.isFile() || (tempStat.mode & 0o7777) !== 0o600) {
+      if (!tempStat.isFile() || !privatePermissions(tempStat, 0o600, temporary)) {
         throw new Error('Captain session temporary path is not a private regular file');
       }
       await handle.writeFile(encoded);
@@ -991,7 +991,7 @@ export function createCaptainSessionStore(options = {}) {
       if (
         directoryStat.isSymbolicLink() ||
         !directoryStat.isDirectory() ||
-        (directoryStat.mode & 0o7777) !== 0o700
+        !privatePermissions(directoryStat, 0o700, path)
       ) {
         throw new Error('lease path is not a private real directory');
       }
@@ -1160,21 +1160,21 @@ export function createCaptainSessionStore(options = {}) {
     let handle;
     let created = false;
     try {
-      await fs.mkdir(stagePath, { mode: 0o700 });
+      await mkdirPrivate(stagePath, fs);
       created = true;
       await fs.chmod(stagePath, 0o700);
       const stageStat = await fs.lstat(stagePath);
       if (
         stageStat.isSymbolicLink() ||
         !stageStat.isDirectory() ||
-        (stageStat.mode & 0o7777) !== 0o700
+        !privatePermissions(stageStat, 0o700, stagePath)
       ) {
         throw new Error('Captain session lease stage is not a private directory');
       }
       handle = await fs.open(join(stagePath, LEASE_OWNER_FILE), 'wx', 0o600);
       await handle.chmod(0o600);
       const ownerStat = await handle.stat();
-      if (!ownerStat.isFile() || (ownerStat.mode & 0o7777) !== 0o600) {
+      if (!ownerStat.isFile() || !privatePermissions(ownerStat, 0o600, join(stagePath, LEASE_OWNER_FILE))) {
         throw new Error('Captain session lease owner is not a private regular file');
       }
       await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
@@ -1922,7 +1922,7 @@ async function readReplaySnapshot({
 
   // During explicit migration the old root remains authoritative until the
   // new manifest publishes. New replay-only sessions have no manifest yet.
-  const sessionId = path.slice(path.lastIndexOf('/') + 1, -'.records.jsonl'.length);
+  const sessionId = basename(path, '.records.jsonl');
   let storedRoot;
   try { storedRoot = JSON.parse(await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, fs, 'record')); }
   catch (cause) { if (cause?.code !== 'ENOENT' && !(cause instanceof SyntaxError)) throw cause; }
@@ -1963,7 +1963,7 @@ async function readReplaySnapshot({
 
   try {
     const openedStat = await handle.stat();
-    assertPrivateRegularStat(openedStat, 0o600, 'replay stream');
+    assertPrivateRegularStat(openedStat, 0o600, 'replay stream', path);
     if (!sameFileIdentity(pathStat, openedStat)) {
       throw new ReplaySnapshotChangedError(
         'replay stream was replaced while opening its snapshot',
@@ -1987,7 +1987,7 @@ async function readReplaySnapshot({
     const bytes = await readReplayRange(handle, startOffset, snapshotLength);
 
     const finalHandleStat = await handle.stat();
-    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream');
+    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream', path);
     if (
       !sameFileIdentity(openedStat, finalHandleStat) ||
       requireReplayFileSize(finalHandleStat.size) < snapshotLength
@@ -2225,11 +2225,11 @@ function requireReplayFileSize(value) {
   return value;
 }
 
-function assertPrivateRegularStat(stat, mode, label) {
+function assertPrivateRegularStat(stat, mode, label, path) {
   if (!stat.isFile()) {
     throw new Error(`${label} path is not a regular file`);
   }
-  if ((stat.mode & 0o7777) !== mode) {
+  if (!privatePermissions(stat, mode, path)) {
     throw new Error(`${label} permissions must be ${octal(mode)}`);
   }
 }
@@ -6412,7 +6412,7 @@ async function readPrivateRegularFile(path, mode, fs, label, raw = false) {
     if (!stat.isFile()) {
       throw new Error(`${label} path is not a regular file`);
     }
-    if ((stat.mode & 0o7777) !== mode) {
+    if (!privatePermissions(stat, mode, path)) {
       throw new Error(`${label} permissions must be ${octal(mode)}`);
     }
     if (!sameFileIdentity(before, stat)) throw privateFileChanged(label, 'open');
@@ -6431,7 +6431,7 @@ async function assertPrivateRegularPath(path, mode, fs, label) {
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error(`${label} path is not a real regular file`);
   }
-  if ((stat.mode & 0o7777) !== mode) {
+  if (!privatePermissions(stat, mode, path)) {
     throw new Error(`${label} permissions must be ${octal(mode)}`);
   }
   return stat;
@@ -6486,7 +6486,7 @@ async function ensurePrivateDirectory(path, fs, mayCreate = () => true) {
   for (const directory of missing.reverse()) {
     let created = false;
     try {
-      await fs.mkdir(directory, { mode: 0o700 });
+      await mkdirPrivate(directory, fs);
       created = true;
     } catch (cause) {
       if (cause?.code !== 'EEXIST') throw cause;
@@ -6497,7 +6497,7 @@ async function ensurePrivateDirectory(path, fs, mayCreate = () => true) {
       await syncDirectory(dirname(directory), fs);
     } else if (
       directory === path &&
-      (stat.mode & 0o7777) !== 0o700
+      !privatePermissions(stat, 0o700, path)
     ) {
       throw new Error('Captain session store directory permissions must be 0700');
     }
@@ -6533,7 +6533,7 @@ function isPathOrAncestor(directory, path) {
 
 async function assertPrivateDirectory(path, fs) {
   const stat = await assertDirectoryNotLink(path, fs);
-  if ((stat.mode & 0o7777) !== 0o700) {
+  if (!privatePermissions(stat, 0o700, path)) {
     throw new Error('Captain session store directory permissions must be 0700');
   }
 }

@@ -8,7 +8,7 @@ import { constants } from 'node:fs';
 import * as nativeFs from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { createSessionChunks, MAX_SESSION_CHUNK_BYTES } from './session-chunks.js';
-import { sameFileIdentity, tightenPrivateEntry, verifyPrivateEntry } from './private-paths.js';
+import { sameFileIdentity, tightenPrivateEntry, verifyPrivateEntry, privatePermissions } from './private-paths.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -21,9 +21,9 @@ function reference(value) {
       !count(value.byteLength) || value.byteLength < 1 || value.byteLength > MAX_SESSION_CHUNK_BYTES) invalid();
   return value;
 }
-function privateStat(stat, directory) {
-  verifyPrivateEntry(stat, directory, 'session replay');
-  if ((stat.mode & 0o7777) !== (directory ? 0o700 : 0o600)) throw new Error('session replay permissions must be private');
+function privateStat(stat, directory, path) {
+  verifyPrivateEntry(stat, directory, 'session replay', undefined, path);
+  if (!privatePermissions(stat, directory ? 0o700 : 0o600, path)) throw new Error('session replay permissions must be private');
 }
 const unchanged = (left, right) => sameFileIdentity(left, right) && left.size === right.size &&
   left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
@@ -32,8 +32,8 @@ function rootChanged(message) {
   error.replayRootRetry = true;
   return error;
 }
-function privateRootStat(stat) {
-  try { privateStat(stat, false); }
+function privateRootStat(stat, path) {
+  try { privateStat(stat, false, path); }
   catch (error) {
     // A complete initial root can briefly have its staging link, and an
     // already opened old root loses its last link on atomic replacement.
@@ -81,14 +81,14 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
     return result;
   };
   const directory = async () => {
-    const stat = await fs.lstat(sessionsDir); privateStat(stat, true); return stat;
+    const stat = await fs.lstat(sessionsDir); privateStat(stat, true, sessionsDir); return stat;
   };
   const syncDirectory = async (expected) => {
     const handle = await fs.open(sessionsDir, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
     try {
-      const stat = await handle.stat(); privateStat(stat, true);
+      const stat = await handle.stat(); privateStat(stat, true, sessionsDir);
       if (!sameFileIdentity(expected, stat)) throw new Error('session replay directory changed');
-      await handle.sync();
+      if (process.platform !== 'win32') await handle.sync();
       if (!sameFileIdentity(stat, await directory())) throw new Error('session replay directory changed');
     } finally { await handle.close(); }
   };
@@ -104,11 +104,11 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
     let before;
     try { before = await fs.lstat(path); }
     catch (error) { if (error.code === 'ENOENT') return { root: null, rootBytes: null, stat: null, owner }; throw error; }
-    privateRootStat(before);
+    privateRootStat(before, path);
     if (before.size > MAX_SESSION_CHUNK_BYTES) throw new Error('session replay root exceeds file bound');
     const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     try {
-      const opened = await handle.stat(); privateRootStat(opened);
+      const opened = await handle.stat(); privateRootStat(opened, path);
       if (!unchanged(before, opened)) throw rootChanged('session replay root changed before read');
       const bytes = Buffer.alloc(opened.size);
       let offset = 0;
@@ -117,7 +117,7 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
         if (!bytesRead) throw rootChanged('session replay root truncated during read');
         offset += bytesRead;
       }
-      const after = await handle.stat(); privateRootStat(after);
+      const after = await handle.stat(); privateRootStat(after, path);
       if (!unchanged(opened, after)) throw rootChanged('session replay root changed during read');
       if (!sameFileIdentity(owner, await directory())) throw new Error('session replay directory changed during read');
       return { root: validateRoot(JSON.parse(bytes.toString('utf8'))), rootBytes: bytes, stat: after, owner };
@@ -137,7 +137,7 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       throw new Error('session replay root changed before publication');
     }
     if (snapshot.stat !== null) {
-      const latest = await fs.lstat(path); privateStat(latest, false);
+      const latest = await fs.lstat(path); privateStat(latest, false, path);
       if (!unchanged(snapshot.stat, latest)) throw new Error('session replay root changed before publication');
     }
   };
@@ -177,10 +177,10 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       await assertSnapshot(snapshot);
       handle = await fs.open(temporary, 'wx', 0o600);
       await handle.chmod(0o600);
-      temporaryStat = await handle.stat(); privateStat(temporaryStat, false);
+      temporaryStat = await handle.stat(); privateStat(temporaryStat, false, temporary);
       await handle.writeFile(bytes); await handle.sync();
-      const after = await handle.stat(); privateStat(after, false);
-      const current = await fs.lstat(temporary); privateStat(current, false);
+      const after = await handle.stat(); privateStat(after, false, temporary);
+      const current = await fs.lstat(temporary); privateStat(current, false, temporary);
       if (!sameFileIdentity(temporaryStat, after) || !sameFileIdentity(after, current)) throw new Error('session replay temporary root changed');
       await handle.close(); handle = undefined;
       await assertOwner();
@@ -191,7 +191,7 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       // name before readers' single-link verification and directory syncing.
       if (exclusive || snapshot.root === null) await fs.unlink(temporary);
       await syncDirectory(snapshot.owner);
-      const published = await fs.lstat(path); privateStat(published, false);
+      const published = await fs.lstat(path); privateStat(published, false, path);
       if (!sameFileIdentity(temporaryStat, published) || published.size !== bytes.length) throw new Error('session replay root changed after publication');
       const completed = { owner: snapshot.owner, stat: published, rootBytes: bytes };
       mutationAnchor = proofOf(completed);

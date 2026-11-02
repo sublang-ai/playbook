@@ -6,6 +6,7 @@
 ## Status
 
 Accepted (2026-10-22).
+Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
 Amends [DR-049](049-portable-session-contract.md).
 
 ## Context

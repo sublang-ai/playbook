@@ -25,7 +25,9 @@ The default per-asset limit shall be 100 MiB, with an explicit positive safe-int
 When a caller reads or materializes a reference, the facade shall verify the owner's private directory, the asset's private current-user-owned single-link regular file, byte count and SHA-256 digest before returning bytes or an absolute local attachment path.
 Invalid references, absent bytes, corrupt bytes and paths escaping the owner shall fail explicitly.
 The facade shall provide immutable descriptor lookup by asset ID and a closeable verified reader whose bounded positional reads reuse one content integrity check and reject subsequent file mutation.
-The facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content, and ignores and never modifies an entry named other than a digest-named asset, its `.json` descriptor or an `.import-*.tmp` temporary.
+On POSIX, the facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content, and ignores and never modifies an entry named other than a digest-named asset, its `.json` descriptor or an `.import-*.tmp` temporary.
+On Windows, the facade shall verify private ownership and ACLs under [DR-098](../decisions/098-native-windows-private-storage.md), refusing unsafe or unverified entries without modifying content or ownership.
+On POSIX, private asset checks shall compare only the ordinary `0777` permission bits, preserving previously accepted special bits when those ordinary bits are already `0700` for a directory or `0600` for a file.
 Preparation shall change no mode or file status metadata of a directory already at `0700` or a file already at `0600`, so verified readers and concurrent verification survive a repeated preparation.
 Materialized paths shall be execution-only values and shall not replace portable references.
 
@@ -55,7 +57,7 @@ When integration tests ingest authentic media and tool-result events into a real
 
 ### session-assets-6
 
-When integration tests import, read, materialize and copy real files through the public facade, they shall verify byte-exact content identity, independent metadata, atomic publication, cancellation, configurable limits, owner isolation, duplicate reuse and open readers surviving a repeated preparation [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
+When integration tests import, read, materialize and copy real files through the public facade, they shall verify byte-exact content identity, independent metadata, atomic publication, cancellation, configurable limits, owner isolation, duplicate reuse, preserved POSIX special mode bits and open readers surviving a repeated preparation [[session-assets-1](#session-assets-1)] [[session-assets-2](#session-assets-2)] [[session-assets-3](#session-assets-3)] [[session-assets-4](#session-assets-4)].
 
 ### session-assets-7
 

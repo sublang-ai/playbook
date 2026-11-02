@@ -6,6 +6,7 @@
 ## Status
 
 Accepted (2026-09-30).
+Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
 Extends [DR-042](042-shared-session-store-and-replay-stream.md) in one scope: the session lease's owner names its machine by a published machine identity rather than by the operating system's host name; the store, its files, and its lifecycle otherwise stand.
 Extends [DR-046](046-public-worktree-host-capabilities.md) in one scope: the repository claim's owner names its machine by the same identity; the capabilities and the claim discipline otherwise stand.
 
