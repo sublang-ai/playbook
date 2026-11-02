@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.1.2] - 2026-11-02
+
 ### Changed
 
 - **Seeds run at medium effort.** The starter seeds the Captain and every player at effort `medium`; a `dev.reviewer` seeded on Codex beside Claude agents runs at `high` ([DR-099](specs/decisions/099-seeds-run-at-medium-effort.md)).
-- **The Codex seed names `gpt-6.1-sol`**, the latest Sol model, ([DR-074](specs/decisions/074-seeds-name-the-latest-models.md), [DR-099](specs/decisions/099-seeds-run-at-medium-effort.md)); the Cligent floor and the Codex SDK development floor rise with the Cligent release whose Codex floor is `0.159.1`.
+- **The Codex seed names `gpt-6.1-sol`**, the latest Sol model, ([DR-074](specs/decisions/074-seeds-name-the-latest-models.md), [DR-099](specs/decisions/099-seeds-run-at-medium-effort.md)); the Cligent floor rises to `^0.37.0`, whose Codex runtime floor `0.159.1` serves it, and the Codex SDK development floor to `^0.159.1`.
 
 ## [18.1.1] - 2026-11-02
 
@@ -1096,7 +1098,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.2...HEAD
+[18.1.2]: https://github.com/sublang-ai/playbook/compare/v18.1.1...v18.1.2
 [18.1.1]: https://github.com/sublang-ai/playbook/compare/v18.1.0...v18.1.1
 [18.1.0]: https://github.com/sublang-ai/playbook/compare/v18.0.1...v18.1.0
 [18.0.1]: https://github.com/sublang-ai/playbook/compare/v18.0.0...v18.0.1
