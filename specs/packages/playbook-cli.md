@@ -377,18 +377,19 @@ The starter shall define players `dev.coder`, `dev.reviewer`, `dev.analyst`, and
 The seeded lineup shall be chosen when the
 file is written from the adapters the credential check of
 [[playbook-cli-12](playbook-cli.md#playbook-cli-12)] already sees, by this fixed
-order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md); [DR-096](../decisions/096-a-second-adapter-reviews.md)):
+order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md); [DR-096](../decisions/096-a-second-adapter-reviews.md); [DR-099](../decisions/099-seeds-run-at-medium-effort.md)):
 
 | Order | Adapter | Model |
 | --- | --- | --- |
 | 1 | `claude` | `claude-opus-5-5` |
-| 2 | `codex` | `gpt-6-sol` |
+| 2 | `codex` | `gpt-6.1-sol` |
 
 - the first ready adapter in that order supplies every seeded agent, except
   that where both listed adapters are ready, `dev.reviewer` alone takes the
   second row;
-- Captain, Coder, and Inspector shall take reasoning effort `high`, Reviewer and Analyst
-  `xhigh`, for whichever adapter is chosen;
+- every seeded agent shall take reasoning effort `medium`, except that
+  `dev.reviewer`, where it takes the second row beside the first, shall take
+  `high`;
 - where no listed adapter is ready, the first row shall be seeded and the
   command shall print one stderr line stating that no adapter probed ready and
   which lineup was written;
@@ -1229,11 +1230,11 @@ shall fail unless the command creates that file from the bundled starter config,
 | Credentials visible to the seed | Seeded lineup | Notice |
 | --- | --- | --- |
 | claude only | every agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
-| codex only | every agent on `codex` / `gpt-6-sol`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
-| both | `dev.reviewer` on `codex` / `gpt-6-sol` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
+| codex only | every agent on `codex` / `gpt-6.1-sol`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
+| both | `dev.reviewer` on `codex` / `gpt-6.1-sol` at effort `high` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
 | neither | every agent on `claude` / `claude-opus-5-5` | the resolved path, plus one line naming that no adapter probed ready |
 
-- Captain and `dev.coder` take effort `high` and `dev.reviewer` and `dev.analyst` `xhigh` in every row;
+- every agent takes effort `medium` in every row, except the both row's `dev.reviewer`;
 - each row shall be driven by an injected home directory and an explicit environment, so no case depends on the machine running the suite;
 - seeding twice in one invocation shall write one file and select one lineup;
 - a session `playbook run` starts on the both row's seed shall continue through `run --session` on that seed, its turn count advancing and its provider resumed [[playbook-cli-11](#playbook-cli-11)].
