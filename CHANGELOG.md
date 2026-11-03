@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.1.3] - 2026-11-03
+
+### Fixed
+
+- Require the published Cligent 0.38.0 (`^0.38.0`): a resumed Claude call on the provider's default model runs, omitting the model so Claude Code selects its current default, instead of being refused; and Claude's model catalog reads inside a packaged Electron app.
+
 ## [18.1.2] - 2026-11-02
 
 ### Changed
@@ -1098,7 +1104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.2...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.3...HEAD
+[18.1.3]: https://github.com/sublang-ai/playbook/compare/v18.1.2...v18.1.3
 [18.1.2]: https://github.com/sublang-ai/playbook/compare/v18.1.1...v18.1.2
 [18.1.1]: https://github.com/sublang-ai/playbook/compare/v18.1.0...v18.1.1
 [18.1.0]: https://github.com/sublang-ai/playbook/compare/v18.0.1...v18.1.0
