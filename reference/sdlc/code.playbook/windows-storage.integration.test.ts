@@ -6,11 +6,19 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { resolveMachineIdentity } from './machine-identity.js';
+import { machineIdentityPath, resolveMachineIdentity as readMachineIdentity } from './bin/machine-identity.js';
 import { createCaptainSessionStore } from './bin/session-store.js';
 import { createSessionChunks } from './bin/session-chunks.js';
 import { createBoundedReplay } from './bin/session-replay.js';
 import { mkdirPrivate } from './bin/private-paths.js';
 import { createAssetStore } from './session-assets.js';
+
+// Grant Everyone (S-1-1-0) access, as the Codex sandbox grants its group,
+// and confirm the grant landed so an admission is not vacuous.
+function grant(path: string, rights: string): void {
+  execFileSync('icacls.exe', [path, '/grant', `*S-1-1-0:${rights}`], { windowsHide: true });
+  expect(execFileSync('icacls.exe', [path], { windowsHide: true }).toString()).toMatch(/Everyone/);
+}
 
 // Packaged .NET ACL inspection is supported too: the measured replay probe
 // takes about 69 seconds under Electron, so retain a bounded two-minute budget.
@@ -38,7 +46,13 @@ describe.skipIf(process.platform !== 'win32')('native Windows private session st
       const files = await assets.listAssets();
       const file = join(assets.directory, files[0].path);
       const before = await fs.readFile(file);
-      execFileSync('icacls.exe', [file, '/grant', '*S-1-1-0:(R)'], { windowsHide: true });
+      // A read grant another tool adds is admitted; one that may change the
+      // file refuses without touching its bytes (session-assets-11).
+      grant(file, '(R)');
+      const granted = await assets.openAsset(asset);
+      expect(Buffer.from(await granted.read({ offset: 0, length: 16 })).toString()).toBe('fixture evidence');
+      await granted.close();
+      grant(file, '(M)');
       await expect(assets.openAsset(asset)).rejects.toThrow();
       expect(await fs.readFile(file)).toEqual(before);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
@@ -56,5 +70,37 @@ describe.skipIf(process.platform !== 'win32')('native Windows private session st
       expect(await replay.checkpoint()).toEqual({ byteLength: 8 });
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   }, 120000);
+  it('admits read grants on sessions and machine identity and refuses a modify grant', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'playbook-windows-grants-'));
+    try {
+      const env = { ...process.env, XDG_STATE_HOME: join(root, 'state') };
+      const identity = await resolveMachineIdentity({ env });
+      const identityFile = machineIdentityPath(env);
+      grant(join(root, 'state', 'playbook'), '(OI)(CI)(RX)');
+      grant(identityFile, '(RX)');
+      // Read again from disk, past the per-process cache (session-storage-27).
+      expect(await readMachineIdentity({ env, fsOps: {} })).toBe(identity);
 
+      const sessionsDir = join(root, 'sessions');
+      await mkdirPrivate(sessionsDir, fs);
+      const sessionId = '94000000-0000-4000-8000-000000000003';
+      const replay = await createBoundedReplay({ sessionId, sessionsDir });
+      await replay.initializeBytes(Buffer.from('one\n'));
+      const sessionFile = join(sessionsDir, `${sessionId}.replay.json`);
+      grant(sessionsDir, '(OI)(CI)(RX)');
+      grant(sessionFile, '(RX)');
+      const store = createCaptainSessionStore({ sessionsDir, env });
+      const lease = await store.acquire(sessionId);
+      await lease.release();
+      const reopened = await createBoundedReplay({ sessionId, sessionsDir });
+      await reopened.prepare();
+      expect((await reopened.readBytes()).toString()).toBe('one\n');
+
+      const before = await fs.readFile(sessionFile);
+      grant(sessionFile, '(M)');
+      await expect(createCaptainSessionStore({ sessionsDir, env }).acquire(sessionId))
+        .rejects.toThrow(/refuses unsafe ownership/);
+      expect(await fs.readFile(sessionFile)).toEqual(before);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  }, 120000);
 });

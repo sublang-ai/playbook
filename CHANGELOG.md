@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Native Windows private storage admits read grants** ([DR-100](specs/decisions/100-windows-private-storage-admits-read-grants.md)): session files, chunks, replay, assets, leases, repository claims and the machine identity refuse another principal's grant only when it may change the entry, its descriptor or its owner, so a host opens storage that the Codex sandbox, or another tool, has granted itself read access to; a local volume is no longer required.
+
 ## [18.1.3] - 2026-11-03
 
 ### Fixed
