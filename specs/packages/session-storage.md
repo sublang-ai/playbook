@@ -29,13 +29,26 @@ The session store shall use these locations and files for each session's canonic
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
 
-- on Windows, private entries retain opened-handle identity checks without directory `fchmod` or directory `fsync` and use the verified local owner/DACL policy of [DR-098](../decisions/098-native-windows-private-storage.md), refusing unsafe or unverified ACLs without changing their contents or ownership;
+- on Windows, private entries retain opened-handle identity checks without directory `fchmod` or directory `fsync` and qualify only by the Windows private-entry admission [[session-storage-26](#session-storage-26)], refusing any other ACL without changing its contents or ownership;
 - manifests and hints use the same private regular-file and atomic writing rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; opening prepares permissions before strict reads or granting a lease:
   - on POSIX, only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
   - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening, and a store that met a block prepares again at its next operation; preparation changes no content, ownership or lease metadata;
   - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
 - the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-97](playbook-cli.md#playbook-cli-97)] stay in place and are never inputs.
 - all hosts record the normalized absolute working directory as `cwd`; the format needs no Spex project ID or registry access.
+
+### session-storage-26
+
+Where the host runs on native Windows, every private-entry check shall admit an entry only when the current user, LocalSystem (`S-1-5-18`) or built-in Administrators (`S-1-5-32-544`) own it and its descriptor grants no other principal a right to change it ([DR-098](../decisions/098-native-windows-private-storage.md), [DR-100](../decisions/100-windows-private-storage-admits-read-grants.md)):
+
+| Allow entry for another principal | Admission |
+| --- | --- |
+| Holds none of `0x2`, `0x4`, `0x10`, `0x40`, `0x100` (data, append or child, extended attributes, child deletion, attributes), `0x10000` (delete), `0x40000` (write descriptor), `0x80000` (write owner), `0x2000000` (maximum allowed), `0x10000000` (generic all) or `0x40000000` (generic write) — e.g. read, execute and synchronize `0x1200A9` | admitted |
+| Holds any of them | refused |
+
+- allow entries for the trusted principals and deny entries are admitted whatever their rights;
+- owner and descriptor facts that are unsupported or incomplete, an absent descriptor or an unsupported entry type refuse; the volume need not be local;
+- the check never changes the entry's descriptor, contents or ownership.
 
 ### session-storage-2
 
@@ -289,6 +302,13 @@ When integration tests import assets under a real session lease, checkpoint, reo
 ### session-storage-25
 
 When private directory preparation runs on real storage, verification shall assert that an opened directory is closed on success or pathname-replacement refusal, with Windows omitting directory `fchmod` while preserving handle/path identity checks [[session-storage-1](#session-storage-1)] ([integration checks](../../reference/sdlc/code.playbook/private-paths.integration.test.ts)).
+
+### session-storage-27
+
+Where the host runs on native Windows at the declared Node minimum, real-storage verification shall grant Everyone access to existing private entries with `icacls.exe` and assert ([integration checks](../../reference/sdlc/code.playbook/windows-storage.integration.test.ts)):
+
+- a sessions directory and a session file granted read and execute, then reopened, leased and read, are admitted, and the machine identity's directory and file granted the same, read again from disk, still yield the published identity [[session-storage-26](#session-storage-26)];
+- a session file granted modify refuses opening, and its bytes are unchanged [[session-storage-26](#session-storage-26)].
 
 
 ## References

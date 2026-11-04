@@ -26,7 +26,7 @@ When a caller reads or materializes a reference, the facade shall verify the own
 Invalid references, absent bytes, corrupt bytes and paths escaping the owner shall fail explicitly.
 The facade shall provide immutable descriptor lookup by asset ID and a closeable verified reader whose bounded positional reads reuse one content integrity check and reject subsequent file mutation.
 On POSIX, the facade shall offer preparation that verifies current-user ownership and real single-link entries, requires sufficient owner permissions, tightens excess directory and file permissions to `0700` and `0600` through verified handles without changing content, and ignores and never modifies an entry named other than a digest-named asset, its `.json` descriptor or an `.import-*.tmp` temporary.
-On Windows, the facade shall verify private ownership and ACLs under [DR-098](../decisions/098-native-windows-private-storage.md), refusing unsafe or unverified entries without modifying content or ownership.
+On Windows, the facade shall verify the owner directory and asset files by the store's Windows private-entry admission [[session-storage-26](session-storage.md#session-storage-26)], refusing any other entry without modifying content or ownership.
 On POSIX, private asset checks shall compare only the ordinary `0777` permission bits, preserving previously accepted special bits when those ordinary bits are already `0700` for a directory or `0600` for a file.
 Preparation shall change no mode or file status metadata of a directory already at `0700` or a file already at `0600`, so verified readers and concurrent verification survive a repeated preparation.
 Materialized paths shall be execution-only values and shall not replace portable references.
@@ -66,3 +66,7 @@ When integration tests present malformed references, unsafe filesystem entries a
 ### session-assets-8
 
 When a consumer compiles against the packaged asset and session presentation exports and round-trips attachment-only input and evidence records through JSON, it shall verify exact empty text, complete attachment metadata, origin information and stable asset URI resolution [[session-assets-5](#session-assets-5)].
+
+### session-assets-11
+
+Where the host runs on native Windows, real-storage verification shall grant Everyone access to an imported asset file with `icacls.exe` and assert that a read grant leaves the asset readable and a modify grant refuses opening it with its bytes unchanged [[session-assets-3](#session-assets-3)] ([integration checks](../../reference/sdlc/code.playbook/windows-storage.integration.test.ts)).
