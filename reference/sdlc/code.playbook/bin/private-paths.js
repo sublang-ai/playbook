@@ -6,7 +6,9 @@
 // also as a single-link regular file — with its owner bits present; a
 // qualifying entry with excess permissions is restricted through an opened
 // handle whose identity is compared before and after, so a link swapped in
-// between check and use cannot be tightened in its place. The session store
+// between check and use cannot be tightened in its place. On Windows an
+// entry qualifies by its owner and descriptor instead and is never
+// tightened (session-storage-26). The session store
 // applies it to the sessions directory and its files; the machine identity
 // applies it to its state directory and file (playbook-cli-97).
 
@@ -18,16 +20,26 @@ import { createRequire } from 'node:module';
 const windowsPermissions = process.platform === 'win32'
   ? createRequire(import.meta.url)('@openclaw/fs-safe/permissions') : undefined;
 
+// Rights no other principal may hold over a private Windows entry
+// (session-storage-26): writing or appending data or adding a child,
+// writing extended attributes or attributes, deleting the entry or a child,
+// writing its descriptor or owner, and the maximum-allowed, generic-all and
+// generic-write rights that may hold any of them. Read, execute and
+// synchronize grants, such as the Codex sandbox's, hold none (DR-100).
+const WINDOWS_CHANGE_RIGHTS = 0x0002 | 0x0004 | 0x0010 | 0x0040 | 0x0100 |
+  0x0001_0000 | 0x0004_0000 | 0x0008_0000 | 0x0200_0000 | 0x1000_0000 | 0x4000_0000;
+
 // The library owns Windows descriptor inspection and creation. This is the
-// store's admission policy, deliberately conservative even for unusual ACEs.
+// store's admission policy (session-storage-26): trusted ownership, complete
+// supported facts, and no other principal granted a right to change the entry.
 export function privatePermissions(stat, mode, path) {
   if (process.platform !== 'win32') return (Number(stat.mode) & 0o7777) === mode;
   if (!path) throw new Error('private Windows permission checks require the entry path');
   const facts = windowsPermissions.readOwnerAndDacl(path);
-  if (facts.status !== 'supported' || !facts.complete || !facts.isLocal || !facts.daclPresent || facts.unsupportedAceTypes.length) return false;
+  if (facts.status !== 'supported' || !facts.complete || !facts.daclPresent || facts.unsupportedAceTypes.length) return false;
   const trusted = new Set([facts.currentUserSid, 's-1-5-18', 's-1-5-32-544']);
   return trusted.has(facts.ownerSid) && facts.aces.every(ace =>
-    ace.aceType === 'deny' || ace.mask === 0 || trusted.has(ace.sid));
+    ace.aceType === 'deny' || (ace.mask & WINDOWS_CHANGE_RIGHTS) === 0 || trusted.has(ace.sid));
 }
 
 export async function mkdirPrivate(path, fs, options = {}) {

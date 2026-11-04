@@ -121,8 +121,9 @@ meta.md       The spec of specs
 | [DR-095](decisions/095-merge-on-green.md) | 095-merge-on-green.md | Merge on green: `main` protected with the CI workflow's jobs as required checks and auto-merge, one run per pull-request head, base branches kept while targeted, a pre-push check, deterministic tests; the Linux-only matrix kept |
 | [DR-096](decisions/096-a-second-adapter-reviews.md) | 096-a-second-adapter-reviews.md | A second adapter reviews: with both adapters ready only `dev.reviewer` seeds on Codex; the selection ships as `@sublang/playbook/seed-config` so every host seeds the same agent settings; amends DR-053; the reviewer's effort by DR-099 |
 | [DR-097](decisions/097-readiness-reads-each-agents-token-forms.md) | 097-readiness-reads-each-agents-token-forms.md | Readiness reads each agent's token forms: `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_API_KEY` and `CODEX_ACCESS_TOKEN` count beside the API keys and sign-in folders, for the seed and the launch gate alike; amends DR-053 |
-| [DR-098](decisions/098-native-windows-private-storage.md) | 098-native-windows-private-storage.md | Native Windows private storage via fs-safe, conservative ACL admission and unchanged portable evidence |
+| [DR-098](decisions/098-native-windows-private-storage.md) | 098-native-windows-private-storage.md | Native Windows private storage via fs-safe, conservative ACL admission and unchanged portable evidence; read grants and non-local volumes admitted by DR-100 |
 | [DR-099](decisions/099-seeds-run-at-medium-effort.md) | 099-seeds-run-at-medium-effort.md | Seeds run at medium effort: every seeded agent at `medium`, a second-adapter `dev.reviewer` at `high`; the Codex row names `gpt-6.1-sol` with Cligent's Codex floor at 0.159.1; amends DR-053 and DR-096 |
+| [DR-100](decisions/100-windows-private-storage-admits-read-grants.md) | 100-windows-private-storage-admits-read-grants.md | Windows private storage admits read grants: another principal's grant refuses only when it may change the entry, so the Codex sandbox's read grant passes; no local volume required; amends DR-098 |
 
 ## Packages
 
