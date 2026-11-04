@@ -5,6 +5,7 @@ import * as fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { resolveMachineIdentity } from './machine-identity.js';
 import { machineIdentityPath, resolveMachineIdentity as readMachineIdentity } from './bin/machine-identity.js';
 import { createCaptainSessionStore } from './bin/session-store.js';
@@ -13,11 +14,21 @@ import { createBoundedReplay } from './bin/session-replay.js';
 import { mkdirPrivate } from './bin/private-paths.js';
 import { createAssetStore } from './session-assets.js';
 
+// The access masks icacls writes for these simple rights.
+const RIGHTS_MASK: Record<string, number> = { R: 0x120089, RX: 0x1200A9, M: 0x1301BF };
+
 // Grant Everyone (S-1-1-0) access, as the Codex sandbox grants its group,
-// and confirm the grant landed so an admission is not vacuous.
+// and confirm by SID and mask, never by the localized account name, that
+// the grant landed, so an admission is not vacuous.
 function grant(path: string, rights: string): void {
   execFileSync('icacls.exe', [path, '/grant', `*S-1-1-0:${rights}`], { windowsHide: true });
-  expect(execFileSync('icacls.exe', [path], { windowsHide: true }).toString()).toMatch(/Everyone/);
+  const expected = RIGHTS_MASK[/\((\w+)\)$/.exec(rights)![1]];
+  const { readOwnerAndDacl } = createRequire(import.meta.url)('@openclaw/fs-safe/permissions');
+  const facts = readOwnerAndDacl(path);
+  const granted = facts.aces
+    .filter((ace: { sid: string; aceType: string }) => ace.aceType === 'allow' && ace.sid === 's-1-1-0')
+    .reduce((mask: number, ace: { mask: number }) => mask | ace.mask, 0);
+  expect(granted & expected).toBe(expected);
 }
 
 // Packaged .NET ACL inspection is supported too: the measured replay probe
