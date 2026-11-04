@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.1.4] - 2026-11-04
+
 ### Fixed
 
 - **Native Windows private storage admits read grants** ([DR-100](specs/decisions/100-windows-private-storage-admits-read-grants.md)): session files, chunks, replay, assets, leases, repository claims and the machine identity refuse another principal's grant only when it may change the entry, its descriptor or its owner, so a host opens storage that the Codex sandbox, or another tool, has granted itself read access to; a local volume is no longer required.
@@ -1108,7 +1110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.3...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.4...HEAD
+[18.1.4]: https://github.com/sublang-ai/playbook/compare/v18.1.3...v18.1.4
 [18.1.3]: https://github.com/sublang-ai/playbook/compare/v18.1.2...v18.1.3
 [18.1.2]: https://github.com/sublang-ai/playbook/compare/v18.1.1...v18.1.2
 [18.1.1]: https://github.com/sublang-ai/playbook/compare/v18.1.0...v18.1.1
