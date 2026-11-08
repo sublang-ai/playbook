@@ -1896,6 +1896,9 @@ async function readReplayStream({
     sequence: lastReadableSeq,
     digest: parsed.digest,
     reusable: true,
+    // A bounded head is cached only when the verified chain ends on the
+    // complete line the cursor stops at; a torn tail caches no head.
+    ...(snapshot.head && completeOffset === snapshot.totalBytes ? { head: snapshot.head } : {}),
   };
   const entries = parsed.entries.filter((entry) => entry.seq > afterSeq);
   return {
@@ -1928,11 +1931,21 @@ async function readReplaySnapshot({
   catch (cause) { if (cause?.code !== 'ENOENT' && !(cause instanceof SyntaxError)) throw cause; }
   if (storedRoot === undefined || ![2, 3, 4, 5, 6, 7].includes(storedRoot.schemaVersion)) {
     const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, chunks });
-    const snapshot = await backend.readSnapshot();
-    if (snapshot.root !== null) return {
-      absent: false, bytes: snapshot.bytes, identity: {dev: 0, ino: 0},
-      incremental: false, startOffset: 0,
-    };
+    // A cursor carries a head only when this store verified that chain
+    // completely and it ended on a complete line; only then may the walk stop there.
+    const bounded = !forceFullRead && cursor !== undefined && cursor.reusable &&
+      cursor.head !== undefined && afterSeq >= cursor.sequence;
+    const snapshot = await backend.readSnapshot(
+      bounded ? { after: { head: cursor.head, totalBytes: cursor.offset } } : {},
+    );
+    if (snapshot.root !== null) {
+      if (cursor !== undefined && snapshot.root.byteLength < cursor.offset) cursor.reusable = false;
+      return {
+        absent: false, bytes: snapshot.bytes, identity: {dev: 0, ino: 0},
+        incremental: snapshot.incremental, startOffset: snapshot.incremental ? cursor.offset : 0,
+        head: snapshot.root.head, totalBytes: snapshot.root.byteLength,
+      };
+    }
     if (storedRoot?.schemaVersion === SESSION_STORAGE_VERSION) return { absent: true };
   }
 
