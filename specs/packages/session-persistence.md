@@ -83,12 +83,12 @@ The bounded replay representation shall encode each nonempty append as one logic
 - `previous` is null for the first append or a reference to its immediately preceding node; `content` references the immutable byte encoding of this append's exact UTF-8 envelope bytes [[session-persistence-11](#session-persistence-11)];
 - each reference is exactly `{sha256,byteLength}`, naming the digest and physical byte length of its encoded root file;
 - `byteLength` is a positive safe integer equal to this append's decoded byte count; `totalBytes` is a safe integer equal to that count plus the preceding node's total, or that count for the first node;
-- the replay root's head references the latest node and its byte length equals that node's total; readers follow `previous` references to null, verify every node and content reference, reject cycles and inconsistent totals, and concatenate content in reverse traversal order;
+- the replay root's head references the latest node and its byte length equals that node's total; a reader follows `previous` references to null, or to a head reference whose complete closure it verified earlier and whose remaining total equals that head's total [[playbook-cli-82](playbook-cli.md#playbook-cli-82)], verifies every node and content reference it follows, rejects cycles and inconsistent totals, and concatenates the followed content in reverse traversal order;
 - a zero-byte append creates no node, and publication changes only the replay root after its new node and content dependencies have been synced [[session-persistence-4](#session-persistence-4)];
 - a nonempty append persists its byte content and synchronously constructed JSON chain node in one serial chunk operation, retaining each new file sync and completing one dependency-directory sync before returning the head for replay-root publication;
 - internal checkpoint synchronization by the owning lifecycle may reuse a proof of its fully verified predecessor and successfully synced append publication while the directory identity and root's identity, metadata and exact bytes remain unchanged; this proof stays within one lease and assumes that lease's immutable chunks are not modified outside the storage protocol;
 - once a writer has verified or published a root, an externally changed root or containing directory blocks that writer's later append and checkpoint operations, including replacement with identical root bytes;
-- reopening, public verification and export verify the complete chain, and recovery publication verifies replay before relying on its checkpoint; a failed chain verification invalidates the local publication proof.
+- reopening, export, recovery publication before relying on its checkpoint, and a public read with no boundary the reading store verified earlier verify the complete chain, while a public read from such a boundary verifies only the nodes after it [[playbook-cli-82](playbook-cli.md#playbook-cli-82)] and establishes no publication proof; a failed chain verification invalidates the local publication proof.
 
 ## Verification
 
@@ -98,7 +98,7 @@ When integration tests save, reopen and export real sessions containing repeated
 
 ### session-persistence-9
 
-When integration tests interrupt writes and inspect malformed, missing or unsafe chunk paths, they shall verify preserved prior checkpoints, explicit incompleteness or refusal without repeated effects, dependency-before-root publication and unchanged private ownership guarantees [[session-persistence-2](#session-persistence-2)] [[session-persistence-3](#session-persistence-3)] [[session-persistence-4](#session-persistence-4)] [[session-persistence-12](#session-persistence-12)] [[session-persistence-11](#session-persistence-11)].
+When integration tests interrupt writes and inspect malformed, missing or unsafe chunk paths, they shall verify preserved prior checkpoints, explicit incompleteness or refusal without repeated effects, refusal by a new store's first read of a chunk corrupted after another store verified it, dependency-before-root publication and unchanged private ownership guarantees [[session-persistence-2](#session-persistence-2)] [[session-persistence-3](#session-persistence-3)] [[session-persistence-4](#session-persistence-4)] [[session-persistence-12](#session-persistence-12)] [[session-persistence-11](#session-persistence-11)].
 
 ### session-persistence-10
 

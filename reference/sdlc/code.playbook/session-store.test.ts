@@ -5,6 +5,8 @@ import { writeFileSync, type StatOptions } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
 import { readFixtureManifest, decodeFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile } from './test-support/session-persistence.js';
+import { createBoundedReplay } from './bin/session-replay.js';
+import { createSessionChunks } from './bin/session-chunks.js';
 import {
   chmod,
   link,
@@ -6283,6 +6285,183 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await writeFile(ownerPath, ownerBytes, 'utf8');
     await lease.release();
 
+  });
+});
+
+describe('bounded follower cursor (PBCLI-80, SP-9)', () => {
+  // Every chunk read lstats its path, even on a verified-cache hit, so this
+  // count bounds the chain a read walked regardless of the chunk cache.
+  function chunkLstatFs() {
+    const counter = { lstats: 0 };
+    const fsOps = {
+      async lstat(path: string, options?: StatOptions) {
+        if (/\.chunks\/[0-9a-f]{64}$/.test(path)) counter.lstats += 1;
+        return lstat(path, options);
+      },
+    };
+    return { counter, fsOps };
+  }
+  const envelopes = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, index) => replayEnvelope(from + index));
+  const rootPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay.json`);
+  const chunksDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.chunks`);
+  async function replaceRoot(sessionsDir: string, bytes: Buffer) {
+    const staged = join(sessionsDir, 'replacement-root');
+    await writeFile(staged, bytes, { mode: 0o600 });
+    await chmod(staged, 0o600);
+    await rename(staged, rootPathOf(sessionsDir));
+  }
+  async function boundedSession(records: number) {
+    const { sessionsDir } = await fixtureDir();
+    const { counter, fsOps } = chunkLstatFs();
+    const store = fixedStore(sessionsDir, tokenO, { fsOps });
+    const lease = await store.acquire(sessionId);
+    for (let seq = 1; seq <= records; seq++) await lease.append({ type: `record-${seq}` });
+    return { sessionsDir, counter, fsOps, store, lease };
+  }
+
+  it('reads only the appended node and content chunks through the store and the writer lease alike', async () => {
+    const { store, lease, counter } = await boundedSession(20);
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(40);
+    let last = 20;
+    for (let round = 0; round < 5; round++) {
+      await lease.append({ type: `record-${++last}` });
+      counter.lstats = 0;
+      expect(await store.readStream(sessionId, { afterSeq: last - 1 })).toEqual({
+        entries: [replayEnvelope(last)],
+        lastReadableSeq: last,
+      });
+      expect(counter.lstats).toBe(2);
+    }
+    for (let round = 0; round < 5; round++) {
+      await lease.append({ type: `record-${++last}` });
+      counter.lstats = 0;
+      const result = await lease.readStream({ afterSeq: last - 1 });
+      expect(result.entries).toEqual([replayEnvelope(last)]);
+      expect(result.lastReadableSeq).toBe(last);
+      expect(counter.lstats).toBe(2);
+    }
+    await lease.release();
+  });
+
+  it('verifies only appended nodes for an independent follower across successive retiring writer leases (PBCLI-79)', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const first = await sequencedStore(sessionsDir, 10).acquire(sessionId);
+    for (let seq = 1; seq <= 10; seq++) await first.append({ type: `record-${seq}` });
+    await first.release();
+    const { counter, fsOps } = chunkLstatFs();
+    const follower = fixedStore(sessionsDir, tokenO, { fsOps });
+    expect(await follower.readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(20);
+    for (let seq = 11; seq <= 13; seq++) {
+      const writer = await sequencedStore(sessionsDir, 10 * seq).acquire(sessionId);
+      await writer.append({ type: `record-${seq}` });
+      await writer.release();
+      counter.lstats = 0;
+      expect(await follower.readStream(sessionId, { afterSeq: seq - 1 })).toEqual({ entries: [replayEnvelope(seq)], lastReadableSeq: seq });
+      // The follower's chunk cache has not seen another writer's new node, so
+      // each of its two chunks costs a pre-read and a post-read lstat.
+      expect(counter.lstats).toBe(4);
+    }
+  });
+
+  it('verifies the complete chain for a request below the cached sequence and keeps later reads cheap', async () => {
+    const { store, lease, counter } = await boundedSession(20);
+    await store.readStream(sessionId);
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId, { afterSeq: 10 })).toEqual({ entries: envelopes(11, 20), lastReadableSeq: 20 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(40);
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(40);
+    await lease.append({ type: 'record-21' });
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId, { afterSeq: 20 })).toEqual({ entries: [replayEnvelope(21)], lastReadableSeq: 21 });
+    expect(counter.lstats).toBe(2);
+    await lease.release();
+  });
+
+  it('verifies the complete chain on a new store first read', async () => {
+    const { sessionsDir, store, lease, counter, fsOps } = await boundedSession(20);
+    await store.readStream(sessionId);
+    counter.lstats = 0;
+    const successor = fixedStore(sessionsDir, tokenN, { fsOps });
+    expect(await successor.readStream(sessionId, { afterSeq: 20 })).toEqual({ entries: [], lastReadableSeq: 20 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(40);
+    await lease.release();
+  });
+
+  it('caches no head when the verified chain ends in a torn tail', async () => {
+    const { sessionsDir } = await fixtureDir();
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await chmod(sessionsDir, 0o700);
+    const backend = await createBoundedReplay({ sessionId, sessionsDir });
+    const third = replayLine(replayEnvelope(3));
+    const torn = third.length - 5;
+    await backend.initializeBytes(Buffer.from(replayLine(replayEnvelope(1))));
+    await backend.appendBytes(Buffer.from(replayLine(replayEnvelope(2))));
+    await backend.appendBytes(Buffer.from(third.slice(0, torn)));
+    const { counter, fsOps } = chunkLstatFs();
+    const store = fixedStore(sessionsDir, tokenO, { fsOps });
+    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 2), lastReadableSeq: 2 });
+    await backend.appendBytes(Buffer.from(third.slice(torn)));
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId, { afterSeq: 2 })).toEqual({ entries: [replayEnvelope(3)], lastReadableSeq: 3 });
+    expect(counter.lstats).toBeGreaterThanOrEqual(8);
+    await backend.appendBytes(Buffer.from(replayLine(replayEnvelope(4))));
+    counter.lstats = 0;
+    expect(await store.readStream(sessionId, { afterSeq: 3 })).toEqual({ entries: [replayEnvelope(4)], lastReadableSeq: 4 });
+    expect(counter.lstats).toBe(4);
+  });
+
+  it('verifies the complete chain of a root that does not extend the cached head', async () => {
+    const { sessionsDir, store, lease, counter, fsOps } = await boundedSession(10);
+    await store.readStream(sessionId);
+    await lease.release();
+    const other = await fixtureDir();
+    await mkdir(other.sessionsDir, { recursive: true, mode: 0o700 });
+    await chmod(other.sessionsDir, 0o700);
+    const replacement = await createBoundedReplay({ sessionId, sessionsDir: other.sessionsDir });
+    const replaced = Array.from({ length: 12 }, (_, index) => replayEnvelope(index + 1, { type: `replaced-${index + 1}` }));
+    for (const envelope of replaced) await replacement.appendBytes(Buffer.from(replayLine(envelope)));
+    for (const name of await readdir(chunksDirOf(other.sessionsDir))) {
+      if (!/^[0-9a-f]{64}$/.test(name)) continue;
+      const target = join(chunksDirOf(sessionsDir), name);
+      await writeFile(target, await readFile(join(chunksDirOf(other.sessionsDir), name)), { mode: 0o600, flag: 'wx' });
+      await chmod(target, 0o600);
+    }
+    await replaceRoot(sessionsDir, await readFile(rootPathOf(other.sessionsDir)));
+    counter.lstats = 0;
+    await expect(store.readStream(sessionId, { afterSeq: 10 })).rejects.toThrow(/observed prefix/);
+    expect(counter.lstats).toBeGreaterThanOrEqual(24);
+    expect(await fixedStore(sessionsDir, tokenN, { fsOps }).readStream(sessionId)).toEqual({ entries: replaced, lastReadableSeq: 12 });
+  });
+
+  it('rejects a root shortened below the cached boundary while a new store accepts the retained prefix', async () => {
+    const { sessionsDir, store, lease } = await boundedSession(10);
+    const saved = await readFile(rootPathOf(sessionsDir));
+    for (let seq = 11; seq <= 20; seq++) await lease.append({ type: `record-${seq}` });
+    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
+    await lease.release();
+    await replaceRoot(sessionsDir, saved);
+    await expect(store.readStream(sessionId, { afterSeq: 20 })).rejects.toThrow(/rolled back/);
+    expect(await fixedStore(sessionsDir, tokenN).readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
+  });
+
+  it('refuses a chunk corrupted after another store verified it on a new store first read (SP-9)', async () => {
+    const { sessionsDir, store, lease } = await boundedSession(10);
+    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
+    await lease.release();
+    const chunks = createSessionChunks({ directory: chunksDirOf(sessionsDir) });
+    let node = await chunks.readJson(JSON.parse(await readFile(rootPathOf(sessionsDir), 'utf8')).head);
+    while (node.previous !== null) node = await chunks.readJson(node.previous);
+    const path = join(chunksDirOf(sessionsDir), node.content.sha256);
+    const bytes = await readFile(path);
+    bytes[0] ^= 1;
+    await writeFile(path, bytes);
+    await expect(fixedStore(sessionsDir, tokenN).readStream(sessionId)).rejects.toThrow();
   });
 });
 
