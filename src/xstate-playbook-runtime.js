@@ -4720,33 +4720,46 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             else {
                 const record = savedPorts?.recordStep;
-                await drainEmissions();
-                signal.throwIfAborted();
                 try {
-                    captureRecoveryCheckpoint(input.stateId, 'command' in input ? input.command : 'role' in input ? composeBoundPlayerPrompt(input) : composeCaptainPrompt(input));
+                    await drainEmissions();
+                    signal.throwIfAborted();
+                    try {
+                        captureRecoveryCheckpoint(input.stateId, 'command' in input ? input.command : 'role' in input ? composeBoundPlayerPrompt(input) : composeCaptainPrompt(input));
+                    }
+                    catch (error) {
+                        if (!isAbortFailure(error, signal))
+                            controlPlaneError ??= error;
+                        throw error;
+                    }
+                    if (record) {
+                        const id = randomUUID();
+                        if (recoveryCheckpoint)
+                            recoveryCheckpoint = { ...recoveryCheckpoint, id };
+                        const step = { id, kind, stateId: input.stateId };
+                        await record(step, exportRuntimeSnapshot({ interrupted: true }));
+                        signal.throwIfAborted();
+                        const result = snapshotJsonValue(await execute());
+                        // Keep the known output if its save loses acknowledgement. A drained
+                        // failure can then preserve it without treating the call as unexecuted.
+                        if (recoveryCheckpoint?.id === id)
+                            recoveryCheckpoint = { ...recoveryCheckpoint, result };
+                        await record({ ...step, result });
+                        output = result;
+                    }
+                    else {
+                        output = await execute();
+                    }
                 }
                 catch (error) {
-                    if (!isAbortFailure(error, signal))
-                        controlPlaneError ??= error;
+                    // DR-063 §2: the signal's own stop parks the step as `aborted`
+                    // wherever within the step it lands — entry drain, started trace,
+                    // host call, adjudication, or record — decided once for every kind.
+                    if (isAbortFailure(error, signal) ||
+                        (activeSignal !== undefined && isAbortFailure(error, activeSignal))) {
+                        failureCauses.retain(error, ABORTED_FAILURE_CAUSE);
+                        attachPlaybookFailureCause(error, ABORTED_FAILURE_CAUSE);
+                    }
                     throw error;
-                }
-                if (record) {
-                    const id = randomUUID();
-                    if (recoveryCheckpoint)
-                        recoveryCheckpoint = { ...recoveryCheckpoint, id };
-                    const step = { id, kind, stateId: input.stateId };
-                    await record(step, exportRuntimeSnapshot({ interrupted: true }));
-                    signal.throwIfAborted();
-                    const result = snapshotJsonValue(await execute());
-                    // Keep the known output if its save loses acknowledgement. A drained
-                    // failure can then preserve it without treating the call as unexecuted.
-                    if (recoveryCheckpoint?.id === id)
-                        recoveryCheckpoint = { ...recoveryCheckpoint, result };
-                    await record({ ...step, result });
-                    output = result;
-                }
-                else {
-                    output = await execute();
                 }
             }
             if (recoveryCheckpoint?.stateId === input.stateId) {
@@ -5564,6 +5577,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     if (result.status !== 'ok') {
                         resultFailure = markFsmResultFailure(new Error(result.error ??
                             `captainActor: callCaptain status "${result.status}"`));
+                        // DR-063 §2: an `aborted` host result is the Boss's own stop,
+                        // decided here as the player bridge decides its own (PBRT-47).
+                        if (result.status === 'aborted') {
+                            failureCauses.retain(resultFailure, ABORTED_FAILURE_CAUSE);
+                            attachPlaybookFailureCause(resultFailure, ABORTED_FAILURE_CAUSE);
+                        }
                     }
                     else if (isEmptyFinalText(result.finalText)) {
                         resultFailure = markFsmResultFailure(new Error('captainActor: callCaptain returned status=ok with no finalText'));

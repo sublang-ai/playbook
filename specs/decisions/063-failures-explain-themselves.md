@@ -11,6 +11,7 @@ Amends [DR-051](051-host-selected-runtime-recovery.md) and [DR-052](052-host-sel
 Everything else of those records stands.
 §4 amended (2026-09-25): one renderer and one report assembly state each failure once, in Boss's words, by rules that hold by construction.
 [DR-090](090-every-role-hears-the-boss.md) amends §4: the appended failure line and control lines carry marks and identifiers, not sentences, while the renderer's words stay in the settlement facts.
+§1 amended (2026-11-08): an `aborted` player or Captain host result is `aborted`, as the signal's own stop is, whichever call it ends; `player-failed` covers an errored player call or an `error` result.
 
 ## Context
 
@@ -40,8 +41,8 @@ Everything else of those records stands.
    | `attribution-ambiguous` | any other ambiguous receipt | `required`, `observed`, `baselineHead`, `afterHead?` |
    | `receipt-missing` | a boundary holds no complete receipt | `baselineHead` |
    | `judge-failed` | adjudication transport failed or its candidate stayed invalid | `reason`, `error?` |
-   | `player-failed` | a player call errored or reported a non-`ok` result | `roleId`, `playerId?`, `error`, `errorCode?` |
-   | `aborted` | the turn's signal aborted the work | none |
+   | `player-failed` | a player call errored or reported an `error` result | `roleId`, `playerId?`, `error`, `errorCode?` |
+   | `aborted` | the turn's signal aborted the work, or a player or Captain call reported an `aborted` result | none |
    | `child-failed` | a nested playbook failed | `playbookId`, `cause?` |
    | `runtime-defect` | a runtime or host invariant failed | `reason` |
 

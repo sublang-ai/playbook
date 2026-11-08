@@ -53,7 +53,9 @@ import {
 import { branchMachine } from '../reference/sdlc/branch.playbook/branch.fsm.js';
 import { _internal as branchArtifact } from '../reference/sdlc/branch.playbook/branch.playbook.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
-import { _internal as captainArtifact } from '../reference/sdlc/captain.playbook/captain.playbook.js';
+import createCaptainPlaybookRuntime, {
+  _internal as captainArtifact,
+} from '../reference/sdlc/captain.playbook/captain.playbook.js';
 import { codeMachine } from '../reference/sdlc/code.playbook/code.fsm.js';
 import createCodePlaybookRuntime, {
   _internal as codeArtifact,
@@ -9703,6 +9705,7 @@ describe('parked failure causes over the shared factory (DR-063)', () => {
     status?: Cause;
     transition?: Cause;
     settled?: Cause;
+    run?: Cause;
   } => {
     const traces = telemetry
       .filter(({ topic }) => topic === 'playbook.trace')
@@ -9724,9 +9727,7 @@ describe('parked failure causes over the shared factory (DR-063)', () => {
         ?.lastError?.cause,
       transition: failedTransition?.lastError?.cause,
       settled: settled?.error?.cause,
-      ...(run.outcome === 'failed' && run.error?.cause !== undefined
-        ? {}
-        : {}),
+      run: 'error' in run ? run.error?.cause : undefined,
     };
   };
 
@@ -9778,6 +9779,7 @@ describe('parked failure causes over the shared factory (DR-063)', () => {
       status: cause,
       transition: cause,
       settled: cause,
+      run: cause,
     });
     await runtime.dispose();
   });
@@ -9883,6 +9885,7 @@ describe('parked failure causes over the shared factory (DR-063)', () => {
       view: cause,
       transition: cause,
       settled: cause,
+      run: cause,
     });
     await runtime.dispose();
   });
@@ -9911,6 +9914,456 @@ describe('parked failure causes over the shared factory (DR-063)', () => {
     });
     await runtime.dispose();
   });
+
+  it('names an aborted player result an abort rather than a failure', async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'aborted' }),
+    });
+    const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+    await runtime.init(makeCodeSession(ports));
+    const run = await runtime.handleBossInput(turn('add a button'));
+
+    expect(run.outcome).toBe('failed');
+    const cause: Cause = { code: 'aborted', evidence: {} };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+      view: cause,
+      status: cause,
+      transition: cause,
+      settled: cause,
+      run: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it('names an aborted Captain result at a direct-Captain state an abort rather than a defect', async () => {
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callCaptain: async () => ({
+        status: 'aborted',
+        error: 'aborted by the Boss',
+      }),
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    const run = await runtime.handleBossInput(turn('release timing'));
+
+    expect(run.outcome).toBe('failed');
+    expect(run.state.stateId).toBe('failed');
+    expect('error' in run ? run.error?.message : undefined).toBe(
+      'aborted by the Boss',
+    );
+    const cause: Cause = { code: 'aborted', evidence: {} };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+      view: cause,
+      status: cause,
+      transition: cause,
+      settled: cause,
+      run: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it("names an aborted Captain result at the compiled Captain's own decision an abort rather than a defect", async () => {
+    let submissions = 0;
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callCaptain: async () => ({
+        status: 'aborted',
+        error: 'aborted by the Boss',
+      }),
+    });
+    const runtime = createCaptainPlaybookRuntime({
+      enabledPlaybooks: [],
+      controller: {
+        submit: async () => {
+          submissions += 1;
+          throw new Error('no decision was made to submit');
+        },
+      },
+    });
+    await runtime.init({ ...makeSession(ports), playbookId: 'captain' });
+    const run = await runtime.handleBossInput(turn('how is it going?'));
+
+    expect(submissions).toBe(0);
+    expect(run.outcome).toBe('failed');
+    expect(run.state.stateId).toBe('failed');
+    expect('error' in run ? run.error?.message : undefined).toBe(
+      'aborted by the Boss',
+    );
+    expect(
+      telemetry
+        .filter(({ topic }) => topic === 'playbook.trace')
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'fsm.transition')
+        .map(({ payload }) => payload as { from?: string; to?: string })
+        .at(-1),
+    ).toMatchObject({ from: 'deciding', to: 'failed' });
+    const cause: Cause = { code: 'aborted', evidence: {} };
+    // The compiled Captain schedules its own `◆ failed` status line in place
+    // of the factory's `◆ workflow failed` one.
+    const { view, transition, settled, run: result } = publishedCauses(
+      runtime,
+      telemetry,
+      statuses,
+      run,
+    );
+    const failedStatus = statuses.findLast(
+      ({ message }) => message === '◆ failed',
+    );
+    expect({
+      view,
+      status: (failedStatus?.data as { lastError?: { cause?: Cause } })
+        ?.lastError?.cause,
+      transition,
+      settled,
+      run: result,
+    }).toEqual({
+      view: cause,
+      status: cause,
+      transition: cause,
+      settled: cause,
+      run: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['a direct-Captain state', 'settles the call aborted', 'direct', 'resolve'],
+    ['a direct-Captain state', "rejects with the signal's reason", 'direct', 'reject'],
+    ["the compiled Captain's own decision", 'settles the call aborted', 'compiled', 'resolve'],
+    ["the compiled Captain's own decision", "rejects with the signal's reason", 'compiled', 'reject'],
+  ] as const)(
+    'names a turn aborted at %s an abort when the host then %s',
+    async (_place, _settlement, fixture, settle) => {
+      const controller = new AbortController();
+      let submissions = 0;
+      const { ports, telemetry, statuses } = makeRecordingPorts({
+        callCaptain: async () => {
+          controller.abort(new Error('aborted by the Boss'));
+          if (settle === 'reject') throw controller.signal.reason;
+          return { status: 'aborted', error: 'aborted by the Boss' };
+        },
+      });
+      const runtime =
+        fixture === 'direct'
+          ? createCaptainRuntime({})
+          : createCaptainPlaybookRuntime({
+              enabledPlaybooks: [],
+              controller: {
+                submit: async () => {
+                  submissions += 1;
+                  throw new Error('no decision was made to submit');
+                },
+              },
+            });
+      await runtime.init(
+        fixture === 'direct'
+          ? makeSession(ports)
+          : { ...makeSession(ports), playbookId: 'captain' },
+      );
+      const run = await runtime.handleBossInput({
+        text: 'how is it going?',
+        signal: controller.signal,
+      });
+
+      expect(submissions).toBe(0);
+      expect(run.outcome).toBe('aborted');
+      expect(run.state.stateId).toBe('failed');
+      const traces = telemetry
+        .filter(({ topic }) => topic === 'playbook.trace')
+        .map(({ payload }) => payload as PlaybookTraceEvent);
+      expect(
+        traces
+          .filter(({ type }) => type === 'fsm.transition')
+          .map(({ payload }) => payload as { from?: string; to?: string })
+          .at(-1),
+      ).toMatchObject(
+        fixture === 'direct'
+          ? { to: 'failed' }
+          : { from: 'deciding', to: 'failed' },
+      );
+      expect(
+        traces
+          .filter(({ type }) => type === 'captain.call.finished')
+          .map(({ payload }) => (payload as { status?: string }).status),
+      ).toEqual(['aborted']);
+      const cause: Cause = { code: 'aborted', evidence: {} };
+      const published = publishedCauses(runtime, telemetry, statuses, run);
+      // The compiled Captain schedules its own `◆ failed` status line in place
+      // of the factory's `◆ workflow failed` one.
+      const status =
+        fixture === 'direct'
+          ? published.status
+          : (
+              statuses.findLast(({ message }) => message === '◆ failed')
+                ?.data as { lastError?: { cause?: Cause } } | undefined
+            )?.lastError?.cause;
+      expect({ ...published, status }).toEqual({
+        view: cause,
+        status: cause,
+        transition: cause,
+        settled: cause,
+        run: cause,
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    ['its started-trace sink', 'sink', 0, ['aborted'], []],
+    ['its entry, before the host call begins', 'entry', 0, [], []],
+    ['its output adjudication', 'adjudication', 1, ['ok'], ['aborted']],
+  ] as const)(
+    'names a turn aborted at a direct-Captain state in %s an abort',
+    async (_place, placement, hostCalls, captainFinishes, judgeFinishes) => {
+      const controller = new AbortController();
+      const stop = (): never => {
+        controller.abort(new Error('aborted by the Boss'));
+        throw controller.signal.reason;
+      };
+      let captainCalls = 0;
+      const recording = makeRecordingPorts({
+        callCaptain: async () => {
+          captainCalls += 1;
+          return { status: 'ok', finalText: 'Ship it on Tuesday.' };
+        },
+        callJudge: async () =>
+          placement === 'adjudication' ? stop() : '{"guard":"final"}',
+      });
+      const { telemetry, statuses } = recording;
+      const ports: PlaybookPorts = {
+        ...recording.ports,
+        emitTelemetry: async (event) => {
+          await recording.ports.emitTelemetry(event);
+          if (event.topic !== 'playbook.trace') return;
+          const trace = event.payload as PlaybookTraceEvent;
+          if (placement === 'sink' && trace.type === 'captain.call.started') {
+            stop();
+          }
+          if (
+            placement === 'entry' &&
+            trace.type === 'fsm.transition' &&
+            (trace.payload as { to?: string }).to === 'decide'
+          ) {
+            controller.abort(new Error('aborted by the Boss'));
+          }
+        },
+      };
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+      const run = await runtime.handleBossInput({
+        text: 'release timing',
+        signal: controller.signal,
+      });
+
+      expect(captainCalls).toBe(hostCalls);
+      expect(run.outcome).toBe('aborted');
+      expect(run.state.stateId).toBe('failed');
+      const finishes = (type: string) =>
+        telemetry
+          .filter(({ topic }) => topic === 'playbook.trace')
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter((trace) => trace.type === type)
+          .map(({ payload }) => (payload as { status?: string }).status);
+      expect(finishes('captain.call.finished')).toEqual(captainFinishes);
+      expect(finishes('judge.call.finished')).toEqual(judgeFinishes);
+      const cause: Cause = { code: 'aborted', evidence: {} };
+      expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+        view: cause,
+        status: cause,
+        transition: cause,
+        settled: cause,
+        run: cause,
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    ['its started-trace sink', 'sink', 0],
+    ['the host call, settled aborted', 'resolve', 1],
+    ["the host call, rejected with the signal's reason", 'reject', 1],
+  ] as const)(
+    'names a turn aborted at a player call in %s an abort',
+    async (_place, placement, hostCalls) => {
+      const controller = new AbortController();
+      const stop = (): never => {
+        controller.abort(new Error('aborted by the Boss'));
+        throw controller.signal.reason;
+      };
+      let playerCalls = 0;
+      const recording = makeRecordingPorts({
+        callPlayer: async () => {
+          playerCalls += 1;
+          if (placement === 'reject') stop();
+          controller.abort(new Error('aborted by the Boss'));
+          return { status: 'aborted' };
+        },
+      });
+      const { telemetry, statuses } = recording;
+      const ports: PlaybookPorts = {
+        ...recording.ports,
+        emitTelemetry: async (event) => {
+          await recording.ports.emitTelemetry(event);
+          if (
+            placement === 'sink' &&
+            event.topic === 'playbook.trace' &&
+            (event.payload as PlaybookTraceEvent).type === 'player.call.started'
+          ) {
+            stop();
+          }
+        },
+      };
+      const runtime = createCodePlaybookRuntime(codeRuntimeConstruction());
+      await runtime.init(makeCodeSession(ports));
+      const run = await runtime.handleBossInput({
+        text: 'add a button',
+        signal: controller.signal,
+      });
+
+      expect(playerCalls).toBe(hostCalls);
+      expect(run.outcome).toBe('aborted');
+      expect(
+        telemetry
+          .filter(({ topic }) => topic === 'playbook.trace')
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter(({ type }) => type === 'player.call.finished')
+          .map(({ payload }) => (payload as { status?: string }).status),
+      ).toEqual(['aborted']);
+      const cause: Cause = { code: 'aborted', evidence: {} };
+      expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+        view: cause,
+        status: cause,
+        transition: cause,
+        settled: cause,
+        run: cause,
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it('names a turn aborted while its script runs an abort', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-cause-'));
+    let scriptPid: number | undefined;
+    try {
+      const controller = new AbortController();
+      const { ports, telemetry, statuses } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      });
+      const runtime = createWorkflowRuntime({
+        command: `echo $$ > ${dir}/script.pid; exec sleep 30`,
+      });
+      await runtime.init(makeSession(ports));
+      const pending = runtime.handleBossInput({
+        text: 'run the script',
+        signal: controller.signal,
+      });
+      // A script announces nothing before it exits, so the command itself
+      // reports that it is running.
+      for (let attempt = 0; scriptPid === undefined; attempt += 1) {
+        if (attempt === 200) throw new Error('script.pid was never written');
+        await new Promise((tick) => setTimeout(tick, 25));
+        const text = await readFile(join(dir, 'script.pid'), 'utf8').catch(
+          () => '',
+        );
+        const pid = Number.parseInt(text.trim(), 10);
+        if (Number.isInteger(pid) && pid > 0) scriptPid = pid;
+      }
+      controller.abort(new Error('aborted by the Boss'));
+      const run = await pending;
+
+      expect(run.outcome).toBe('aborted');
+      expect(run.state.stateId).toBe('failed');
+      expect(() => process.kill(scriptPid!, 0)).toThrow();
+      const cause: Cause = { code: 'aborted', evidence: {} };
+      expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+        view: cause,
+        status: cause,
+        transition: cause,
+        settled: cause,
+        run: cause,
+      });
+      await runtime.dispose();
+    } finally {
+      if (scriptPid !== undefined) {
+        try {
+          process.kill(-scriptPid, 'SIGKILL');
+        } catch {
+          // The runtime already took the group down.
+        }
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('names a turn aborted at a direct-Captain state in its progress record an abort', async () => {
+    const controller = new AbortController();
+    let captainCalls = 0;
+    let records = 0;
+    const { ports, telemetry, statuses } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return { status: 'ok', finalText: 'Ship it on Tuesday.' };
+      },
+      callJudge: async () => '{"guard":"final"}',
+      recordStep: async () => {
+        records += 1;
+        controller.abort(new Error('aborted by the Boss'));
+        throw controller.signal.reason;
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    const run = await runtime.handleBossInput({
+      text: 'release timing',
+      signal: controller.signal,
+    });
+
+    expect(records).toBe(1);
+    expect(captainCalls).toBe(0);
+    expect(run.outcome).toBe('aborted');
+    expect(run.state.stateId).toBe('failed');
+    const cause: Cause = { code: 'aborted', evidence: {} };
+    expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+      view: cause,
+      status: cause,
+      transition: cause,
+      settled: cause,
+      run: cause,
+    });
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['with', { status: 'error', error: 'captain unavailable' }, 'captain unavailable'],
+    ['without', { status: 'error' }, 'captainActor: callCaptain status "error"'],
+  ] as const)(
+    'names an `error` Captain result %s a host error string at a direct-Captain state a defect',
+    async (_label, captainResult, reason) => {
+      const controller = new AbortController();
+      const { ports, telemetry, statuses } = makeRecordingPorts({
+        callCaptain: async () => captainResult,
+      });
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+      const run = await runtime.handleBossInput({
+        text: 'release timing',
+        signal: controller.signal,
+      });
+
+      expect(controller.signal.aborted).toBe(false);
+      expect(run.outcome).toBe('failed');
+      expect(run.state.stateId).toBe('failed');
+      const cause: Cause = { code: 'runtime-defect', evidence: { reason } };
+      expect(publishedCauses(runtime, telemetry, statuses, run)).toEqual({
+        view: cause,
+        status: cause,
+        transition: cause,
+        settled: cause,
+        run: cause,
+      });
+      await runtime.dispose();
+    },
+  );
 
   it.each([
     ['a string', 'coder is down'],
