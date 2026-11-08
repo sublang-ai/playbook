@@ -460,4 +460,4 @@ The suites shall further fail unless a rejected player port, a non-`ok` player r
 
 #### playbook-57
 
-When the BRANCH and PR conformance suites drive their real artifact-schema-3 runtimes, whose compiled machines keep a JSON-safe record of a failure as `lastError`, they shall fail unless a rejected Coder port and a non-`ok` Coder result each publish `player-failed` naming the Coder role and its bound player from the failed state's status data, the control view, the exported snapshot, and — where the turn settles rather than rejects — the run result (verifying [[playbook-55](#playbook-55)]).
+When the BRANCH and PR conformance suites drive their real artifact-schema-3 runtimes, whose compiled machines keep a JSON-safe record of a failure as `lastError`, they shall fail unless a rejected Coder port and an `error` Coder result each publish `player-failed` naming the Coder role and its bound player from the failed state's status data, the control view, the exported snapshot, and — where the turn settles rather than rejects — the run result (verifying [[playbook-55](#playbook-55)]).
