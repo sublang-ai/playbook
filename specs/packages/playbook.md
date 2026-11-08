@@ -13,7 +13,7 @@ This package specifies agreement among the maintained CODE, REVIEW, DECIDE, DEV,
 
 #### playbook-1
 
-Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, `DEV-1` through `DEV-6`, `BRANCH-1`, `PR-1` through `PR-7`, or `INSPECT-1`, while the compiled FSM and runtime shall implement every preserved outcome.
+Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-3`, `REVIEW-1` through `REVIEW-4`, `DECIDE-1` through `DECIDE-4`, `DEV-1` through `DEV-6`, `BRANCH-1`, `PR-1` through `PR-7`, or `INSPECT-1`, while the compiled FSM and runtime shall implement every preserved outcome.
 Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
 The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
 The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE, REVIEW, DEV, BRANCH, PR, and INSPECT shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
@@ -61,21 +61,12 @@ The prompt shall bound Analyst's reading of the specs and the repository to what
 
 ### Workflow behavior
 
-#### playbook-60
-
-When CODE prepares a later IR-task invocation, CODE shall deliver its prior-phase canonical review context according to these lifecycle cases ([DR-081](../decisions/081-code-prior-review-relay.md)):
-
-| Case | Required context |
-| --- | --- |
-| Accepted canonical clean REVIEW | Freeze the exact direct, new-intent or IR-task kind, IR/task when present, receipt-owned CODE scope commit and REVIEW evaluated revision as distinct identities, using no player prose or caller override. |
-| Later IR task, including permitted restoration and Boss-answer continuation | Relay the frozen record as quoted evidence and instruct Coder to verify clean current HEAD equals its evaluated revision before treating it as current; the record authorizes neither this task's independent review nor a new owner or release decision. |
-| Fresh start or explicit interruption | Clear the previous record; a later invocation explicitly reports its absence. |
-
 #### playbook-20
 
-When CODE receives a coding request, CODE shall run its first phase as a direct implementation, a new-IR phase, or an existing IR's next unfinished task, obtain and retain from the qualifying repository receipt the exact Coder commit for each phase under [[playbook-32](#playbook-32)], call REVIEW at the end of every phase with the original intent, the review scope naming that exact commit, and the Coder output, start no later phase until REVIEW establishes that scope evaluated with no unsettled findings, and after the direct phase or the final IR task so passes terminate successfully reporting the exact last CODE-owned commit, the exact final evaluated repository revision, and the fact that every phase's review passed:
+When CODE receives a coding request, CODE shall run its first phase as a direct implementation, a new-IR phase, or an existing IR's next unfinished task, continue from a new-IR or nonfinal IR-task phase to the next unfinished IR-task phase with no review between phases, obtain and retain from each qualifying repository receipt the exact Coder commit of every phase in order under [[playbook-32](#playbook-32)], call REVIEW once after the direct phase or the final IR task with the original intent, the review scope naming every retained commit oldest first with the resulting repository state, the final phase's Coder output, and for an IR its number, and after REVIEW establishes that scope evaluated with no unsettled findings terminate successfully reporting the exact last CODE-owned commit, the exact final evaluated repository revision, and the fact that the intent's review passed ([DR-102](../decisions/102-code-reviews-the-intent-once.md)):
 
 - Standalone documentation or status maintenance that implements no identified unfinished IR task, including a reference to an IR with no unfinished task: new change intent, direct where it can be completed well in one commit and the existing new-IR sequence otherwise, with no invented or reopened task in the referenced IR and no owner acceptance inferred beyond the caller's request.
+- The later IR-task prompt states that the intent's earlier phases await the one REVIEW that follows its final task, so Coder asks Boss for no review of them.
 
 #### playbook-24
 
@@ -84,11 +75,17 @@ When the nested REVIEW call fails outside that authored result contract, CODE sh
 
 #### playbook-21
 
-When REVIEW receives its caller's intent, scope, and context, REVIEW shall have Reviewer evaluate the review scope in its cumulative committed state against the relayed original intent, relay the complete caller input every round and to Coder plus the receipt-derived review-fix commit and Coder feedback after each disposition, ask Coder to accept or reject every finding with one new review-fix commit or a no-commit all-rejected rebuttal, and begin a new receipt-validated Reviewer round after each disposition under [[playbook-34](#playbook-34)] until Reviewer affirmatively reports the requested review complete with no unsettled findings; a progress report, status update, or promise of a later result supports no review outcome.
+When REVIEW receives its caller's intent, scope, and context, REVIEW shall have Reviewer evaluate the review scope in its cumulative committed state against the relayed original intent, relay the complete caller input every round and to Coder plus the receipt-derived review-fix commit and Coder feedback after each disposition, ask Coder to accept or reject every finding with one new review-fix commit or a no-commit all-rejected rebuttal, and begin a new receipt-validated Reviewer round after each disposition under [[playbook-34](#playbook-34)] until Reviewer affirmatively reports the requested review complete with no unsettled findings or the third round ends with findings under [[playbook-62](#playbook-62)]; a progress report, status update, or promise of a later result supports no review outcome.
 
 #### playbook-26
 
 When Reviewer affirmatively reports the requested review complete with no unsettled findings, REVIEW shall terminate successfully with `{ noUnsettledFindings: true, evaluatedRevision }`, where `evaluatedRevision` is the exact receipt-proven repository revision the final clean round evaluated per [DR-045](../decisions/045-unchanged-receipt-revision-authority.md), and its terminal state description shall report that completion.
+
+#### playbook-62
+
+While REVIEW has run three Reviewer rounds — the first review and one round after each of two Coder dispositions, a review-fix commit or an all-rejected rebuttal alike — when Reviewer raises or keeps any finding, REVIEW shall terminate at its `unsettled` failure terminal with `{ noUnsettledFindings: false, reviewerOutput }` carrying Reviewer's final findings, call Coder for no further disposition, and publish a terminal state description reporting that findings remain unsettled and no further fix round runs ([DR-102](../decisions/102-code-reviews-the-intent-once.md)):
+
+- a Boss interruption that restarts the first review resets the round count to one, while one that redoes a later round keeps it.
 
 #### playbook-22
 
@@ -185,7 +182,8 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 
 | Workflow | Success terminal state | Failure-relay terminal state |
 | --- | --- | --- |
-| CODE | entered only after REVIEW establishes the direct phase's or final IR task's scope evaluated with no unsettled findings [[playbook-20](#playbook-20)] | entered on an authored REVIEW abort or failure, or on a terminal REVIEW result that does not establish the evaluated scope [[playbook-24](#playbook-24)] |
+| CODE | entered only after the one REVIEW establishes the intent's scope evaluated with no unsettled findings [[playbook-20](#playbook-20)] | entered on an authored REVIEW abort or failure, or on a terminal REVIEW result that does not establish the evaluated scope [[playbook-24](#playbook-24)] |
+| REVIEW | `done`, entered only when Reviewer affirmatively reports no unsettled findings [[playbook-26](#playbook-26)] | `unsettled`, entered only by findings raised or kept at the third round [[playbook-62](#playbook-62)] |
 | DECIDE | entered only when REVIEW establishes the DECIDE-owned commit's scope evaluated with no unsettled findings [[playbook-22](#playbook-22)] | entered on those same authored REVIEW outcomes [[playbook-25](#playbook-25)] |
 | DEV | entered only by the final child's proven canonical success [[playbook-38](#playbook-38)] | entered on an authored child abort, failure, or insufficient terminal result [[playbook-38](#playbook-38)] |
 | BRANCH | `branched`, entered only by an affirmatively supported branched outcome whose receipt proves the repository exact [[playbook-43](#playbook-43)] | `refused`, entered only by an affirmatively supported refusal [[playbook-43](#playbook-43)] |
@@ -201,8 +199,8 @@ Where a workflow declares more than one authored terminal outcome, its compiled 
 
 Every maintained workflow's compiled FSM shall declare each of its final states' terminal kind in `meta.playbook.terminal`, so a caller routes a completed child from the machine that child reached rather than from that child's output fields [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)]:
 
-- each success terminal state of [[playbook-27](#playbook-27)] — BRANCH's `branched` and both of PR's `mergedLocalUpdated` and `mergedLocalNotUpdated` among them — REVIEW's one completion, and DEV's discussion-complete state declare `success`;
-- each failure-relay terminal state of [[playbook-27](#playbook-27)] — BRANCH's `refused` and each of PR's `notPublished`, `fixFailed`, `fixNotPublished`, `checksFailed`, and `mergeUnconfirmed` among them — declares `failure`;
+- each success terminal state of [[playbook-27](#playbook-27)] — BRANCH's `branched` and both of PR's `mergedLocalUpdated` and `mergedLocalNotUpdated` among them — REVIEW's `done`, and DEV's discussion-complete state declare `success`;
+- each failure-relay terminal state of [[playbook-27](#playbook-27)] — BRANCH's `refused`, REVIEW's `unsettled`, and each of PR's `notPublished`, `fixFailed`, `fixNotPublished`, `checksFailed`, and `mergeUnconfirmed` among them — declares `failure`;
 - the recoverable parked `failed` state is not final and declares no kind.
 
 A caller's compiled FSM shall therefore route a maintained child's failure terminal through its `invoke.onError` authored-outcome arm [[playbook-runtime-84](playbook-runtime.md#playbook-runtime-84)], relaying the child's own output as its relayed failure evidence.
@@ -217,20 +215,20 @@ Where CODE runs under artifact schema `3`, each delegated Coder outcome shall de
 
 | Source state | Accepted outcome | Payload authority | Repository disposition | Target state |
 | --- | --- | --- | --- | --- |
-| `firstPhase` | `directCommit` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewNewIntentPhase` |
-| `firstPhase` | `irCommit` | presentation `coderOutput`; semantic `irNumber`; effect `latestCommit` | `one-descendant-commit` | `reviewNewIntentPhase` |
-| `firstPhase` | `moreTasks` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTaskPhase` |
-| `firstPhase` | `finalTask` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTaskPhase` |
+| `firstPhase` | `directCommit` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewIntent` |
+| `firstPhase` | `irCommit` | presentation `coderOutput`; semantic `irNumber`; effect `latestCommit` | `one-descendant-commit` | `irTaskPhase` |
+| `firstPhase` | `moreTasks` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `irTaskPhase` |
+| `firstPhase` | `finalTask` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIntent` |
 | `firstPhase` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
-| `irTaskPhase` | `moreTasks` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTaskPhase` |
-| `irTaskPhase` | `finalTask` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIrTaskPhase` |
+| `irTaskPhase` | `moreTasks` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `irTaskPhase`, reentered |
+| `irTaskPhase` | `finalTask` | presentation `coderOutput`; semantic `irNumber`, `irTask`; effect `latestCommit` | `one-descendant-commit` | `reviewIntent` |
 | `irTaskPhase` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
 
-- `firstPhase` / `directCommit`: includes standalone documentation or status maintenance implementing no identified unfinished IR task, completed in one phase under the ordinary new-change assessment even when it refers to an IR with no unfinished task, with the same qualifying commit receipt and mandatory REVIEW as direct implementation [[playbook-20](#playbook-20)].
+- `firstPhase` / `directCommit`: includes standalone documentation or status maintenance implementing no identified unfinished IR task, completed in one phase under the ordinary new-change assessment even when it refers to an IR with no unfinished task, with the same qualifying commit receipt and one mandatory REVIEW as direct implementation [[playbook-20](#playbook-20)].
 
 For both Coder states, `needsBossReply` shall use the compiler's standard framework-owned description [[compiler-results-5](compiler-results.md#compiler-results-5)] and mean an unanswered clarifying question required to finish the current coding phase at call end, excluding resolved interim questions and prerequisites only for later stages under the runtime's current-call adjudication rule [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)]; contradictory or insufficient completion evidence shall establish no forced commit outcome.
 For an implemented IR task, the Coder prompts shall require ordinary-prose reporting of its identity and whether any IR task still has unfinished Coder work, identifying the next unfinished task if present or stating this was the final IR task's Coder work, distinguishing pending independent REVIEW, owner acceptance and later delivery/workshop steps from that status unless the IR assigns their work to a remaining task, and claiming only facts the IR and completed work establish.
-The Coder prompts shall require exactly one phase-owned commit for each completed phase, but when a required Boss answer prevents completion of the current phase or IR task they shall require asking and returning without committing, preserving permitted uncommitted work for the deferred continuation [[playbook-30](#playbook-30)] rather than creating a partial or blocker-only commit, and making the completed phase's one commit before REVIEW after the answer permits completion.
+The Coder prompts shall require exactly one phase-owned commit for each completed phase, but when a required Boss answer prevents completion of the current phase or IR task they shall require asking and returning without committing, preserving permitted uncommitted work for the deferred continuation [[playbook-30](#playbook-30)] rather than creating a partial or blocker-only commit, and making the completed phase's one commit after the answer permits completion.
 They shall prescribe no `Commit:` marker or other response formatting, while the reconciler shall treat `coderOutput` as opaque presentation, obtain `latestCommit` only from the matching receipt OID, and retain `irNumber`, `irTask` naming the exact implemented task, and the `moreTasks` versus `finalTask` choice as exact semantic evidence under [[playbook-runtime-77](playbook-runtime.md#playbook-runtime-77)].
 Each accepted matrix arm shall execute one stable `playbook.acceptedOutcome` marker carrying its exact source, target, and accepted outcome under [[playbook-runtime-81](playbook-runtime.md#playbook-runtime-81)], and each deferred arm shall use the checkpoint-bound continuation of [[playbook-30](#playbook-30)].
 The CODE source, GEARS, FSM, linked runtime, declarations, and registry shall move atomically to artifact schema `3` under runtime ABI `1` [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] while preserving their agreement under [[playbook-1](#playbook-1)].
@@ -247,10 +245,10 @@ Where REVIEW runs under artifact schema `3`, each delegated outcome shall declar
 | `fixFindings` | `committed` | presentation `coderOutput`; effect `latestCommit` | `one-descendant-commit` | `reviewAfterFix` |
 | `fixFindings` | `rejectedAll` | presentation `coderOutput` | `unchanged` | `reviewAfterRejection` |
 | `fixFindings` | `needsBossReply` | presentation `question` | `deferred` | `awaitBossReply` |
-| `reviewAfterFix` | `hasFindings` | presentation `reviewerOutput` | `unchanged` | `fixFindings` |
+| `reviewAfterFix` | `hasFindings` | presentation `reviewerOutput` | `unchanged` | `fixFindings` before the third round; `unsettled` at it [[playbook-62](#playbook-62)] |
 | `reviewAfterFix` | `noFindings` | effect `evaluatedRevision` | `unchanged` | `done` |
 | `reviewAfterFix` | `needsBossReply` | presentation `question` | `unchanged` | `awaitBossReply` |
-| `reviewAfterRejection` | `hasFindings` | presentation `reviewerOutput` | `unchanged` | `fixFindings` |
+| `reviewAfterRejection` | `hasFindings` | presentation `reviewerOutput` | `unchanged` | `fixFindings` before the third round; `unsettled` at it [[playbook-62](#playbook-62)] |
 | `reviewAfterRejection` | `noFindings` | effect `evaluatedRevision` | `unchanged` | `done` |
 | `reviewAfterRejection` | `needsBossReply` | presentation `question` | `unchanged` | `awaitBossReply` |
 
@@ -350,10 +348,6 @@ The report shall preserve the complete Inspector explanation, and the authored p
 
 ## Verification
 
-#### playbook-61
-
-When model-free integration drives real linked CODE and REVIEW factories with actual Git commits through the shared host, it shall verify a frozen scope/task record with distinct CODE and review-fix descendant revisions reaches the next IR task, stale pending-review document text does not hide the canonical evidence, permitted restore and Boss answer retain it, failed or malformed review starts no later task, and the prompt restricts current reliance to matching clean evaluated HEAD without granting a new owner or release decision [[playbook-60](#playbook-60)].
-
 #### playbook-59
 
 When integration tests run compiled INSPECT through its real registry and shared host, they shall verify unchanged-repository completion, Boss clarification and fresh continuation, unavailable-evidence failure, and authentic media presentation without a fabricated capture claim [[playbook-58](#playbook-58)].
@@ -400,7 +394,7 @@ When the DEV prompt-contract suite runs, it shall fail if a composed Analyst pro
 
 #### playbook-23
 
-When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE sequences each retained commit through nested REVIEW, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result, DECIDE preserves blind parallel proposals until both are complete, each parent reports an authored child failure or invalid success with its exact last owned commit and without starting further work, each such authored failure or invalid success settles in a terminal state whose published description reports that REVIEW failure while the approval-backed terminal state is entered only by an exact approval, each terminal result carries the exact description of the final state reached, and each parent parks on a nested REVIEW control-plane failure without reporting an authored outcome (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], [[playbook-26](#playbook-26)], and [[playbook-27](#playbook-27)]).
+When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE reaches nested REVIEW once, after the direct phase or the final IR task, naming every retained phase commit and relaying the IR number of an IR, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result and ends findings kept at its third round at its `unsettled` terminal with the declared failure result and no further Coder call, DECIDE preserves blind parallel proposals until both are complete, each parent reports an authored child failure or invalid success with its exact last owned commit and without starting further work, each such authored failure or invalid success settles in a terminal state whose published description reports that REVIEW failure while the approval-backed terminal state is entered only by an exact approval, each terminal result carries the exact description of the final state reached, and each parent parks on a nested REVIEW control-plane failure without reporting an authored outcome (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], [[playbook-26](#playbook-26)], [[playbook-27](#playbook-27)], and [[playbook-62](#playbook-62)]).
 
 #### playbook-29
 
@@ -410,14 +404,16 @@ When maintained-workflow conformance drives equivalent artifact-schema-3 governe
 
 When the CODE conformance suites drive its real artifact-schema-3 runtime, they shall fail unless the source, GEARS, and compiled prompts contain no `Commit:` response-format instruction; no presentation parser influences a transition, except that a commit outcome over an unchanged receipt reads whether the final text names the commit already at HEAD; missing, glued, fenced, quoted, duplicated, or misleading `Commit:` prose leaves the accepted arm unchanged under equal semantic and effect evidence; each of the four commit outcomes accepts only a matching `one-descendant-commit` receipt and obtains `latestCommit` from its exact OID; a `directCommit` candidate over two new commits resolves with `latestCommit` from the last and both listed, and one over an `unchanged` receipt whose HEAD the Coder's final text names resolves with that HEAD and reviews it ([DR-088](../decisions/088-a-commit-outcome-takes-every-new-commit.md)); for a commit candidate every other unchanged, worktree-only, rewritten or non-descendant, or observation-ambiguous receipt, including one caused by post-commit residual worktree state, remains unresolved, while a commit that absorbs pre-existing uncommitted changes resolves with `latestCommit` from its OID; `irNumber`, `irTask`, and `moreTasks` versus `finalTask` come only from exact semantic candidates; a semantic `latestCommit` is rejected; both Coder states exercise deferred `needsBossReply` through an exact-checkpoint authored continuation and cumulative original-baseline receipt; every accepted arm publishes its exact confirmed marker and status while an unaccepted fallback publishes neither; and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-32](#playbook-32)] (verifying [[playbook-1](#playbook-1)], [[playbook-20](#playbook-20)], and [[playbook-30](#playbook-30)]):
 
-- Caller-requested status update to an IR whose tasks are already complete: `directCommit` on its real commit receipt, nested REVIEW for that exact commit, and completion only after the canonical clean REVIEW, with no invented or started IR task (verifying [[playbook-20](#playbook-20)] and [[playbook-32](#playbook-32)]).
+- Caller-requested status update to an IR whose tasks are already complete: `directCommit` on its real commit receipt, the one nested REVIEW naming that exact commit, and completion only after the canonical clean REVIEW, with no invented or started IR task (verifying [[playbook-20](#playbook-20)] and [[playbook-32](#playbook-32)]).
 
-The suites shall further fail unless the real CODE runtime and repository-effect host preserve full worker text and forward the existing current-call guidance and the standard framework-owned question description in adjudication, the first existing-IR and later IR-task calls receive the ordinary-prose task-finality instruction, explicit semantic task-finality candidates alone select more versus final tasks, a matching completed-phase candidate reaches REVIEW on its exact one-commit receipt despite resolved interim questions or later-stage prerequisites, a genuine unanswered current-phase question over an unchanged receipt remains the authored wait, and a blocked completion or a question candidate contradicting a one-commit receipt remains unresolved without REVIEW or player replay (verifying [[playbook-32](#playbook-32)]).
-The suites shall further fail unless both Coder states' real invocation prompts require returning uncommitted when a mandatory Boss answer blocks current-phase completion, their deferred waits preserve permitted uncommitted changes without a partial commit or premature REVIEW, their exact-answer continuations make one cumulative phase-owned commit before REVIEW, and a partial commit with an unanswered required current-task question remains unresolved without a new REVIEW or player replay (verifying [[playbook-32](#playbook-32)]).
+The suites shall further fail unless the real CODE runtime and repository-effect host preserve full worker text and forward the existing current-call guidance and the standard framework-owned question description in adjudication, the first existing-IR and later IR-task calls receive the ordinary-prose task-finality instruction, explicit semantic task-finality candidates alone select more versus final tasks, a matching completed-phase candidate advances on its exact one-commit receipt — to REVIEW after the direct phase or the final task, to the next IR-task phase otherwise — despite resolved interim questions or later-stage prerequisites, a genuine unanswered current-phase question over an unchanged receipt remains the authored wait, and a blocked completion or a question candidate contradicting a one-commit receipt remains unresolved without a later phase, REVIEW or player replay (verifying [[playbook-32](#playbook-32)]).
+The suites shall further fail unless both Coder states' real invocation prompts require returning uncommitted when a mandatory Boss answer blocks current-phase completion, their deferred waits preserve permitted uncommitted changes without a partial commit or a premature later phase or REVIEW, their exact-answer continuations make one cumulative phase-owned commit before the phase ends, and a partial commit with an unanswered required current-task question remains unresolved without a later phase, REVIEW or player replay (verifying [[playbook-32](#playbook-32)]).
+The suites shall further fail unless a multi-task intent through the real CODE and REVIEW factories with actual Git commits reaches one REVIEW after its final task, naming every phase commit oldest first with the IR number, while a later IR-task prompt carries no prior-phase review and tells Coder that the earlier phases await that one REVIEW, and unless the frozen-record relay of the now-retired `playbook-60` appears in no prompt (verifying [[playbook-20](#playbook-20)]).
 
 #### playbook-35
 
 When the REVIEW conformance suites drive its real artifact-schema-3 runtime, they shall fail unless every outcome from all three Reviewer states accepts only a matching `unchanged` receipt, including each question and separately governed answer continuation; Coder `committed` accepts only `one-descendant-commit`; Coder `rejectedAll` accepts only `unchanged`; `latestCommit` and `evaluatedRevision` come only from their matching receipts, with a judge-authored value for either rejected as a structural error; every Reviewer and Coder prompt relays the caller's complete request; the post-commit round relays the exact receipt OID; mismatched or ambiguous evidence remains unresolved without replaying Coder; and Coder `needsBossReply` uses one exact-checkpoint cumulative deferred operation (verifying [[playbook-12](#playbook-12)], [[playbook-21](#playbook-21)], [[playbook-30](#playbook-30)], and [[playbook-34](#playbook-34)]).
+The suites shall further fail unless findings raised at the third Reviewer round — after two review-fix commits, after two rebuttals, or after one of each — settle at `unsettled` with `{ noUnsettledFindings: false, reviewerOutput }` and its published description, with no third Coder call, while findings at the second round still reach Coder, a Boss interruption into the first review resets the count and one into a later round keeps it, and the terminal declares `failure` (verifying [[playbook-62](#playbook-62)] and [[playbook-27](#playbook-27)]).
 The suites shall further fail unless every accepted matrix row publishes its exact confirmed marker and status while an unaccepted fallback publishes neither, and the source, GEARS, FSM, linked runtime, declarations, and registry agree on schema `3`, runtime ABI `1`, and the matrix of [[playbook-34](#playbook-34)] (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-37

@@ -6,15 +6,15 @@ export type JsonValue = null | boolean | number | string | readonly JsonValue[] 
 export type CodeRole = 'coder';
 /** One role-id array per parallel group; CODE declares no parallel group. */
 export declare const concurrentRoleSets: readonly (readonly CodeRole[])[];
-/** Delegated-player working leaves (CODE-1, CODE-3). */
+/** Delegated-player working leaves (CODE-1, CODE-2). */
 export type WorkingStateId = 'firstPhase' | 'irTaskPhase';
 /** Working leaves that may suspend for, and resume from, a Boss reply. */
 export type ResumableStateId = WorkingStateId;
 /** Root `BOSS_INTERRUPT` targets. */
 export type JumpableStateId = WorkingStateId;
-/** Nested `review` call states (CODE-2, CODE-4). */
-export type ReviewStateId = 'reviewNewIntentPhase' | 'reviewIrTaskPhase';
-export type CodeSourceItem = 'CODE-1' | 'CODE-2' | 'CODE-3' | 'CODE-4';
+/** The one nested `review` call state (CODE-3). */
+export type ReviewStateId = 'reviewIntent';
+export type CodeSourceItem = 'CODE-1' | 'CODE-2' | 'CODE-3';
 /** The accepted phase outcome whose `review` call decides the next step. */
 export type PhaseOutcome = 'directCommit' | 'irCommit' | 'moreTasks' | 'finalTask';
 /** The literal nested-call target shared by both call states and guards. */
@@ -22,7 +22,7 @@ declare const REVIEW_PLAYBOOK_ID = "review";
 export interface PendingBossQuestion {
     readonly questionId: ResumableStateId;
     readonly resumeStateId: ResumableStateId;
-    readonly sourceItem: 'CODE-1' | 'CODE-3';
+    readonly sourceItem: 'CODE-1' | 'CODE-2';
     readonly asker: {
         readonly kind: 'role';
         readonly roleId: CodeRole;
@@ -48,11 +48,9 @@ export interface FirstPhasePlayerInput extends PlayerInputBase {
 }
 export interface IrTaskPhasePlayerInput extends PlayerInputBase {
     readonly stateId: 'irTaskPhase';
-    readonly sourceItem: 'CODE-3';
+    readonly sourceItem: 'CODE-2';
     /** `<ir-number>`: the IR whose next unfinished task this phase implements. */
     readonly irNumber?: string;
-    /** Source-owned relay; historical canonical evidence, not present approval. */
-    readonly previousPhaseReview: string;
 }
 export type PlayerInput = FirstPhasePlayerInput | IrTaskPhasePlayerInput;
 export type PlayerOutput = {
@@ -82,7 +80,7 @@ export type PlayerOutput = {
 };
 export interface PlaybookInput {
     readonly stateId: ReviewStateId;
-    readonly sourceItem: 'CODE-2' | 'CODE-4';
+    readonly sourceItem: 'CODE-3';
     readonly playbookId: typeof REVIEW_PLAYBOOK_ID;
     readonly text: string;
 }
@@ -127,33 +125,25 @@ export interface CodeInput {
     /** Optional seed for `<run-results>`; `START_CODE` may supply its own. */
     readonly runResults?: string;
 }
-export interface PreviousPhaseReview {
-    readonly phaseKind: 'direct' | 'new-intent' | 'ir-task';
-    readonly phaseOutcome: PhaseOutcome;
-    readonly scopeCommit: string;
-    readonly evaluatedRevision: string;
-    readonly irNumber?: string;
-    readonly irTask?: string;
-}
 export interface CodeContext {
     /** `<run-results>`: relevant run results relayed to every phase. */
     readonly runResults: string;
     /** `<caller-input>`: the caller's coding request and relevant context. */
     readonly callerInput?: string;
-    /** `<code-commit>`: the accepted `latestCommit` of the latest phase. */
+    /** The accepted `latestCommit` of the latest phase: the last `code`-owned commit. */
     readonly codeCommit?: string;
+    /** `<code-commits>`: every phase's accepted commit of this run, oldest first. */
+    readonly codeCommits: readonly string[];
     /** `<coder-output>`: Coder's verbatim final text for the latest phase. */
     readonly coderOutput?: string;
     /** `<ir-number>`: the created or continued IR. */
     readonly irNumber?: string;
     /** `<ir-task>`: the IR task the latest IR-task phase implemented. */
     readonly irTask?: string;
-    /** The accepted outcome of the phase under review. */
+    /** The accepted outcome of the latest phase. */
     readonly phaseOutcome?: PhaseOutcome;
-    /** Revision evaluated by the latest passing review. */
+    /** Revision evaluated by the passing review. */
     readonly evaluatedRevision?: string;
-    /** Frozen only by an accepted canonical clean child REVIEW. */
-    readonly previousPhaseReview?: PreviousPhaseReview;
     /** Compact failure CODE reports when review did not pass a phase. */
     readonly reviewError?: CompactError;
     /** Sanitized evidence of the review result that ended CODE. */
@@ -264,24 +254,15 @@ export declare const codeMachine: import("xstate").StateMachine<CodeContext, {
     type: "needsBossReplyWithQuestion";
     params: unknown;
 } | {
+    type: "reviewPassed";
+    params: unknown;
+} | {
     type: "validStartCode";
     params: unknown;
 } | {
     type: "emptyBossReply";
     params: unknown;
-} | {
-    type: "reviewPassedDirect";
-    params: unknown;
-} | {
-    type: "reviewPassedNewIr";
-    params: unknown;
-} | {
-    type: "reviewPassedNonfinalTask";
-    params: unknown;
-} | {
-    type: "reviewPassedFinalTask";
-    params: unknown;
-}, never, "done" | "failed" | "ready" | "awaitBossReply" | "firstPhase" | "irTaskPhase" | "reviewNewIntentPhase" | "reviewIrTaskPhase" | "reviewFailed", string, CodeInput, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "firstPhase" | "irTaskPhase" | "reviewIntent" | "reviewFailed", string, CodeInput, {
     readonly status: "complete";
     readonly lastCodeCommit: string;
     readonly finalEvaluatedRevision: string;
@@ -299,14 +280,11 @@ export declare const codeMachine: import("xstate").StateMachine<CodeContext, {
         readonly firstPhase: {
             id: "firstPhase";
         };
-        readonly reviewNewIntentPhase: {
-            id: "reviewNewIntentPhase";
-        };
         readonly irTaskPhase: {
             id: "irTaskPhase";
         };
-        readonly reviewIrTaskPhase: {
-            id: "reviewIrTaskPhase";
+        readonly reviewIntent: {
+            id: "reviewIntent";
         };
         readonly awaitBossReply: {
             id: "awaitBossReply";

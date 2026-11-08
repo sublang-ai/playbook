@@ -89,11 +89,17 @@ export interface ErrorRecord {
     readonly message: string;
     readonly stack?: string;
 }
+/** Reviewer rounds REVIEW runs at most: the first and one after each of two Coder dispositions. */
+export declare const MAX_REVIEW_ROUNDS = 3;
 /** Public output interface of the packaged builtin `review`. */
-export interface ReviewOutput {
+export type ReviewOutput = {
     readonly noUnsettledFindings: true;
     readonly evaluatedRevision: string;
-}
+} | {
+    /** Findings Reviewer raised or kept at the third round stay unsettled. */
+    readonly noUnsettledFindings: false;
+    readonly reviewerOutput: string;
+};
 /** The machine reads no input: the caller input arrives on `START_REVIEW`. */
 export type ReviewInput = Readonly<Record<never, never>>;
 export interface ReviewContext {
@@ -109,6 +115,10 @@ export interface ReviewContext {
     readonly coderOutcome?: CoderOutcome;
     /** Revision evaluated by the clean review round that ended REVIEW. */
     readonly evaluatedRevision?: string;
+    /** The Reviewer round in progress: 1 at the first review, +1 per Coder disposition. */
+    readonly round?: number;
+    /** Set when the third round ended with findings still unsettled. */
+    readonly findingsUnsettled?: true;
     readonly lastError?: ErrorRecord;
     readonly pendingBossQuestion?: PendingBossQuestion;
     readonly bossReply?: string;
@@ -180,16 +190,25 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     type: "rememberCoderDisposition";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "rememberUnsettledFindings";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "rememberEvaluatedRevision";
     params: import("xstate").NonReducibleUnknown;
 }, {
     type: "emptyBossReply";
     params: unknown;
 } | {
+    type: "acceptHasFindings";
+    params: unknown;
+} | {
+    type: "acceptHasFindingsBeforeBound";
+    params: unknown;
+} | {
     type: "validStartReview";
     params: unknown;
 } | {
-    type: "acceptHasFindings";
+    type: "acceptHasFindingsAtBound";
     params: unknown;
 } | {
     type: "acceptNoFindings";
@@ -203,7 +222,14 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
 } | {
     type: "acceptNeedsBossReply";
     params: unknown;
-}, never, "done" | "failed" | "ready" | "awaitBossReply" | "firstReview" | "fixFindings" | "reviewAfterFix" | "reviewAfterRejection", string, Readonly<Record<never, never>>, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "firstReview" | "fixFindings" | "reviewAfterFix" | "reviewAfterRejection" | "unsettled", string, Readonly<Record<never, never>>, {
+    readonly noUnsettledFindings: true;
+    readonly evaluatedRevision: string;
+} | {
+    /** Findings Reviewer raised or kept at the third round stay unsettled. */
+    readonly noUnsettledFindings: false;
+    readonly reviewerOutput: string;
+}, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "review";
     states: {
         readonly ready: {
@@ -229,6 +255,9 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
         };
         readonly done: {
             id: "done";
+        };
+        readonly unsettled: {
+            id: "unsettled";
         };
     };
 }>;

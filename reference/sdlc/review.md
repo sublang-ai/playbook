@@ -111,6 +111,7 @@ Captain shall use the repository-effect receipt as the authoritative identity of
 
 When Coder makes a new commit or decides to reject all findings, Captain shall relay the round's context above to Reviewer and begin the next review round.
 Reviewer shall read the context information and follow the corresponding instructions.
-Rounds continue until Reviewer affirmatively reports that the requested review is complete and no unsettled findings remain.
+Rounds continue until Reviewer affirmatively reports that the requested review is complete and no unsettled findings remain, through at most three review rounds: the first review and one further round after each of at most two Coder dispositions.
 A progress report, status update, or promise of a later result supports no review outcome.
 `review` then returns the exact repository revision at which the review scope was evaluated and the fact that no unsettled findings remain within that scope.
+When Reviewer raises or keeps any finding at the third round, `review` ends with those findings unsettled: Coder makes no further disposition, and `review` returns Reviewer's findings and the fact that unsettled findings remain within that scope.

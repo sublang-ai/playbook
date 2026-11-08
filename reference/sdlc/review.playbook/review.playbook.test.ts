@@ -638,6 +638,87 @@ describe('linked REVIEW runtime', () => {
     await runtime.dispose();
   });
 
+  // playbook-62 / DR-102: REVIEW runs at most three Reviewer rounds; findings
+  // the third round raises or keeps stop it unsettled, with no sixth call.
+  it.each([
+    ['a rejection', 'reviewAfterRejection', undefined, 'rejectedAll'],
+    ['a second commit', 'reviewAfterFix', 'commit', 'committed'],
+  ] as const)(
+    'stops after the third round with the findings unsettled after %s',
+    async (_name, lastRound, secondEffect, secondGuard) => {
+      const playerCalls: PlayerCall[] = [];
+      const thirdFindings = '1. The parser still drops escapes.\n   Evidence.';
+      const host = await harness({
+        playerCalls,
+        playerResults: [
+          { status: 'ok', finalText: '1. The parser drops escapes.', resumeToken: 'reviewer-1' },
+          {
+            status: 'ok',
+            finalText: 'Accepted and fixed.',
+            resumeToken: 'coder-1',
+            repositoryEffect: 'commit',
+          },
+          { status: 'ok', finalText: '1. The parser still drops escapes.', resumeToken: 'reviewer-2' },
+          {
+            status: 'ok',
+            finalText:
+              secondGuard === 'committed'
+                ? 'Accepted and fixed again.'
+                : 'Rejected item 1 with evidence.',
+            resumeToken: 'coder-2',
+            ...(secondEffect === undefined ? {} : { repositoryEffect: secondEffect }),
+          },
+          { status: 'ok', finalText: thirdFindings, resumeToken: 'reviewer-3' },
+          { status: 'ok', finalText: 'Unexpected sixth call.', resumeToken: 'coder-3' },
+        ],
+        judgeReplies: [
+          '{"guard":"hasFindings"}',
+          '{"guard":"committed"}',
+          '{"guard":"hasFindings"}',
+          `{"guard":"${secondGuard}"}`,
+          '{"guard":"hasFindings"}',
+        ],
+      });
+      const runtime = linkedRuntime(host);
+      await runtime.init(session(host.ports));
+
+      const result = await runtime.handleBossInput({
+        text: 'Review the parser commit.',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.outcome).toBe('terminal');
+      assertWorkflowTerminal('review', result);
+      if (result.outcome === 'terminal') {
+        expect(result.stateDescription).toBe(
+          'REVIEW stopped after its third round: findings remain unsettled within the review scope, and no further fix round runs.',
+        );
+        expect(result.output).toEqual({
+          noUnsettledFindings: false,
+          reviewerOutput: thirdFindings,
+        });
+      }
+      expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+        'reviewer',
+        'coder',
+        'reviewer',
+        'coder',
+        'reviewer',
+      ]);
+      expect(acceptedOutcomes(host)).toEqual([
+        { source: 'firstReview', target: 'fixFindings', acceptedOutcome: 'hasFindings' },
+        { source: 'fixFindings', target: 'reviewAfterFix', acceptedOutcome: 'committed' },
+        { source: 'reviewAfterFix', target: 'fixFindings', acceptedOutcome: 'hasFindings' },
+        { source: 'fixFindings', target: lastRound, acceptedOutcome: secondGuard },
+        { source: lastRound, target: 'unsettled', acceptedOutcome: 'hasFindings' },
+      ]);
+      // No sixth player call and no sixth adjudication ran.
+      expect(host.judgePrompts).toHaveLength(5);
+      expect(playerCalls).toHaveLength(5);
+      await runtime.dispose();
+    },
+  );
+
   it('keeps a Reviewer outcome unresolved after any repository change', async () => {
     const playerCalls: PlayerCall[] = [];
     const host = await harness({
@@ -1330,6 +1411,12 @@ describe('linked REVIEW runtime', () => {
     for (const stateId of Object.keys(reviewStateCountLabels)) {
       expect(_internal.RESUMABLE_STATE_IDS.has(stateId), stateId).toBe(true);
     }
+  });
+
+  it('reports only the round-bound stop as an unfinished final state', () => {
+    // playbook-62 / DR-102: the unsettled stop is a failure terminal, never
+    // a completed review.
+    expect(_internal.UNFINISHED_FINAL_STATE_IDS).toEqual(new Set(['unsettled']));
   });
 
   it('advertises the schema-3 local-role manifest', async () => {

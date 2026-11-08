@@ -87,18 +87,36 @@
     "review": {
       "callInput": "text",
       "output": {
-        "type": "object",
-        "properties": {
-          "noUnsettledFindings": {
-            "const": true
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "noUnsettledFindings": {
+                "const": true
+              },
+              "evaluatedRevision": {
+                "type": "string",
+                "description": "Exact receipt-observed repository revision evaluated by the final clean review round; it can include REVIEW-owned fixes after the caller's original commit."
+              }
+            },
+            "required": ["noUnsettledFindings", "evaluatedRevision"],
+            "additionalProperties": false
           },
-          "evaluatedRevision": {
-            "type": "string",
-            "description": "Exact receipt-observed repository revision evaluated by the final clean review round; it can include REVIEW-owned fixes after the caller's original commit."
+          {
+            "type": "object",
+            "properties": {
+              "noUnsettledFindings": {
+                "const": false
+              },
+              "reviewerOutput": {
+                "type": "string",
+                "description": "Reviewer's final findings, raised or kept at the third round and left unsettled; the failure terminal of a review that reached its round bound."
+              }
+            },
+            "required": ["noUnsettledFindings", "reviewerOutput"],
+            "additionalProperties": false
           }
-        },
-        "required": ["noUnsettledFindings", "evaluatedRevision"],
-        "additionalProperties": false
+        ]
       }
     },
     "decide": {

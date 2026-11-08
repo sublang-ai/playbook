@@ -16,6 +16,7 @@ const CONTEXT: CodeContext = {
   callerInput: 'Implement the intent.',
   coderOutput: 'Committed the requested change.',
   codeCommit: 'abc123',
+  codeCommits: ['abc000', 'abc123'],
   irNumber: '040',
   irTask: 'Implement task 1.',
 };
@@ -25,7 +26,7 @@ describe('CODE FSM introspection', () => {
     const states = enumeratePlayerStates(codeMachine);
     expect(states.map(({ stateId, sourceItem }) => ({ stateId, sourceItem }))).toEqual([
       { stateId: 'firstPhase', sourceItem: 'CODE-1' },
-      { stateId: 'irTaskPhase', sourceItem: 'CODE-3' },
+      { stateId: 'irTaskPhase', sourceItem: 'CODE-2' },
     ]);
     expect(states.map((state) => state.getInput(CONTEXT).role)).toEqual([
       'coder',
@@ -33,34 +34,34 @@ describe('CODE FSM introspection', () => {
     ]);
   });
 
-  it('enumerates both literal REVIEW calls and their exact inputs', () => {
+  it('enumerates the one literal REVIEW call and its exact input', () => {
     const states = enumerateNestedPlaybookStates(codeMachine);
     expect(states.map(({ stateId, sourceItem }) => ({ stateId, sourceItem }))).toEqual([
-      { stateId: 'reviewNewIntentPhase', sourceItem: 'CODE-2' },
-      { stateId: 'reviewIrTaskPhase', sourceItem: 'CODE-4' },
+      { stateId: 'reviewIntent', sourceItem: 'CODE-3' },
     ]);
+    // DR-102: the scope names every phase commit oldest first, and an IR
+    // relays its number as the Source's second, separate quote block.
     expect(states.map((state) => state.getInput(CONTEXT))).toEqual([
       {
-        stateId: 'reviewNewIntentPhase',
-        sourceItem: 'CODE-2',
+        stateId: 'reviewIntent',
+        sourceItem: 'CODE-3',
         playbookId: 'review',
         text:
           '> Original intent: Implement the intent.\n' +
-          '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
-          '> Coder output: Committed the requested change.',
-      },
-      {
-        stateId: 'reviewIrTaskPhase',
-        sourceItem: 'CODE-4',
-        playbookId: 'review',
-        text:
-          '> Original intent: Implement the intent.\n' +
-          '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
+          '> Review scope: every commit of this coding intent, namely abc000, abc123, and its resulting repository state.\n' +
           '> Coder output: Committed the requested change.\n' +
           '\n' +
-          '> Current IR task: Implement task 1.',
+          '> IR number: 040',
       },
     ]);
+    // A direct intent relays no IR block.
+    expect(
+      states[0]?.getInput({ ...CONTEXT, codeCommits: ['abc123'], irNumber: undefined }).text,
+    ).toBe(
+      '> Original intent: Implement the intent.\n' +
+        '> Review scope: every commit of this coding intent, namely abc123, and its resulting repository state.\n' +
+        '> Coder output: Committed the requested change.',
+    );
   });
 
   it('exposes one entry, empty-reply failure, and two resume arms', () => {

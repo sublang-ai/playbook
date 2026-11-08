@@ -15,8 +15,9 @@ Captain takes the evaluated repository revision from repository authority, not f
 Finding numbers are references within this review only.
 No review transition depends on numbering or any fixed presentation format of either player's reply.
 Reviewer reads the relayed context information and follows the corresponding instructions.
-Rounds continue until Reviewer affirmatively reports that the requested review is complete and no unsettled findings remain; a progress report, status update, or promise of a later result supports no review outcome.
+Rounds continue until Reviewer affirmatively reports that the requested review is complete and no unsettled findings remain, through at most three review rounds: the first review and one further round after each of at most two Coder dispositions; a progress report, status update, or promise of a later result supports no review outcome.
 `review` then returns the exact repository revision at which the review scope was evaluated and the fact that no unsettled findings remain within that scope.
+When Reviewer raises or keeps any finding at the third round, `review` ends with those findings unsettled: Coder makes no further disposition, and `review` returns Reviewer's findings and the fact that unsettled findings remain within that scope.
 
 ### REVIEW-1
 
@@ -110,6 +111,8 @@ Results:
 - `hasFindings`: Reviewer raised or kept one or more unsettled findings; a progress report, status update, or promise of a later result supports no review outcome, and the outcome does not depend on finding numbering or any fixed presentation format of Reviewer's reply. Output shall include `reviewerOutput: <verbatim final text>`.
 - `noFindings`: Reviewer affirmatively reported that the requested review is complete and no unsettled findings remain; a progress report, status update, or promise of a later result supports no review outcome, and the outcome does not depend on finding numbering or any fixed presentation format of Reviewer's reply. On this outcome the workflow returns the exact repository revision at which the review scope was evaluated, taken from repository authority and not from either player's prose, as evaluatedRevision, and the fact that no unsettled findings remain within that scope, as noUnsettledFindings true. Output shall include `evaluatedRevision: <repository revision>`.
 
+When this is the third review round and Reviewer raises or keeps any finding, `review` ends with those findings unsettled: Coder makes no further disposition, and `review` returns Reviewer's findings and the fact that unsettled findings remain within the scope.
+
 ### REVIEW-4
 
 When Coder rejects every finding and makes no commit, at the start of the next review round, Captain shall prompt Reviewer:
@@ -140,3 +143,5 @@ When Coder rejects every finding and makes no commit, at the start of the next r
 Results:
 - `hasFindings`: Reviewer raised or kept one or more unsettled findings; a progress report, status update, or promise of a later result supports no review outcome, and the outcome does not depend on finding numbering or any fixed presentation format of Reviewer's reply. Output shall include `reviewerOutput: <verbatim final text>`.
 - `noFindings`: Reviewer affirmatively reported that the requested review is complete and no unsettled findings remain; a progress report, status update, or promise of a later result supports no review outcome, and the outcome does not depend on finding numbering or any fixed presentation format of Reviewer's reply. On this outcome the workflow returns the exact repository revision at which the review scope was evaluated, taken from repository authority and not from either player's prose, as evaluatedRevision, and the fact that no unsettled findings remain within that scope, as noUnsettledFindings true. Output shall include `evaluatedRevision: <repository revision>`.
+
+When this is the third review round and Reviewer raises or keeps any finding, `review` ends with those findings unsettled: Coder makes no further disposition, and `review` returns Reviewer's findings and the fact that unsettled findings remain within the scope.

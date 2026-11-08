@@ -29,6 +29,7 @@ const ACTUAL_CONTEXT: CodeContext = {
   callerInput: 'Implement the intent.',
   coderOutput: 'Completed the preceding phase.',
   codeCommit: 'abc123',
+  codeCommits: ['abc123'],
   irNumber: '048',
   irTask: 'Implement task 14.',
 };
@@ -88,7 +89,7 @@ describe('CODE player prompt composition', () => {
     const states = enumeratePlayerStates(codeMachine);
     expect(states.map(({ sourceItem }) => sourceItem)).toEqual([
       'CODE-1',
-      'CODE-3',
+      'CODE-2',
     ]);
     for (const state of states) {
       const body = gearsItems
@@ -101,7 +102,6 @@ describe('CODE player prompt composition', () => {
           .replace('<caller-input>', 'Implement the intent.\n> Keep the CLI stable.')
           .replace('<ir-number>', '048')
           .replace('<run-results>', 'tests passed')
-          .replace('<previous-phase-review>', 'No accepted prior-phase review is available.')
           .replace('<coder-llm>', 'GPT-5.6 Sol'),
       );
       expect(prompt).toMatch(
@@ -124,7 +124,7 @@ describe('CODE player prompt composition', () => {
     const input: PlayerInput = {
       stateId: 'irTaskPhase',
       role: 'coder',
-      sourceItem: 'CODE-3',
+      sourceItem: 'CODE-2',
       prompt: [
         '> Original request: <caller-input>',
         '> IR number: <ir-number>',
@@ -137,7 +137,6 @@ describe('CODE player prompt composition', () => {
       callerInput: 'Use literal <coder-llm> and $&.\nThen finish.',
       runResults: '',
       irNumber: '040',
-      previousPhaseReview: 'No accepted prior-phase review is available.',
     };
     expect(composePlayerPrompt(input, promptIdentity)).toBe(
       [

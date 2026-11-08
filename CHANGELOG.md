@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CODE reviews the intent once, and REVIEW stops after three rounds** ([DR-102](specs/decisions/102-code-reviews-the-intent-once.md)): CODE calls nested REVIEW once after the direct phase or the final IR task, over every phase commit with the IR number, instead of after every commit, and relays no prior-phase review to later tasks; REVIEW runs at most three Reviewer rounds and ends findings kept at the third at a distinct `unsettled` failure terminal returning `{ noUnsettledFindings: false, reviewerOutput }`, which CODE and DECIDE report through their existing review-failure terminals. CODE's GEARS carry `CODE-1` through `CODE-3`.
+
 ## [18.1.4] - 2026-11-04
 
 ### Fixed

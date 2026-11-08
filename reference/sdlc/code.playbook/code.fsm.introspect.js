@@ -27,7 +27,7 @@ export function enumeratePlayerStates(machine) {
         if (invoke?.src !== 'player' || invoke.input === undefined)
             return [];
         const getInput = (context) => invoke.input?.({ context });
-        const input = getInput({ runResults: '' });
+        const input = getInput({ runResults: '', codeCommits: [] });
         return [
             {
                 stateId,
@@ -47,7 +47,7 @@ export function enumerateNestedPlaybookStates(machine) {
         if (invoke?.src !== 'playbook' || invoke.input === undefined)
             return [];
         const getInput = (context) => invoke.input?.({ context });
-        const input = getInput({ runResults: '' });
+        const input = getInput({ runResults: '', codeCommits: [] });
         return [
             {
                 stateId,
