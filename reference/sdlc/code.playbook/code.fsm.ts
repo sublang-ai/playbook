@@ -31,7 +31,7 @@ export type CodeRole = 'coder';
 /** One role-id array per parallel group; CODE declares no parallel group. */
 export const concurrentRoleSets: readonly (readonly CodeRole[])[] = [];
 
-/** Delegated-player working leaves (CODE-1, CODE-3). */
+/** Delegated-player working leaves (CODE-1, CODE-2). */
 export type WorkingStateId = 'firstPhase' | 'irTaskPhase';
 
 /** Working leaves that may suspend for, and resume from, a Boss reply. */
@@ -40,10 +40,10 @@ export type ResumableStateId = WorkingStateId;
 /** Root `BOSS_INTERRUPT` targets. */
 export type JumpableStateId = WorkingStateId;
 
-/** Nested `review` call states (CODE-2, CODE-4). */
-export type ReviewStateId = 'reviewNewIntentPhase' | 'reviewIrTaskPhase';
+/** The one nested `review` call state (CODE-3). */
+export type ReviewStateId = 'reviewIntent';
 
-export type CodeSourceItem = 'CODE-1' | 'CODE-2' | 'CODE-3' | 'CODE-4';
+export type CodeSourceItem = 'CODE-1' | 'CODE-2' | 'CODE-3';
 
 /** The accepted phase outcome whose `review` call decides the next step. */
 export type PhaseOutcome =
@@ -62,7 +62,7 @@ const REVIEW_PLAYBOOK_ID = 'review';
 export interface PendingBossQuestion {
   readonly questionId: ResumableStateId;
   readonly resumeStateId: ResumableStateId;
-  readonly sourceItem: 'CODE-1' | 'CODE-3';
+  readonly sourceItem: 'CODE-1' | 'CODE-2';
   readonly asker: { readonly kind: 'role'; readonly roleId: CodeRole };
   readonly question: string;
 }
@@ -92,11 +92,9 @@ export interface FirstPhasePlayerInput extends PlayerInputBase {
 
 export interface IrTaskPhasePlayerInput extends PlayerInputBase {
   readonly stateId: 'irTaskPhase';
-  readonly sourceItem: 'CODE-3';
+  readonly sourceItem: 'CODE-2';
   /** `<ir-number>`: the IR whose next unfinished task this phase implements. */
   readonly irNumber?: string;
-  /** Source-owned relay; historical canonical evidence, not present approval. */
-  readonly previousPhaseReview: string;
 }
 
 export type PlayerInput = FirstPhasePlayerInput | IrTaskPhasePlayerInput;
@@ -135,7 +133,7 @@ export type PlayerOutput =
 
 export interface PlaybookInput {
   readonly stateId: ReviewStateId;
-  readonly sourceItem: 'CODE-2' | 'CODE-4';
+  readonly sourceItem: 'CODE-3';
   readonly playbookId: typeof REVIEW_PLAYBOOK_ID;
   readonly text: string;
 }
@@ -196,34 +194,25 @@ export interface CodeInput {
   readonly runResults?: string;
 }
 
-export interface PreviousPhaseReview {
-  readonly phaseKind: 'direct' | 'new-intent' | 'ir-task';
-  readonly phaseOutcome: PhaseOutcome;
-  readonly scopeCommit: string;
-  readonly evaluatedRevision: string;
-  readonly irNumber?: string;
-  readonly irTask?: string;
-}
-
 export interface CodeContext {
   /** `<run-results>`: relevant run results relayed to every phase. */
   readonly runResults: string;
   /** `<caller-input>`: the caller's coding request and relevant context. */
   readonly callerInput?: string;
-  /** `<code-commit>`: the accepted `latestCommit` of the latest phase. */
+  /** The accepted `latestCommit` of the latest phase: the last `code`-owned commit. */
   readonly codeCommit?: string;
+  /** `<code-commits>`: every phase's accepted commit of this run, oldest first. */
+  readonly codeCommits: readonly string[];
   /** `<coder-output>`: Coder's verbatim final text for the latest phase. */
   readonly coderOutput?: string;
   /** `<ir-number>`: the created or continued IR. */
   readonly irNumber?: string;
   /** `<ir-task>`: the IR task the latest IR-task phase implemented. */
   readonly irTask?: string;
-  /** The accepted outcome of the phase under review. */
+  /** The accepted outcome of the latest phase. */
   readonly phaseOutcome?: PhaseOutcome;
-  /** Revision evaluated by the latest passing review. */
+  /** Revision evaluated by the passing review. */
   readonly evaluatedRevision?: string;
-  /** Frozen only by an accepted canonical clean child REVIEW. */
-  readonly previousPhaseReview?: PreviousPhaseReview;
   /** Compact failure CODE reports when review did not pass a phase. */
   readonly reviewError?: CompactError;
   /** Sanitized evidence of the review result that ended CODE. */
@@ -276,7 +265,7 @@ const FIRST_PHASE_PROMPT = [
   'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
   "If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.",
   "Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.",
-  "After the answer allows completion, make exactly one phase-owned commit before REVIEW.",
+  "After the answer allows completion, make exactly one phase-owned commit.",
   "When the phase is complete, make its minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
   'Make the commit message explain concisely what changed and why, including relevant verification.',
   'Identify every new commit you make.',
@@ -294,15 +283,13 @@ const IR_TASK_PHASE_PROMPT = [
   "Report pending independent REVIEW, owner acceptance and later delivery/workshop steps separately; they imply an unfinished IR task only when the IR assigns that work to a remaining task.",
   "Report only what the IR and completed work establish, in ordinary prose without a required marker.",
   'If the IR will be finished after this phase, double-check that all acceptance criteria are met.',
-  'Use the quoted previous-phase review only for its exact recorded scope; committed pending-review text may predate that canonical result.',
-  'Before treating it as current review evidence, verify clean current HEAD equals its evaluatedRevision; a mismatch is not approval.',
-  'It does not replace independent review of this task or any new owner or release decision.',
+  'The earlier phases of this intent await the one REVIEW that follows its final task; do not ask Boss to review or approve them.',
   '',
   'Keep to the original intent and follow what it asks.',
   'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
   "If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.",
   "Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.",
-  "After the answer allows completion, make exactly one phase-owned commit before REVIEW.",
+  "After the answer allows completion, make exactly one phase-owned commit.",
   "When the phase is complete, make its minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
   'Make the commit message explain concisely what changed and why, including relevant verification.',
   'Identify every new commit you make.',
@@ -311,21 +298,14 @@ const IR_TASK_PHASE_PROMPT = [
   '> Original request: <caller-input>',
   '> IR number: <ir-number>',
   '> Run results: <run-results>',
-  '> Previous phase review: <previous-phase-review>',
 ].join('\n');
 
-const REVIEW_NEW_INTENT_PHASE_TEMPLATE = [
+const REVIEW_INTENT_TEMPLATE = [
   '> Original intent: <caller-input>',
-  '> Review scope: the commit <code-commit> from this coding phase and its resulting repository state.',
-  '> Coder output: <coder-output>',
-].join('\n');
-
-const REVIEW_IR_TASK_PHASE_TEMPLATE = [
-  '> Original intent: <caller-input>',
-  '> Review scope: the commit <code-commit> from this coding phase and its resulting repository state.',
+  '> Review scope: every commit of this coding intent, namely <code-commits>, and its resulting repository state.',
   '> Coder output: <coder-output>',
   '',
-  '> Current IR task: <ir-task>',
+  '> IR number: <ir-number>',
 ].join('\n');
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
@@ -355,23 +335,21 @@ const STATE_DESCRIPTIONS = {
   ready: 'Waiting for a coding request.',
   firstPhase:
     'Coder runs the first phase: a direct change, a new IR, or an existing IR\'s next unfinished task.',
-  reviewNewIntentPhase:
-    'REVIEW examines the commit of the direct or new-IR phase.',
   irTaskPhase: "Coder implements the identified IR's next unfinished task.",
-  reviewIrTaskPhase: 'REVIEW examines the commit of the IR-task phase.',
+  reviewIntent: 'REVIEW examines every commit of this coding intent.',
   awaitBossReply: "Waiting for Boss to answer the acting agent's question.",
   failed:
     'CODE parked after a control-plane failure and waits for Boss to restart or resume it.',
   reviewFailed:
-    'CODE stopped because review did not pass a phase and reports the failure with its last code-owned commit.',
-  done: "CODE completed: every phase's review passed with no unsettled findings.",
+    "CODE stopped because review did not pass the intent's commits and reports the failure with its last code-owned commit.",
+  done: "CODE completed: the intent's review passed with no unsettled findings.",
 } as const;
 
 type StateKey = keyof typeof STATE_DESCRIPTIONS;
 
 const RESUME_METADATA = {
   firstPhase: { sourceItem: 'CODE-1' },
-  irTaskPhase: { sourceItem: 'CODE-3' },
+  irTaskPhase: { sourceItem: 'CODE-2' },
 } as const satisfies Record<
   ResumableStateId,
   { readonly sourceItem: PendingBossQuestion['sourceItem'] }
@@ -615,7 +593,7 @@ function authoredReviewFailureOf(
 // ---------------------------------------------------------------------------
 
 const REVIEW_PLACEHOLDER =
-  /<caller-input>|<code-commit>|<coder-output>|<ir-task>/g;
+  /<caller-input>|<code-commits>|<coder-output>|<ir-number>/g;
 
 /**
  * Composes review call text in one callback pass per template line: a quoted
@@ -665,14 +643,13 @@ const acceptsOutcome =
 const needsBossReplyWithQuestion = ({ event }: EventArgs): boolean =>
   playerOutputOf(event)?.guard === 'needsBossReply';
 
-// A review state is entered only through an accepting phase arm, which records
-// the phase outcome and its non-empty code-owned commit.
-const reviewPassedAfter =
-  (outcome: PhaseOutcome) =>
-  ({ context, event }: ContextEventArgs): boolean =>
-    context.phaseOutcome === outcome &&
-    isNonEmptyString(context.codeCommit) &&
-    reviewPassOf(event) !== undefined;
+// The review state is entered only through an accepting final-phase arm, which
+// records the phase outcome and the run's non-empty code-owned commits.
+const reviewPassed = ({ context, event }: ContextEventArgs): boolean =>
+  (context.phaseOutcome === 'directCommit' ||
+    context.phaseOutcome === 'finalTask') &&
+  isNonEmptyString(context.codeCommit) &&
+  reviewPassOf(event) !== undefined;
 
 const authoredReviewFailure = ({ event }: EventArgs): boolean =>
   authoredReviewFailureOf(event) !== undefined;
@@ -752,15 +729,19 @@ const acceptedOutcome = (
     params: { source, target, acceptedOutcome: outcome },
   }) as const;
 
+// A nonfinal phase continues to the next IR task; the direct phase and the
+// final task reach the one review. The IR-task leaf reenters itself so its
+// player actor restarts for the next task.
 const acceptPhaseArm = (
   source: WorkingStateId,
   outcome: PhaseOutcome,
   guard: 'acceptDirectCommit' | 'acceptIrCommit' | 'acceptMoreTasks' | 'acceptFinalTask',
-  target: ReviewStateId,
+  target: ReviewStateId | 'irTaskPhase',
 ) =>
   ({
     guard,
     target: `#${target}`,
+    ...(target === source ? { reenter: true } : {}),
     actions: [
       acceptedOutcome(source, target, outcome),
       'rememberPhaseCommit',
@@ -850,12 +831,12 @@ export const codeMachine = setup({
             callerInput: event.callerInput,
             runResults: event.runResults ?? context.runResults,
             codeCommit: undefined,
+            codeCommits: [],
             coderOutput: undefined,
             irNumber: undefined,
             irTask: undefined,
             phaseOutcome: undefined,
             evaluatedRevision: undefined,
-            previousPhaseReview: undefined,
             reviewError: undefined,
             reviewEvidence: undefined,
             lastError: undefined,
@@ -867,18 +848,18 @@ export const codeMachine = setup({
     resetForInterrupt: assign({
       phaseOutcome: undefined,
       evaluatedRevision: undefined,
-      previousPhaseReview: undefined,
       reviewError: undefined,
       reviewEvidence: undefined,
       lastError: undefined,
       pendingBossQuestion: undefined,
       bossReply: undefined,
     }),
-    rememberPhaseCommit: assign(({ event }) => {
+    rememberPhaseCommit: assign(({ context, event }) => {
       const output = playerOutputOf(event);
       if (output === undefined || output.guard === 'needsBossReply') return {};
       return {
         codeCommit: output.latestCommit,
+        codeCommits: [...(context.codeCommits ?? []), output.latestCommit],
         coderOutput: output.coderOutput,
         phaseOutcome: output.guard,
         irNumber: output.guard === 'directCommit' ? undefined : output.irNumber,
@@ -910,24 +891,11 @@ export const codeMachine = setup({
       pendingBossQuestion: undefined,
       bossReply: undefined,
     }),
-    rememberReviewPass: assign(({ context, event }) => {
+    rememberReviewPass: assign(({ event }) => {
       const pass = reviewPassOf(event);
-      return pass === undefined || context.codeCommit === undefined || context.phaseOutcome === undefined
+      return pass === undefined
         ? {}
-        : {
-            evaluatedRevision: pass.evaluatedRevision,
-            previousPhaseReview: {
-              phaseKind: context.phaseOutcome === 'directCommit'
-                ? 'direct' as const : context.phaseOutcome === 'irCommit'
-                ? 'new-intent' as const : 'ir-task' as const,
-              phaseOutcome: context.phaseOutcome,
-              scopeCommit: context.codeCommit,
-              evaluatedRevision: pass.evaluatedRevision,
-              ...(context.irNumber === undefined ? {} : { irNumber: context.irNumber }),
-              ...(context.irTask === undefined ? {} : { irTask: context.irTask }),
-            },
-            lastError: undefined,
-          };
+        : { evaluatedRevision: pass.evaluatedRevision, lastError: undefined };
     }),
     rememberReviewNotPassed: assign(({ event }) => {
       const output = doneOutputOf(event);
@@ -976,10 +944,7 @@ export const codeMachine = setup({
     acceptIrCommit: acceptsOutcome('irCommit'),
     acceptMoreTasks: acceptsOutcome('moreTasks'),
     acceptFinalTask: acceptsOutcome('finalTask'),
-    reviewPassedDirect: reviewPassedAfter('directCommit'),
-    reviewPassedNewIr: reviewPassedAfter('irCommit'),
-    reviewPassedNonfinalTask: reviewPassedAfter('moreTasks'),
-    reviewPassedFinalTask: reviewPassedAfter('finalTask'),
+    reviewPassed,
     authoredReviewFailure,
     validStartCode,
     emptyBossReply,
@@ -989,6 +954,7 @@ export const codeMachine = setup({
   initial: 'ready',
   context: ({ input }): CodeContext => ({
     runResults: typeof input?.runResults === 'string' ? input.runResults : '',
+    codeCommits: [],
   }),
   output: ({ context }): CodeOutput => {
     if (!isNonEmptyString(context.codeCommit)) {
@@ -1055,62 +1021,29 @@ export const codeMachine = setup({
             'firstPhase',
             'directCommit',
             'acceptDirectCommit',
-            'reviewNewIntentPhase',
+            'reviewIntent',
           ),
           acceptPhaseArm(
             'firstPhase',
             'irCommit',
             'acceptIrCommit',
-            'reviewNewIntentPhase',
+            'irTaskPhase',
           ),
           acceptPhaseArm(
             'firstPhase',
             'moreTasks',
             'acceptMoreTasks',
-            'reviewIrTaskPhase',
+            'irTaskPhase',
           ),
           acceptPhaseArm(
             'firstPhase',
             'finalTask',
             'acceptFinalTask',
-            'reviewIrTaskPhase',
+            'reviewIntent',
           ),
           malformedPlayerOutputArm,
         ],
         onError: playerOnError,
-      },
-    },
-    reviewNewIntentPhase: {
-      id: 'reviewNewIntentPhase',
-      tags: 'playbook.suspended',
-      description: STATE_DESCRIPTIONS.reviewNewIntentPhase,
-      meta: meta('reviewNewIntentPhase'),
-      invoke: {
-        src: 'playbook',
-        input: ({ context }): PlaybookInput => ({
-          stateId: 'reviewNewIntentPhase',
-          sourceItem: 'CODE-2',
-          playbookId: REVIEW_PLAYBOOK_ID,
-          text: composeReviewText(REVIEW_NEW_INTENT_PHASE_TEMPLATE, {
-            '<caller-input>': context.callerInput,
-            '<code-commit>': context.codeCommit,
-            '<coder-output>': context.coderOutput,
-          }),
-        }),
-        onDone: [
-          {
-            guard: 'reviewPassedDirect',
-            target: 'done',
-            actions: 'rememberReviewPass',
-          },
-          {
-            guard: 'reviewPassedNewIr',
-            target: 'irTaskPhase',
-            actions: 'rememberReviewPass',
-          },
-          { target: 'reviewFailed', actions: 'rememberReviewNotPassed' },
-        ],
-        onError: reviewOnError,
       },
     },
     irTaskPhase: {
@@ -1123,7 +1056,7 @@ export const codeMachine = setup({
         input: ({ context }): IrTaskPhasePlayerInput => ({
           stateId: 'irTaskPhase',
           role: 'coder',
-          sourceItem: 'CODE-3',
+          sourceItem: 'CODE-2',
           prompt: IR_TASK_PHASE_PROMPT,
           result: IR_TASK_PHASE_RESULT,
           ...(context.callerInput !== undefined
@@ -1133,9 +1066,6 @@ export const codeMachine = setup({
             ? { irNumber: context.irNumber }
             : {}),
           runResults: context.runResults,
-          previousPhaseReview: context.previousPhaseReview === undefined
-            ? 'No accepted prior-phase review is available.'
-            : JSON.stringify(context.previousPhaseReview),
           ...bossReplyFields(context),
         }),
         onDone: [
@@ -1144,45 +1074,41 @@ export const codeMachine = setup({
             'irTaskPhase',
             'moreTasks',
             'acceptMoreTasks',
-            'reviewIrTaskPhase',
+            'irTaskPhase',
           ),
           acceptPhaseArm(
             'irTaskPhase',
             'finalTask',
             'acceptFinalTask',
-            'reviewIrTaskPhase',
+            'reviewIntent',
           ),
           malformedPlayerOutputArm,
         ],
         onError: playerOnError,
       },
     },
-    reviewIrTaskPhase: {
-      id: 'reviewIrTaskPhase',
+    reviewIntent: {
+      id: 'reviewIntent',
       tags: 'playbook.suspended',
-      description: STATE_DESCRIPTIONS.reviewIrTaskPhase,
-      meta: meta('reviewIrTaskPhase'),
+      description: STATE_DESCRIPTIONS.reviewIntent,
+      meta: meta('reviewIntent'),
       invoke: {
         src: 'playbook',
         input: ({ context }): PlaybookInput => ({
-          stateId: 'reviewIrTaskPhase',
-          sourceItem: 'CODE-4',
+          stateId: 'reviewIntent',
+          sourceItem: 'CODE-3',
           playbookId: REVIEW_PLAYBOOK_ID,
-          text: composeReviewText(REVIEW_IR_TASK_PHASE_TEMPLATE, {
+          text: composeReviewText(REVIEW_INTENT_TEMPLATE, {
             '<caller-input>': context.callerInput,
-            '<code-commit>': context.codeCommit,
+            '<code-commits>': (context.codeCommits ?? []).join(', '),
             '<coder-output>': context.coderOutput,
-            '<ir-task>': context.irTask,
+            // An IR relays its number; a direct intent contributes no line.
+            '<ir-number>': context.irNumber ?? '',
           }),
         }),
         onDone: [
           {
-            guard: 'reviewPassedNonfinalTask',
-            target: 'irTaskPhase',
-            actions: 'rememberReviewPass',
-          },
-          {
-            guard: 'reviewPassedFinalTask',
+            guard: 'reviewPassed',
             target: 'done',
             actions: 'rememberReviewPass',
           },

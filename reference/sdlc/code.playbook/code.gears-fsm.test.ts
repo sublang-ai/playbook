@@ -44,29 +44,28 @@ interface RawReviewState {
   };
 }
 
-// Each REVIEW item carries its authored workflow outcomes as its own
+// The one REVIEW item carries its authored workflow outcomes as its own
 // sentences (playbook-1 lets an outcome attach to its corresponding item).
-const CODE_2_OUTCOMES = [
-  'A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
-  'When `review` passes a direct phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
-  'When `review` passes a new-IR phase, Captain continues with the next unfinished IR-task phase.',
+const CODE_3_OUTCOMES = [
+  'A nested `review` passes only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+  'When `review` passes, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that the intent\'s review passed with no unsettled findings.',
   'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.',
   'When the nested `review` call fails outside that authored result contract, `code` parks as failed and retains the control-plane error instead of reporting an authored review outcome.',
 ];
 
-const CODE_4_OUTCOMES = [
-  'A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
-  'When `review` passes a nonfinal IR-task phase, Captain continues with the next unfinished IR-task phase.',
-  'When `review` passes the final IR-task phase, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
-  'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.',
-  'When the nested `review` call fails outside that authored result contract, `code` parks as failed and retains the control-plane error instead of reporting an authored review outcome.',
-];
+// DR-102: a nonfinal phase continues without a review; the Coder items carry
+// that continuation as their own sentences.
+const PHASE_CONTINUATION_OUTCOMES = {
+  'CODE-1':
+    'When a new-IR or a nonfinal IR-task phase completes, Captain continues with the next unfinished IR-task phase without a review.',
+  'CODE-2':
+    'When a nonfinal IR-task phase completes, Captain continues with the next unfinished IR-task phase without a review.',
+} as const;
 
-function gearsSection(id: 'CODE-2' | 'CODE-4'): string {
+function gearsSection(id: 'CODE-1' | 'CODE-2' | 'CODE-3'): string {
   const start = gearsText.indexOf(`### ${id}`);
-  const end =
-    id === 'CODE-2' ? gearsText.indexOf('### CODE-3', start) : gearsText.length;
-  return gearsText.slice(start, end);
+  const next = gearsText.indexOf('\n### ', start + 1);
+  return gearsText.slice(start, next === -1 ? gearsText.length : next);
 }
 
 // Arms name their target either bare or by `#id`; both mean the same state.
@@ -86,6 +85,7 @@ const CONTEXT: CodeContext = {
   callerInput: 'Implement the request.',
   coderOutput: 'Committed the requested change.',
   codeCommit: 'abc123',
+  codeCommits: ['abc123'],
   irNumber: '040',
   irTask: 'Implement task 1.',
 };
@@ -96,20 +96,23 @@ const RETIRED_COMMIT_RESPONSE_INSTRUCTION =
 describe('CODE Source, GEARS, and FSM agreement', () => {
   it('preserves every authored instruction and quoted relay', () => {
     expect(checkSourceGearsContract(source, gearsText)).toEqual([]);
-    const start = source.indexOf('On each successful nested REVIEW,');
-    const lifecycle = source.slice(start, source.indexOf('\n\nAt the start', start));
-    expect(start).toBeGreaterThan(0);
-    for (const id of ['CODE-2', 'CODE-4'] as const) {
-      expect(gearsSection(id)).toContain(lifecycle);
+    // DR-102 retired the DR-081 prior-phase relay: no record is frozen and
+    // no later task reads one.
+    for (const text of [source, gearsText]) {
+      expect(text).not.toContain('previous-phase-review');
+      expect(text).not.toContain('On each successful nested REVIEW');
+      expect(text).not.toContain('evaluatedRevision; a mismatch is not approval');
     }
+    expect(source).toContain(
+      'The earlier phases of this intent await the one REVIEW that follows its final task; do not ask Boss to review or approve them.',
+    );
   });
 
-  it('maps exactly CODE-1 through CODE-4 once', () => {
+  it('maps exactly CODE-1 through CODE-3 once', () => {
     expect(gears.map(({ id }) => id)).toEqual([
       'CODE-1',
       'CODE-2',
       'CODE-3',
-      'CODE-4',
     ]);
     const stateItems = [
       ...enumeratePlayerStates(codeMachine),
@@ -150,16 +153,15 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       '> Original request: <caller-input>',
       '> Run results: <run-results>',
     ]);
-    expect(byId.get('CODE-3')?.prompt[0]).toBe(
+    expect(byId.get('CODE-2')?.prompt[0]).toBe(
       'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
     );
-    expect(byId.get('CODE-3')?.prompt.slice(-4)).toEqual([
+    expect(byId.get('CODE-2')?.prompt.slice(-3)).toEqual([
       '> Original request: <caller-input>',
       '> IR number: <ir-number>',
       '> Run results: <run-results>',
-      '> Previous phase review: <previous-phase-review>',
     ]);
-    for (const [id, relays] of [['CODE-1', 2], ['CODE-3', 4]] as const) {
+    for (const [id, relays] of [['CODE-1', 2], ['CODE-2', 3]] as const) {
       const prompt = byId.get(id)?.prompt ?? [];
       expect(prompt.at(-relays - 1), id).toBe('');
       expect(
@@ -189,99 +191,89 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       expect(byId.get(state.sourceItem)?.player).toBeUndefined();
     }
     expect(
-      enumeratePlayerStates(codeMachine).some(({ sourceItem }) =>
-        sourceItem === 'CODE-2' || sourceItem === 'CODE-4',
+      enumeratePlayerStates(codeMachine).some(
+        ({ sourceItem }) => sourceItem === 'CODE-3',
       ),
     ).toBe(false);
+    expect(enumerateNestedPlaybookStates(codeMachine)).toHaveLength(1);
   });
 
   it('pins every authored post-REVIEW outcome to its compiled route', () => {
     for (const clause of [
-      'When `review` passes a direct phase, `code` is complete.',
-      'When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.',
-      'When `review` passes the final IR-task phase, `code` is complete.',
+      'When a new-IR or a nonfinal IR-task phase completes, Captain shall continue with the next unfinished IR-task phase without a review.',
+      'After the direct phase or the final IR-task phase, Captain shall call the `review` playbook once over every `code`-owned commit of this run and wait until it passes with no unsettled findings.',
+      'When `review` passes, `code` is complete.',
       'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.',
       'When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
-      'A nested `review` passes the phase only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
-      'On successful completion, `code` returns the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that every phase\'s review passed with no unsettled findings.',
+      'A nested `review` passes only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
+      'On successful completion, `code` returns the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that the intent\'s review passed with no unsettled findings.',
     ]) {
       expect(source).toContain(clause);
     }
-    for (const outcome of CODE_2_OUTCOMES) {
-      expect(gearsSection('CODE-2')).toContain(outcome);
+    for (const outcome of CODE_3_OUTCOMES) {
+      expect(gearsSection('CODE-3')).toContain(outcome);
     }
-    for (const outcome of CODE_4_OUTCOMES) {
-      expect(gearsSection('CODE-4')).toContain(outcome);
+    for (const [id, outcome] of Object.entries(PHASE_CONTINUATION_OUTCOMES)) {
+      expect(gearsSection(id as 'CODE-1' | 'CODE-2')).toContain(outcome);
     }
 
     const states = (codeMachine as unknown as {
-      config: { states: Record<string, RawReviewState> };
+      config: {
+        states: Record<string, RawReviewState & { invoke?: { onDone?: readonly RawTransition[] } }>;
+      };
     }).config.states;
-    const first = states.reviewNewIntentPhase?.invoke;
-    const task = states.reviewIrTaskPhase?.invoke;
+    const review = states.reviewIntent?.invoke;
     expect({
-      firstApprovedDirect: route(first?.onDone?.[0]),
-      firstApprovedIr: route(first?.onDone?.[1]),
-      firstInvalidApproval: route(first?.onDone?.[2]),
-      firstAuthoredFailure: route(first?.onError?.[0]),
-      firstControlFailure: route(first?.onError?.[1]),
-      taskApprovedMore: route(task?.onDone?.[0]),
-      taskApprovedFinal: route(task?.onDone?.[1]),
-      taskInvalidApproval: route(task?.onDone?.[2]),
-      taskAuthoredFailure: route(task?.onError?.[0]),
-      taskControlFailure: route(task?.onError?.[1]),
+      approved: route(review?.onDone?.[0]),
+      invalidApproval: route(review?.onDone?.[1]),
+      authoredFailure: route(review?.onError?.[0]),
+      controlFailure: route(review?.onError?.[1]),
     }).toEqual({
-      firstApprovedDirect: {
-        guard: 'reviewPassedDirect',
+      approved: {
+        guard: 'reviewPassed',
         target: 'done',
         actions: 'rememberReviewPass',
       },
-      firstApprovedIr: {
-        guard: 'reviewPassedNewIr',
-        target: 'irTaskPhase',
-        actions: 'rememberReviewPass',
-      },
-      firstInvalidApproval: {
+      invalidApproval: {
         guard: undefined,
         target: 'reviewFailed',
         actions: 'rememberReviewNotPassed',
       },
-      firstAuthoredFailure: {
+      authoredFailure: {
         guard: 'authoredReviewFailure',
         target: 'reviewFailed',
         actions: 'rememberAuthoredReviewFailure',
       },
-      firstControlFailure: {
-        guard: undefined,
-        target: 'failed',
-        actions: 'rememberActorError',
-      },
-      taskApprovedMore: {
-        guard: 'reviewPassedNonfinalTask',
-        target: 'irTaskPhase',
-        actions: 'rememberReviewPass',
-      },
-      taskApprovedFinal: {
-        guard: 'reviewPassedFinalTask',
-        target: 'done',
-        actions: 'rememberReviewPass',
-      },
-      taskInvalidApproval: {
-        guard: undefined,
-        target: 'reviewFailed',
-        actions: 'rememberReviewNotPassed',
-      },
-      taskAuthoredFailure: {
-        guard: 'authoredReviewFailure',
-        target: 'reviewFailed',
-        actions: 'rememberAuthoredReviewFailure',
-      },
-      taskControlFailure: {
+      controlFailure: {
         guard: undefined,
         target: 'failed',
         actions: 'rememberActorError',
       },
     });
+    // DR-102: the phase arms route by finality, never through a review.
+    const armTargets = (stateId: string) =>
+      (states[stateId]?.invoke?.onDone ?? []).map((arm) => [
+        arm.guard,
+        stateName(arm.target),
+      ]);
+    expect(armTargets('firstPhase')).toEqual([
+      ['needsBossReplyWithQuestion', 'awaitBossReply'],
+      ['acceptDirectCommit', 'reviewIntent'],
+      ['acceptIrCommit', 'irTaskPhase'],
+      ['acceptMoreTasks', 'irTaskPhase'],
+      ['acceptFinalTask', 'reviewIntent'],
+      [undefined, 'failed'],
+    ]);
+    expect(armTargets('irTaskPhase')).toEqual([
+      ['needsBossReplyWithQuestion', 'awaitBossReply'],
+      ['acceptMoreTasks', 'irTaskPhase'],
+      ['acceptFinalTask', 'reviewIntent'],
+      [undefined, 'failed'],
+    ]);
+    // The self-loop restarts the Coder actor for the next task.
+    expect(
+      (states.irTaskPhase?.invoke?.onDone?.[1] as { reenter?: boolean } | undefined)?.reenter,
+    ).toBe(true);
   });
 
   it('publishes a distinct terminal meaning per authored outcome', () => {
@@ -322,19 +314,14 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
 
     // Every arm entering a terminal state carries that state's own outcome, so
     // the description a host quotes holds however the run arrived there.
-    expect(entering.get('done')).toEqual([
-      'rememberReviewPass',
-      'rememberReviewPass',
-    ]);
+    expect(entering.get('done')).toEqual(['rememberReviewPass']);
     expect(entering.get('reviewFailed')?.sort()).toEqual([
       'rememberAuthoredReviewFailure',
-      'rememberAuthoredReviewFailure',
-      'rememberReviewNotPassed',
       'rememberReviewNotPassed',
     ]);
     expect(states.done?.description).toContain('no unsettled findings');
     expect(states.reviewFailed?.description).toContain(
-      'review did not pass a phase',
+      "review did not pass the intent's commits",
     );
     expect(states.reviewFailed?.description).not.toContain(
       'no unsettled findings',
@@ -371,9 +358,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     for (const id of ['firstPhase', 'irTaskPhase']) {
       expect(states[id]?.tags).toContain('playbook.busy');
     }
-    for (const id of ['reviewNewIntentPhase', 'reviewIrTaskPhase']) {
-      expect(states[id]?.tags).toContain('playbook.suspended');
-    }
+    expect(states.reviewIntent?.tags).toContain('playbook.suspended');
     for (const id of ['ready', 'awaitBossReply', 'failed']) {
       expect(states[id]?.tags).toContain('playbook.parked');
     }

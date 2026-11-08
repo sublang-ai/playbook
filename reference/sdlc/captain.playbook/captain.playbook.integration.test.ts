@@ -2911,7 +2911,7 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
       {
         playbookId: 'code',
         runtime: {
-          state: { stateId: 'reviewNewIntentPhase' },
+          state: { stateId: 'reviewIntent' },
           suspendedCall: {
             playbookId: 'review',
             childSessionId: generation.frames[1]?.sessionId,
@@ -3181,10 +3181,10 @@ describe('IR-046 retained resumption on real linked artifacts', () => {
     if (dismissed) {
       expect(stopped.mode).toBe('chat');
       expect(source.statuses).toContain('◇ /code finished');
-      expect(source.closingPrompts().at(-1)).toContain('CODE stopped because review did not pass a phase');
+      expect(source.closingPrompts().at(-1)).toContain("CODE stopped because review did not pass the intent's commits");
     } else {
       expect(stopped).toMatchObject({ mode: 'engaged.parked' });
-      expect(stopped.mode === 'engaged.parked' && stopped.frames.map(frame => frame.runtime.state.stateId)).toEqual(['reviewNewIntentPhase', 'failed']);
+      expect(stopped.mode === 'engaged.parked' && stopped.frames.map(frame => frame.runtime.state.stateId)).toEqual(['reviewIntent', 'failed']);
       expect(traceEvents(source).filter(({ type }) => type === 'playbook.call.finished')).toHaveLength(0);
     }
     const retainedAfterTerminal = retainedGeneration(source);

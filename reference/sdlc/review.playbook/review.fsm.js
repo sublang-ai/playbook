@@ -8,6 +8,11 @@ import { assign, fromPromise, setup } from 'xstate';
 /** One role-id array per parallel group; REVIEW declares no parallel group. */
 export const concurrentRoleSets = [];
 // ---------------------------------------------------------------------------
+// Machine input, context, events, and output
+// ---------------------------------------------------------------------------
+/** Reviewer rounds REVIEW runs at most: the first and one after each of two Coder dispositions. */
+export const MAX_REVIEW_ROUNDS = 3;
+// ---------------------------------------------------------------------------
 // Prompts and result contracts (verbatim from review.gears.md)
 // ---------------------------------------------------------------------------
 const FIRST_REVIEW_PROMPT = [
@@ -134,6 +139,7 @@ const STATE_DESCRIPTIONS = {
     awaitBossReply: "Waiting for Boss to answer the acting agent's question.",
     failed: 'REVIEW parked after a failure and waits for Boss to restart or resume it.',
     done: 'REVIEW completed: the review scope was evaluated at the returned revision and no unsettled findings remain.',
+    unsettled: 'REVIEW stopped after its third round: findings remain unsettled within the review scope, and no further fix round runs.',
 };
 const RESUME_METADATA = {
     firstReview: { sourceItem: 'REVIEW-1', role: 'reviewer' },
@@ -201,6 +207,14 @@ function errorRecord(value) {
     return { name: 'Error', message: String(value) };
 }
 const acceptsOutcome = (outcome) => ({ event }) => playerOutputOf(event)?.guard === outcome;
+/** The round in progress; a context from before the bound counts as the first. */
+const roundOf = (context) => context.round ?? 1;
+// A later round routes findings by its ordinal: Coder answers them before the
+// third round, and the third round's findings stay unsettled.
+const acceptHasFindingsBeforeBound = ({ context, event }) => playerOutputOf(event)?.guard === 'hasFindings' &&
+    roundOf(context) < MAX_REVIEW_ROUNDS;
+const acceptHasFindingsAtBound = ({ context, event }) => playerOutputOf(event)?.guard === 'hasFindings' &&
+    roundOf(context) >= MAX_REVIEW_ROUNDS;
 // The entry guard validates the text the current event supplies, before the
 // entry action copies it into context.
 const validStartReview = ({ event }) => event.type === 'START_REVIEW' && isNonEmptyString(event.callerInput);
@@ -261,12 +275,22 @@ const acceptedOutcome = (source, target, outcome) => ({
     params: { source, target, acceptedOutcome: outcome },
 });
 /** Reviewer found unsettled findings: Coder answers them next (REVIEW-2). */
-const hasFindingsArm = (source) => ({
-    guard: 'acceptHasFindings',
+const hasFindingsArm = (source, guard = 'acceptHasFindings') => ({
+    guard,
     target: '#fixFindings',
     actions: [
         acceptedOutcome(source, 'fixFindings', 'hasFindings'),
         'rememberFindings',
+        'clearBossReplyContext',
+    ],
+});
+/** Reviewer kept findings at the third round: they stay unsettled (DR-102). */
+const unsettledArm = (source) => ({
+    guard: 'acceptHasFindingsAtBound',
+    target: '#unsettled',
+    actions: [
+        acceptedOutcome(source, 'unsettled', 'hasFindings'),
+        'rememberUnsettledFindings',
         'clearBossReplyContext',
     ],
 });
@@ -340,30 +364,41 @@ export const reviewMachine = setup({
                 latestCommit: undefined,
                 coderOutcome: undefined,
                 evaluatedRevision: undefined,
+                round: 1,
+                findingsUnsettled: undefined,
                 lastError: undefined,
                 pendingBossQuestion: undefined,
                 bossReply: undefined,
             }
             : {}),
-        resetForInterrupt: assign({
+        // A jump back to the first review restarts the round count; a jump into a
+        // later round redoes that round and keeps it.
+        resetForInterrupt: assign(({ context, event }) => ({
             evaluatedRevision: undefined,
+            findingsUnsettled: undefined,
+            round: event.type === 'BOSS_INTERRUPT' && event.targetId === 'firstReview'
+                ? 1
+                : roundOf(context),
             lastError: undefined,
             pendingBossQuestion: undefined,
             bossReply: undefined,
-        }),
+        })),
         rememberFindings: assign(({ event }) => {
             const output = playerOutputOf(event);
             return output?.guard === 'hasFindings'
                 ? { reviewerOutput: output.reviewerOutput, lastError: undefined }
                 : {};
         }),
-        rememberCoderDisposition: assign(({ event }) => {
+        rememberCoderDisposition: assign(({ context, event }) => {
             const output = playerOutputOf(event);
+            // Each disposition opens the next Reviewer round.
+            const round = roundOf(context) + 1;
             if (output?.guard === 'committed') {
                 return {
                     coderOutput: output.coderOutput,
                     latestCommit: output.latestCommit,
                     coderOutcome: 'committed',
+                    round,
                     lastError: undefined,
                 };
             }
@@ -371,10 +406,21 @@ export const reviewMachine = setup({
                 return {
                     coderOutput: output.coderOutput,
                     coderOutcome: 'rejectedAll',
+                    round,
                     lastError: undefined,
                 };
             }
             return {};
+        }),
+        rememberUnsettledFindings: assign(({ event }) => {
+            const output = playerOutputOf(event);
+            return output?.guard === 'hasFindings'
+                ? {
+                    reviewerOutput: output.reviewerOutput,
+                    findingsUnsettled: true,
+                    lastError: undefined,
+                }
+                : {};
         }),
         rememberEvaluatedRevision: assign(({ event }) => {
             const output = playerOutputOf(event);
@@ -424,6 +470,8 @@ export const reviewMachine = setup({
     },
     guards: {
         acceptHasFindings: acceptsOutcome('hasFindings'),
+        acceptHasFindingsBeforeBound,
+        acceptHasFindingsAtBound,
         acceptNoFindings: acceptsOutcome('noFindings'),
         acceptCommitted: acceptsOutcome('committed'),
         acceptRejectedAll: acceptsOutcome('rejectedAll'),
@@ -436,6 +484,15 @@ export const reviewMachine = setup({
     initial: 'ready',
     context: {},
     output: ({ context }) => {
+        if (context.findingsUnsettled === true) {
+            if (!isNonEmptyString(context.reviewerOutput)) {
+                throw new Error('REVIEW stopped at its bound without the unsettled findings');
+            }
+            return {
+                noUnsettledFindings: false,
+                reviewerOutput: context.reviewerOutput,
+            };
+        }
         if (!isNonEmptyString(context.evaluatedRevision)) {
             throw new Error('REVIEW completed without the evaluated repository revision');
         }
@@ -560,7 +617,8 @@ export const reviewMachine = setup({
                     ...bossReplyFields(context),
                 }),
                 onDone: [
-                    hasFindingsArm('reviewAfterFix'),
+                    hasFindingsArm('reviewAfterFix', 'acceptHasFindingsBeforeBound'),
+                    unsettledArm('reviewAfterFix'),
                     noFindingsArm('reviewAfterFix'),
                     suspendArm('reviewAfterFix'),
                     malformedPlayerOutputArm,
@@ -590,7 +648,8 @@ export const reviewMachine = setup({
                     ...bossReplyFields(context),
                 }),
                 onDone: [
-                    hasFindingsArm('reviewAfterRejection'),
+                    hasFindingsArm('reviewAfterRejection', 'acceptHasFindingsBeforeBound'),
+                    unsettledArm('reviewAfterRejection'),
                     noFindingsArm('reviewAfterRejection'),
                     suspendArm('reviewAfterRejection'),
                     malformedPlayerOutputArm,
@@ -634,6 +693,12 @@ export const reviewMachine = setup({
             type: 'final',
             description: STATE_DESCRIPTIONS.done,
             meta: finalMeta('done', 'success'),
+        },
+        unsettled: {
+            id: 'unsettled',
+            type: 'final',
+            description: STATE_DESCRIPTIONS.unsettled,
+            meta: finalMeta('unsettled', 'failure'),
         },
     },
 });

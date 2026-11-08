@@ -10,6 +10,7 @@ Amends [DR-040](040-outcome-authority-effect-reconciliation.md) in three scopes:
 Amends [DR-062](062-pre-existing-changes-are-context.md) §2 in one scope: its accounting applies to the whole advance rather than to exactly one commit.
 The three dispositions, the exclusive claim, the cohort and exclusively-`unchanged` rules, the deferred chain, and the fail-closed treatment of rewritten, residual, foreign, lost, and unstable evidence stand.
 [DR-090](090-every-role-hears-the-boss.md) amends §3: each statement names the branch the commits landed on, and a step's one new commit joins the closing reply's facts.
+[DR-102](102-code-reviews-the-intent-once.md) amends the consequence on CODE's review request: it names every phase's receipt-owned commit, oldest first, in the one review after the intent.
 
 ## Context
 

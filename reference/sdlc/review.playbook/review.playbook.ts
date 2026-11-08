@@ -53,7 +53,9 @@ const RESUMABLE_STATE_IDS: ReadonlySet<string> = new Set([
   "reviewAfterFix",
   "reviewAfterRejection"
 ]);
-const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set([]);
+const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set([
+  "unsettled"
+]);
 const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   "reviewerOutput",
   "coderOutput"
@@ -224,7 +226,9 @@ const runtimeSpec = {
     "answer",
     "questionId"
   ],
-  "controlContextFields": []
+  "controlContextFields": [
+    "round"
+  ]
 },
   snapshotOptions: validateOptions,
   machineInput: (options: PlaybookRuntimeOptions) => Object.fromEntries(

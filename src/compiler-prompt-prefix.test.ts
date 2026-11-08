@@ -19,7 +19,7 @@ const definition = readFileSync(new URL('../slc/prefix.md', import.meta.url), 'u
 const SECTION = '## Prefixed prompts';
 
 const workflows = [
-  { id: 'code', prefixed: ['CODE-1', 'CODE-3'], nested: ['CODE-2', 'CODE-4'] },
+  { id: 'code', prefixed: ['CODE-1', 'CODE-2'], nested: ['CODE-3'] },
   { id: 'review', prefixed: ['REVIEW-1', 'REVIEW-2', 'REVIEW-3', 'REVIEW-4'], nested: [] },
   { id: 'decide', prefixed: ['DECIDE-1', 'DECIDE-2'], nested: ['DECIDE-4'] },
   { id: 'dev', prefixed: ['DEV-1'], nested: ['DEV-2', 'DEV-3', 'DEV-4', 'DEV-5', 'DEV-6'] },
@@ -403,7 +403,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
     expect(checkSourceGearsContract(source, prefixed)).toEqual([]);
     const dropped = prefixed.replace('> > Run results: <run-results>\n', '');
     expect(checkSourceGearsContract(source, dropped)).toEqual([
-      'source relay fragment at line 28 was dropped or changed',
+      'source relay fragment at line 27 was dropped or changed',
     ]);
     // Moving CODE-1's trailing relays back before its first instruction
     // restores the Source-order layout, which still passes.
@@ -422,7 +422,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
       .replace('>\n> For a new change intent', `${relays}>\n> For a new change intent`);
     expect(inside).not.toBe(prefixed);
     expect(checkSourceGearsContract(source, inside)).toEqual([
-      'source instruction fragment at line 31 was dropped or changed',
+      'source instruction fragment at line 30 was dropped or changed',
     ]);
   });
 
@@ -474,8 +474,8 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
 
   it('orders every occurrence, so a relay block repeated after a later fragment fails', () => {
     // DECIDE-3's trailing block relays the topic and then the proposal, so a
-    // repeated block puts a topic after the proposal; CODE-4's first block
-    // repeated after its last stands after the IR-task relay.
+    // repeated block puts a topic after the proposal; CODE-3's first block
+    // repeated after its last stands after the IR-number relay.
     const cases = [
       {
         id: 'decide',
@@ -485,11 +485,11 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
       },
       {
         id: 'code',
-        item: 'CODE-4',
-        after: '> > Current IR task: <ir-task>\n',
+        item: 'CODE-3',
+        after: '> > Coder output: <coder-output>\n>\n> > IR number: <ir-number>\n',
         block: [
           '> > Original intent: <caller-input>',
-          '> > Review scope: the commit <code-commit> from this coding phase and its resulting repository state.',
+          '> > Review scope: every commit of this coding intent, namely <code-commits>, and its resulting repository state.',
           '> > Coder output: <coder-output>',
           '',
         ].join('\n'),

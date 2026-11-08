@@ -209,9 +209,16 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   ],
   'reviewAfterFix.invoke.onDone': [
     {
-      guard: 'acceptHasFindings',
+      guard: 'acceptHasFindingsBeforeBound',
       target: '#fixFindings',
-      context,
+      context: { ...context, round: 2 },
+      event: done({ guard: 'hasFindings', reviewerOutput: 'Finding 2' }),
+    },
+    {
+      // playbook-62 / DR-102: the third round's findings stay unsettled.
+      guard: 'acceptHasFindingsAtBound',
+      target: '#unsettled',
+      context: { ...context, round: 3 },
       event: done({ guard: 'hasFindings', reviewerOutput: 'Finding 2' }),
     },
     {
@@ -238,9 +245,16 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   ],
   'reviewAfterRejection.invoke.onDone': [
     {
-      guard: 'acceptHasFindings',
+      guard: 'acceptHasFindingsBeforeBound',
       target: '#fixFindings',
-      context,
+      context: { ...context, round: 2 },
+      event: done({ guard: 'hasFindings', reviewerOutput: 'Finding remains' }),
+    },
+    {
+      // playbook-62 / DR-102: the third round's findings stay unsettled.
+      guard: 'acceptHasFindingsAtBound',
+      target: '#unsettled',
+      context: { ...context, round: 3 },
       event: done({ guard: 'hasFindings', reviewerOutput: 'Finding remains' }),
     },
     {
@@ -495,7 +509,7 @@ describe('REVIEW GEARS to FSM compilation', () => {
     }
   });
 
-  it('marks all twelve governed outcomes with stable identities', () => {
+  it('marks all fourteen governed outcomes with stable identities', () => {
     const governed = [
       {
         stateId: 'firstReview',
@@ -547,6 +561,11 @@ describe('REVIEW GEARS to FSM compilation', () => {
           },
           {
             source: 'reviewAfterFix',
+            target: 'unsettled',
+            acceptedOutcome: 'hasFindings',
+          },
+          {
+            source: 'reviewAfterFix',
             target: 'done',
             acceptedOutcome: 'noFindings',
           },
@@ -563,6 +582,11 @@ describe('REVIEW GEARS to FSM compilation', () => {
           {
             source: 'reviewAfterRejection',
             target: 'fixFindings',
+            acceptedOutcome: 'hasFindings',
+          },
+          {
+            source: 'reviewAfterRejection',
+            target: 'unsettled',
             acceptedOutcome: 'hasFindings',
           },
           {
@@ -791,6 +815,114 @@ describe('REVIEW GEARS to FSM compilation', () => {
     actor.stop();
   });
 
+  // playbook-62 / DR-102: REVIEW runs at most three Reviewer rounds; the
+  // third round's findings stop REVIEW unsettled with no further Coder call.
+  const scriptedActor = (script: (PlayerOutput | 'pending')[]) => {
+    const inputs: PlayerInput[] = [];
+    const actor = createActor(
+      reviewMachine.provide({
+        actors: {
+          player: fromPromise<PlayerOutput, PlayerInput>(async ({ input }) => {
+            inputs.push(input);
+            const next = script.shift();
+            if (next === undefined) throw new Error('unexpected player call');
+            if (next === 'pending') return new Promise<never>(() => undefined);
+            return next;
+          }),
+        },
+      }),
+      { input: {} },
+    ).start();
+    return { actor, inputs };
+  };
+  const commit = {
+    guard: 'committed',
+    latestCommit: '2222222222222222222222222222222222222222',
+    coderOutput: 'Fixed.',
+  } as const;
+
+  it('stops after the third round with its findings unsettled', async () => {
+    const { actor, inputs } = scriptedActor([
+      { guard: 'hasFindings', reviewerOutput: '1. Round one finding' },
+      commit,
+      { guard: 'hasFindings', reviewerOutput: '1. Round two finding' },
+      { guard: 'rejectedAll', coderOutput: 'Rejected with evidence.' },
+      { guard: 'hasFindings', reviewerOutput: '1. Round three finding' },
+    ]);
+    actor.send({ type: 'START_REVIEW', callerInput: 'Review the release.' });
+    const stopped = await waitFor(actor, (snapshot) => snapshot.status === 'done');
+    expect(stopped.value).toBe('unsettled');
+    expect(stopped.context.round).toBe(3);
+    expect(inputs.map(({ stateId }) => stateId)).toEqual([
+      'firstReview',
+      'fixFindings',
+      'reviewAfterFix',
+      'fixFindings',
+      'reviewAfterRejection',
+    ]);
+    expect(inputs.filter(({ role }) => role === 'coder')).toHaveLength(2);
+    expect(stopped.output).toEqual({
+      noUnsettledFindings: false,
+      reviewerOutput: '1. Round three finding',
+    });
+    actor.stop();
+  });
+
+  it('sends the second round findings to Coder before the bound', async () => {
+    const { actor, inputs } = scriptedActor([
+      { guard: 'hasFindings', reviewerOutput: '1. Round one finding' },
+      { guard: 'rejectedAll', coderOutput: 'Rejected with evidence.' },
+      { guard: 'hasFindings', reviewerOutput: '1. Round two finding' },
+      'pending',
+    ]);
+    actor.send({ type: 'START_REVIEW', callerInput: 'Review the release.' });
+    const fixing = await waitFor(
+      actor,
+      (snapshot) => snapshot.matches('fixFindings') && snapshot.context.round === 2,
+    );
+    expect(fixing.context.reviewerOutput).toBe('1. Round two finding');
+    expect(fixing.context.findingsUnsettled).toBeUndefined();
+    await waitFor(actor, () => inputs.length === 4);
+    expect(inputs.at(-1)).toMatchObject({
+      stateId: 'fixFindings',
+      reviewerOutput: '1. Round two finding',
+    });
+    actor.stop();
+  });
+
+  it('restarts the round count only on a Boss jump to the first review', async () => {
+    const { actor, inputs } = scriptedActor([
+      { guard: 'hasFindings', reviewerOutput: '1. Round one finding' },
+      commit,
+      'pending',
+      'pending',
+      'pending',
+    ]);
+    actor.send({ type: 'START_REVIEW', callerInput: 'Review the release.' });
+    const second = await waitFor(
+      actor,
+      (snapshot) =>
+        snapshot.matches('reviewAfterFix') && snapshot.context.round === 2,
+    );
+    expect(second.context).toMatchObject({
+      callerInput: 'Review the release.',
+      coderOutcome: 'committed',
+      latestCommit: commit.latestCommit,
+      coderOutput: commit.coderOutput,
+    });
+    // A jump that redoes a later round keeps that round's ordinal ...
+    actor.send({ type: 'BOSS_INTERRUPT', targetId: 'reviewAfterFix' });
+    const redone = await waitFor(actor, () => inputs.length === 4);
+    expect(redone.value).toBe('reviewAfterFix');
+    expect(redone.context.round).toBe(2);
+    // ... and a jump back to the first review restarts the count.
+    actor.send({ type: 'BOSS_INTERRUPT', targetId: 'firstReview' });
+    const restarted = await waitFor(actor, () => inputs.length === 5);
+    expect(restarted.value).toBe('firstReview');
+    expect(restarted.context.round).toBe(1);
+    actor.stop();
+  });
+
   it('refuses a Boss jump into a round whose typed context is missing', () => {
     const jumps = (machineConfig.on?.BOSS_INTERRUPT ?? []) as readonly {
       guard: (args: { context: ReviewContext; event: unknown }) => boolean;
@@ -876,9 +1008,25 @@ describe('REVIEW GEARS to FSM compilation', () => {
     expect(() => output({ context: request })).toThrow(
       /without the evaluated repository revision/,
     );
+    // playbook-62 / DR-102: the bound's stop returns the unsettled findings,
+    // never a revision, and refuses to stop without them.
+    expect(
+      output({
+        context: {
+          ...context,
+          findingsUnsettled: true,
+          reviewerOutput: 'Finding remains',
+        },
+      }),
+    ).toEqual({ noUnsettledFindings: false, reviewerOutput: 'Finding remains' });
+    expect(() =>
+      output({
+        context: { ...context, findingsUnsettled: true, reviewerOutput: '' },
+      }),
+    ).toThrow(/without the unsettled findings/);
   });
 
-  it('declares the terminal kind of its one final state', () => {
+  it('declares the terminal kind of each final state', () => {
     const states = (
       reviewMachine as unknown as {
         config: {
@@ -889,13 +1037,15 @@ describe('REVIEW GEARS to FSM compilation', () => {
         };
       }
     ).config.states;
-    // DR-048: REVIEW's only completion is a success, so a caller's `onDone`
-    // proves approval without reading REVIEW's output fields.
+    // DR-048: a clean review is REVIEW's only success; DR-102 / playbook-62:
+    // stopping at the round bound with findings unsettled is a failure, so a
+    // caller's `onDone` never reads it as approval.
     expect(
       Object.entries(states)
         .filter(([, state]) => state.type === 'final')
-        .map(([id]) => id),
-    ).toEqual(['done']);
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(['done', 'unsettled']);
     expect(states.done?.meta).toEqual({
       playbook: {
         stateId: 'done',
@@ -903,5 +1053,16 @@ describe('REVIEW GEARS to FSM compilation', () => {
         terminal: 'success',
       },
     });
+    expect(states.unsettled?.meta).toEqual({
+      playbook: {
+        stateId: 'unsettled',
+        description: states.unsettled?.description,
+        terminal: 'failure',
+      },
+    });
+    expect(states.unsettled?.description).toEqual(expect.any(String));
+    expect(states.unsettled?.description).not.toContain(
+      'no unsettled findings remain',
+    );
   });
 });

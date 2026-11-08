@@ -5,7 +5,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [DR-102](102-code-reviews-the-intent-once.md): CODE reviews the intent once after its final phase, so no later IR-task phase follows a review and nothing remains to relay.
 
 ## Context
 

@@ -96,7 +96,7 @@ const linkedWorkflows = [
     linkedFields: reviewInternal.VERBATIM_PAYLOAD_FIELDS,
     expectedFields: ['reviewerOutput', 'coderOutput'],
     unfinishedFinalStateIds: reviewInternal.UNFINISHED_FINAL_STATE_IDS,
-    expectedUnfinishedFinalStateIds: [],
+    expectedUnfinishedFinalStateIds: ['unsettled'],
   },
   {
     id: 'DECIDE',

@@ -9,6 +9,7 @@ Accepted.
 [DR-019](019-shared-linked-runtime-factory.md) moves CODE's single-region interpreter into the shared runtime factory.
 [DR-011](011-composable-playbook-execution.md) supplies nested playbook-call semantics, and [DR-030](030-shared-mapped-player-continuity.md) supplies same-role continuity for CODE to REVIEW.
 [DR-032](032-explicit-roles-session-players.md) supersedes that same-role inference: CODE and REVIEW share continuity only where their explicit role bindings name the same configured player id.
+[DR-102](102-code-reviews-the-intent-once.md) amends §3: CODE invokes REVIEW once, after the direct phase or the final IR-task phase, over every `code`-owned commit of the run.
 
 ## Context
 

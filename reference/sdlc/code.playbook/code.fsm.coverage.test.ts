@@ -64,6 +64,7 @@ const CONTEXT: CodeContext = {
   callerInput: 'Implement the request.',
   coderOutput: 'Completed the phase.',
   codeCommit: 'abc123',
+  codeCommits: ['abc123'],
   irNumber: '040',
   irTask: 'Implement task 1.',
 };
@@ -120,7 +121,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     questionFixture,
     {
       guard: 'acceptDirectCommit',
-      target: '#reviewNewIntentPhase',
+      target: '#reviewIntent',
       context: CONTEXT,
       event: done({
         guard: 'directCommit',
@@ -130,7 +131,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: 'acceptIrCommit',
-      target: '#reviewNewIntentPhase',
+      target: '#irTaskPhase',
       context: CONTEXT,
       event: done({
         guard: 'irCommit',
@@ -141,7 +142,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: 'acceptMoreTasks',
-      target: '#reviewIrTaskPhase',
+      target: '#irTaskPhase',
       context: CONTEXT,
       event: done({
         guard: 'moreTasks',
@@ -153,7 +154,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: 'acceptFinalTask',
-      target: '#reviewIrTaskPhase',
+      target: '#reviewIntent',
       context: CONTEXT,
       event: done({
         guard: 'finalTask',
@@ -173,48 +174,11 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       }),
     },
   ],
-  'reviewNewIntentPhase.invoke.onDone': [
-    {
-      guard: 'reviewPassedDirect',
-      target: 'done',
-      context: { ...CONTEXT, phaseOutcome: 'directCommit' },
-      event: done(APPROVED),
-    },
-    {
-      guard: 'reviewPassedNewIr',
-      target: 'irTaskPhase',
-      context: { ...CONTEXT, phaseOutcome: 'irCommit' },
-      event: done(APPROVED),
-    },
-    {
-      guard: '<fallback>',
-      target: 'reviewFailed',
-      context: { ...CONTEXT, phaseOutcome: 'directCommit' },
-      event: done({ approvedCommit: 'previous', noUnsettledFindings: true }),
-    },
-  ],
-  'reviewNewIntentPhase.invoke.onError': [
-    {
-      guard: 'authoredReviewFailure',
-      target: '#reviewFailed',
-      context: CONTEXT,
-      event: { type: 'xstate.error.actor.review', error: authoredFailure },
-    },
-    {
-      guard: '<fallback>',
-      target: '#failed',
-      context: CONTEXT,
-      event: {
-        type: 'xstate.error.actor.review',
-        error: new Error('control-plane failure'),
-      },
-    },
-  ],
   'irTaskPhase.invoke.onDone': [
     questionFixture,
     {
       guard: 'acceptMoreTasks',
-      target: '#reviewIrTaskPhase',
+      target: '#irTaskPhase',
       context: CONTEXT,
       event: done({
         guard: 'moreTasks',
@@ -226,7 +190,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: 'acceptFinalTask',
-      target: '#reviewIrTaskPhase',
+      target: '#reviewIntent',
       context: CONTEXT,
       event: done({
         guard: 'finalTask',
@@ -246,15 +210,11 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
       }),
     },
   ],
-  'reviewIrTaskPhase.invoke.onDone': [
+  // DR-102: the one review follows the direct phase or the final task; a
+  // nonfinal phase outcome never reaches it.
+  'reviewIntent.invoke.onDone': [
     {
-      guard: 'reviewPassedNonfinalTask',
-      target: 'irTaskPhase',
-      context: { ...CONTEXT, phaseOutcome: 'moreTasks' },
-      event: done(APPROVED),
-    },
-    {
-      guard: 'reviewPassedFinalTask',
+      guard: 'reviewPassed',
       target: 'done',
       context: { ...CONTEXT, phaseOutcome: 'finalTask' },
       event: done(APPROVED),
@@ -262,11 +222,11 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     {
       guard: '<fallback>',
       target: 'reviewFailed',
-      context: { ...CONTEXT, phaseOutcome: 'finalTask' },
+      context: { ...CONTEXT, phaseOutcome: 'directCommit' },
       event: done({ evaluatedRevision: 'rev123', noUnsettledFindings: false }),
     },
   ],
-  'reviewIrTaskPhase.invoke.onError': [
+  'reviewIntent.invoke.onError': [
     {
       guard: 'authoredReviewFailure',
       target: '#reviewFailed',
@@ -482,22 +442,22 @@ describe('CODE FSM transition coverage', () => {
           },
           {
             source: 'firstPhase',
-            target: 'reviewNewIntentPhase',
+            target: 'reviewIntent',
             acceptedOutcome: 'directCommit',
           },
           {
             source: 'firstPhase',
-            target: 'reviewNewIntentPhase',
+            target: 'irTaskPhase',
             acceptedOutcome: 'irCommit',
           },
           {
             source: 'firstPhase',
-            target: 'reviewIrTaskPhase',
+            target: 'irTaskPhase',
             acceptedOutcome: 'moreTasks',
           },
           {
             source: 'firstPhase',
-            target: 'reviewIrTaskPhase',
+            target: 'reviewIntent',
             acceptedOutcome: 'finalTask',
           },
         ],
@@ -512,12 +472,12 @@ describe('CODE FSM transition coverage', () => {
           },
           {
             source: 'irTaskPhase',
-            target: 'reviewIrTaskPhase',
+            target: 'irTaskPhase',
             acceptedOutcome: 'moreTasks',
           },
           {
             source: 'irTaskPhase',
-            target: 'reviewIrTaskPhase',
+            target: 'reviewIntent',
             acceptedOutcome: 'finalTask',
           },
         ],
@@ -560,14 +520,16 @@ describe('CODE FSM transition coverage', () => {
       finalEvaluatedRevision: 'rev123',
       allReviewsPassed: true,
     });
+    // A direct intent names its one commit and relays no IR block.
     expect(workflow.reviewInputs[0]?.text).toBe(
       '> Original intent: Fix the bug.\n' +
-        '> Review scope: the commit abc123 from this coding phase and its resulting repository state.\n' +
+        '> Review scope: every commit of this coding intent, namely abc123, and its resulting repository state.\n' +
         '> Coder output: Committed the change.',
     );
+    expect(snapshot.context.codeCommits).toEqual(['abc123']);
   });
 
-  it('loops one commit per IR task and stops after the final reviewed task', async () => {
+  it('loops one commit per IR task and reviews the intent once after the final task', async () => {
     const workflow = createWorkflow(
       [
         {
@@ -591,7 +553,7 @@ describe('CODE FSM transition coverage', () => {
           irTask: 'Implement task 2.',
         },
       ],
-      [APPROVED, APPROVED, APPROVED],
+      [APPROVED],
     );
     workflow.actor.send({ type: 'START_CODE', callerInput: 'Large change.' });
     const snapshot = await waitFor(
@@ -604,26 +566,30 @@ describe('CODE FSM transition coverage', () => {
       finalEvaluatedRevision: 'rev123',
       allReviewsPassed: true,
     });
+    // DR-102: three phases, each with its own Coder call, then one REVIEW.
     expect(workflow.playerInputs.map(({ stateId }) => stateId)).toEqual([
       'firstPhase',
       'irTaskPhase',
       'irTaskPhase',
     ]);
     expect(irNumberOf(workflow.playerInputs[1])).toBe('040');
+    expect(irNumberOf(workflow.playerInputs[2])).toBe('040');
+    for (const input of workflow.playerInputs) {
+      expect(input).not.toHaveProperty('previousPhaseReview');
+    }
     expect(workflow.reviewInputs.map(({ stateId }) => stateId)).toEqual([
-      'reviewNewIntentPhase',
-      'reviewIrTaskPhase',
-      'reviewIrTaskPhase',
+      'reviewIntent',
     ]);
-    expect(workflow.reviewInputs[0]?.text).not.toContain('Current IR task:');
-    // CODE-4 relays the IR task as the Source's second, separate quote block.
-    expect(workflow.reviewInputs[2]?.text).toBe(
+    // CODE-3 names every phase commit oldest first and relays the IR number
+    // as the Source's second, separate quote block.
+    expect(workflow.reviewInputs[0]?.text).toBe(
       '> Original intent: Large change.\n' +
-        '> Review scope: the commit task2 from this coding phase and its resulting repository state.\n' +
+        '> Review scope: every commit of this coding intent, namely ir040, task1, task2, and its resulting repository state.\n' +
         '> Coder output: Completed task 2.\n' +
         '\n' +
-        '> Current IR task: Implement task 2.',
+        '> IR number: 040',
     );
+    expect(snapshot.context.codeCommits).toEqual(['ir040', 'task1', 'task2']);
   });
 
   it('continues an existing IR from the first phase through the IR-task review', async () => {
@@ -644,7 +610,7 @@ describe('CODE FSM transition coverage', () => {
           irTask: 'Implement task 4.',
         },
       ],
-      [APPROVED, APPROVED_TASK4],
+      [APPROVED_TASK4],
     );
     workflow.actor.send({ type: 'START_CODE', callerInput: 'Continue IR-040.' });
     const snapshot = await waitFor(
@@ -663,12 +629,46 @@ describe('CODE FSM transition coverage', () => {
     ]);
     expect(irNumberOf(workflow.playerInputs[1])).toBe('040');
     expect(workflow.reviewInputs.map(({ stateId }) => stateId)).toEqual([
-      'reviewIrTaskPhase',
-      'reviewIrTaskPhase',
+      'reviewIntent',
     ]);
     expect(workflow.reviewInputs[0]?.text).toContain(
-      '> Current IR task: Implement task 3.',
+      '> Review scope: every commit of this coding intent, namely task3, task4, and its resulting repository state.',
     );
+    expect(workflow.reviewInputs[0]?.text).toContain('> IR number: 040');
+  });
+
+  it('reports every task commit when the one review fails after a multi-task intent', async () => {
+    const workflow = createWorkflow(
+      [
+        {
+          guard: 'moreTasks',
+          coderOutput: 'Task 3.',
+          latestCommit: 'task3',
+          irNumber: '040',
+          irTask: 'Implement task 3.',
+        },
+        {
+          guard: 'finalTask',
+          coderOutput: 'Task 4.',
+          latestCommit: 'task4',
+          irNumber: '040',
+          irTask: 'Implement task 4.',
+        },
+      ],
+      [authoredFailure],
+    );
+    workflow.actor.send({ type: 'START_CODE', callerInput: 'Continue IR-040.' });
+    const snapshot = await waitFor(
+      workflow.actor,
+      (value) => value.status === 'done',
+    );
+    expect(snapshot.value).toBe('reviewFailed');
+    expect(snapshot.output).toMatchObject({
+      status: 'review-failed',
+      lastCodeCommit: 'task4',
+    });
+    expect(snapshot.context.codeCommits).toEqual(['task3', 'task4']);
+    expect(workflow.reviewInputs).toHaveLength(1);
   });
 
   it('parks and resumes the same Coder leaf after a Boss reply', async () => {

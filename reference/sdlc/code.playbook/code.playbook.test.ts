@@ -418,7 +418,7 @@ describe('linked CODE runtime', () => {
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
-      "CODE completed: every phase's review passed with no unsettled findings.",
+      "CODE completed: the intent's review passed with no unsettled findings.",
     );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'complete',
@@ -447,19 +447,19 @@ describe('linked CODE runtime', () => {
       text:
         '> Original intent: Fix the bug.\n' +
         '> Preserve compatibility.\n' +
-        `> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.\n` +
+        `> Review scope: every commit of this coding intent, namely ${host.commitOids[0]}, and its resulting repository state.\n` +
         '> Coder output: Tests passed.',
     });
     expect(host.statuses).toContain('→ directCommit');
     expect(acceptedOutcomes(host)).toContainEqual({
       source: 'firstPhase',
-      target: 'reviewNewIntentPhase',
+      target: 'reviewIntent',
       acceptedOutcome: 'directCommit',
     });
     const view = runtime.describe!();
     expect(view.state.stateId).toBe('done');
     expect(view.stateDescription).toBe(
-      "CODE completed: every phase's review passed with no unsettled findings.",
+      "CODE completed: the intent's review passed with no unsettled findings.",
     );
     await runtime.dispose();
   });
@@ -521,7 +521,7 @@ describe('linked CODE runtime', () => {
       expect(host.playerCalls).toHaveLength(1);
       expect(host.judgePrompts).toHaveLength(1);
       expect(host.childRequests).toHaveLength(1);
-      expect(host.childRequests[0]?.text).toContain(`> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.`);
+      expect(host.childRequests[0]?.text).toContain(`> Review scope: every commit of this coding intent, namely ${host.commitOids[0]}, and its resulting repository state.`);
       expect(host.childRequests[0]?.text).toContain(finalText.replace(/\n/g, '\n> '));
       expect(host.effectLedger.snapshot().boundaries[0]?.finalText).toBe(finalText);
       expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt).toMatchObject({ classification: 'one-descendant-commit', commitOid: host.commitOids[0] });
@@ -566,7 +566,7 @@ describe('linked CODE runtime', () => {
         { guard: 'moreTasks', irNumber: '009', irTask: '1' },
         { guard: 'finalTask', irNumber: '009', irTask: '2' },
       ],
-      children: [approvedChild(1), approvedChild(2)],
+      children: [approvedChild(1)],
     });
     const runtime = linkedRuntime(host);
     await runtime.init(rootSession(host.ports));
@@ -585,8 +585,10 @@ describe('linked CODE runtime', () => {
         { guard: 'moreTasks', irNumber: '009', irTask: '1' },
         { guard: 'finalTask', irNumber: '009', irTask: '2' },
       ]);
-      expect(host.childRequests).toHaveLength(2);
-      host.childRequests.forEach((request, index) => expect(request.text).toContain(`> Review scope: the commit ${host.commitOids[index]} from this coding phase and its resulting repository state.`));
+      // DR-102: both tasks precede the one REVIEW, whose scope names both.
+      expect(host.childRequests).toHaveLength(1);
+      expect(host.childRequests[0]?.text).toContain(`> Review scope: every commit of this coding intent, namely ${host.commitOids[0]}, ${host.commitOids[1]}, and its resulting repository state.`);
+      expect(host.childRequests[0]?.text).toContain('> IR number: 009');
       expect(result).toMatchObject({ outcome: 'terminal', output: { lastCodeCommit: host.commitOids[1], allReviewsPassed: true } });
     } finally {
       await runtime.dispose();
@@ -644,7 +646,8 @@ describe('linked CODE runtime', () => {
       });
       expect(host.playerCalls).toHaveLength(2);
       expect(host.judgePrompts).toHaveLength(2);
-      expect(host.childRequests).toHaveLength(1);
+      // DR-102: no review ran between the new-IR phase and its first task.
+      expect(host.childRequests).toHaveLength(0);
       expect(acceptedOutcomes(host)).toMatchObject([{ acceptedOutcome: 'irCommit' }]);
       expect(host.commitOids).toHaveLength(2);
     } finally {
@@ -743,7 +746,7 @@ describe('linked CODE runtime', () => {
           commits: host.commitOids,
         });
       expect(host.childRequests[0]?.text).toContain(
-        `> Review scope: the commit ${host.commitOids[1]} from this coding phase and its resulting repository state.`,
+        `> Review scope: every commit of this coding intent, namely ${host.commitOids[1]}, and its resulting repository state.`,
       );
       expect(host.statuses).toContain('→ directCommit');
       expect(result).toMatchObject({
@@ -777,7 +780,7 @@ describe('linked CODE runtime', () => {
       expect(host.effectLedger.snapshot().boundaries[0]?.physicalReceipt)
         .toMatchObject({ classification: 'unchanged' });
       expect(host.childRequests[0]?.text).toContain(
-        `> Review scope: the commit ${head} from this coding phase and its resulting repository state.`,
+        `> Review scope: every commit of this coding intent, namely ${head}, and its resulting repository state.`,
       );
       expect(result).toMatchObject({
         outcome: 'terminal',
@@ -871,7 +874,7 @@ describe('linked CODE runtime', () => {
           irTask: 'Implement task 2.',
         },
       ],
-      children: [approvedChild(1), approvedChild(2), approvedChild(3)],
+      children: [approvedChild(1)],
     });
     const runtime = linkedRuntime(host);
     await runtime.init(rootSession(host.ports));
@@ -883,9 +886,10 @@ describe('linked CODE runtime', () => {
     expect(parked.outcome).toBe('quiescent');
     expect(host.playerCalls[1]?.prompt).toContain('If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.');
     expect(host.playerCalls[1]?.prompt).toContain('Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.');
-    expect(host.playerCalls[1]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit before REVIEW.');
+    expect(host.playerCalls[1]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit.');
     expect(host.commitOids).toHaveLength(1);
-    expect(host.childRequests).toHaveLength(1);
+    // DR-102: the new-IR phase continues to the task with no review between.
+    expect(host.childRequests).toHaveLength(0);
     expect(host.effectLedger.snapshot().logicalOperations[0]).toMatchObject({
       pendingQuestion: {
         question: 'Which compatibility boundary should I use?',
@@ -902,7 +906,7 @@ describe('linked CODE runtime', () => {
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
-      "CODE completed: every phase's review passed with no unsettled findings.",
+      "CODE completed: the intent's review passed with no unsettled findings.",
     );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'complete',
@@ -934,26 +938,27 @@ describe('linked CODE runtime', () => {
     expect(host.playerCalls[3]?.prompt).toMatch(
       /^Role: coder · Model: GPT-5\.6 Sol\n\n\? ⟶\nWhich compatibility boundary should I use\?\n\nBoss ⟶\nPreserve the narrow compatibility boundary\.\n\nRead the identified IR[\s\S]*Coder GPT-5\.6 Sol\.\n\n> Original request: Implement the large change\.\n> IR number: 040/,
     );
+    // DR-102: one REVIEW after the final task names every phase commit oldest
+    // first and relays the IR number; the reentered IR-task leaf ran the
+    // second task as its own governed player call before it.
     expect(host.childRequests.map(({ text }) => text)).toEqual([
       '> Original intent: Implement the large change.\n' +
-        `> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.\n` +
-        '> Coder output: Created IR-040.',
-      '> Original intent: Implement the large change.\n' +
-        `> Review scope: the commit ${host.commitOids[1]} from this coding phase and its resulting repository state.\n` +
-        '> Coder output: Completed task 1.\n' +
-        '\n' +
-        '> Current IR task: Implement task 1.',
-      '> Original intent: Implement the large change.\n' +
-        `> Review scope: the commit ${host.commitOids[2]} from this coding phase and its resulting repository state.\n` +
+        `> Review scope: every commit of this coding intent, namely ${host.commitOids[0]}, ${host.commitOids[1]}, ${host.commitOids[2]}, and its resulting repository state.\n` +
         '> Coder output: Completed task 2.\n' +
         '\n' +
-        '> Current IR task: Implement task 2.',
+        '> IR number: 040',
     ]);
     expect(host.commitOids).toHaveLength(3);
+    for (const call of host.playerCalls) {
+      expect(call.prompt).not.toContain('Previous phase review');
+    }
+    expect(host.playerCalls[3]?.prompt).toContain(
+      'The earlier phases of this intent await the one REVIEW that follows its final task; do not ask Boss to review or approve them.',
+    );
     expect(acceptedOutcomes(host)).toEqual([
       {
         source: 'firstPhase',
-        target: 'reviewNewIntentPhase',
+        target: 'irTaskPhase',
         acceptedOutcome: 'irCommit',
       },
       {
@@ -963,15 +968,18 @@ describe('linked CODE runtime', () => {
       },
       {
         source: 'irTaskPhase',
-        target: 'reviewIrTaskPhase',
+        target: 'irTaskPhase',
         acceptedOutcome: 'moreTasks',
       },
       {
         source: 'irTaskPhase',
-        target: 'reviewIrTaskPhase',
+        target: 'reviewIntent',
         acceptedOutcome: 'finalTask',
       },
     ]);
+    const view = runtime.describe!();
+    expect(view.context).toMatchObject({ codeCommit: host.commitOids[2] });
+    expect(view.context).not.toHaveProperty('codeCommits');
     await runtime.dispose();
   });
 
@@ -1034,7 +1042,7 @@ describe('linked CODE runtime', () => {
     expect(
       result.outcome === 'terminal' ? result.stateDescription : undefined,
     ).toBe(
-      'CODE stopped because review did not pass a phase and reports the failure with its last code-owned commit.',
+      "CODE stopped because review did not pass the intent's commits and reports the failure with its last code-owned commit.",
     );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'review-failed',
@@ -1047,7 +1055,7 @@ describe('linked CODE runtime', () => {
     const view = runtime.describe!();
     expect(view.state.stateId).toBe('reviewFailed');
     expect(view.stateDescription).toBe(
-      'CODE stopped because review did not pass a phase and reports the failure with its last code-owned commit.',
+      "CODE stopped because review did not pass the intent's commits and reports the failure with its last code-owned commit.",
     );
     await runtime.dispose();
   });
@@ -1082,7 +1090,7 @@ describe('linked CODE runtime', () => {
     await runtime.dispose();
   });
 
-  it('reports the new-IR commit and starts no task after REVIEW fails', async () => {
+  it('starts the first task after the new-IR commit without a review between', async () => {
     const host = await harness({
       players: [
         {
@@ -1090,11 +1098,21 @@ describe('linked CODE runtime', () => {
           finalText: 'Created IR-041.',
           resumeToken: 'coder-ir',
         },
+        {
+          status: 'ok',
+          finalText: 'Completed the only task.',
+          resumeToken: 'coder-task-1',
+        },
       ],
       judges: [
         {
           guard: 'irCommit',
           irNumber: '041',
+        },
+        {
+          guard: 'finalTask',
+          irNumber: '041',
+          irTask: 'Implement task 1.',
         },
       ],
       children: [
@@ -1117,43 +1135,49 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
 
+    // DR-102: the one REVIEW follows the final task; its failure reports the
+    // last code-owned commit, and the new-IR commit was never reviewed alone.
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'review-failed',
-      lastCodeCommit: host.commitOids[0],
+      lastCodeCommit: host.commitOids[1],
       error: { name: 'ReviewError', message: 'IR review failed.' },
     });
-    expect(host.playerCalls).toHaveLength(1);
+    expect(host.playerCalls).toHaveLength(2);
     expect(host.childRequests).toHaveLength(1);
+    expect(host.childRequests[0]?.text).toContain(
+      `namely ${host.commitOids[0]}, ${host.commitOids[1]}, and its resulting repository state.`,
+    );
+    expect(host.childRequests[0]?.text).toContain('> IR number: 041');
     await runtime.dispose();
   });
 
-  it('reports the current task commit and starts no next task after REVIEW fails', async () => {
+  it('reports every task commit and starts nothing after the one REVIEW fails', async () => {
     const host = await harness({
       players: [
-        {
-          status: 'ok',
-          finalText: 'Created IR-041.',
-          resumeToken: 'coder-ir',
-        },
         {
           status: 'ok',
           finalText: 'Completed task 1.',
           resumeToken: 'coder-task-1',
         },
+        {
+          status: 'ok',
+          finalText: 'Completed task 2.',
+          resumeToken: 'coder-task-2',
+        },
       ],
       judges: [
-        {
-          guard: 'irCommit',
-          irNumber: '041',
-        },
         {
           guard: 'moreTasks',
           irNumber: '041',
           irTask: 'Implement task 1.',
         },
+        {
+          guard: 'finalTask',
+          irNumber: '041',
+          irTask: 'Implement task 2.',
+        },
       ],
       children: [
-        approvedChild(1),
         {
           state: 'settled',
           result: {
@@ -1169,7 +1193,7 @@ describe('linked CODE runtime', () => {
     await runtime.init(rootSession(host.ports));
 
     const result = await runtime.handleBossInput({
-      text: 'Implement a large change.',
+      text: 'Continue IR-041.',
       signal: new AbortController().signal,
     });
 
@@ -1179,7 +1203,10 @@ describe('linked CODE runtime', () => {
       error: { name: 'ReviewError', message: 'Task review failed.' },
     });
     expect(host.playerCalls).toHaveLength(2);
-    expect(host.childRequests).toHaveLength(2);
+    expect(host.childRequests).toHaveLength(1);
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('reviewFailed');
+    expect(view.context).toMatchObject({ codeCommit: host.commitOids[1] });
     await runtime.dispose();
   });
 
@@ -1241,7 +1268,7 @@ describe('linked CODE runtime', () => {
       expect(host.playerCalls).toHaveLength(1);
       expect(host.childRequests).toHaveLength(1);
       expect(host.childRequests[0]?.text).toContain(
-        `> Review scope: the commit ${host.commitOids[0]} from this coding phase and its resulting repository state.`,
+        `> Review scope: every commit of this coding intent, namely ${host.commitOids[0]}, and its resulting repository state.`,
       );
       expect(JSON.stringify(child)).toBe(originalChild);
       await runtime.dispose();
@@ -1280,7 +1307,7 @@ describe('linked CODE runtime', () => {
     expect(parked.outcome).toBe('quiescent');
     expect(host.playerCalls[0]?.prompt).toContain('If a required Boss answer prevents completion of the current phase or IR task, ask that question and return without committing.');
     expect(host.playerCalls[0]?.prompt).toContain('Preserve permitted uncommitted work for the deferred continuation; do not create a partial or blocker-only commit to meet the one-commit requirement.');
-    expect(host.playerCalls[0]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit before REVIEW.');
+    expect(host.playerCalls[0]?.prompt).toContain('After the answer allows completion, make exactly one phase-owned commit.');
     expect(host.commitOids).toEqual([]);
     const openOperation = host.effectLedger.snapshot().logicalOperations[0];
     expect(openOperation).toMatchObject({
@@ -1336,7 +1363,7 @@ describe('linked CODE runtime', () => {
       },
       {
         source: 'firstPhase',
-        target: 'reviewNewIntentPhase',
+        target: 'reviewIntent',
         acceptedOutcome: 'directCommit',
       },
     ]);

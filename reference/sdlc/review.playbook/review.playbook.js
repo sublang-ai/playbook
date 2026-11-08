@@ -12,7 +12,9 @@ const RESUMABLE_STATE_IDS = new Set([
     "reviewAfterFix",
     "reviewAfterRejection"
 ]);
-const UNFINISHED_FINAL_STATE_IDS = new Set([]);
+const UNFINISHED_FINAL_STATE_IDS = new Set([
+    "unsettled"
+]);
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     "reviewerOutput",
     "coderOutput"
@@ -187,7 +189,9 @@ const runtimeSpec = {
             "answer",
             "questionId"
         ],
-        "controlContextFields": []
+        "controlContextFields": [
+            "round"
+        ]
     },
     snapshotOptions: validateOptions,
     machineInput: (options) => Object.fromEntries(Object.entries(INPUT_MAPPING).filter(([, key]) => options[key] !== undefined)

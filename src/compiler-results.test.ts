@@ -329,7 +329,7 @@ it("keeps a created commit under latestCommit while the Source reads it through 
     "binds to a typed context field named by its canonical mapping, assigned from that call's accepted `latestCommit`",
   );
   for (const [workflow, placeholder] of [
-    ["code", "<code-commit>"],
+    ["code", "<code-commits>"],
     ["decide", "<decide-commit>"],
   ] as const) {
     const gears = readFileSync(
