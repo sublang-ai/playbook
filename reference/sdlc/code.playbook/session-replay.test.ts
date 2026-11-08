@@ -117,12 +117,95 @@ describe('bounded replay on the real filesystem', () => {
     await expect(damaged.checkpoint({ trustPublished: true })).rejects.toThrow();
   });
 
+  describe('reads after a caller-verified head (PBCLI-80 bounded follower cursor)', () => {
+    // Every chunk read lstats its path, even on a verified-cache hit, so this
+    // count bounds the chain a read walked regardless of the chunk cache.
+    function chunkLstats() {
+      const counter = { lstats: 0 };
+      const fsOps = { async lstat(path: string, options?: any) {
+        if (/\.chunks\/[0-9a-f]{64}$/.test(path)) counter.lstats++;
+        return fs.lstat(path, options);
+      } };
+      return { counter, fsOps };
+    }
+    async function tenLines() {
+      const { counter, fsOps } = chunkLstats();
+      const setup = await fixture(fsOps);
+      const lines = Array.from({ length: 12 }, (_, index) => line(index + 1, `entry ${index + 1}`));
+      for (const bytes of lines.slice(0, 10)) await setup.replay.appendBytes(bytes);
+      const full = await setup.replay.readSnapshot();
+      return { ...setup, counter, fsOps, lines, full, after: { head: full.root.head, totalBytes: full.root.byteLength } };
+    }
+
+    it('walks only the nodes appended after the head and returns exactly their bytes', async () => {
+      const { replay, counter, lines, full, after } = await tenLines();
+      expect(full.incremental).toBe(false);
+      expect(full.bytes).toEqual(Buffer.concat(lines.slice(0, 10)));
+      for (const bytes of lines.slice(10)) await replay.appendBytes(bytes);
+      counter.lstats = 0;
+      const snapshot = await replay.readSnapshot({ after });
+      expect(snapshot.incremental).toBe(true);
+      expect(snapshot.bytes).toEqual(Buffer.concat(lines.slice(10)));
+      expect(snapshot.root.byteLength).toBe(Buffer.concat(lines).length);
+      expect(counter.lstats).toBe(4);
+      counter.lstats = 0;
+      const unchanged = await replay.readSnapshot({ after: { head: snapshot.root.head, totalBytes: snapshot.root.byteLength } });
+      expect(unchanged).toMatchObject({ incremental: true, bytes: Buffer.alloc(0) });
+      expect(counter.lstats).toBe(0);
+    });
+
+    it('refuses a head whose byte count disagrees and malformed boundaries', async () => {
+      const { replay, after } = await tenLines();
+      await replay.appendBytes(line(11, 'entry 11'));
+      await expect(replay.readSnapshot({ after: { ...after, totalBytes: after.totalBytes + 1 } })).rejects.toThrow('invalid bounded session replay');
+      await expect(replay.readSnapshot({ after: { ...after, totalBytes: after.totalBytes - 1 } })).rejects.toThrow('invalid bounded session replay');
+      await expect(replay.readSnapshot({ after: { head: { ...after.head, byteLength: after.head.byteLength + 1 }, totalBytes: after.totalBytes } })).rejects.toThrow('invalid bounded session replay');
+      await expect(replay.readSnapshot({ after: { head: after.head } } as any)).rejects.toThrow(TypeError);
+      await expect(replay.readSnapshot({ after: { ...after, extra: true } } as any)).rejects.toThrow(TypeError);
+      await expect(replay.readSnapshot({ after: { head: after.head, totalBytes: 0 } })).rejects.toThrow(TypeError);
+      await expect(replay.readSnapshot({ after: { head: 'not a reference', totalBytes: after.totalBytes } } as any)).rejects.toThrow();
+      await expect(replay.readSnapshot({ after: { head: { sha256: 'xyz', byteLength: 1 }, totalBytes: after.totalBytes } })).rejects.toThrow();
+    });
+
+    it('reads the whole chain when the head is off the chain or beyond the root', async () => {
+      const { replay, chunks, counter, lines, after } = await tenLines();
+      for (const bytes of lines.slice(10)) await replay.appendBytes(bytes);
+      const all = Buffer.concat(lines);
+      const node = await chunks.readJson(after.head);
+      for (const boundary of [
+        { head: node.content, totalBytes: after.totalBytes },
+        { head: { sha256: 'a'.repeat(64), byteLength: 1 }, totalBytes: after.totalBytes },
+        { head: after.head, totalBytes: all.length + 1 },
+      ]) {
+        counter.lstats = 0;
+        const snapshot = await replay.readSnapshot({ after: boundary });
+        expect(snapshot.incremental).toBe(false);
+        expect(snapshot.bytes).toEqual(all);
+        expect(counter.lstats).toBeGreaterThanOrEqual(2 * lines.length);
+      }
+    });
+
+    it('establishes no publication proof from a walk stopped at a caller-named head', async () => {
+      const { replay, sessionsDir, counter, fsOps, lines, after } = await tenLines();
+      for (const bytes of lines.slice(10)) await replay.appendBytes(bytes);
+      const fresh = await createBoundedReplay({ sessionId, sessionsDir, fsOps });
+      const partial = await fresh.readSnapshot({ after });
+      expect(partial).toMatchObject({ incremental: true, bytes: Buffer.concat(lines.slice(10)) });
+      counter.lstats = 0;
+      await fresh.checkpoint({ trustPublished: true });
+      expect(counter.lstats).toBeGreaterThanOrEqual(2 * lines.length);
+      counter.lstats = 0;
+      await fresh.checkpoint({ trustPublished: true });
+      expect(counter.lstats).toBe(0);
+    });
+  });
+
   it('imports exclusively and preserves the legacy source and prior root on repeated import', async () => {
     const { replay, sessionsDir } = await fixture();
     const bytes = Buffer.from(' {"v":1,"seq":1,"record":{"text":"spaces"}}\r\n');
     const legacy = join(sessionsDir, `${sessionId}.records.jsonl`);
     await fs.writeFile(legacy, bytes, { mode: 0o600 });
-    expect(await replay.readSnapshot()).toEqual({ root: null, rootBytes: null, bytes: Buffer.alloc(0) });
+    expect(await replay.readSnapshot()).toEqual({ root: null, rootBytes: null, bytes: Buffer.alloc(0), incremental: false });
     await replay.initializeBytes(bytes);
     const root = await replay.rootBytes();
     await expect(replay.initializeBytes(Buffer.from('replacement'))).rejects.toThrow('already exists');

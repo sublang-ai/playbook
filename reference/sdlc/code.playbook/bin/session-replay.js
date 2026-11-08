@@ -53,7 +53,8 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
   let queue = Promise.resolve();
   // This constant-size proof is private to one backend / writer lease. It
   // establishes durability of append-only dependencies, not immunity to an
-  // outside writer changing an immutable chunk. Public reads always verify.
+  // outside writer changing an immutable chunk. Public reads verify the whole
+  // chain unless the caller names a head it verified completely itself.
   let publicationProof = null;
   let mutationAnchor = null;
   const proofOf = (snapshot) => ({
@@ -141,12 +142,25 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       if (!unchanged(snapshot.stat, latest)) throw new Error('session replay root changed before publication');
     }
   };
-  const verifyChain = async (snapshot, visit) => {
+  const boundaryOf = (after) => {
+    if (after === undefined) return undefined;
+    if (!exactKeys(after, ['head', 'totalBytes']) || !count(after.totalBytes) || after.totalBytes < 1) {
+      throw new TypeError('session replay read boundary must name a verified head and its byte count');
+    }
+    return { head: reference(after.head), totalBytes: after.totalBytes };
+  };
+  const verifyChain = async (snapshot, visit, boundary) => {
     let ref = snapshot.root?.head ?? null;
     let total = snapshot.root?.byteLength ?? 0;
     const seen = new Set();
     while (ref !== null) {
       reference(ref);
+      if (boundary !== undefined && ref.sha256 === boundary.head.sha256) {
+        // A content-addressed node binds its whole prefix, so a head the caller
+        // verified completely ends the walk; its totals must still agree.
+        if (ref.byteLength !== boundary.head.byteLength || total !== boundary.totalBytes) invalid();
+        return true;
+      }
       if (seen.has(ref.sha256)) throw new Error('session replay chain contains a cycle');
       seen.add(ref.sha256);
       const node = await chunkStore.readJson(ref);
@@ -162,9 +176,10 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
       ref = node.previous;
     }
     if (total !== 0) throw new Error('session replay chain length mismatch');
+    return false;
   };
-  const visitChain = async (snapshot, visit) => {
-    try { return await verifyChain(snapshot, visit); }
+  const visitChain = async (snapshot, visit, boundary) => {
+    try { return await verifyChain(snapshot, visit, boundary); }
     catch (error) { publicationProof = null; throw error; }
   };
   const publish = async (snapshot, root, exclusive) => {
@@ -226,12 +241,17 @@ export async function createBoundedReplay({ sessionId, sessionsDir, fsOps, asser
     const head = bytes.length ? await chunkStore.writeBytesAndJson(bytes, (content) => ({ previous: snapshot.root?.head ?? null, content, byteLength: bytes.length, totalBytes: byteLength })) : null;
     return publish(snapshot, { kind: 'captain-session-replay', schemaVersion: 1, sessionId, head, byteLength }, exclusive);
   };
-  const readSnapshot = async () => {
+  const readSnapshot = async ({ after } = {}) => {
+      const boundary = boundaryOf(after);
       const snapshot = await readRoot();
       const parts = [];
-      await visitChain(snapshot, (_ref, _node, bytes) => parts.push(bytes));
-      rememberProof(snapshot);
-      return { root: snapshot.root, rootBytes: snapshot.rootBytes, bytes: Buffer.concat(parts.reverse(), snapshot.root?.byteLength ?? 0) };
+      const bounded = boundary !== undefined && snapshot.root !== null && snapshot.root.byteLength >= boundary.totalBytes;
+      const incremental = await visitChain(snapshot, (_ref, _node, bytes) => parts.push(bytes), bounded ? boundary : undefined);
+      // A walk stopped at a caller-verified head proves nothing about the
+      // nodes before it, so only a complete walk may establish a proof.
+      if (!incremental) rememberProof(snapshot);
+      const byteLength = (snapshot.root?.byteLength ?? 0) - (incremental ? boundary.totalBytes : 0);
+      return { root: snapshot.root, rootBytes: snapshot.rootBytes, bytes: Buffer.concat(parts.reverse(), byteLength), incremental };
   };
   const admit = (bytes, exclusive) => {
     if (!(bytes instanceof Uint8Array)) return Promise.reject(new TypeError('session replay bytes must be a Uint8Array'));

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A store rereads only what it has not verified** ([DR-101](specs/decisions/101-a-store-rereads-only-what-it-has-not-verified.md)): a chunked session's `readStream` verifies and parses only the appends since the head this store last verified, so a host that reads after every record pays for the new record rather than the whole session; a new store, reopening, export, migration and any root that does not extend that head still verify the complete chain.
+
 ## [18.1.4] - 2026-11-04
 
 ### Fixed

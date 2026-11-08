@@ -7,6 +7,7 @@
 
 Accepted (2026-10-22).
 Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
+Amended by [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a store's later monotonic reads verify only the nodes after a head it verified completely.
 Amends [DR-049](049-portable-session-contract.md).
 
 ## Context
