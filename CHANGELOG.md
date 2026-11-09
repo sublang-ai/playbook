@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.2.0] - 2026-11-08
+
 ### Changed
 
 - **CODE reviews the intent once, and REVIEW stops after three rounds** ([DR-102](specs/decisions/102-code-reviews-the-intent-once.md)): CODE calls nested REVIEW once after the direct phase or the final IR task, over every phase commit with the IR number, instead of after every commit, and relays no prior-phase review to later tasks; REVIEW runs at most three Reviewer rounds and ends findings kept at the third at a distinct `unsettled` failure terminal returning `{ noUnsettledFindings: false, reviewerOutput }`, which CODE and DECIDE report through their existing review-failure terminals. CODE's GEARS carry `CODE-1` through `CODE-3`.
@@ -1119,7 +1121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.1.4...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.2.0...HEAD
+[18.2.0]: https://github.com/sublang-ai/playbook/compare/v18.1.4...v18.2.0
 [18.1.4]: https://github.com/sublang-ai/playbook/compare/v18.1.3...v18.1.4
 [18.1.3]: https://github.com/sublang-ai/playbook/compare/v18.1.2...v18.1.3
 [18.1.2]: https://github.com/sublang-ai/playbook/compare/v18.1.1...v18.1.2
