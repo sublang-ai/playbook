@@ -1619,10 +1619,12 @@ The provided actor shall:
   - `durationMs` is the whole milliseconds from spawning the shell to its
     exit, never negative.
   - `output` is the last 16384 bytes the command wrote to stdout and stderr,
-    as one text in the order written, begun at a character boundary where
+    as one text in the order written, begun at a UTF-8 character boundary where
     earlier bytes were dropped, decoded as UTF-8 with each invalid sequence
     replaced by U+FFFD and every NUL removed; `outputTruncated` states whether
-    earlier bytes were dropped.
+    earlier bytes were dropped. On native Windows whose ANSI and OEM code
+    pages are one of 874, 932, 936, 949, 950, and 1258, a line that is not
+    valid UTF-8 and holds no NUL is decoded in that code page instead.
   - Capture ends when the pipe closes or, where a descendant holds it open
     past the shell's exit, 250 ms after that exit. The runtime shall keep
     reading and discarding what such a descendant writes later, so that write

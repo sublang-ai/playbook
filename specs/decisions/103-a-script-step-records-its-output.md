@@ -21,7 +21,9 @@ Script output stays out of machine context, guards, prompts, status lines, and `
   - separate stdout and stderr tails: each line keeps its stream and loses its place among the other stream's lines, which is what a reader follows;
   - two pipes merged as read: the order of near-simultaneous writes on two pipes is arbitrary;
   - recording only a nonzero exit: a pass that should have failed needs the same evidence as a failure;
-  - decoding by the Windows system code page: a code-page lookup and mapping for output that is mostly UTF-8, left until real runs show the need;
+  - UTF-8 alone: on a Chinese Windows, `cmd`, PowerShell, Python, and the system tools print their messages in code page 936, which then read as U+FFFD and unrelated characters beyond recovery;
+  - choosing between a system's differing ANSI and OEM code pages: both are single-byte, so a line is valid in either and a wrong choice prints plausible wrong letters;
+  - reading UTF-16 lines: `wsl.exe` alone prints them, and their ASCII already reads once NUL is removed;
   - redaction: the runtime cannot tell a secret from other text, and an agent's tool output is already stored unredacted;
   - showing the output in `playbook run`: a terminal display of untrusted text is a separate host decision.
 
@@ -36,6 +38,7 @@ The stream a line came from is not kept.
 
 - The record keeps the last 16 KiB of the captured bytes and states whether earlier bytes were dropped.
 - The kept bytes decode as UTF-8, each invalid sequence becoming U+FFFD.
+- On native Windows, a line that is not UTF-8 decodes in the system code page instead, where one code page — 874, 932, 936, 949, 950, or 1258 — serves as both the system's ANSI and OEM code page; a line holding a NUL is UTF-16 and stays UTF-8.
 - NUL characters are removed, so a UTF-16 line of ASCII text reads as its text and no record holds U+0000.
 - Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr.
 
@@ -62,7 +65,10 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - Session records grow by at most the bound, plus JSON escaping, for each script step.
 - The payload change is additive: `RUNTIME_ABI` and artifact schemas are unchanged, and no artifact recompiles, because the shared factory provides the actor ([DR-019](019-shared-linked-runtime-factory.md)).
 - A consumer comparing the `playbook.script` payload exactly must accept the three new fields.
-- Text in a system code page is lost beyond recovery: it reads as U+FFFD and unrelated characters, with only its ASCII intact.
+- On a Chinese, Japanese, Korean, Thai, or Vietnamese Windows, a tool's messages in the system code page read as their text beside UTF-8 lines.
+- On a Windows whose ANSI and OEM code pages differ, a line that is not UTF-8 is lost beyond recovery: it reads as U+FFFD and unrelated characters, with only its ASCII intact; so does the non-ASCII text of a UTF-16 line.
+- A short code-page line whose bytes happen to form valid UTF-8 reads as UTF-8.
+- The runtime reads the system's code pages from the registry once per process, on the first output that is not UTF-8.
 - A step whose descendant holds the pipe open settles later by at most the bounded wait.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
 
