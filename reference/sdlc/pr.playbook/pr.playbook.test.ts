@@ -463,10 +463,18 @@ function acceptedOutcomes(host: PrHarness): unknown[] {
     .map(({ payload }) => payload);
 }
 
+// Which script ran and how it exited. The duration and output each event also
+// records (DR-103) are the shared factory's concern, verified there.
 function scriptEvents(host: PrHarness): unknown[] {
   return host.telemetry
     .filter(({ topic }) => topic === 'playbook.script')
-    .map(({ payload }) => payload);
+    .map(({ payload }) => {
+      const { stateId, sourceItem, exitStatus } = payload as Record<
+        string,
+        unknown
+      >;
+      return { stateId, sourceItem, exitStatus };
+    });
 }
 
 // The gh log records `<pwd>\t<args>`; the commands each script ran, in order.

@@ -88,6 +88,7 @@ Where the Playbook Captain shell is running under tmux-play, while
 a playbook is engaged, when the engaged runtime emits status or
 telemetry, the shell shall pass those emissions through to the host
 in order, except question statuses marked `{ kind: "boss-question" }`, whose wording the Captain supplies from the complete pending questions [[playbook-captain-9](#playbook-captain-9)] in its closing reply.
+The shell shall give the `output` of a passed-through `playbook.script` event [[playbook-runtime-108](playbook-runtime.md#playbook-runtime-108)] to no Captain, judge, or player call, the closing reply of the run that script failed included ([DR-103](../decisions/103-a-script-step-records-its-output.md)).
 Where the Playbook Captain shell is running under tmux-play, when
 the shell engages, dismisses, or disposes an enabled external root playbook,
 the shell shall emit Boss-visible Captain status lines
@@ -1551,6 +1552,10 @@ emitting shell status or shell FSM telemetry for adapter teardown.
 A rejected runtime initialization shall emit a recovery transition
 to `chat` whose ledger has stack depth zero, leaving the session
 Captain and its durable conversation live (verifying [[playbook-captain-3](#playbook-captain-3)], [[playbook-captain-4](#playbook-captain-4)], [[playbook-captain-6](#playbook-captain-6)], [[playbook-captain-10](#playbook-captain-10)], [[playbook-captain-11](#playbook-captain-11)], [[playbook-captain-16](#playbook-captain-16)]).
+
+#### playbook-captain-90
+
+When the integration suite runs a real linked runtime, whose script step prints a marker and exits nonzero into a failure terminal, under the real Captain shell, it shall fail unless the host receives one `playbook.script` event carrying that output unchanged, the closing-reply call carries the terminal's authored description, and no Captain or player call of that turn or of a later Boss question about the output, and no reply, status, or other telemetry, contains the marker (verifying [[playbook-captain-3](#playbook-captain-3)]).
 
 ### Registry and options
 

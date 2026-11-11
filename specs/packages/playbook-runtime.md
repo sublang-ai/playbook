@@ -560,6 +560,23 @@ An executed marker that is malformed, undeclared, or unconfirmed by those adjace
 
 Where a factory-backed artifact supplies an artifact-specific status override, the runtime shall still require complete local-role `roleStates` metadata; missing metadata shall reject at construction instead of selecting metadata-absent legacy status defaults.
 
+#### playbook-runtime-108
+
+When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-103](../decisions/103-a-script-step-records-its-output.md)):
+
+| Field | Value |
+| --- | --- |
+| `stateId`, `sourceItem` | the invocation's own |
+| `exitStatus` | the shell's exit status, or `1` when it ended without one |
+| `durationMs` | the whole milliseconds from spawning the shell to its exit, never negative |
+| `output` | the tail of what the command wrote to stdout and stderr, as one text |
+| `outputTruncated` | whether captured bytes before that tail were dropped |
+
+- The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
+- `output` shall hold the last 16384 captured bytes, begun at a character boundary where earlier bytes were dropped, decoded as UTF-8 with each invalid sequence replaced by U+FFFD and every NUL removed.
+- Capture shall end when the pipe closes or, where a descendant holds it open past the shell's exit, 250 ms after that exit; the runtime shall keep reading and discarding what such a descendant writes later, so that write never fails.
+- The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
+
 ### Host adapter and registry
 
 #### playbook-runtime-15
@@ -1152,6 +1169,18 @@ When the integration suite drives transition and status profiles, it shall fail 
 - Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
 - A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <acceptedOutcome>` from confirmed evidence with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
 - A schema-3 factory-backed fixture with missing or incomplete `roleStates` rejects during construction even when a status override exists, before machine interpretation or a host call (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
+
+#### playbook-runtime-109
+
+When the runtime suite runs real commands through a player-and-script machine, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-108](#playbook-runtime-108)]):
+
+| Command | Required record |
+| --- | --- |
+| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` |
+| Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true |
+| Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL |
+| Leaves a descendant holding the pipe that writes after the shell's exit | Settlement before that later write, only the earlier writes recorded, and the later write succeeding |
+| Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot |
 
 #### playbook-runtime-68
 
