@@ -17,10 +17,12 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 - [x] `slc/link.md` "Script execution", the embedding guide, spec items, map, and changelog in agreement; `spex lint` clean.
 - [x] Runtime and Captain-shell suites pinning the record and its confinement.
 - [x] The spawn and capture checked against Git's `sh.exe` on Windows 11.
+- [x] A line in the Windows system code page decoded in it, verified on a Windows 11 host at code page 936.
 
 ## Tasks
 
 1. Specify, implement, and verify the script output record in one commit.
+2. Decode a non-UTF-8 line in the Windows system code page.
 
 ## Verification
 

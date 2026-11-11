@@ -227,7 +227,10 @@ the command exits, at a zero or nonzero status alike:
 | `outputTruncated` | whether earlier output was dropped |
 
 `output` is decoded as UTF-8, with U+FFFD for each invalid sequence and NUL
-removed. It is untrusted text for people: show it as inert text beside the
+removed. On a Windows system that has one code page for both its ANSI and OEM
+forms — 874, 932, 936, 949, 950, or 1258 — a line that is not UTF-8 is decoded
+in that code page instead, so a tool's localized messages stay readable. It
+is untrusted text for people: show it as inert text beside the
 exit status, and hand it to no agent on the run's behalf. The runtime and the
 Captain shell place it in no prompt, machine context, status line, or trace.
 It is stored with the session's other telemetry and is not redacted; a host

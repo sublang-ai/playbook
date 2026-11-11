@@ -15,9 +15,10 @@
 // (reference/sdlc/code.playbook/code.playbook.ts) verbatim where possible;
 // its behavior tests are the equivalence proof. Do not change observable
 // behavior here without consulting those suites.
-import { spawn } from 'node:child_process';
+import { isUtf8 } from 'node:buffer';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, TextDecoder } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise, initialTransition } from 'xstate';
 import { ACCEPTED_OUTCOME_ACTION_TYPE, createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
@@ -1863,7 +1864,7 @@ function createScriptOutputTail() {
             let bytes = Buffer.concat(chunks, size);
             if (truncated) {
                 // The cut may have split a character: drop its trailing bytes so
-                // the tail begins at a character boundary.
+                // the tail begins at a UTF-8 character boundary.
                 let start = 0;
                 while (start < 3 &&
                     start < bytes.length &&
@@ -1872,15 +1873,83 @@ function createScriptOutputTail() {
                 }
                 bytes = bytes.subarray(start);
             }
-            // Lenient UTF-8: `toString` replaces each invalid sequence with
-            // U+FFFD. NUL goes, so a UTF-16 line of ASCII text reads as its text
-            // and no record holds U+0000.
-            return {
-                output: bytes.toString('utf8').replace(/\0/g, ''),
-                outputTruncated: truncated,
-            };
+            return { bytes, truncated };
         },
     };
+}
+// The Windows code pages that serve a system as both its ANSI and its OEM
+// code page, by the label of the decoder that reads them (DR-103).
+const SCRIPT_OUTPUT_CODE_PAGE_LABELS = {
+    '874': 'windows-874',
+    '932': 'shift_jis',
+    '936': 'gbk',
+    '949': 'euc-kr',
+    '950': 'big5',
+    '1258': 'windows-1258',
+};
+const SCRIPT_OUTPUT_CODE_PAGE_QUERY_TIMEOUT_MS = 5000;
+let scriptOutputCodePageDecoder;
+/**
+ * The decoder for this system's code page, on native Windows where the
+ * system has one supported code page for both forms. A system whose ANSI
+ * and OEM code pages differ has no single reading of a non-UTF-8 line, so
+ * it gets none; neither does one whose registry or decoder is unavailable.
+ * Read once per process.
+ */
+function systemCodePageDecoder() {
+    if (process.platform !== 'win32')
+        return Promise.resolve(undefined);
+    scriptOutputCodePageDecoder ??= new Promise((resolve) => {
+        const systemRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows';
+        execFile(`${systemRoot}\\System32\\reg.exe`, ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage'], {
+            encoding: 'latin1',
+            timeout: SCRIPT_OUTPUT_CODE_PAGE_QUERY_TIMEOUT_MS,
+            windowsHide: true,
+        }, (error, stdout) => {
+            if (error) {
+                resolve(undefined);
+                return;
+            }
+            const codePage = (name) => new RegExp(`^\\s*${name}\\s+REG_SZ\\s+(\\d+)\\s*$`, 'm').exec(stdout)?.[1];
+            const ansi = codePage('ACP');
+            const label = ansi !== undefined && ansi === codePage('OEMCP')
+                ? SCRIPT_OUTPUT_CODE_PAGE_LABELS[ansi]
+                : undefined;
+            try {
+                resolve(label === undefined ? undefined : new TextDecoder(label));
+            }
+            catch {
+                // A Node built without the legacy converters.
+                resolve(undefined);
+            }
+        });
+    });
+    return scriptOutputCodePageDecoder;
+}
+/**
+ * Script output as text (DR-103). UTF-8 throughout, each invalid sequence
+ * becoming U+FFFD, except that a line which is not UTF-8 is read in the
+ * system code page where the system has one. A line holding a NUL is
+ * UTF-16, never code-page text, and stays UTF-8. NUL goes last, so a
+ * UTF-16 line of ASCII text reads as its text and no record holds U+0000.
+ */
+async function decodeScriptOutput(bytes) {
+    const codePage = isUtf8(bytes) ? undefined : await systemCodePageDecoder();
+    if (codePage === undefined) {
+        return bytes.toString('utf8').replace(/\0/g, '');
+    }
+    let text = '';
+    for (let start = 0; start < bytes.length;) {
+        const newline = bytes.indexOf(0x0a, start);
+        const end = newline === -1 ? bytes.length : newline + 1;
+        const line = bytes.subarray(start, end);
+        text +=
+            isUtf8(line) || line.includes(0)
+                ? line.toString('utf8')
+                : codePage.decode(line);
+        start = end;
+    }
+    return text.replace(/\0/g, '');
 }
 class ScriptProcessGroupTeardownError extends Error {
     constructor(pid, message, cause) {
@@ -5981,6 +6050,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             void outputEnded.then(settle);
                         });
                     });
+                    const { bytes, truncated } = outputTail.read();
+                    const output = await decodeScriptOutput(bytes);
                     await settleIfAborted();
                     await ports.emitStatus(`Executed script for ${input.stateId} (exit ${exitStatus}).`);
                     await settleIfAborted();
@@ -5991,7 +6062,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             sourceItem: input.sourceItem,
                             exitStatus,
                             durationMs,
-                            ...outputTail.read(),
+                            output,
+                            outputTruncated: truncated,
                         },
                     });
                     await settleIfAborted();

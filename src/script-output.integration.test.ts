@@ -7,6 +7,7 @@
 // when the Boss then asks what the command printed. The real factory runs a
 // real `sh` under the real Captain shell.
 
+import { execFileSync } from 'node:child_process';
 import { createMachine } from 'xstate';
 import { describe, expect, it } from 'vitest';
 
@@ -40,7 +41,7 @@ const FAILURE_DESCRIPTION =
 
 // A gate: one script step whose nonzero exit ends the run at a failure
 // terminal with a description authored before the run.
-const gateMachine = createMachine({
+const gateMachine = (command: string) => createMachine({
   id: 'gate',
   initial: 'ready',
   context: {},
@@ -58,7 +59,7 @@ const gateMachine = createMachine({
         input: {
           stateId: 'checkLint',
           sourceItem: 'GATE-1',
-          command: COMMAND,
+          command,
           result: {
             lintPassed: 'The check exited zero.',
             lintFailed: 'The check exited nonzero.',
@@ -98,14 +99,15 @@ const gateMachine = createMachine({
   },
 });
 
-const createGateRuntime = createXStatePlaybookRuntime(gateMachine, {
-  label: 'GATE',
-  compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
-  snapshotOptions: () => ({}),
-  entryEvent: { type: 'START', textField: 'task' },
-  roleStates: {},
-  outcomeAuthority: { governedPlayerStates: {} },
-});
+const createGateRuntime = (command: string) =>
+  createXStatePlaybookRuntime(gateMachine(command), {
+    label: 'GATE',
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    entryEvent: { type: 'START', textField: 'task' },
+    roleStates: {},
+    outcomeAuthority: { governedPlayerStates: {} },
+  });
 
 function registryEntry(): PlaybookCaptainRegistryEntry {
   return {
@@ -118,7 +120,7 @@ function registryEntry(): PlaybookCaptainRegistryEntry {
     concurrentRoleSets: [],
     validateOptions: (options) => options,
     createRuntime: (_options, hostCapabilities): PlaybookRuntime =>
-      createGateRuntime({ configuredOptions: {}, hostCapabilities }),
+      createGateRuntime(COMMAND)({ configuredOptions: {}, hostCapabilities }),
   };
 }
 
@@ -317,3 +319,106 @@ describe('script output under the Captain shell (DR-103)', () => {
     await harness.shell.dispose!();
   });
 });
+
+// DR-103 §2 on native Windows: a line that is not UTF-8 is read in the
+// system code page, where the system has one for both its ANSI and OEM
+// forms. The samples are each text's bytes in that code page, as octal
+// `printf` escapes, so the command's own text never spells the text.
+const CODE_PAGE_SAMPLES: Record<string, { text: string; bytes: string }> = {
+  '874': {
+    text: 'ไม่พบไฟล์ที่ระบุ',
+    bytes: String.raw`\344\301\350\276\272\344\277\305\354\267\325\350\303\320\272\330`,
+  },
+  '932': {
+    text: '指定されたパスが見つかりません。',
+    bytes: String.raw`\216\167\222\350\202\263\202\352\202\275\203\160\203\130\202\252\214\251\202\302\202\251\202\350\202\334\202\271\202\361\201\102`,
+  },
+  '936': {
+    text: '系统找不到指定的文件。',
+    bytes: String.raw`\317\265\315\263\325\322\262\273\265\275\326\270\266\250\265\304\316\304\274\376\241\243`,
+  },
+  '949': {
+    text: '지정된 경로를 찾을 수 없습니다.',
+    bytes: String.raw`\301\366\301\244\265\310\040\260\346\267\316\270\246\040\303\243\300\273\040\274\366\040\276\370\275\300\264\317\264\331\056`,
+  },
+  '950': {
+    text: '系統找不到指定的路徑。',
+    bytes: String.raw`\250\164\262\316\247\344\244\243\250\354\253\374\251\167\252\272\270\364\256\174\241\103`,
+  },
+  '1258': {
+    text: 'Không tìm thấy tệp',
+    bytes: String.raw`\113\150\364\156\147\040\164\151\314\155\040\164\150\342\354\171\040\164\352\362\160`,
+  },
+};
+
+// The system locale's two code pages, read through PowerShell rather than
+// the registry value the runtime reads.
+function systemCodePageSample(): { text: string; bytes: string } | undefined {
+  if (process.platform !== 'win32') return undefined;
+  const [ansi, oem] = execFileSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      '$t = (Get-WinSystemLocale).TextInfo; "$($t.ANSICodePage) $($t.OEMCodePage)"',
+    ],
+    { encoding: 'utf8', windowsHide: true },
+  )
+    .trim()
+    .split(' ');
+  return ansi === oem ? CODE_PAGE_SAMPLES[ansi!] : undefined;
+}
+
+const codePageSample = systemCodePageSample();
+
+describe.skipIf(codePageSample === undefined)(
+  'script output on native Windows (DR-103)',
+  () => {
+    it('reads a line that is not UTF-8 in the system code page, beside UTF-8 lines', async () => {
+      const { text, bytes } = codePageSample!;
+      // A UTF-8 line, a line in the system code page, and a UTF-16LE line:
+      // U+9519 then `A`, whose NUL marks it as no code-page text.
+      const command =
+        String.raw`printf '\344\270\255\346\226\207 ok\n'; ` +
+        `printf '${bytes}\\n'; ` +
+        String.raw`printf '\031\225A\000\n\000'; exit 1`;
+      const telemetry: { topic: string; payload: unknown }[] = [];
+      const unused = async (): Promise<never> => {
+        throw new Error('this fixture makes no agent call');
+      };
+      const runtime = createGateRuntime(command)({
+        configuredOptions: {},
+        hostCapabilities: hostCapabilities(),
+      });
+      await runtime.init({
+        sessionId: '41000000-0000-4000-8000-0000000000a1',
+        rootSessionId: '41000000-0000-4000-8000-0000000000a1',
+        playbookId: 'gate',
+        depth: 0,
+        ports: {
+          callPlayer: unused,
+          callCaptain: unused,
+          callJudge: unused,
+          callPlaybook: unused,
+          emitStatus: async () => {},
+          emitTelemetry: async (event) => {
+            telemetry.push({ topic: event.topic, payload: event.payload });
+          },
+        },
+      });
+      const result = await runtime.handleBossInput({
+        text: 'run the gate',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.state.stateId).toBe('lintFailed');
+      const outputs = telemetry
+        .filter(({ topic }) => topic === 'playbook.script')
+        .map(({ payload }) => (payload as { output: string }).output);
+      expect(outputs.map((output) => output.normalize('NFC'))).toEqual([
+        `中文 ok\n${text.normalize('NFC')}\n\u0019\uFFFDA\n`,
+      ]);
+      await runtime.dispose();
+    });
+  },
+);
