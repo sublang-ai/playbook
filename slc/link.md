@@ -1575,7 +1575,9 @@ The provided actor shall:
   `PlaybookRuntimeOptions.cwd` when the caller supplies it, else the process
   working directory. The linker shall declare the optional `cwd` option on the
   emitted options interface whenever the FSM contains a script state; the
-  validated option reaches the shared script actor through the spec.
+  validated option reaches the shared script actor through the spec. The
+  command's stdout and stderr shall share one pipe that the runtime reads, so
+  the output is recorded in the order written; stdin stays unconnected.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
@@ -1611,14 +1613,29 @@ The provided actor shall:
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
-  `{ stateId, sourceItem, exitStatus }`, through the ordinary serialized
-  emission channel.
+  `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`,
+  through the ordinary serialized emission channel
+  ([DR-103](../specs/decisions/103-a-script-step-records-its-output.md)):
+  - `durationMs` is the whole milliseconds from spawning the shell to its
+    exit, never negative.
+  - `output` is the last 16384 bytes the command wrote to stdout and stderr,
+    as one text in the order written, begun at a character boundary where
+    earlier bytes were dropped, decoded as UTF-8 with each invalid sequence
+    replaced by U+FFFD and every NUL removed; `outputTruncated` states whether
+    earlier bytes were dropped.
+  - Capture ends when the pipe closes or, where a descendant holds it open
+    past the shell's exit, 250 ms after that exit. The runtime shall keep
+    reading and discarding what such a descendant writes later, so that write
+    never fails.
 
 Script execution emits no `*.call.*` trace pair: the surrounding FSM
 transition trace and the `playbook.script` telemetry are its record, so trace
 schema consumers see no new event types.
-Script stdout and stderr are not workflow data: the runtime shall not place
-them in machine context, prompts, or trace payloads.
+Script stdout and stderr are not workflow data: the runtime shall record them
+only in that `playbook.script` event, for hosts and people, and shall not
+place them in the actor's result, machine context, a saved step result,
+prompts, status lines, or trace payloads. Guard selection reads the exit
+status alone.
 
 ## Nested playbook bridge
 

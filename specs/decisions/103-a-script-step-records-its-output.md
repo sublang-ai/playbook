@@ -1,0 +1,71 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# DR-103: A Script Step Records Its Output
+
+## Status
+
+Accepted (2026-11-11), after one check step's nonzero exit ended three runs for two different reasons that no record could tell apart [[1]].
+Amends [DR-016](016-script-actors-and-optimize-pass.md) §2 in one scope: the `playbook.script` telemetry event additionally carries the step's duration and a bounded tail of what the command printed.
+Script output stays out of machine context, guards, prompts, status lines, and `playbook.trace` payloads, and every other DR-016 decision stands.
+
+## Context
+
+- A script step ran its command with stdout and stderr discarded: its whole record was the status line and `{ stateId, sourceItem, exitStatus }`.
+- Script steps serve as gates, and a nonzero exit has many causes besides the check's own "no": a missing tool, a wrong runtime version, a wrong branch or directory, no network.
+- A script runs in the host process's environment, not in an agent's shell, so one command can pass for the agent and fail as a script with nothing recorded to show the difference.
+- A failure terminal's description is authored before the run and names one assumed cause ([DR-035](035-truthful-terminal-meaning.md), [DR-037](037-terminal-result-meaning.md)); a reader could not check it against what the command printed.
+- An agent step leaves its commands and their output on record; the optimize pass's rewrite into a script dropped that record, although DR-016 §3 treats the rewrite as behavior-preserving.
+- DR-016 §2 kept script output from becoming workflow data; it names the `playbook.script` topic as a record beside the trace, and it never required that the output go unrecorded.
+- Considered and declined:
+  - separate stdout and stderr tails: each line keeps its stream and loses its place among the other stream's lines, which is what a reader follows;
+  - two pipes merged as read: the order of near-simultaneous writes on two pipes is arbitrary;
+  - recording only a nonzero exit: a pass that should have failed needs the same evidence as a failure;
+  - decoding by the Windows system code page: a code-page lookup and mapping for output that is mostly UTF-8, left until real runs show the need;
+  - redaction: the runtime cannot tell a secret from other text, and an agent's tool output is already stored unredacted;
+  - showing the output in `playbook run`: a terminal display of untrusted text is a separate host decision.
+
+## Decision
+
+### 1. One text, in the order written
+
+The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
+The stream a line came from is not kept.
+
+### 2. A bounded, leniently decoded tail
+
+- The record keeps the last 16 KiB of the captured bytes and states whether earlier bytes were dropped.
+- The kept bytes decode as UTF-8, each invalid sequence becoming U+FFFD.
+- NUL characters are removed, so a UTF-16 line of ASCII text reads as its text and no record holds U+0000.
+- Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr.
+
+### 3. The record is the `playbook.script` telemetry event
+
+Every completed script step, at a zero or nonzero exit alike, emits `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`.
+The status line is unchanged, and an aborted or unspawnable step still emits neither.
+The exit status alone still selects the guard.
+
+### 4. Untrusted text, for hosts and people only
+
+- The output enters no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
+- The Captain shell passes the event to its host and gives its output to no agent call, the one reporting a failed run included.
+- A host shows the output as inert text and hands it to no agent on the run's behalf.
+
+### 5. Stored like every telemetry record
+
+The event lands in the session's records, which a host may sync or share, exactly as an agent's tool output does today.
+The runtime redacts nothing; a host that must not retain the output drops the two fields at its own telemetry port.
+
+## Consequences
+
+- A host can show why a gate failed: the command's own words beside the exit status and the terminal's authored description.
+- Session records grow by at most the bound, plus JSON escaping, for each script step.
+- The payload change is additive: `RUNTIME_ABI` and artifact schemas are unchanged, and no artifact recompiles, because the shared factory provides the actor ([DR-019](019-shared-linked-runtime-factory.md)).
+- A consumer comparing the `playbook.script` payload exactly must accept the three new fields.
+- Text in a system code page is lost beyond recovery: it reads as U+FFFD and unrelated characters, with only its ASCII intact.
+- A step whose descendant holds the pipe open settles later by at most the bounded wait.
+- `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
+
+## References
+
+[1]: https://github.com/sublang-ai/playbook/issues/104 "Playbook issue 104 — a script step records only its exit status"

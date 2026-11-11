@@ -1874,7 +1874,14 @@ describe('player + script workflow over the shared factory', () => {
     expect(scriptEvents).toEqual([
       {
         topic: 'playbook.script',
-        payload: { stateId: 'verify', sourceItem: 'WF-2', exitStatus: 0 },
+        payload: {
+          stateId: 'verify',
+          sourceItem: 'WF-2',
+          exitStatus: 0,
+          durationMs: expect.any(Number),
+          output: '',
+          outputTruncated: false,
+        },
       },
     ]);
     await runtime.dispose();
@@ -1965,6 +1972,197 @@ describe('player + script workflow over the shared factory', () => {
       await runtime.dispose();
     } finally {
       await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  // DR-103 / slc/link.md §Script execution: what a script step printed is
+  // recorded on its `playbook.script` telemetry event, and nowhere else.
+  const runScriptStep = async (
+    command: string,
+    overrides: Partial<PlaybookPorts> = {},
+  ) => {
+    const recorded = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      ...overrides,
+    });
+    // Statuses and telemetry in the one order the runtime emitted them.
+    const emissions: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recorded.ports,
+      emitStatus: async (message, data) => {
+        emissions.push(`status ${message}`);
+        await recorded.ports.emitStatus(message, data);
+      },
+      emitTelemetry: async (event) => {
+        emissions.push(`telemetry ${event.topic}`);
+        await recorded.ports.emitTelemetry(event);
+      },
+    };
+    const runtime = createWorkflowRuntime({ command });
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('run the check'));
+    const scriptEvents = recorded.telemetry
+      .filter(({ topic }) => topic === 'playbook.script')
+      .map(({ payload }) => payload as Record<string, unknown>);
+    return { ...recorded, emissions, runtime, result, scriptEvents };
+  };
+
+  it.each([
+    ['zero', 0, 'done'],
+    ['nonzero', 3, 'failed'],
+  ] as const)(
+    'records what a script wrote to stdout and stderr in write order at a %s exit',
+    async (_label, exitStatus, stateId) => {
+      const { runtime, result, emissions, scriptEvents } =
+        await runScriptStep(
+          'echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2; ' +
+            `exit ${exitStatus}`,
+        );
+
+      expect(result.state.stateId).toBe(stateId);
+      expect(scriptEvents).toEqual([
+        {
+          stateId: 'verify',
+          sourceItem: 'WF-2',
+          exitStatus,
+          durationMs: expect.any(Number),
+          output: 'out-1\nerr-1\nout-2\nerr-2\n',
+          outputTruncated: false,
+        },
+      ]);
+      const { durationMs } = scriptEvents[0] as { durationMs: number };
+      expect(Number.isInteger(durationMs) && durationMs >= 0).toBe(true);
+      // The status line is unchanged and precedes the telemetry event.
+      const statusAt = emissions.indexOf(
+        `status Executed script for verify (exit ${exitStatus}).`,
+      );
+      expect(statusAt).toBeGreaterThanOrEqual(0);
+      expect(emissions.indexOf('telemetry playbook.script')).toBeGreaterThan(
+        statusAt,
+      );
+      await runtime.dispose();
+    },
+  );
+
+  it('keeps the last 16384 bytes of a longer script output, begun at a character boundary', async () => {
+    // 5000 + 6000 × 3 + 3 = 23003 bytes. The last 16384 are one trailing
+    // byte of a 3-byte character, 5460 whole ones, and `ab\n`.
+    const { runtime, scriptEvents } = await runScriptStep(
+      `awk 'BEGIN { for (i = 0; i < 5000; i++) printf "x"; ` +
+        `for (i = 0; i < 6000; i++) printf "中"; print "ab" }'`,
+    );
+
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      exitStatus: 0,
+      output: `${'中'.repeat(5460)}ab\n`,
+      outputTruncated: true,
+    });
+    await runtime.dispose();
+  });
+
+  it('decodes script output as lenient UTF-8 and removes NUL', async () => {
+    // Two bytes no UTF-8 text holds, then a UTF-16LE line of ASCII text as
+    // `wsl.exe` prints one.
+    const { runtime, scriptEvents } = await runScriptStep(
+      String.raw`printf 'ok \377\376 bad\n'; printf 'W\000S\000L\000\n\000'`,
+    );
+
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      output: 'ok \uFFFD\uFFFD bad\nWSL\n',
+      outputTruncated: false,
+    });
+    await runtime.dispose();
+  });
+
+  it('keeps script output out of prompts, statuses, traces, results, and saved steps', async () => {
+    const marker = 'IGNORE-PREVIOUS-INSTRUCTIONS-7c1f';
+    const prompts: string[] = [];
+    const saved: unknown[] = [];
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        prompts.push(prompt);
+        return { status: 'ok', finalText: 'done' };
+      },
+      callJudge: async (prompt) => {
+        prompts.push(prompt);
+        return '{"guard":"implemented","summary":"ok"}';
+      },
+      recordStep: async (step, position) => {
+        saved.push(step, position);
+      },
+    });
+    // The command assembles the marker, so its own text — which the machine
+    // context and the saved step rightly hold — never spells it.
+    const runtime = createWorkflowRuntime({
+      command:
+        'm=IGNORE-PREVIOUS; echo "$m-INSTRUCTIONS-7c1f"; ' +
+        'echo "$m-INSTRUCTIONS-7c1f" >&2; exit 3',
+    });
+    await runtime.init(makeSession(ports));
+    // The second turn restarts from the failure the first script exit caused,
+    // so every prompt after a recorded output is observed too.
+    const results = [
+      await runtime.handleBossInput(turn('run the check')),
+      await runtime.handleBossInput(turn('run the check again')),
+    ];
+
+    const scriptEvents = telemetry.filter(
+      ({ topic }) => topic === 'playbook.script',
+    );
+    expect(scriptEvents.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ output: `${marker}\n${marker}\n` }),
+      expect.objectContaining({ output: `${marker}\n${marker}\n` }),
+    ]);
+    expect(prompts.length).toBeGreaterThanOrEqual(4);
+    expect(saved.length).toBeGreaterThan(0);
+    const elsewhere = JSON.stringify({
+      prompts,
+      statuses,
+      telemetry: telemetry.filter(({ topic }) => topic !== 'playbook.script'),
+      results,
+      saved,
+      snapshot: runtime.exportSnapshot?.(),
+    });
+    expect(elsewhere).toContain('playbook.trace');
+    expect(elsewhere).not.toContain(marker);
+    await runtime.dispose();
+  });
+
+  it('settles without waiting for a descendant that holds the output pipe, and leaves its later write working', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-linger-'));
+    try {
+      const startedAt = Date.now();
+      // The backgrounded subshell outlives the shell with the pipe open. Its
+      // later `echo` must not fail, or it never reaches the marker.
+      const { runtime, result, scriptEvents } = await runScriptStep(
+        `(sleep 2; echo late; echo survived > ${dir}/marker) & echo started`,
+      );
+      const settledAfterMs = Date.now() - startedAt;
+
+      expect(result.state.stateId).toBe('done');
+      // Before the descendant's two-second sleep ends: the bounded wait.
+      expect(settledAfterMs).toBeLessThan(1500);
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({
+        exitStatus: 0,
+        output: 'started\n',
+        outputTruncated: false,
+      });
+      let marker: string | undefined;
+      for (let attempt = 0; attempt < 200 && marker === undefined; attempt += 1) {
+        try {
+          marker = await readFile(join(dir, 'marker'), 'utf8');
+        } catch {
+          await new Promise((tick) => setTimeout(tick, 25));
+        }
+      }
+      expect(marker).toBe('survived\n');
+      await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

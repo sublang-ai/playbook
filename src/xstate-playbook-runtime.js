@@ -1826,6 +1826,62 @@ const SUPPRESSED_ENTRY_STATES = new Set(['ready', 'done']);
 // SIGKILL after this grace, so settlement (gated on the shell's own exit)
 // stays bounded even for TERM-immune commands.
 const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
+// DR-103: the outer shell joins stderr to the one stdout pipe and execs
+// `sh -c <command>`, so a script's output is read in the order written.
+const SCRIPT_MERGED_OUTPUT_COMMAND = 'exec sh -c "$1" 2>&1';
+const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
+// How long a script's record waits, after the shell's exit, for an output
+// pipe that a surviving descendant still holds open.
+const SCRIPT_OUTPUT_DRAIN_GRACE_MS = 250;
+/**
+ * The bounded record of what a script wrote (DR-103): the last
+ * `SCRIPT_OUTPUT_TAIL_BYTES` captured bytes, kept in arrival order.
+ */
+function createScriptOutputTail() {
+    const chunks = [];
+    let size = 0;
+    let truncated = false;
+    return {
+        push(chunk) {
+            chunks.push(chunk);
+            size += chunk.length;
+            while (size > SCRIPT_OUTPUT_TAIL_BYTES) {
+                const excess = size - SCRIPT_OUTPUT_TAIL_BYTES;
+                const head = chunks[0];
+                if (head.length <= excess) {
+                    chunks.shift();
+                    size -= head.length;
+                }
+                else {
+                    chunks[0] = head.subarray(excess);
+                    size -= excess;
+                }
+                truncated = true;
+            }
+        },
+        read() {
+            let bytes = Buffer.concat(chunks, size);
+            if (truncated) {
+                // The cut may have split a character: drop its trailing bytes so
+                // the tail begins at a character boundary.
+                let start = 0;
+                while (start < 3 &&
+                    start < bytes.length &&
+                    (bytes[start] & 0xc0) === 0x80) {
+                    start += 1;
+                }
+                bytes = bytes.subarray(start);
+            }
+            // Lenient UTF-8: `toString` replaces each invalid sequence with
+            // U+FFFD. NUL goes, so a UTF-16 line of ASCII text reads as its text
+            // and no record holds U+0000.
+            return {
+                output: bytes.toString('utf8').replace(/\0/g, ''),
+                outputTruncated: truncated,
+            };
+        },
+    };
+}
 class ScriptProcessGroupTeardownError extends Error {
     constructor(pid, message, cause) {
         super(`script process group ${pid} teardown could not be confirmed: ${message}`, cause === undefined ? undefined : { cause });
@@ -5749,8 +5805,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // Deterministic script actor (slc/link.md §Script execution). Runs
         // `input.command` through `sh -c`, resolves the declared guard
         // mechanically from the exit status, and emits one status + one
-        // `playbook.script` telemetry event. No agent call, no adjudication,
-        // no `*.call.*` trace.
+        // `playbook.script` telemetry event, which alone carries the bounded
+        // record of what the command printed (DR-103). No agent call, no
+        // adjudication, no `*.call.*` trace.
         function scriptActor() {
             return fromPromise(({ input, signal }) => runJournalledStep('script', input, signal, async () => {
                 await drainEmissions();
@@ -5844,33 +5901,64 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     active.throwIfAborted();
                 };
                 let invocationFailed = false;
+                const outputTail = createScriptOutputTail();
+                let capturing = true;
+                // Stops recording and lets the pipe go without closing it: the
+                // stream stays flowing and unreferenced, so a descendant that
+                // outlived the shell keeps a working stdout and stderr whose
+                // later writes are read and dropped, never refused (DR-103).
+                const releaseOutputPipe = () => {
+                    capturing = false;
+                    const stdout = child?.stdout;
+                    // A pipe that already closed has nothing left to release.
+                    if (stdout && !stdout.destroyed)
+                        stdout.unref?.();
+                };
+                let durationMs = 0;
                 try {
                     const exitStatus = await new Promise((resolve, reject) => {
+                        const startedAt = performance.now();
                         try {
                             // detached: the shell leads its own POSIX process group,
                             // so an abort can terminate the command's whole group — a
                             // lone SIGTERM to the wrapper never reaches backgrounded
                             // members.
-                            child = spawn('sh', ['-c', input.command], {
-                                cwd,
-                                stdio: 'ignore',
-                                detached: true,
-                            });
+                            // DR-103: the wrapper only joins stderr to the stdout pipe
+                            // and execs, so `input.command` still runs verbatim through
+                            // `sh -c` in the same process, as the same group leader.
+                            child = spawn('sh', ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command], { cwd, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
                         }
                         catch (error) {
                             reject(error);
                             return;
                         }
+                        const stdout = child.stdout;
+                        const outputEnded = new Promise((ended) => {
+                            if (stdout === null) {
+                                ended();
+                                return;
+                            }
+                            stdout.on('data', (chunk) => {
+                                if (capturing)
+                                    outputTail.push(chunk);
+                            });
+                            // A read failure ends the record where it stands.
+                            stdout.on('error', () => ended());
+                            stdout.once('end', ended);
+                            stdout.once('close', ended);
+                        });
                         // On abort, terminate the group and escalate — but settle
-                        // only from 'close', after the shell itself has exited, so
+                        // only from 'exit', after the shell itself has exited, so
                         // the turn never reports quiescence while the script still
                         // runs (slc/link.md §Abort). SIGKILL is untrappable, so
-                        // 'close' is bounded by the grace.
+                        // 'exit' is bounded by the grace.
                         active.addEventListener('abort', onAbort, { once: true });
                         child.on('error', (error) => {
                             reject(error);
                         });
-                        child.on('close', (code) => {
+                        // 'exit', not 'close': a descendant holding the output pipe
+                        // delays 'close' for as long as it lives.
+                        child.on('exit', (code) => {
                             if (active.aborted) {
                                 // The shell may exit cooperatively on the group SIGTERM
                                 // while a TERM-immune same-group descendant survives;
@@ -5881,7 +5969,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
                                 void awaitGroupGone().then(() => reject(active.reason), reject);
                                 return;
                             }
-                            resolve(typeof code === 'number' ? code : 1);
+                            durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+                            // The record ends when the pipe closes, or a bounded wait
+                            // after the shell's exit when a descendant holds it open.
+                            const settle = () => {
+                                clearTimeout(drainTimer);
+                                releaseOutputPipe();
+                                resolve(typeof code === 'number' ? code : 1);
+                            };
+                            const drainTimer = setTimeout(settle, SCRIPT_OUTPUT_DRAIN_GRACE_MS);
+                            void outputEnded.then(settle);
                         });
                     });
                     await settleIfAborted();
@@ -5893,6 +5990,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             stateId: input.stateId,
                             sourceItem: input.sourceItem,
                             exitStatus,
+                            durationMs,
+                            ...outputTail.read(),
                         },
                     });
                     await settleIfAborted();
@@ -5919,6 +6018,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         }
                     }
                     finally {
+                        releaseOutputPipe();
                         active.removeEventListener('abort', onAbort);
                         if (killTimer !== undefined)
                             clearTimeout(killTimer);
