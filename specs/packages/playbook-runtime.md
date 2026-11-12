@@ -573,7 +573,8 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 | `outputTruncated` | whether captured bytes before those were dropped |
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
-- On a host other than native Windows where the runtime can make a FIFO in the temporary directory, the command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`; on native Windows, and where it cannot, the pipe shall be the platform's, which a command opens by path neither on Linux nor under Git's `sh`.
+- The command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`.
+- Where the runtime can make that pipe itself, the command shall run as the runtime's own child; on native Windows, and where the temporary directory admits no FIFO, the step's shell shall make the pipe, and the command shall run as that shell's child and, where a signal ends it, report the status that shell gives it.
 - Capture shall end when every byte written has reached the runtime and the pipe's last writer has closed it, or 250 ms after the shell's exit, 2 s on native Windows, whichever comes first; a byte that has not reached the runtime by then shall go unrecorded, and `outputTruncated` shall not count it.
 - A descendant that holds the pipe open past the shell's exit shall keep a working stdout and stderr: its later write shall succeed, unrecorded, whether or not the host process still runs.
 - The capture shall need `cat` beside `sh` on the host's `PATH`; without `cat`, a command's write to stdout or stderr shall fail.
@@ -1192,11 +1193,12 @@ When the runtime suite runs real commands through a player-and-script machine, i
 | Command | Required record | Verifying |
 | --- | --- | --- |
 | Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
-| Writes to `/dev/stderr` and to `/dev/stdout` by path, on a host other than native Windows | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes to `/dev/stderr` and to `/dev/stdout` by path | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Prints its parent, writes to both paths, and exits nonzero, under a host process of its own that can make the pipe and under one whose temporary directory does not exist | That exit status and both texts under either host; off native Windows, the host as the parent under the first alone | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Is ended by a signal, on a host other than native Windows | `exitStatus` `1`, the earlier write recorded, and the nonzero guard | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
-| The same, under a host process that exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
+| The same, under each of those two hosts, which exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true | [[playbook-runtime-108](#playbook-runtime-108)], [[playbook-runtime-111](#playbook-runtime-111)] |
 | Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL | [[playbook-runtime-111](#playbook-runtime-111)] |

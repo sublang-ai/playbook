@@ -21,6 +21,7 @@ Script output stays out of machine context, guards, prompts, status lines, and `
   - separate stdout and stderr tails: each line keeps its stream and loses its place among the other stream's lines, which is what a reader follows;
   - two pipes merged as read: the order of near-simultaneous writes on two pipes is arbitrary;
   - the pipe Node gives a child process, alone: it is a socket pair, which Linux refuses to open again by path, so a command that writes to `/dev/stderr` would fail where it passed with its output discarded;
+  - the step's shell making the pipe on every platform: one arrangement, but on macOS and Linux every command would then run as that shell's child and report a shell's status when a signal ends it, where it ran as the runtime's own child;
   - the runtime as the pipe's only reader: a process the command left running would be killed by its next write once the host process exited, where discarded output never failed it;
   - a file the runtime reads back: a long-lived process the command left running would fill it without bound;
   - recording only a nonzero exit: a pass that should have failed needs the same evidence as a failure;
@@ -35,9 +36,10 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 ### 1. One text, in the order written
 
 The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
-Off native Windows, where the host allows, it is a pipe the command can open again by path, as through `/dev/stderr`.
+It is a pipe the command can open again by path, as through `/dev/stderr`.
 The stream a line came from is not kept.
-The runtime starts a relay process beside the command's shell and hands it the reading of that pipe: the relay copies to the runtime and, once the runtime stops reading or its process exits, reads on and discards.
+A relay process reads that pipe: it copies to the runtime and, once the runtime stops reading or its process exits, reads on and discards.
+Where the runtime can make the pipe itself, it starts the relay beside the command's shell, which stays its own child; on native Windows, and where no FIFO can be made, the step's shell makes the pipe and runs the relay.
 
 ### 2. A bounded, leniently decoded tail
 
@@ -78,8 +80,8 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - On native Windows, a host process's first script step waits for one registry read of the system's code pages.
 - A step whose descendant holds the pipe open settles later by at most the bounded wait, and its relay runs for as long as that descendant holds the pipe.
 - The bounded wait cannot tell a descendant that holds the pipe from a relay that is still copying: a relay that falls behind the shell's exit by more than the wait costs the record its last bytes, with nothing to mark the loss.
-- On native Windows, and on Linux where the runtime cannot make its pipe, a command that opens `/dev/stderr` or `/dev/stdout` by path fails, where it passed with its output discarded.
-- A script step needs `cat` beside `sh` and starts one more process, the relay; without `cat` a command's writes fail. The command's own shell, its process group, and its exit status are as before.
+- On native Windows, and where no FIFO can be made, the command is the child of the step's shell and not of the runtime, a command that a signal ends reports the status that shell gives it, and a step on Windows takes about a tenth of a second longer.
+- A script step needs `cat` beside `sh` and starts one more process, the relay; without `cat` a command's writes fail. Where the runtime makes the pipe, the command's own shell, its process group, and its exit status are as before.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
 
 ## References

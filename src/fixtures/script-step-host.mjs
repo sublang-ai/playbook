@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 // A host process that runs one script step through the shared factory and
-// exits when the run ends, as a one-shot `playbook run` does. It prints the
-// step's `playbook.script` payloads as JSON. argv: the command.
+// exits when the run ends, as a one-shot `playbook run` does. It prints its
+// own process id and the step's `playbook.script` payloads as JSON. argv:
+// the command.
 
 import { createMachine } from 'xstate';
 import {
@@ -107,4 +108,4 @@ await runtime.handleBossInput({
   signal: new AbortController().signal,
 });
 await runtime.dispose();
-process.stdout.write(JSON.stringify(payloads));
+process.stdout.write(JSON.stringify({ pid: process.pid, payloads }));

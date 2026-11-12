@@ -2069,25 +2069,21 @@ describe('player + script workflow over the shared factory', () => {
   );
 
   // Linux opens the stream again for such a path, which a socket refuses and
-  // a pipe allows. Native Windows keeps Node's pipe, which Git's `sh` cannot
-  // open by path.
-  it.skipIf(process.platform === 'win32')(
-    'records what a command writes to /dev/stderr and /dev/stdout by path',
-    async () => {
-      const { runtime, result, scriptEvents } = await runScriptStep(
-        'echo oops > /dev/stderr; echo hi > /dev/stdout',
-      );
+  // a pipe allows; Git's `sh` opens by path only a pipe of its own making.
+  it('records what a command writes to /dev/stderr and /dev/stdout by path', async () => {
+    const { runtime, result, scriptEvents } = await runScriptStep(
+      'echo oops > /dev/stderr; echo hi > /dev/stdout',
+    );
 
-      expect(result.state.stateId).toBe('done');
-      expect(scriptEvents).toHaveLength(1);
-      expect(scriptEvents[0]).toMatchObject({
-        exitStatus: 0,
-        output: 'oops\nhi\n',
-        outputTruncated: false,
-      });
-      await runtime.dispose();
-    },
-  );
+    expect(result.state.stateId).toBe('done');
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      exitStatus: 0,
+      output: 'oops\nhi\n',
+      outputTruncated: false,
+    });
+    await runtime.dispose();
+  });
 
   it('keeps the last 16384 bytes of a longer script output, begun at a character boundary', async () => {
     // 5000 + 6000 × 3 + 3 = 23003 bytes. The last 16384 are one trailing
@@ -2268,30 +2264,83 @@ describe('player + script workflow over the shared factory', () => {
     }
   });
 
-  it('leaves a descendant\'s later write working after the host process has exited', async () => {
-    const { dir, command, release } = await lingering();
-    try {
-      // A host of its own, which exits when the run ends: from then on no
-      // process reads the host's end of the script's output.
-      const { stdout } = await promisify(execFile)(process.execPath, [
+  // A host process of its own, which runs one script step and exits when the
+  // run ends. One whose temporary directory does not exist can make no pipe
+  // for the command, so the step's shell makes it — as it always does on
+  // native Windows.
+  const SCRIPT_HOSTS = [
+    ['a pipe of its own making', true],
+    ['none, for want of a temporary directory', false],
+  ] as const;
+  const runScriptHost = async (
+    command: string,
+    ownPipe: boolean,
+  ): Promise<{ pid: number; payloads: Record<string, unknown>[] }> => {
+    const missing = join(tmpdir(), `playbook-script-missing-${randomUUID()}`);
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
         fileURLToPath(
           new URL('./fixtures/script-step-host.mjs', import.meta.url),
         ),
         command,
-      ]);
+      ],
+      {
+        env:
+          ownPipe || process.platform === 'win32'
+            ? process.env
+            : { ...process.env, TMPDIR: missing, TMP: missing, TEMP: missing },
+      },
+    );
+    return JSON.parse(stdout);
+  };
 
-      expect(JSON.parse(stdout)).toEqual([
-        expect.objectContaining({
-          exitStatus: 0,
-          output: 'started\n',
-          outputTruncated: false,
-        }),
-      ]);
-      expect(await release()).toBe('survived\n');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  it.each(SCRIPT_HOSTS)(
+    'runs a command under a host with %s',
+    async (_pipe, ownPipe) => {
+      const { pid, payloads } = await runScriptHost(
+        'echo "parent=$PPID"; echo oops > /dev/stderr; ' +
+          'echo hi > /dev/stdout; exit 3',
+        ownPipe,
+      );
+
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]).toMatchObject({
+        exitStatus: 3,
+        outputTruncated: false,
+      });
+      const [parent, ...written] = (payloads[0]!.output as string).split('\n');
+      expect(written).toEqual(['oops', 'hi', '']);
+      // The command is the host's own child where the host made the pipe,
+      // and the step's shell's child where that shell did.
+      if (process.platform !== 'win32') {
+        expect(parent === `parent=${pid}`).toBe(ownPipe);
+      }
+    },
+  );
+
+  it.each(SCRIPT_HOSTS)(
+    'leaves a descendant\'s later write working after a host with %s has exited',
+    async (_pipe, ownPipe) => {
+      const { dir, command, release } = await lingering();
+      try {
+        // The host is gone when this returns: from then on no process reads
+        // the host's end of the script's output.
+        const { payloads } = await runScriptHost(command, ownPipe);
+
+        expect(payloads).toEqual([
+          expect.objectContaining({
+            exitStatus: 0,
+            output: 'started\n',
+            outputTruncated: false,
+          }),
+        ]);
+        expect(await release()).toBe('survived\n');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('suspends on needsBossReply and resumes through the generic BOSS_REPLY classifier', async () => {
     let playerCalls = 0;

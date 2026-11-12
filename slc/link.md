@@ -1577,17 +1577,24 @@ The provided actor shall:
   emitted options interface whenever the FSM contains a script state; the
   validated option reaches the shared script actor through the spec. The
   command's stdout and stderr shall share one pipe, so the output is recorded
-  in the order written; stdin stays unconnected. On a host other than native
-  Windows the runtime shall make that pipe from a FIFO in the temporary
-  directory, opened at both ends and then removed, so the command can open it
-  again by path, as through `/dev/stdout` or `/dev/stderr`; where it cannot,
-  and on native Windows, the pipe is the platform's `pipe` stdio, which a
-  command opens by path neither on Linux nor under Git's `sh`. The runtime
-  shall start a relay process (`sh -c 'cat || exec cat >/dev/null'`) detached
-  beside the shell, give it the read end of that pipe as stdin, and close its
-  own copies before reading from it. The relay copies to the runtime, and
-  reads on and discards once the runtime closes its end or its process exits,
-  so a write by a process the command left running never fails.
+  in the order written; stdin stays unconnected. The command shall be able to
+  open that pipe again by path, as through `/dev/stdout` or `/dev/stderr`,
+  which the platform's `pipe` stdio allows neither on Linux nor under Git's
+  `sh`. A relay (`cat || exec cat >/dev/null`) shall read the pipe: it copies
+  to the runtime, and reads on and discards once the runtime closes its end
+  or its process exits, so a write by a process the command left running
+  never fails. Who makes the pipe decides the arrangement:
+  - On a host other than native Windows the runtime shall make it from a
+    FIFO in the temporary directory, opened at both ends and then removed.
+    The shell gets its write end, the runtime starts the relay through
+    `sh -c`, detached, with its read end as stdin, and the runtime closes
+    its own copies of both. The command is the runtime's own child.
+  - On native Windows, and where the FIFO cannot be made, the step's shell
+    shall make the pipe: it runs the command through `sh -c` with both
+    streams on a pipeline to the relay, which it runs in the background and
+    does not await, and it exits with the command's status when the command
+    does. The command is that shell's child, and one that a signal ends
+    reports the status that shell gives it.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
@@ -1619,9 +1626,12 @@ The provided actor shall:
   emission already started when the abort lands completes through the
   ordinary serialized channel and the rejection follows it. A
   descendant that leaves the process group is beyond the runtime's kill
-  scope. The relay stands outside that group, so a command that handles
-  the group's `SIGTERM` can still write, and ends when the pipe's last writer
-  does.
+  scope. A relay the runtime starts stands outside that group and ends
+  when the pipe's last writer does. Where the step's shell runs the relay,
+  that shell shall not end on the group's `SIGTERM` before the command does,
+  and the relay shall ignore it, so in either arrangement a command that
+  handles the signal can still write and still reports its status; the
+  group's `SIGKILL` then ends that relay.
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
