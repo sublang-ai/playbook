@@ -1575,7 +1575,26 @@ The provided actor shall:
   `PlaybookRuntimeOptions.cwd` when the caller supplies it, else the process
   working directory. The linker shall declare the optional `cwd` option on the
   emitted options interface whenever the FSM contains a script state; the
-  validated option reaches the shared script actor through the spec.
+  validated option reaches the shared script actor through the spec. The
+  command's stdout and stderr shall share one pipe, so the output is recorded
+  in the order written; stdin stays unconnected. The command shall be able to
+  open that pipe again by path, as through `/dev/stdout` or `/dev/stderr`,
+  which the platform's `pipe` stdio allows neither on Linux nor under Git's
+  `sh`. A relay (`cat || exec cat >/dev/null`) shall read the pipe: it copies
+  to the runtime, and reads on and discards once the runtime closes its end
+  or its process exits, so a write by a process the command left running
+  never fails. Who makes the pipe decides the arrangement:
+  - On a host other than native Windows the runtime shall make it from a
+    FIFO in the temporary directory, opened at both ends and then removed.
+    The shell gets its write end, the runtime starts the relay through
+    `sh -c`, detached, with its read end as stdin, and the runtime closes
+    its own copies of both. The command is the runtime's own child.
+  - On native Windows, and where the FIFO cannot be made, the step's shell
+    shall make the pipe: it runs the command through `sh -c` with both
+    streams on a pipeline to the relay, which it runs in the background and
+    does not await, and it exits with the command's status when the command
+    does. The command is that shell's child, and one that a signal ends
+    reports the status that shell gives it.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
@@ -1607,18 +1626,51 @@ The provided actor shall:
   emission already started when the abort lands completes through the
   ordinary serialized channel and the rejection follows it. A
   descendant that leaves the process group is beyond the runtime's kill
-  scope.
+  scope. A relay the runtime starts stands outside that group and ends
+  when the pipe's last writer does. Where the step's shell runs the relay,
+  that shell shall not end on the group's `SIGTERM` before the command does,
+  and the relay shall ignore it, so in either arrangement a command that
+  handles the signal can still write and still reports its status; the
+  group's `SIGKILL` then ends that relay.
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
-  `{ stateId, sourceItem, exitStatus }`, through the ordinary serialized
-  emission channel.
+  `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`,
+  through the ordinary serialized emission channel
+  ([DR-103](../specs/decisions/103-a-script-step-records-its-output.md)):
+  - `durationMs` is the whole milliseconds from spawning the shell to its
+    exit, never negative.
+  - `output` is the last 16384 bytes the command wrote to stdout and stderr,
+    as one text in the order written, decoded as UTF-8 with each invalid
+    sequence replaced by U+FFFD and every NUL removed; `outputTruncated`
+    states whether earlier bytes were dropped. On native Windows whose ANSI
+    and OEM code pages are one of 874, 932, 936, 949, 950, and 1258, a line
+    that is not valid UTF-8 and holds no NUL is decoded in that code page
+    instead; a NUL directly after a newline is part of that newline, as in
+    UTF-16LE, and of neither line. Where earlier bytes were dropped, the
+    first kept line is read as the rest of the one line the cut fell in: in
+    the encoding that whole line takes, the bytes before the cut counted,
+    and from that line's first character boundary at or after the cut, so
+    the character the cut split is dropped and no other. The kept bytes
+    alone settle neither, so the runtime follows that line's dropped bytes
+    as it drops them: whether they are valid UTF-8 and hold a NUL, the UTF-8
+    character they leave open, and, in the code page, whether they end on
+    the first byte of a two-byte character.
+  - Capture ends when the relay ends or 250 ms after the shell's exit, 2 s on
+    native Windows, whichever comes first: what a descendant that holds the
+    pipe writes later, and what a relay has not yet passed on, is not
+    recorded. The runtime then closes its end, and the relay discards the
+    rest. The relay needs `cat` on the host's `PATH`; without it a command's
+    write to stdout or stderr fails.
 
 Script execution emits no `*.call.*` trace pair: the surrounding FSM
 transition trace and the `playbook.script` telemetry are its record, so trace
 schema consumers see no new event types.
-Script stdout and stderr are not workflow data: the runtime shall not place
-them in machine context, prompts, or trace payloads.
+Script stdout and stderr are not workflow data: the runtime shall record them
+only in that `playbook.script` event, for hosts and people, and shall not
+place them in the actor's result, machine context, a saved step result,
+prompts, status lines, or trace payloads. Guard selection reads the exit
+status alone.
 
 ## Nested playbook bridge
 

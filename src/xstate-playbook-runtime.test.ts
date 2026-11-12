@@ -8,11 +8,14 @@
 // defaults (entry event, parked-state classifier, prompt composition,
 // adjudication, statuses).
 
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
@@ -50,6 +53,8 @@ import {
   type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
+import { SCRIPT_OUTPUT_CODE_PAGES } from './script-output.js';
+import { windowsSystemCodePage } from './test-support/code-pages.ts';
 import { branchMachine } from '../reference/sdlc/branch.playbook/branch.fsm.js';
 import { _internal as branchArtifact } from '../reference/sdlc/branch.playbook/branch.playbook.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
@@ -1874,7 +1879,14 @@ describe('player + script workflow over the shared factory', () => {
     expect(scriptEvents).toEqual([
       {
         topic: 'playbook.script',
-        payload: { stateId: 'verify', sourceItem: 'WF-2', exitStatus: 0 },
+        payload: {
+          stateId: 'verify',
+          sourceItem: 'WF-2',
+          exitStatus: 0,
+          durationMs: expect.any(Number),
+          output: '',
+          outputTruncated: false,
+        },
       },
     ]);
     await runtime.dispose();
@@ -1967,6 +1979,368 @@ describe('player + script workflow over the shared factory', () => {
       await rm(workDir, { recursive: true, force: true });
     }
   });
+
+  // DR-103 / slc/link.md §Script execution: what a script step printed is
+  // recorded on its `playbook.script` telemetry event, and nowhere else.
+  const runScriptStep = async (
+    command: string,
+    overrides: Partial<PlaybookPorts> = {},
+  ) => {
+    const recorded = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      ...overrides,
+    });
+    // Statuses and telemetry in the one order the runtime emitted them.
+    const emissions: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recorded.ports,
+      emitStatus: async (message, data) => {
+        emissions.push(`status ${message}`);
+        await recorded.ports.emitStatus(message, data);
+      },
+      emitTelemetry: async (event) => {
+        emissions.push(`telemetry ${event.topic}`);
+        await recorded.ports.emitTelemetry(event);
+      },
+    };
+    const runtime = createWorkflowRuntime({ command });
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('run the check'));
+    const scriptEvents = recorded.telemetry
+      .filter(({ topic }) => topic === 'playbook.script')
+      .map(({ payload }) => payload as Record<string, unknown>);
+    return { ...recorded, emissions, runtime, result, scriptEvents };
+  };
+
+  it.each([
+    ['zero', 0, 'done'],
+    ['nonzero', 3, 'failed'],
+  ] as const)(
+    'records what a script wrote to stdout and stderr in write order at a %s exit',
+    async (_label, exitStatus, stateId) => {
+      const { runtime, result, emissions, scriptEvents } =
+        await runScriptStep(
+          'echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2; ' +
+            `exit ${exitStatus}`,
+        );
+
+      expect(result.state.stateId).toBe(stateId);
+      expect(scriptEvents).toEqual([
+        {
+          stateId: 'verify',
+          sourceItem: 'WF-2',
+          exitStatus,
+          durationMs: expect.any(Number),
+          output: 'out-1\nerr-1\nout-2\nerr-2\n',
+          outputTruncated: false,
+        },
+      ]);
+      const { durationMs } = scriptEvents[0] as { durationMs: number };
+      expect(Number.isInteger(durationMs) && durationMs >= 0).toBe(true);
+      // The status line is unchanged and precedes the telemetry event.
+      const statusAt = emissions.indexOf(
+        `status Executed script for verify (exit ${exitStatus}).`,
+      );
+      expect(statusAt).toBeGreaterThanOrEqual(0);
+      expect(emissions.indexOf('telemetry playbook.script')).toBeGreaterThan(
+        statusAt,
+      );
+      await runtime.dispose();
+    },
+  );
+
+  // Native Windows gives a shell ended this way a status of its own.
+  it.skipIf(process.platform === 'win32')(
+    'reports exit status 1 for a command that ended without one',
+    async () => {
+      const { runtime, result, scriptEvents } = await runScriptStep(
+        'echo before; kill -KILL $$',
+      );
+
+      expect(result.state.stateId).toBe('failed');
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({
+        exitStatus: 1,
+        output: 'before\n',
+      });
+      await runtime.dispose();
+    },
+  );
+
+  // Linux opens the stream again for such a path, which a socket refuses and
+  // a pipe allows; Git's `sh` opens by path only a pipe of its own making.
+  it('records what a command writes to /dev/stderr and /dev/stdout by path', async () => {
+    const { runtime, result, scriptEvents } = await runScriptStep(
+      'echo oops > /dev/stderr; echo hi > /dev/stdout',
+    );
+
+    expect(result.state.stateId).toBe('done');
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      exitStatus: 0,
+      output: 'oops\nhi\n',
+      outputTruncated: false,
+    });
+    await runtime.dispose();
+  });
+
+  it('keeps the last 16384 bytes of a longer script output, begun at a character boundary', async () => {
+    // 5000 + 6000 × 3 + 3 = 23003 bytes. The last 16384 are one trailing
+    // byte of a 3-byte character, 5460 whole ones, and `ab\n`.
+    const { runtime, scriptEvents } = await runScriptStep(
+      `awk 'BEGIN { for (i = 0; i < 5000; i++) printf "x"; ` +
+        `for (i = 0; i < 6000; i++) printf "中"; print "ab" }'`,
+    );
+
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      exitStatus: 0,
+      output: `${'中'.repeat(5460)}ab\n`,
+      outputTruncated: true,
+    });
+    await runtime.dispose();
+  });
+
+  // A Windows host with one system code page reads such a line in it.
+  it.skipIf((windowsSystemCodePage() ?? '') in SCRIPT_OUTPUT_CODE_PAGES)(
+    'drops the character a cut split after bytes that are not UTF-8',
+    async () => {
+      // One line: a byte no UTF-8 text holds, then 6000 three-byte
+      // characters. The kept 16384 bytes open on the last byte of one.
+      const { runtime, scriptEvents } = await runScriptStep(
+        String.raw`printf '\377'; ` +
+          `awk 'BEGIN { for (i = 0; i < 6000; i++) printf "中" }'`,
+      );
+
+      expect(scriptEvents).toHaveLength(1);
+      const { output, outputTruncated } = scriptEvents[0] as {
+        output: string;
+        outputTruncated: boolean;
+      };
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 2)).toBe('中中');
+      expect(output === '中'.repeat(5461)).toBe(true);
+      await runtime.dispose();
+    },
+  );
+
+  it('decodes script output as lenient UTF-8 and removes NUL', async () => {
+    // Two bytes no UTF-8 text holds, then a UTF-16LE line of ASCII text as
+    // `wsl.exe` prints one.
+    const { runtime, scriptEvents } = await runScriptStep(
+      String.raw`printf 'ok \377\376 bad\n'; printf 'W\000S\000L\000\n\000'`,
+    );
+
+    expect(scriptEvents).toHaveLength(1);
+    expect(scriptEvents[0]).toMatchObject({
+      output: 'ok \uFFFD\uFFFD bad\nWSL\n',
+      outputTruncated: false,
+    });
+    await runtime.dispose();
+  });
+
+  it('keeps script output out of prompts, statuses, traces, results, and saved steps', async () => {
+    const marker = 'IGNORE-PREVIOUS-INSTRUCTIONS-7c1f';
+    const prompts: string[] = [];
+    const saved: unknown[] = [];
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        prompts.push(prompt);
+        return { status: 'ok', finalText: 'done' };
+      },
+      callJudge: async (prompt) => {
+        prompts.push(prompt);
+        return '{"guard":"implemented","summary":"ok"}';
+      },
+      recordStep: async (step, position) => {
+        saved.push(step, position);
+      },
+    });
+    // The command assembles the marker, so its own text — which the machine
+    // context and the saved step rightly hold — never spells it.
+    const runtime = createWorkflowRuntime({
+      command:
+        'm=IGNORE-PREVIOUS; echo "$m-INSTRUCTIONS-7c1f"; ' +
+        'echo "$m-INSTRUCTIONS-7c1f" >&2; exit 3',
+    });
+    await runtime.init(makeSession(ports));
+    // The second turn restarts from the failure the first script exit caused,
+    // so every prompt after a recorded output is observed too.
+    const results = [
+      await runtime.handleBossInput(turn('run the check')),
+      await runtime.handleBossInput(turn('run the check again')),
+    ];
+
+    const scriptEvents = telemetry.filter(
+      ({ topic }) => topic === 'playbook.script',
+    );
+    expect(scriptEvents.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ output: `${marker}\n${marker}\n` }),
+      expect.objectContaining({ output: `${marker}\n${marker}\n` }),
+    ]);
+    expect(prompts.length).toBeGreaterThanOrEqual(4);
+    expect(saved.length).toBeGreaterThan(0);
+    const elsewhere = JSON.stringify({
+      prompts,
+      statuses,
+      telemetry: telemetry.filter(({ topic }) => topic !== 'playbook.script'),
+      results,
+      saved,
+      snapshot: runtime.exportSnapshot?.(),
+    });
+    expect(elsewhere).toContain('playbook.trace');
+    expect(elsewhere).not.toContain(marker);
+    await runtime.dispose();
+  });
+
+  it.each([
+    [16384, false],
+    [16385, true],
+  ] as const)(
+    'reports whether a script output of %i bytes lost earlier bytes',
+    async (bytes, outputTruncated) => {
+      const { runtime, scriptEvents } = await runScriptStep(
+        `awk 'BEGIN { for (i = 0; i < ${bytes}; i++) printf "x" }'`,
+      );
+
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({ outputTruncated });
+      const { output } = scriptEvents[0] as { output: string };
+      expect(output === 'x'.repeat(16384)).toBe(true);
+      await runtime.dispose();
+    },
+  );
+
+  // A descendant that outlives the shell with the output pipe open: it
+  // writes `started` at once, and `late` only when the gate file exists.
+  // The marker is written only if that later `echo` itself succeeds. The
+  // descendant stops waiting when its directory goes, so a failed test
+  // leaves none behind.
+  const lingering = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-linger-'));
+    // Forward slashes, which `sh` reads the same on every platform.
+    const path = (name: string): string =>
+      join(dir, name).replaceAll('\\', '/');
+    return {
+      dir,
+      command:
+        `(while [ -d ${path('.')} ] && [ ! -e ${path('gate')} ]; ` +
+        `do sleep 0.1; done; echo late && ` +
+        `echo survived > ${path('marker')}) & echo started`,
+      // Opens the gate and returns what the descendant then wrote. The write
+      // itself bounds the wait: a test that never sees it fails at its
+      // timeout.
+      release: async (): Promise<string> => {
+        await writeFile(join(dir, 'gate'), '');
+        for (;;) {
+          const marker = await readFile(join(dir, 'marker'), 'utf8').catch(
+            () => '',
+          );
+          if (marker !== '') return marker;
+          await new Promise((tick) => setTimeout(tick, 25));
+        }
+      },
+    };
+  };
+
+  it('settles before a descendant that holds the output pipe writes again, and leaves that write working', async () => {
+    const { dir, command, release } = await lingering();
+    try {
+      // The gate opens only below, so the step settled before the write.
+      const { runtime, result, scriptEvents } = await runScriptStep(command);
+
+      expect(result.state.stateId).toBe('done');
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({
+        exitStatus: 0,
+        output: 'started\n',
+        outputTruncated: false,
+      });
+      expect(await release()).toBe('survived\n');
+      await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A host process of its own, which runs one script step and exits when the
+  // run ends. One whose temporary directory does not exist can make no pipe
+  // for the command, so the step's shell makes it — as it always does on
+  // native Windows.
+  const SCRIPT_HOSTS = [
+    ['a pipe of its own making', true],
+    ['none, for want of a temporary directory', false],
+  ] as const;
+  const runScriptHost = async (
+    command: string,
+    ownPipe: boolean,
+  ): Promise<{ pid: number; payloads: Record<string, unknown>[] }> => {
+    const missing = join(tmpdir(), `playbook-script-missing-${randomUUID()}`);
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL('./fixtures/script-step-host.mjs', import.meta.url),
+        ),
+        command,
+      ],
+      {
+        env:
+          ownPipe || process.platform === 'win32'
+            ? process.env
+            : { ...process.env, TMPDIR: missing, TMP: missing, TEMP: missing },
+      },
+    );
+    return JSON.parse(stdout);
+  };
+
+  it.each(SCRIPT_HOSTS)(
+    'runs a command under a host with %s',
+    async (_pipe, ownPipe) => {
+      const { pid, payloads } = await runScriptHost(
+        'echo "parent=$PPID"; echo oops > /dev/stderr; ' +
+          'echo hi > /dev/stdout; exit 3',
+        ownPipe,
+      );
+
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]).toMatchObject({
+        exitStatus: 3,
+        outputTruncated: false,
+      });
+      const [parent, ...written] = (payloads[0]!.output as string).split('\n');
+      expect(written).toEqual(['oops', 'hi', '']);
+      // The command is the host's own child where the host made the pipe,
+      // and the step's shell's child where that shell did.
+      if (process.platform !== 'win32') {
+        expect(parent === `parent=${pid}`).toBe(ownPipe);
+      }
+    },
+  );
+
+  it.each(SCRIPT_HOSTS)(
+    'leaves a descendant\'s later write working after a host with %s has exited',
+    async (_pipe, ownPipe) => {
+      const { dir, command, release } = await lingering();
+      try {
+        // The host is gone when this returns: from then on no process reads
+        // the host's end of the script's output.
+        const { payloads } = await runScriptHost(command, ownPipe);
+
+        expect(payloads).toEqual([
+          expect.objectContaining({
+            exitStatus: 0,
+            output: 'started\n',
+            outputTruncated: false,
+          }),
+        ]);
+        expect(await release()).toBe('survived\n');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('suspends on needsBossReply and resumes through the generic BOSS_REPLY classifier', async () => {
     let playerCalls = 0;

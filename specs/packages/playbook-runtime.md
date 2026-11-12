@@ -560,6 +560,39 @@ An executed marker that is malformed, undeclared, or unconfirmed by those adjace
 
 Where a factory-backed artifact supplies an artifact-specific status override, the runtime shall still require complete local-role `roleStates` metadata; missing metadata shall reject at construction instead of selecting metadata-absent legacy status defaults.
 
+#### playbook-runtime-108
+
+When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-103](../decisions/103-a-script-step-records-its-output.md)):
+
+| Field | Value |
+| --- | --- |
+| `stateId`, `sourceItem` | the invocation's own |
+| `exitStatus` | the shell's exit status, or `1` when it ended without one |
+| `durationMs` | the whole milliseconds from spawning the shell to its exit, never negative |
+| `output` | the last 16384 captured bytes of what the command wrote to stdout and stderr, as the one text of [[playbook-runtime-111](#playbook-runtime-111)] |
+| `outputTruncated` | whether captured bytes before those were dropped |
+
+- The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
+- The command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`.
+- Where the runtime can make that pipe itself, the command shall run as the runtime's own child; on native Windows, and where the temporary directory admits no FIFO, the step's shell shall make the pipe, and the command shall run as that shell's child and, where a signal ends it, report the status that shell gives it.
+- Capture shall end when every byte written has reached the runtime and the pipe's last writer has closed it, or 250 ms after the shell's exit, 2 s on native Windows, whichever comes first; a byte that has not reached the runtime by then shall go unrecorded, and `outputTruncated` shall not count it.
+- A descendant that holds the pipe open past the shell's exit shall keep a working stdout and stderr: its later write shall succeed, unrecorded, whether or not the host process still runs.
+- The capture shall need `cat` beside `sh` on the host's `PATH`; without `cat`, a command's write to stdout or stderr shall fail.
+- The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
+
+#### playbook-runtime-111
+
+The runtime shall read the bytes of a `playbook.script` event's `output` [[playbook-runtime-108](#playbook-runtime-108)] as text line by line, each line in one encoding, and remove every NUL from that text ([DR-103](../decisions/103-a-script-step-records-its-output.md) §2):
+
+| Line | Read as |
+| --- | --- |
+| Valid UTF-8, or holding a NUL, or on a host with no code page for script output | UTF-8, each invalid sequence replaced by U+FFFD |
+| Any other | The host's code page for script output |
+
+- A host shall have a code page for script output where it runs on native Windows, its registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, and the runtime reads those values and holds that page's decoder.
+- A line shall end with its newline byte, and a NUL directly after a newline shall be part of that newline, as in UTF-16LE, and of neither line.
+- Where captured bytes before the kept ones were dropped, the first kept line shall be read as the rest of the one line the cut fell in: in the encoding that whole line takes, the bytes before the cut counted, and from that line's first character boundary at or after the cut, so the character the cut split is dropped and no other.
+
 ### Host adapter and registry
 
 #### playbook-runtime-15
@@ -1152,6 +1185,38 @@ When the integration suite drives transition and status profiles, it shall fail 
 - Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
 - A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <acceptedOutcome>` from confirmed evidence with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
 - A schema-3 factory-backed fixture with missing or incomplete `roleStates` rejects during construction even when a status override exists, before machine interpretation or a host call (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
+
+#### playbook-runtime-109
+
+When the runtime suite runs real commands through a player-and-script machine, it shall fail unless every case in this matrix holds:
+
+| Command | Required record | Verifying |
+| --- | --- | --- |
+| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes to `/dev/stderr` and to `/dev/stdout` by path | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Prints its parent, writes to both paths, and exits nonzero, under a host process of its own that can make the pipe and under one whose temporary directory does not exist | That exit status and both texts under either host; off native Windows, the host as the parent under the first alone | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Is ended by a signal, on a host other than native Windows | `exitStatus` `1`, the earlier write recorded, and the nonzero guard | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
+| The same, under each of those two hosts, which exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true | [[playbook-runtime-108](#playbook-runtime-108)], [[playbook-runtime-111](#playbook-runtime-111)] |
+| Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL | [[playbook-runtime-111](#playbook-runtime-111)] |
+| Writes a byte that is not UTF-8 and then, on the same line, more than 16384 bytes of multibyte characters, on a host with no code page for script output | The kept whole characters alone: the one the cut split is dropped and leaves no U+FFFD | [[playbook-runtime-111](#playbook-runtime-111)] |
+
+#### playbook-runtime-110
+
+Where the suite runs on native Windows whose system locale has one of the code pages 874, 932, 936, 949, 950, and 1258 as both its ANSI and OEM code page, when scripts write in that code page, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-111](#playbook-runtime-111)]):
+
+| Command writes | Required `output` |
+| --- | --- |
+| A UTF-8 line, a code-page line, and a UTF-16 line of non-ASCII text | The first two lines as their text and the third as UTF-8 with U+FFFD for its invalid bytes |
+| A UTF-16 line of ASCII text and then a code-page line | Both lines as their text |
+| More than 16384 bytes of one code-page character whose every byte is a UTF-8 continuation byte, cut between two characters | That character alone, every kept one intact |
+| The same, cut inside a character | The same, less the partial character |
+| The same followed by ASCII letters and a newline, cut inside a character | That character and the ASCII, less the partial character |
+| One such character and a newline, then ASCII to the bound, cut just before that character | The character, the newline, and the ASCII, nothing dropped |
+| More than 16384 bytes ending in a UTF-8 line and a code-page line, cut inside a UTF-8 character | Both lines as their text, less the partial character |
 
 #### playbook-runtime-68
 

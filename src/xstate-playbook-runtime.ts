@@ -32,6 +32,12 @@ import {
   createAcceptedOutcomeConsumer,
   type AcceptedOutcomeReceipt,
 } from './accepted-outcome.js';
+import {
+  closeScriptOutputPipe,
+  createScriptOutputTail,
+  openScriptOutputPipe,
+  readSystemCodePage,
+} from './script-output.js';
 import { assertPlaybookFailureCause } from './runtime.js';
 import {
   assertPlaybookRuntimeSnapshot,
@@ -3005,6 +3011,44 @@ const SUPPRESSED_ENTRY_STATES: ReadonlySet<string> = new Set(['ready', 'done']);
 // SIGKILL after this grace, so settlement (gated on the shell's own exit)
 // stays bounded even for TERM-immune commands.
 const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
+// DR-103: the command's stdout and stderr go to one pipe, so a script's
+// output is read in the order written, and a relay reads that pipe. The
+// relay copies to this process until this process closes its end or exits,
+// then reads on and discards, so a descendant that outlives the shell — or
+// this process — never writes to a pipe nobody reads. Who makes the pipe
+// decides the rest.
+//
+// Where this process makes it, the outer shell only joins stderr to stdout
+// and execs `sh -c <command>`, and this process starts the relay beside it.
+const SCRIPT_MERGED_OUTPUT_COMMAND = 'exec sh -c "$1" 2>&1';
+const SCRIPT_OUTPUT_RELAY_COMMAND = 'cat || exec cat >/dev/null';
+// Where this process can make none — native Windows, or a temporary
+// directory that admits no FIFO — the outer shell makes the pipe, as a
+// pipeline, and runs the same relay at its end.
+// - The relay runs in the background, unawaited, so the outer shell exits
+//   when the command does. A pipeline reports its last command's status
+//   alone, so the command's comes back through the command substitution,
+//   on fd 4.
+// - fd 3 is this process's pipe and fd 5 the relay's end of the command's;
+//   the command inherits none of them.
+// - An abort's SIGTERM reaches the whole group. The outer shell and the
+//   subshell that reports the status trap it, which defers them until the
+//   command has handled it and exited; the relay ignores it, so a command
+//   that cleans up can still write. The SIGKILL that follows ends the relay.
+const SCRIPT_SHELL_PIPED_COMMAND = [
+  'trap : TERM',
+  'exec 3>&1',
+  'code=$({ { trap : TERM; sh -c "$1" 2>&1 3>&- 4>&-; echo "$?" >&4; } | ' +
+    `{ { trap '' TERM; ${SCRIPT_OUTPUT_RELAY_COMMAND}; } ` +
+    '<&5 >&3 3>&- 4>&- 5<&- & } 5<&0; } 4>&1)',
+  'exit "${code:-1}"',
+].join('\n');
+// How long a script's record waits, after the shell's exit, for the relay
+// to end. It ends at once unless a surviving descendant holds the command's
+// pipe open, so the wait is spent only then. A relay that is merely slow
+// to start must not cost the record its last bytes, and native Windows
+// starts a process far more slowly, so its wait is longer.
+const SCRIPT_OUTPUT_DRAIN_GRACE_MS = process.platform === 'win32' ? 2000 : 250;
 
 class ScriptProcessGroupTeardownError extends Error {
   constructor(
@@ -8519,8 +8563,9 @@ export function createXStatePlaybookRuntime<
     // Deterministic script actor (slc/link.md §Script execution). Runs
     // `input.command` through `sh -c`, resolves the declared guard
     // mechanically from the exit status, and emits one status + one
-    // `playbook.script` telemetry event. No agent call, no adjudication,
-    // no `*.call.*` trace.
+    // `playbook.script` telemetry event, which alone carries the bounded
+    // record of what the command printed (DR-103). No agent call, no
+    // adjudication, no `*.call.*` trace.
     function scriptActor(): PromiseActorLogic<
       PlaybookActorOutput,
       PlaybookScriptInput
@@ -8538,6 +8583,15 @@ export function createXStatePlaybookRuntime<
           // nothing, and the thrown signal reason keeps the rejection
           // causally classified as the abort it is.
           active.throwIfAborted();
+          // DR-103: the code page a non-UTF-8 line is read in is settled
+          // before the command runs, because the capture follows it.
+          const codePage = await readSystemCodePage();
+          // DR-103: the command writes to a pipe it can open again by path,
+          // as through `/dev/stderr`. This process makes it where it can;
+          // elsewhere the step's shell does.
+          const outputPipe = await openScriptOutputPipe();
+          if (active.aborted) closeScriptOutputPipe(outputPipe);
+          active.throwIfAborted();
 
           // Abort ownership — the listener that terminates the group and
           // the escalation timer — spans the whole invocation body, not
@@ -8546,6 +8600,7 @@ export function createXStatePlaybookRuntime<
           // members before the actor settles (slc/link.md §Script
           // execution). One finally releases both.
           let child: ReturnType<typeof spawn> | undefined;
+          let relay: ReturnType<typeof spawn> | undefined;
           let killTimer: ReturnType<typeof setTimeout> | undefined;
           const signalGroup = (sig: NodeJS.Signals): void => {
             if (child?.pid !== undefined) {
@@ -8630,33 +8685,103 @@ export function createXStatePlaybookRuntime<
             active.throwIfAborted();
           };
           let invocationFailed = false;
+          const outputTail = createScriptOutputTail(codePage);
+          let capturing = true;
+          // Stops recording and closes this process's end of the relay's
+          // pipe. The relay reads on and discards, so a descendant that
+          // outlived the shell keeps a working stdout and stderr (DR-103)
+          // and this process holds nothing of the step once it settles.
+          const releaseOutputPipe = (): void => {
+            capturing = false;
+            (relay ?? child)?.stdout?.destroy();
+          };
+          let durationMs = 0;
           try {
             const exitStatus = await new Promise<number>(
               (resolve, reject) => {
+                const startedAt = performance.now();
                 try {
                   // detached: the shell leads its own POSIX process group,
                   // so an abort can terminate the command's whole group — a
                   // lone SIGTERM to the wrapper never reaches backgrounded
                   // members.
-                  child = spawn('sh', ['-c', input.command], {
-                    cwd,
-                    stdio: 'ignore',
-                    detached: true,
-                  });
+                  // DR-103: with a pipe of this process's making, the
+                  // wrapper only joins stderr to stdout and execs, so
+                  // `input.command` still runs verbatim through `sh -c` in
+                  // the same process, as the same group leader. With none,
+                  // the wrapper leads the group, makes the pipe, and runs
+                  // `input.command` through `sh -c` inside it.
+                  child = spawn(
+                    'sh',
+                    [
+                      '-c',
+                      outputPipe === undefined
+                        ? SCRIPT_SHELL_PIPED_COMMAND
+                        : SCRIPT_MERGED_OUTPUT_COMMAND,
+                      'sh',
+                      input.command,
+                    ],
+                    {
+                      cwd,
+                      stdio: ['ignore', outputPipe?.write ?? 'pipe', 'ignore'],
+                      detached: true,
+                    },
+                  );
+                  if (outputPipe !== undefined) {
+                    // The relay reads the pipe this process made, and this
+                    // process closes its own copies of both ends below.
+                    // Detached, the relay stands outside the command's
+                    // group, which an abort signals, and outlives this
+                    // process for as long as a descendant holds the pipe.
+                    relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
+                      cwd,
+                      stdio: [outputPipe.read, 'pipe', 'ignore'],
+                      detached: true,
+                    });
+                    relay.unref();
+                  }
                 } catch (error) {
+                  // A command already started has no reader: end it.
+                  signalGroup('SIGKILL');
                   reject(error);
                   return;
+                } finally {
+                  closeScriptOutputPipe(outputPipe);
                 }
+                relay?.on('error', (error) => {
+                  signalGroup('SIGKILL');
+                  reject(error);
+                });
+                // The relay's output: this process's own relay, or the one
+                // the step's shell runs behind the shell's stdout.
+                const stdout = (relay ?? child).stdout;
+                const outputEnded = new Promise<void>((ended) => {
+                  // No stream at all where the relay could not be started
+                  // for want of descriptors: its 'error' rejects the step.
+                  if (stdout == null) {
+                    ended();
+                    return;
+                  }
+                  stdout.on('data', (chunk: Buffer) => {
+                    if (capturing) outputTail.push(chunk);
+                  });
+                  // A read failure ends the record where it stands.
+                  stdout.on('error', () => ended());
+                  stdout.once('end', ended);
+                  stdout.once('close', ended);
+                });
                 // On abort, terminate the group and escalate — but settle
-                // only from 'close', after the shell itself has exited, so
+                // only from 'exit', after the shell itself has exited, so
                 // the turn never reports quiescence while the script still
                 // runs (slc/link.md §Abort). SIGKILL is untrappable, so
-                // 'close' is bounded by the grace.
+                // 'exit' is bounded by the grace.
                 active.addEventListener('abort', onAbort, { once: true });
                 child.on('error', (error) => {
                   reject(error);
                 });
-                child.on('close', (code) => {
+                // The shell's 'exit', not the end of its output: the relay
+                // runs for as long as a descendant holds the command's pipe.
+                child.on('exit', (code) => {
                   if (active.aborted) {
                     // The shell may exit cooperatively on the group SIGTERM
                     // while a TERM-immune same-group descendant survives;
@@ -8671,11 +8796,27 @@ export function createXStatePlaybookRuntime<
                     );
                     return;
                   }
-                  resolve(typeof code === 'number' ? code : 1);
+                  durationMs = Math.max(
+                    0,
+                    Math.round(performance.now() - startedAt),
+                  );
+                  // The record ends when the relay does, or a bounded wait
+                  // after the shell's exit when a descendant keeps it running.
+                  const settle = (): void => {
+                    clearTimeout(drainTimer);
+                    releaseOutputPipe();
+                    resolve(typeof code === 'number' ? code : 1);
+                  };
+                  const drainTimer = setTimeout(
+                    settle,
+                    SCRIPT_OUTPUT_DRAIN_GRACE_MS,
+                  );
+                  void outputEnded.then(settle);
                 });
               },
             );
 
+            const { output, outputTruncated } = outputTail.read();
             await settleIfAborted();
 
             await ports.emitStatus(
@@ -8688,6 +8829,9 @@ export function createXStatePlaybookRuntime<
                 stateId: input.stateId,
                 sourceItem: input.sourceItem,
                 exitStatus,
+                durationMs,
+                output,
+                outputTruncated,
               },
             });
             await settleIfAborted();
@@ -8711,6 +8855,7 @@ export function createXStatePlaybookRuntime<
                 if (!invocationFailed) active.throwIfAborted();
               }
             } finally {
+              releaseOutputPipe();
               active.removeEventListener('abort', onAbort);
               if (killTimer !== undefined) clearTimeout(killTimer);
             }
