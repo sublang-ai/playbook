@@ -5,8 +5,61 @@
 // once. Internal to the shared factory's script actor.
 import { isUtf8 } from 'node:buffer';
 import { execFile } from 'node:child_process';
-import { TextDecoder } from 'node:util';
+import { closeSync, constants, openSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify, TextDecoder } from 'node:util';
 export const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
+/**
+ * A pipe of the kernel's own for a command's stdout and stderr (DR-103).
+ * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
+ * again by path, so a command that writes to `/dev/stderr` fails on one. A
+ * FIFO opened at both ends is a pipe, and stays one once its name is gone.
+ * None on native Windows, whose `sh` serves those paths itself, and none
+ * where the FIFO cannot be made: the caller then falls back on Node's.
+ */
+export async function openScriptOutputPipe() {
+    if (process.platform === 'win32')
+        return undefined;
+    let dir;
+    try {
+        dir = await mkdtemp(join(tmpdir(), 'playbook-script-output-'));
+        const path = join(dir, 'pipe');
+        await promisify(execFile)('mkfifo', [path]);
+        // The read end first, and without waiting for a writer: the write end
+        // then opens at once. The reader's stdin is set to block when it starts.
+        const read = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+        try {
+            return { read, write: openSync(path, constants.O_WRONLY) };
+        }
+        catch {
+            closeSync(read);
+            return undefined;
+        }
+    }
+    catch {
+        return undefined;
+    }
+    finally {
+        if (dir !== undefined) {
+            await rm(dir, { recursive: true, force: true }).catch(() => { });
+        }
+    }
+}
+/** Closes this process's copies of a pipe's two ends. */
+export function closeScriptOutputPipe(pipe) {
+    if (pipe === undefined)
+        return;
+    for (const end of [pipe.read, pipe.write]) {
+        try {
+            closeSync(end);
+        }
+        catch {
+            // Already closed: nothing is left to release.
+        }
+    }
+}
 export const SCRIPT_OUTPUT_CODE_PAGES = {
     '874': { label: 'windows-874' },
     '932': {

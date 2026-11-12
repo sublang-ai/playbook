@@ -1577,12 +1577,16 @@ The provided actor shall:
   emitted options interface whenever the FSM contains a script state; the
   validated option reaches the shared script actor through the spec. The
   command's stdout and stderr shall share one pipe, so the output is recorded
-  in the order written; stdin stays unconnected. The runtime shall start a
-  relay process (`sh -c 'cat || exec cat >/dev/null'`) detached beside the
-  shell, give it the runtime's end of that pipe as stdin, and close its own
-  copy before reading from it. The relay copies to the runtime, and reads on
-  and discards once the runtime closes its end or its process exits, so a
-  write by a process the command left running never fails.
+  in the order written; stdin stays unconnected. On a host other than native
+  Windows the runtime shall make that pipe from a FIFO in the temporary
+  directory, opened at both ends and then removed, so the command can open it
+  again by path, as through `/dev/stdout` or `/dev/stderr`; where it cannot,
+  and on native Windows, the pipe is the platform's `pipe` stdio. The runtime
+  shall start a relay process (`sh -c 'cat || exec cat >/dev/null'`) detached
+  beside the shell, give it the read end of that pipe as stdin, and close its
+  own copies before reading from it. The relay copies to the runtime, and
+  reads on and discards once the runtime closes its end or its process exits,
+  so a write by a process the command left running never fails.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is

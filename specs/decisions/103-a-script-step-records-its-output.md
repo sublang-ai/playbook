@@ -20,6 +20,7 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 - Considered and declined:
   - separate stdout and stderr tails: each line keeps its stream and loses its place among the other stream's lines, which is what a reader follows;
   - two pipes merged as read: the order of near-simultaneous writes on two pipes is arbitrary;
+  - the pipe Node gives a child process, alone: it is a socket pair, which Linux refuses to open again by path, so a command that writes to `/dev/stderr` would fail where it passed with its output discarded;
   - the runtime as the pipe's only reader: a process the command left running would be killed by its next write once the host process exited, where discarded output never failed it;
   - a file the runtime reads back: a long-lived process the command left running would fill it without bound;
   - recording only a nonzero exit: a pass that should have failed needs the same evidence as a failure;
@@ -34,6 +35,7 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 ### 1. One text, in the order written
 
 The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
+Where the host allows, it is a pipe the command can open again by path, as through `/dev/stderr`.
 The stream a line came from is not kept.
 The runtime starts a relay process beside the command's shell and hands it the reading of that pipe: the relay copies to the runtime and, once the runtime stops reading or its process exits, reads on and discards.
 
