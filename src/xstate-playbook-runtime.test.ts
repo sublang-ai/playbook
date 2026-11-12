@@ -53,6 +53,8 @@ import {
   type XStatePlaybookRuntimeConstruction,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
+import { SCRIPT_OUTPUT_CODE_PAGES } from './script-output.js';
+import { windowsSystemCodePage } from './test-support/code-pages.ts';
 import { branchMachine } from '../reference/sdlc/branch.playbook/branch.fsm.js';
 import { _internal as branchArtifact } from '../reference/sdlc/branch.playbook/branch.playbook.js';
 import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
@@ -2066,7 +2068,7 @@ describe('player + script workflow over the shared factory', () => {
   });
 
   // A Windows host with one system code page reads such a line in it.
-  it.skipIf(process.platform === 'win32')(
+  it.skipIf((windowsSystemCodePage() ?? '') in SCRIPT_OUTPUT_CODE_PAGES)(
     'drops the character a cut split after bytes that are not UTF-8',
     async () => {
       // One line: a byte no UTF-8 text holds, then 6000 three-byte
