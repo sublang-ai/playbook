@@ -15,13 +15,13 @@
 // (reference/sdlc/code.playbook/code.playbook.ts) verbatim where possible;
 // its behavior tests are the equivalence proof. Do not change observable
 // behavior here without consulting those suites.
-import { isUtf8 } from 'node:buffer';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { isDeepStrictEqual, TextDecoder } from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise, initialTransition } from 'xstate';
 import { ACCEPTED_OUTCOME_ACTION_TYPE, createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
+import { createScriptOutputTail, readSystemCodePage } from './script-output.js';
 import { assertPlaybookFailureCause } from './runtime.js';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, attachPlaybookFailureCause, combineAbortSignals, createNestedPlaybookBridge, describePlaybookSemanticValueShape, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
 export const BOSS_REPLY_ERRORS = {
@@ -1835,245 +1835,12 @@ const SCRIPT_MERGED_OUTPUT_COMMAND = 'exec sh -c "$1" 2>&1';
 // reads on and discards, so a descendant that outlives the shell — or this
 // process — never writes to a pipe nobody reads.
 const SCRIPT_OUTPUT_RELAY_COMMAND = 'cat || exec cat >/dev/null';
-const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
 // How long a script's record waits, after the shell's exit, for the relay
 // to end. It ends at once unless a surviving descendant holds the command's
 // pipe open, so the wait is spent only then. A relay that is merely slow
 // to start must not cost the record its last bytes, and native Windows
 // starts a process far more slowly, so its wait is longer.
 const SCRIPT_OUTPUT_DRAIN_GRACE_MS = process.platform === 'win32' ? 2000 : 250;
-const SCRIPT_OUTPUT_CODE_PAGES = {
-    '874': { label: 'windows-874' },
-    '932': {
-        label: 'shift_jis',
-        opensTwoBytes: (byte) => (byte >= 0x81 && byte <= 0x9f) || (byte >= 0xe0 && byte <= 0xfc),
-    },
-    '936': { label: 'gbk', opensTwoBytes: (byte) => byte >= 0x81 && byte <= 0xfe },
-    '949': {
-        label: 'euc-kr',
-        opensTwoBytes: (byte) => byte >= 0x81 && byte <= 0xfe,
-    },
-    '950': { label: 'big5', opensTwoBytes: (byte) => byte >= 0x81 && byte <= 0xfe },
-    '1258': { label: 'windows-1258' },
-};
-const SCRIPT_OUTPUT_CODE_PAGE_QUERY_TIMEOUT_MS = 5000;
-let scriptOutputCodePage;
-/**
- * This system's code page, on native Windows where the system has one
- * supported code page for both forms. A system whose ANSI and OEM code
- * pages differ has no single reading of a non-UTF-8 line, so it gets none;
- * neither does one whose registry or decoder is unavailable. Read once per
- * process.
- */
-function systemCodePage() {
-    if (process.platform !== 'win32')
-        return Promise.resolve(undefined);
-    scriptOutputCodePage ??= new Promise((resolve) => {
-        const systemRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows';
-        execFile(`${systemRoot}\\System32\\reg.exe`, ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage'], {
-            encoding: 'latin1',
-            timeout: SCRIPT_OUTPUT_CODE_PAGE_QUERY_TIMEOUT_MS,
-            windowsHide: true,
-        }, (error, stdout) => {
-            if (error) {
-                resolve(undefined);
-                return;
-            }
-            const codePage = (name) => new RegExp(`^\\s*${name}\\s+REG_SZ\\s+(\\d+)\\s*$`, 'm').exec(stdout)?.[1];
-            const ansi = codePage('ACP');
-            const system = ansi !== undefined && ansi === codePage('OEMCP')
-                ? SCRIPT_OUTPUT_CODE_PAGES[ansi]
-                : undefined;
-            try {
-                if (system !== undefined)
-                    new TextDecoder(system.label);
-                resolve(system);
-            }
-            catch {
-                // A Node built without the legacy converters.
-                resolve(undefined);
-            }
-        });
-    });
-    return scriptOutputCodePage;
-}
-/**
- * How many bytes at the end of `bytes` open a UTF-8 character without
- * completing it: zero to three.
- */
-function openUtf8Character(bytes) {
-    for (let back = 1; back <= 3 && back <= bytes.length; back += 1) {
-        const byte = bytes[bytes.length - back];
-        if ((byte & 0xc0) === 0x80)
-            continue;
-        const length = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
-        return length > back ? back : 0;
-    }
-    return 0;
-}
-/** `text` without its first character. */
-function afterFirstCharacter(text) {
-    const first = text.codePointAt(0);
-    return first === undefined ? text : text.slice(first > 0xffff ? 2 : 1);
-}
-/**
- * A reader of whole lines in a code page. Nothing a decoder does with
- * bytes it cannot read may fail the step: such a line stays UTF-8.
- */
-function createCodePageReader(codePage) {
-    if (codePage === undefined)
-        return undefined;
-    let decoder = new TextDecoder(codePage.label);
-    return (line) => {
-        try {
-            return decoder.decode(line);
-        }
-        catch {
-            decoder = new TextDecoder(codePage.label);
-            return line.toString('utf8');
-        }
-    };
-}
-/**
- * The line a cut falls in (DR-103). Its dropped bytes are followed as they
- * are dropped, in UTF-8 and in the system code page, so the kept rest of
- * the line is read from a character boundary that is known — a two-byte
- * code page marks none in the bytes themselves — and the line is judged as
- * the one line it is.
- */
-function createCutLine(codePage, inCodePage) {
-    // UTF-8: the bytes of the character the dropped bytes leave open, and
-    // whether the dropped bytes before it are valid. The first stands on its
-    // own: a line that is not UTF-8 is still read from a UTF-8 boundary.
-    let utf8Open = Buffer.alloc(0);
-    let utf8Valid = true;
-    // Code page: whether the dropped bytes end on the first byte of a
-    // two-byte character.
-    let twoBytesOpen = false;
-    let holdsNul = false;
-    const restart = () => {
-        utf8Valid = true;
-        utf8Open = Buffer.alloc(0);
-        twoBytesOpen = false;
-        holdsNul = false;
-    };
-    // The second byte of a two-byte character is never a control, a digit,
-    // or the punctuation below `@`, in any code page read here.
-    const isSecondByte = (byte) => byte >= 0x40;
-    return {
-        drop(dropped) {
-            // A newline ends a character in every encoding read here, so only
-            // the bytes after the last one belong to the line the cut falls in.
-            const newline = dropped.lastIndexOf(0x0a);
-            if (newline !== -1)
-                restart();
-            const bytes = dropped.subarray(newline + 1);
-            if (bytes.length === 0)
-                return;
-            holdsNul ||= bytes.includes(0);
-            const line = Buffer.concat([utf8Open, bytes]);
-            const open = openUtf8Character(line);
-            utf8Valid &&= isUtf8(line.subarray(0, line.length - open));
-            utf8Open = Buffer.from(line.subarray(line.length - open));
-            const opensTwoBytes = codePage?.opensTwoBytes;
-            if (opensTwoBytes !== undefined) {
-                for (let index = 0; index < bytes.length; index += 1) {
-                    const byte = bytes[index];
-                    if (twoBytesOpen) {
-                        twoBytesOpen = false;
-                        if (isSecondByte(byte))
-                            continue;
-                    }
-                    twoBytesOpen = opensTwoBytes(byte);
-                }
-            }
-        },
-        read(kept) {
-            // With the open character's dropped bytes restored, the kept bytes
-            // read as UTF-8 exactly as the whole line would.
-            const fromOpenCharacter = Buffer.concat([utf8Open, kept]);
-            const afterOpenCharacter = (text) => utf8Open.length === 0 ? text : afterFirstCharacter(text);
-            if (utf8Valid && isUtf8(fromOpenCharacter)) {
-                return afterOpenCharacter(fromOpenCharacter.toString('utf8'));
-            }
-            if (inCodePage !== undefined && !holdsNul && !kept.includes(0)) {
-                const second = twoBytesOpen && kept.length > 0 && isSecondByte(kept[0]);
-                return inCodePage(kept.subarray(second ? 1 : 0));
-            }
-            return afterOpenCharacter(fromOpenCharacter.toString('utf8'));
-        },
-    };
-}
-/**
- * Whole lines of script output as text (DR-103). UTF-8 throughout, each
- * invalid sequence becoming U+FFFD, except that a line which is not UTF-8
- * is read in the system code page where the system has one. A line holding
- * a NUL is UTF-16, never code-page text, and stays UTF-8.
- */
-function decodeScriptOutputLines(bytes, inCodePage) {
-    if (inCodePage === undefined || isUtf8(bytes))
-        return bytes.toString('utf8');
-    let text = '';
-    for (let start = 0; start < bytes.length;) {
-        const newline = bytes.indexOf(0x0a, start);
-        const end = newline === -1 ? bytes.length : newline + 1;
-        const line = bytes.subarray(start, end);
-        text +=
-            isUtf8(line) || line.includes(0)
-                ? line.toString('utf8')
-                : inCodePage(line);
-        start = end;
-    }
-    return text;
-}
-/**
- * The bounded record of what a script wrote (DR-103): the last
- * `SCRIPT_OUTPUT_TAIL_BYTES` captured bytes in arrival order, read as text
- * once. NUL goes last, so a UTF-16 line of ASCII text reads as its text and
- * no record holds U+0000.
- */
-function createScriptOutputTail(codePage) {
-    const chunks = [];
-    let size = 0;
-    let truncated = false;
-    const inCodePage = createCodePageReader(codePage);
-    const cutLine = createCutLine(codePage, inCodePage);
-    return {
-        push(chunk) {
-            chunks.push(chunk);
-            size += chunk.length;
-            while (size > SCRIPT_OUTPUT_TAIL_BYTES) {
-                const excess = size - SCRIPT_OUTPUT_TAIL_BYTES;
-                const head = chunks[0];
-                if (head.length <= excess) {
-                    chunks.shift();
-                    size -= head.length;
-                    cutLine.drop(head);
-                }
-                else {
-                    chunks[0] = head.subarray(excess);
-                    size -= excess;
-                    cutLine.drop(head.subarray(0, excess));
-                }
-                truncated = true;
-            }
-        },
-        read() {
-            const bytes = Buffer.concat(chunks, size);
-            // Where earlier bytes were dropped, the first kept line is the rest
-            // of the line the cut fell in.
-            let rest = 0;
-            let text = '';
-            if (truncated) {
-                const newline = bytes.indexOf(0x0a);
-                rest = newline === -1 ? bytes.length : newline + 1;
-                text = cutLine.read(bytes.subarray(0, rest));
-            }
-            text += decodeScriptOutputLines(bytes.subarray(rest), inCodePage);
-            return { output: text.replace(/\0/g, ''), outputTruncated: truncated };
-        },
-    };
-}
 class ScriptProcessGroupTeardownError extends Error {
     constructor(pid, message, cause) {
         super(`script process group ${pid} teardown could not be confirmed: ${message}`, cause === undefined ? undefined : { cause });
@@ -6015,7 +5782,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 active.throwIfAborted();
                 // DR-103: the code page a non-UTF-8 line is read in is settled
                 // before the command runs, because the capture follows it.
-                const codePage = await systemCodePage();
+                const codePage = await readSystemCodePage();
                 active.throwIfAborted();
                 // Abort ownership — the listener that terminates the group and
                 // the escalation timer — spans the whole invocation body, not
