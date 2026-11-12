@@ -573,8 +573,9 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 | `outputTruncated` | whether captured bytes before that tail were dropped |
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
-- `output` shall hold the last 16384 captured bytes, begun at a UTF-8 character boundary where earlier bytes were dropped, decoded as UTF-8 with each invalid sequence replaced by U+FFFD and every NUL removed.
+- `output` shall hold the last 16384 captured bytes, decoded as UTF-8 with each invalid sequence replaced by U+FFFD and every NUL removed.
 - Where the host runs on native Windows whose registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, a line of `output` that is not valid UTF-8 and holds no NUL shall be decoded in that code page instead; the runtime shall read those values once per process, and a failed read or an unavailable decoder shall leave every line to UTF-8.
+- Where earlier bytes were dropped, the first kept line shall drop the character the cut split, in the encoding that decodes that line: as UTF-8, its leading continuation bytes, at most three; in the code page, its first byte where reading the line from its second byte yields fewer U+FFFD than reading it from its first.
 - Capture shall end when the pipe closes or, where a descendant holds it open past the shell's exit, 250 ms after that exit; the runtime shall keep reading and discarding what such a descendant writes later, so that write never fails.
 - The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
 
@@ -1185,7 +1186,14 @@ When the runtime suite runs real commands through a player-and-script machine, i
 
 #### playbook-runtime-110
 
-Where the suite runs on native Windows whose system locale has one of the code pages 874, 932, 936, 949, 950, and 1258 as both its ANSI and OEM code page, when a script writes a UTF-8 line, a line in that code page, and a UTF-16 line of non-ASCII text, it shall fail unless `output` holds the first two lines as their text and the third as UTF-8 with U+FFFD for its invalid bytes (verifying [[playbook-runtime-108](#playbook-runtime-108)]).
+Where the suite runs on native Windows whose system locale has one of the code pages 874, 932, 936, 949, 950, and 1258 as both its ANSI and OEM code page, when scripts write in that code page, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-108](#playbook-runtime-108)]):
+
+| Command writes | Required `output` |
+| --- | --- |
+| A UTF-8 line, a code-page line, and a UTF-16 line of non-ASCII text | The first two lines as their text and the third as UTF-8 with U+FFFD for its invalid bytes |
+| More than 16384 bytes of one code-page character whose first byte is a UTF-8 continuation byte, cut between two characters | That character alone, every kept one intact |
+| The same, cut inside a character | The same, less the partial character |
+| More than 16384 bytes ending in a UTF-8 line and a code-page line, cut inside a UTF-8 character | Both lines as their text, less the partial character |
 
 #### playbook-runtime-68
 

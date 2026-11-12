@@ -322,38 +322,65 @@ describe('script output under the Captain shell (DR-103)', () => {
 
 // DR-103 §2 on native Windows: a line that is not UTF-8 is read in the
 // system code page, where the system has one for both its ANSI and OEM
-// forms. The samples are each text's bytes in that code page, as octal
-// `printf` escapes, so the command's own text never spells the text.
-const CODE_PAGE_SAMPLES: Record<string, { text: string; bytes: string }> = {
+// forms. Each sample is a text and one character with their bytes in that
+// code page, as octal escapes, so the command's own text never spells them.
+// Every `char` opens with a byte in 0x80–0xBF, which UTF-8 reads as the
+// continuation of a character.
+interface CodePageSample {
+  text: string;
+  bytes: string;
+  char: string;
+  charBytes: string;
+  charWidth: 1 | 2;
+}
+const CODE_PAGE_SAMPLES: Record<string, CodePageSample> = {
   '874': {
     text: 'ไม่พบไฟล์ที่ระบุ',
     bytes: String.raw`\344\301\350\276\272\344\277\305\354\267\325\350\303\320\272\330`,
+    char: 'ก',
+    charBytes: String.raw`\241`,
+    charWidth: 1,
   },
   '932': {
     text: '指定されたパスが見つかりません。',
     bytes: String.raw`\216\167\222\350\202\263\202\352\202\275\203\160\203\130\202\252\214\251\202\302\202\251\202\350\202\334\202\271\202\361\201\102`,
+    char: 'あ',
+    charBytes: String.raw`\202\240`,
+    charWidth: 2,
   },
   '936': {
     text: '系统找不到指定的文件。',
     bytes: String.raw`\317\265\315\263\325\322\262\273\265\275\326\270\266\250\265\304\316\304\274\376\241\243`,
+    char: '测',
+    charBytes: String.raw`\262\342`,
+    charWidth: 2,
   },
   '949': {
     text: '지정된 경로를 찾을 수 없습니다.',
     bytes: String.raw`\301\366\301\244\265\310\040\260\346\267\316\270\246\040\303\243\300\273\040\274\366\040\276\370\275\300\264\317\264\331\056`,
+    char: '가',
+    charBytes: String.raw`\260\241`,
+    charWidth: 2,
   },
   '950': {
     text: '系統找不到指定的路徑。',
     bytes: String.raw`\250\164\262\316\247\344\244\243\250\354\253\374\251\167\252\272\270\364\256\174\241\103`,
+    char: '中',
+    charBytes: String.raw`\244\244`,
+    charWidth: 2,
   },
   '1258': {
     text: 'Không tìm thấy tệp',
     bytes: String.raw`\113\150\364\156\147\040\164\151\314\155\040\164\150\342\354\171\040\164\352\362\160`,
+    char: '°',
+    charBytes: String.raw`\260`,
+    charWidth: 1,
   },
 };
 
 // The system locale's two code pages, read through PowerShell rather than
 // the registry value the runtime reads.
-function systemCodePageSample(): { text: string; bytes: string } | undefined {
+function systemCodePageSample(): CodePageSample | undefined {
   if (process.platform !== 'win32') return undefined;
   const [ansi, oem] = execFileSync(
     'powershell.exe',
@@ -371,6 +398,48 @@ function systemCodePageSample(): { text: string; bytes: string } | undefined {
 
 const codePageSample = systemCodePageSample();
 
+// One script step through the real runtime; its `playbook.script` payloads.
+let gateSessions = 0;
+async function runGate(
+  command: string,
+): Promise<{ output: string; outputTruncated: boolean }[]> {
+  const payloads: { output: string; outputTruncated: boolean }[] = [];
+  const unused = async (): Promise<never> => {
+    throw new Error('this fixture makes no agent call');
+  };
+  const runtime = createGateRuntime(command)({
+    configuredOptions: {},
+    hostCapabilities: hostCapabilities(),
+  });
+  const sessionId = `41000000-0000-4000-8000-${String(0xa00 + ++gateSessions).padStart(12, '0')}`;
+  await runtime.init({
+    sessionId,
+    rootSessionId: sessionId,
+    playbookId: 'gate',
+    depth: 0,
+    ports: {
+      callPlayer: unused,
+      callCaptain: unused,
+      callJudge: unused,
+      callPlaybook: unused,
+      emitStatus: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.script') {
+          payloads.push(
+            event.payload as { output: string; outputTruncated: boolean },
+          );
+        }
+      },
+    },
+  });
+  await runtime.handleBossInput({
+    text: 'run the gate',
+    signal: new AbortController().signal,
+  });
+  await runtime.dispose();
+  return payloads;
+}
+
 describe.skipIf(codePageSample === undefined)(
   'script output on native Windows (DR-103)',
   () => {
@@ -378,47 +447,77 @@ describe.skipIf(codePageSample === undefined)(
       const { text, bytes } = codePageSample!;
       // A UTF-8 line, a line in the system code page, and a UTF-16LE line:
       // U+9519 then `A`, whose NUL marks it as no code-page text.
-      const command =
+      const payloads = await runGate(
         String.raw`printf '\344\270\255\346\226\207 ok\n'; ` +
-        `printf '${bytes}\\n'; ` +
-        String.raw`printf '\031\225A\000\n\000'; exit 1`;
-      const telemetry: { topic: string; payload: unknown }[] = [];
-      const unused = async (): Promise<never> => {
-        throw new Error('this fixture makes no agent call');
-      };
-      const runtime = createGateRuntime(command)({
-        configuredOptions: {},
-        hostCapabilities: hostCapabilities(),
-      });
-      await runtime.init({
-        sessionId: '41000000-0000-4000-8000-0000000000a1',
-        rootSessionId: '41000000-0000-4000-8000-0000000000a1',
-        playbookId: 'gate',
-        depth: 0,
-        ports: {
-          callPlayer: unused,
-          callCaptain: unused,
-          callJudge: unused,
-          callPlaybook: unused,
-          emitStatus: async () => {},
-          emitTelemetry: async (event) => {
-            telemetry.push({ topic: event.topic, payload: event.payload });
-          },
-        },
-      });
-      const result = await runtime.handleBossInput({
-        text: 'run the gate',
-        signal: new AbortController().signal,
-      });
+          `printf '${bytes}\\n'; ` +
+          String.raw`printf '\031\225A\000\n\000'; exit 1`,
+      );
 
-      expect(result.state.stateId).toBe('lintFailed');
-      const outputs = telemetry
-        .filter(({ topic }) => topic === 'playbook.script')
-        .map(({ payload }) => (payload as { output: string }).output);
-      expect(outputs.map((output) => output.normalize('NFC'))).toEqual([
+      expect(payloads.map(({ output }) => output.normalize('NFC'))).toEqual([
         `中文 ok\n${text.normalize('NFC')}\n\u0019\uFFFDA\n`,
       ]);
-      await runtime.dispose();
+    });
+
+    // A long localized diagnostic: one line of code-page characters, longer
+    // than the 16384 bytes the record keeps.
+    const repeated = (count: number, tail: string): string =>
+      `LC_ALL=C awk 'BEGIN { for (i = 0; i < 100; i++) printf "x"; ` +
+      `for (i = 0; i < ${count}; i++) printf "${codePageSample!.charBytes}"; ` +
+      `printf "${tail}" }'`;
+
+    it('keeps a cut code-page line intact where the cut falls between two characters', async () => {
+      const { char, charWidth } = codePageSample!;
+      // 100 ASCII bytes, then exactly 16384 bytes of the character: the
+      // kept tail opens on a whole character.
+      const kept = 16384 / charWidth;
+      const payloads = await runGate(repeated(kept, ''));
+
+      expect(payloads).toHaveLength(1);
+      const { output, outputTruncated } = payloads[0]!;
+      expect(outputTruncated).toBe(true);
+      // Short facts first, so a failure names the damage, not 16 KiB of it.
+      expect(output.slice(0, 4)).toBe(char.repeat(4));
+      expect([...output]).toHaveLength(kept);
+      expect(output === char.repeat(kept)).toBe(true);
+    });
+
+    it('drops the partial character of a cut UTF-8 line before a code-page line', async () => {
+      const { text, bytes } = codePageSample!;
+      // 5000 ASCII bytes, 6000 three-byte UTF-8 characters, `ab`, then the
+      // code-page line: the kept tail opens inside the UTF-8 run.
+      // One escape per byte of the code-page line, and its newline.
+      const codePageLine = bytes.split('\\').length - 1 + 1;
+      const whole = Math.floor((16384 - codePageLine - 3) / 3);
+      const payloads = await runGate(
+        `LC_ALL=C awk 'BEGIN { for (i = 0; i < 5000; i++) printf "x"; ` +
+          String.raw`for (i = 0; i < 6000; i++) printf "\344\270\255"; ` +
+          `printf "ab\\n${bytes}\\n" }'`,
+      );
+
+      expect(payloads).toHaveLength(1);
+      const { output, outputTruncated } = payloads[0]!;
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 4)).toBe('中'.repeat(4));
+      expect(
+        output.normalize('NFC') ===
+          `${'中'.repeat(whole)}ab\n${text.normalize('NFC')}\n`,
+      ).toBe(true);
+    });
+
+    it('drops only the partial character where the cut falls inside one', async () => {
+      const { char, charWidth } = codePageSample!;
+      // One more character and a newline: 16384 + width + 1 bytes after the
+      // ASCII, so the kept tail opens one byte later than a whole character
+      // would.
+      const payloads = await runGate(repeated(16384 / charWidth + 1, '\\n'));
+
+      expect(payloads).toHaveLength(1);
+      const { output, outputTruncated } = payloads[0]!;
+      const whole = Math.floor(16383 / charWidth);
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 4)).toBe(char.repeat(4));
+      expect([...output]).toHaveLength(whole + 1);
+      expect(output === `${char.repeat(whole)}\n`).toBe(true);
     });
   },
 );

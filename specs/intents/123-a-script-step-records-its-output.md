@@ -18,11 +18,13 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 - [x] Runtime and Captain-shell suites pinning the record and its confinement.
 - [x] The spawn and capture checked against Git's `sh.exe` on Windows 11.
 - [x] A line in the Windows system code page decoded in it, verified on a Windows 11 host at code page 936.
+- [x] A cut tail whose first line keeps its characters in the encoding that decodes it, verified on the same host.
 
 ## Tasks
 
 1. Specify, implement, and verify the script output record in one commit.
 2. Decode a non-UTF-8 line in the Windows system code page.
+3. Drop a cut tail's partial character in the encoding that decodes its first line.
 
 ## Verification
 
