@@ -3043,21 +3043,7 @@ function createScriptOutputTail(): {
       }
     },
     read() {
-      let bytes = Buffer.concat(chunks, size);
-      if (truncated) {
-        // The cut may have split a character: drop its trailing bytes so
-        // the tail begins at a UTF-8 character boundary.
-        let start = 0;
-        while (
-          start < 3 &&
-          start < bytes.length &&
-          (bytes[start]! & 0xc0) === 0x80
-        ) {
-          start += 1;
-        }
-        bytes = bytes.subarray(start);
-      }
-      return { bytes, truncated };
+      return { bytes: Buffer.concat(chunks, size), truncated };
     },
   };
 }
@@ -3122,26 +3108,63 @@ function systemCodePageDecoder(): Promise<TextDecoder | undefined> {
 }
 
 /**
+ * The bytes of a line after the trailing bytes of a UTF-8 character that a
+ * cut split: at most three, each a continuation byte.
+ */
+function afterPartialUtf8Character(line: Buffer): Buffer {
+  let start = 0;
+  while (start < 3 && start < line.length && (line[start]! & 0xc0) === 0x80) {
+    start += 1;
+  }
+  return line.subarray(start);
+}
+
+/**
+ * A cut line read in the code page. A cut can fall inside a two-byte
+ * character, and such a code page gives no way to tell from the first
+ * byte: read the line from its first byte and from its second, and keep
+ * the reading with fewer U+FFFD, the first on a tie.
+ */
+function decodeCutCodePageLine(codePage: TextDecoder, line: Buffer): string {
+  const replacements = (text: string): number => text.split('\uFFFD').length;
+  const whole = codePage.decode(line);
+  const shifted = codePage.decode(line.subarray(1));
+  return replacements(shifted) < replacements(whole) ? shifted : whole;
+}
+
+/**
  * Script output as text (DR-103). UTF-8 throughout, each invalid sequence
  * becoming U+FFFD, except that a line which is not UTF-8 is read in the
  * system code page where the system has one. A line holding a NUL is
  * UTF-16, never code-page text, and stays UTF-8. NUL goes last, so a
  * UTF-16 line of ASCII text reads as its text and no record holds U+0000.
+ *
+ * Where earlier bytes were dropped, the first line may open inside a
+ * character, and it drops that partial character in the encoding that
+ * reads it — which is only known once the line is.
  */
-async function decodeScriptOutput(bytes: Buffer): Promise<string> {
-  const codePage = isUtf8(bytes) ? undefined : await systemCodePageDecoder();
+async function decodeScriptOutput(
+  bytes: Buffer,
+  truncated: boolean,
+): Promise<string> {
+  const asUtf8 = truncated ? afterPartialUtf8Character(bytes) : bytes;
+  const codePage = isUtf8(asUtf8) ? undefined : await systemCodePageDecoder();
   if (codePage === undefined) {
-    return bytes.toString('utf8').replace(/\0/g, '');
+    return asUtf8.toString('utf8').replace(/\0/g, '');
   }
   let text = '';
   for (let start = 0; start < bytes.length; ) {
     const newline = bytes.indexOf(0x0a, start);
     const end = newline === -1 ? bytes.length : newline + 1;
     const line = bytes.subarray(start, end);
+    const cut = truncated && start === 0;
+    const lineAsUtf8 = cut ? afterPartialUtf8Character(line) : line;
     text +=
-      isUtf8(line) || line.includes(0)
-        ? line.toString('utf8')
-        : codePage.decode(line);
+      isUtf8(lineAsUtf8) || line.includes(0)
+        ? lineAsUtf8.toString('utf8')
+        : cut
+          ? decodeCutCodePageLine(codePage, line)
+          : codePage.decode(line);
     start = end;
   }
   return text.replace(/\0/g, '');
@@ -8870,7 +8893,7 @@ export function createXStatePlaybookRuntime<
             );
 
             const { bytes, truncated } = outputTail.read();
-            const output = await decodeScriptOutput(bytes);
+            const output = await decodeScriptOutput(bytes, truncated);
             await settleIfAborted();
 
             await ports.emitStatus(
