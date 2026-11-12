@@ -1181,6 +1181,7 @@ When the runtime suite runs real commands through a player-and-script machine, i
 | Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` |
 | Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true |
 | Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL |
+| Writes a byte that is not UTF-8 and then, on the same line, more than 16384 bytes of multibyte characters, on a host with no code page for it | The kept whole characters alone: the one the cut split is dropped and leaves no U+FFFD |
 | Leaves a descendant holding the pipe that writes after the shell's exit | Settlement before that later write, only the earlier writes recorded, and the later write succeeding |
 | Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot |
 

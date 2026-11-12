@@ -3142,10 +3142,11 @@ function createCutLine(
   drop(dropped: Buffer): void;
   read(kept: Buffer): string;
 } {
-  // UTF-8: whether the dropped bytes are valid, and the bytes of the
-  // character they leave open.
-  let utf8Valid = true;
+  // UTF-8: the bytes of the character the dropped bytes leave open, and
+  // whether the dropped bytes before it are valid. The first stands on its
+  // own: a line that is not UTF-8 is still read from a UTF-8 boundary.
   let utf8Open: Buffer = Buffer.alloc(0);
+  let utf8Valid = true;
   // Code page: whether the dropped bytes end on the first byte of a
   // two-byte character.
   let twoBytesOpen = false;
@@ -3168,12 +3169,10 @@ function createCutLine(
       const bytes = dropped.subarray(newline + 1);
       if (bytes.length === 0) return;
       holdsNul ||= bytes.includes(0);
-      if (utf8Valid) {
-        const line = Buffer.concat([utf8Open, bytes]);
-        const open = openUtf8Character(line);
-        utf8Valid = isUtf8(line.subarray(0, line.length - open));
-        utf8Open = Buffer.from(line.subarray(line.length - open));
-      }
+      const line = Buffer.concat([utf8Open, bytes]);
+      const open = openUtf8Character(line);
+      utf8Valid &&= isUtf8(line.subarray(0, line.length - open));
+      utf8Open = Buffer.from(line.subarray(line.length - open));
       const opensTwoBytes = codePage?.opensTwoBytes;
       if (opensTwoBytes !== undefined) {
         for (let index = 0; index < bytes.length; index += 1) {
@@ -3200,9 +3199,7 @@ function createCutLine(
           twoBytesOpen && kept.length > 0 && isSecondByte(kept[0]!);
         return inCodePage(kept.subarray(second ? 1 : 0));
       }
-      return utf8Valid
-        ? afterOpenCharacter(fromOpenCharacter.toString('utf8'))
-        : kept.toString('utf8');
+      return afterOpenCharacter(fromOpenCharacter.toString('utf8'));
     },
   };
 }

@@ -2062,6 +2062,29 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
+  // A Windows host with one system code page reads such a line in it.
+  it.skipIf(process.platform === 'win32')(
+    'drops the character a cut split after bytes that are not UTF-8',
+    async () => {
+      // One line: a byte no UTF-8 text holds, then 6000 three-byte
+      // characters. The kept 16384 bytes open on the last byte of one.
+      const { runtime, scriptEvents } = await runScriptStep(
+        String.raw`printf '\377'; ` +
+          `awk 'BEGIN { for (i = 0; i < 6000; i++) printf "中" }'`,
+      );
+
+      expect(scriptEvents).toHaveLength(1);
+      const { output, outputTruncated } = scriptEvents[0] as {
+        output: string;
+        outputTruncated: boolean;
+      };
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 2)).toBe('中中');
+      expect(output === '中'.repeat(5461)).toBe(true);
+      await runtime.dispose();
+    },
+  );
+
   it('decodes script output as lenient UTF-8 and removes NUL', async () => {
     // Two bytes no UTF-8 text holds, then a UTF-16LE line of ASCII text as
     // `wsl.exe` prints one.
