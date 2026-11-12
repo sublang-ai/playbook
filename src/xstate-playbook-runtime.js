@@ -21,7 +21,7 @@ import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { createActor, fromPromise, initialTransition } from 'xstate';
 import { ACCEPTED_OUTCOME_ACTION_TYPE, createAcceptedOutcomeConsumer, } from './accepted-outcome.js';
-import { createScriptOutputTail, readSystemCodePage } from './script-output.js';
+import { closeScriptOutputPipe, createScriptOutputTail, openScriptOutputPipe, readSystemCodePage, } from './script-output.js';
 import { assertPlaybookFailureCause } from './runtime.js';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, attachPlaybookFailureCause, combineAbortSignals, createNestedPlaybookBridge, describePlaybookSemanticValueShape, detachPersistedMachineSnapshot, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, isPlaybookEffectLedgerMonotonicExtension, PlaybookSemanticCandidateStructureError, reconcilePlaybookSemanticEvidence, validateCaptainResult, validatePlayerResult, waitForPlaybookQuiescence, } from './xstate-runtime.js';
 export const BOSS_REPLY_ERRORS = {
@@ -5783,6 +5783,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // DR-103: the code page a non-UTF-8 line is read in is settled
                 // before the command runs, because the capture follows it.
                 const codePage = await readSystemCodePage();
+                // DR-103: where the host can give one, the command writes to a
+                // pipe it can open again by path, as through `/dev/stderr`.
+                const outputPipe = await openScriptOutputPipe();
+                if (active.aborted)
+                    closeScriptOutputPipe(outputPipe);
                 active.throwIfAborted();
                 // Abort ownership — the listener that terminates the group and
                 // the escalation timer — spans the whole invocation body, not
@@ -5887,16 +5892,24 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // DR-103: the wrapper only joins stderr to the stdout pipe
                             // and execs, so `input.command` still runs verbatim through
                             // `sh -c` in the same process, as the same group leader.
-                            child = spawn('sh', ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command], { cwd, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
-                            // The relay inherits this process's end of the command's
-                            // pipe, and this process closes its own copy before it
-                            // reads a byte: from here the relay alone reads the
-                            // command. Detached, it stands outside the command's
-                            // group, which an abort signals, and outlives this
-                            // process for as long as a descendant holds the pipe.
+                            child = spawn('sh', ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command], {
+                                cwd,
+                                stdio: ['ignore', outputPipe?.write ?? 'pipe', 'ignore'],
+                                detached: true,
+                            });
+                            // The relay inherits the read end of the command's pipe,
+                            // and this process closes its own copies before it reads
+                            // a byte: from here the relay alone reads the command.
+                            // Detached, it stands outside the command's group, which
+                            // an abort signals, and outlives this process for as long
+                            // as a descendant holds the pipe.
                             relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
                                 cwd,
-                                stdio: [child.stdout ?? 'ignore', 'pipe', 'ignore'],
+                                stdio: [
+                                    outputPipe?.read ?? child.stdout ?? 'ignore',
+                                    'pipe',
+                                    'ignore',
+                                ],
                                 detached: true,
                             });
                             child.stdout?.destroy();
@@ -5907,6 +5920,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             signalGroup('SIGKILL');
                             reject(error);
                             return;
+                        }
+                        finally {
+                            closeScriptOutputPipe(outputPipe);
                         }
                         relay.on('error', (error) => {
                             signalGroup('SIGKILL');

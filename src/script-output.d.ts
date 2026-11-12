@@ -1,4 +1,20 @@
 export declare const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
+/** The two descriptors of a pipe: its read end and its write end. */
+export interface ScriptOutputPipe {
+    readonly read: number;
+    readonly write: number;
+}
+/**
+ * A pipe of the kernel's own for a command's stdout and stderr (DR-103).
+ * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
+ * again by path, so a command that writes to `/dev/stderr` fails on one. A
+ * FIFO opened at both ends is a pipe, and stays one once its name is gone.
+ * None on native Windows, whose `sh` serves those paths itself, and none
+ * where the FIFO cannot be made: the caller then falls back on Node's.
+ */
+export declare function openScriptOutputPipe(): Promise<ScriptOutputPipe | undefined>;
+/** Closes this process's copies of a pipe's two ends. */
+export declare function closeScriptOutputPipe(pipe: ScriptOutputPipe | undefined): void;
 /**
  * A Windows code page that serves a system as both its ANSI and its OEM
  * code page (DR-103): the label of the decoder that reads it and, where

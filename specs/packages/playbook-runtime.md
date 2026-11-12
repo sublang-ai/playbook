@@ -573,6 +573,7 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 | `outputTruncated` | whether captured bytes before those were dropped |
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
+- On a host other than native Windows where the runtime can make a FIFO in the temporary directory, the command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`.
 - Capture shall end when the last writer closes that pipe or, where a descendant holds it open past the shell's exit, 250 ms after that exit, 2 s on native Windows; a later write by such a descendant shall succeed, unrecorded, whether or not the host process still runs.
 - The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
 
@@ -1189,6 +1190,7 @@ When the runtime suite runs real commands through a player-and-script machine, i
 | Command | Required record | Verifying |
 | --- | --- | --- |
 | Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes to `/dev/stderr` and to `/dev/stdout` by path, on a host other than native Windows | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
 | The same, under a host process that exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |

@@ -32,7 +32,12 @@ import {
   createAcceptedOutcomeConsumer,
   type AcceptedOutcomeReceipt,
 } from './accepted-outcome.js';
-import { createScriptOutputTail, readSystemCodePage } from './script-output.js';
+import {
+  closeScriptOutputPipe,
+  createScriptOutputTail,
+  openScriptOutputPipe,
+  readSystemCodePage,
+} from './script-output.js';
 import { assertPlaybookFailureCause } from './runtime.js';
 import {
   assertPlaybookRuntimeSnapshot,
@@ -8557,6 +8562,10 @@ export function createXStatePlaybookRuntime<
           // DR-103: the code page a non-UTF-8 line is read in is settled
           // before the command runs, because the capture follows it.
           const codePage = await readSystemCodePage();
+          // DR-103: where the host can give one, the command writes to a
+          // pipe it can open again by path, as through `/dev/stderr`.
+          const outputPipe = await openScriptOutputPipe();
+          if (active.aborted) closeScriptOutputPipe(outputPipe);
           active.throwIfAborted();
 
           // Abort ownership — the listener that terminates the group and
@@ -8677,17 +8686,25 @@ export function createXStatePlaybookRuntime<
                   child = spawn(
                     'sh',
                     ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command],
-                    { cwd, stdio: ['ignore', 'pipe', 'ignore'], detached: true },
+                    {
+                      cwd,
+                      stdio: ['ignore', outputPipe?.write ?? 'pipe', 'ignore'],
+                      detached: true,
+                    },
                   );
-                  // The relay inherits this process's end of the command's
-                  // pipe, and this process closes its own copy before it
-                  // reads a byte: from here the relay alone reads the
-                  // command. Detached, it stands outside the command's
-                  // group, which an abort signals, and outlives this
-                  // process for as long as a descendant holds the pipe.
+                  // The relay inherits the read end of the command's pipe,
+                  // and this process closes its own copies before it reads
+                  // a byte: from here the relay alone reads the command.
+                  // Detached, it stands outside the command's group, which
+                  // an abort signals, and outlives this process for as long
+                  // as a descendant holds the pipe.
                   relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
                     cwd,
-                    stdio: [child.stdout ?? 'ignore', 'pipe', 'ignore'],
+                    stdio: [
+                      outputPipe?.read ?? child.stdout ?? 'ignore',
+                      'pipe',
+                      'ignore',
+                    ],
                     detached: true,
                   });
                   child.stdout?.destroy();
@@ -8697,6 +8714,8 @@ export function createXStatePlaybookRuntime<
                   signalGroup('SIGKILL');
                   reject(error);
                   return;
+                } finally {
+                  closeScriptOutputPipe(outputPipe);
                 }
                 relay.on('error', (error) => {
                   signalGroup('SIGKILL');
