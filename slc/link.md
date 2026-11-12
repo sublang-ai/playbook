@@ -1624,10 +1624,12 @@ The provided actor shall:
     states whether earlier bytes were dropped. On native Windows whose ANSI
     and OEM code pages are one of 874, 932, 936, 949, 950, and 1258, a line
     that is not valid UTF-8 and holds no NUL is decoded in that code page
-    instead. Where earlier bytes were dropped, the first kept line drops the
-    character the cut split, in the encoding that decodes that line: as UTF-8
-    its leading continuation bytes, in the code page its first byte where
-    reading the line from its second byte yields fewer U+FFFD.
+    instead. Where earlier bytes were dropped, the first kept line is
+    decoded as the rest of the one line the cut fell in: that line's dropped
+    bytes count in whether it is valid UTF-8 and holds a NUL, and the runtime
+    follows them as it drops them — in UTF-8, and in the code page by the
+    bytes that open a two-byte character — so the kept rest is read from a
+    character boundary, less the character the cut split.
   - Capture ends when the pipe closes or, where a descendant holds it open
     past the shell's exit, 250 ms after that exit. The runtime shall keep
     reading and discarding what such a descendant writes later, so that write

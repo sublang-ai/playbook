@@ -25,6 +25,7 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 1. Specify, implement, and verify the script output record in one commit.
 2. Decode a non-UTF-8 line in the Windows system code page.
 3. Drop a cut tail's partial character in the encoding that decodes its first line.
+4. Follow the cut line's dropped bytes, so its character boundary is known and not inferred.
 
 ## Verification
 
