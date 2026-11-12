@@ -573,7 +573,7 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 | `outputTruncated` | whether captured bytes before those were dropped |
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
-- On a host other than native Windows where the runtime can make a FIFO in the temporary directory, the command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`.
+- On a host other than native Windows where the runtime can make a FIFO in the temporary directory, the command shall be able to open that pipe again by path, as through `/dev/stdout` and `/dev/stderr`; on native Windows, and where it cannot, the pipe shall be the platform's, which a command opens by path neither on Linux nor under Git's `sh`.
 - Capture shall end when every byte written has reached the runtime and the pipe's last writer has closed it, or 250 ms after the shell's exit, 2 s on native Windows, whichever comes first; a byte that has not reached the runtime by then shall go unrecorded, and `outputTruncated` shall not count it.
 - A descendant that holds the pipe open past the shell's exit shall keep a working stdout and stderr: its later write shall succeed, unrecorded, whether or not the host process still runs.
 - The capture shall need `cat` beside `sh` on the host's `PATH`; without `cat`, a command's write to stdout or stderr shall fail.

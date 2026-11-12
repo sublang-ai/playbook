@@ -9,8 +9,8 @@ export interface ScriptOutputPipe {
  * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
  * again by path, so a command that writes to `/dev/stderr` fails on one. A
  * FIFO opened at both ends is a pipe, and stays one once its name is gone.
- * None on native Windows, whose `sh` serves those paths itself, and none
- * where the FIFO cannot be made: the caller then falls back on Node's.
+ * None on native Windows, and none where the FIFO cannot be made: the
+ * caller then falls back on Node's, which no command can open by path.
  */
 export declare function openScriptOutputPipe(): Promise<ScriptOutputPipe | undefined>;
 /** Closes this process's copies of a pipe's two ends. */

@@ -42,6 +42,7 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 15. Pass a code page's reader as one value.
 16. Tie the descendant's marker to its write's own status, and pin the status of a signal-ended command.
 17. State what the capture needs, and that its wait bounds a slow relay too.
+18. State that native Windows keeps a pipe no command opens by path.
 
 ## Verification
 
