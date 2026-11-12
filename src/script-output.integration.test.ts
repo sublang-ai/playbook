@@ -42,6 +42,8 @@ const COMMAND =
   'echo "fatal: $m-INSTRUCTIONS-9d2e" >&2; exit 1';
 const FAILURE_DESCRIPTION =
   'gate ended in failure: the lint check reports problems';
+// What the session Captain says to close the failed run.
+const CLOSING_REPLY = 'The gate stopped at its lint check.';
 
 // A gate: one script step whose nonzero exit ends the run at a failure
 // terminal with a description authored before the run.
@@ -203,9 +205,10 @@ function createHarness() {
   const statuses: string[] = [];
   const telemetry: { topic: string; payload: unknown }[] = [];
   const agentPrompts: string[] = [];
+  // Each Captain call's prompt beside the text it returned.
+  const captainCalls: { prompt: string; text: string }[] = [];
   const replies: string[] = [];
   const captainReplies: CaptainRunResult[] = [];
-  let captainCalls = 0;
   const controller = new AbortController();
   const session: CaptainSession = {
     signal: controller.signal,
@@ -227,15 +230,13 @@ function createHarness() {
     },
     callCaptain: async (prompt): Promise<CaptainRunResult> => {
       agentPrompts.push(prompt);
-      const scripted = captainReplies.shift();
-      const resumeToken = `conversation-${++captainCalls}`;
-      if (scripted !== undefined) return { ...scripted, resumeToken };
-      return {
-        status: 'ok',
+      const scripted = captainReplies.shift() ?? {
+        status: 'ok' as const,
         turnId: 1,
         finalText: 'Acknowledged.',
-        resumeToken,
       };
+      captainCalls.push({ prompt, text: scripted.finalText ?? '' });
+      return { ...scripted, resumeToken: `conversation-${captainCalls.length}` };
     },
     emitReply: async (text) => {
       replies.push(text);
@@ -249,6 +250,7 @@ function createHarness() {
     statuses,
     telemetry,
     agentPrompts,
+    captainCalls,
     replies,
     captainReplies,
   };
@@ -261,6 +263,11 @@ describe('script output under the Captain shell (DR-103)', () => {
 
     // Turn 1: the gate runs, its check exits nonzero, and the run ends at
     // the failure terminal, which the session Captain reports.
+    harness.captainReplies.push({
+      status: 'ok',
+      turnId: 1,
+      finalText: CLOSING_REPLY,
+    });
     await harness.shell.handleBossTurn(
       turn('/gate run the gate'),
       harness.context,
@@ -283,11 +290,15 @@ describe('script output under the Captain shell (DR-103)', () => {
         outputTruncated: false,
       },
     ]);
-    // The report was composed from the terminal's authored description…
-    const reportPrompts = harness.agentPrompts.filter((prompt) =>
-      prompt.includes(FAILURE_DESCRIPTION),
+    // The Boss was told what one Captain call said, and that call was
+    // composed from the terminal's authored description…
+    expect(
+      harness.replies.some((reply) => reply.includes(CLOSING_REPLY)),
+    ).toBe(true);
+    const closingCall = harness.captainCalls.find(
+      ({ text }) => text === CLOSING_REPLY,
     );
-    expect(reportPrompts.length).toBeGreaterThan(0);
+    expect(closingCall?.prompt).toContain(FAILURE_DESCRIPTION);
 
     // Turn 2: the Boss asks what the command printed. The decision call and
     // the reply it leads to are grounded in what the shell retained.
