@@ -187,21 +187,33 @@ function afterFirstCharacter(text: string): string {
 }
 
 /**
- * A reader of whole lines in a code page. Nothing a decoder does with
- * bytes it cannot read may fail the step: such a line stays UTF-8.
+ * What reading in a code page takes: its line decoder and, where its
+ * characters take one or two bytes, the bytes that open a two-byte one.
+ */
+interface CodePageReader {
+  readonly decode: (line: Buffer) => string;
+  readonly opensTwoBytes?: (byte: number) => boolean;
+}
+
+/**
+ * The reader of a code page. Nothing a decoder does with bytes it cannot
+ * read may fail the step: such a line stays UTF-8.
  */
 function createCodePageReader(
   codePage: ScriptOutputCodePage | undefined,
-): ((line: Buffer) => string) | undefined {
+): CodePageReader | undefined {
   if (codePage === undefined) return undefined;
   let decoder = new TextDecoder(codePage.label);
-  return (line) => {
-    try {
-      return decoder.decode(line);
-    } catch {
-      decoder = new TextDecoder(codePage.label);
-      return line.toString('utf8');
-    }
+  return {
+    opensTwoBytes: codePage.opensTwoBytes,
+    decode: (line) => {
+      try {
+        return decoder.decode(line);
+      } catch {
+        decoder = new TextDecoder(codePage.label);
+        return line.toString('utf8');
+      }
+    },
   };
 }
 
@@ -212,10 +224,7 @@ function createCodePageReader(
  * code page marks none in the bytes themselves — and the line is judged as
  * the one line it is.
  */
-function createCutLine(
-  codePage: ScriptOutputCodePage | undefined,
-  inCodePage: ((line: Buffer) => string) | undefined,
-): {
+function createCutLine(codePage: CodePageReader | undefined): {
   drop(dropped: Buffer): void;
   /** The rest of that line as text, and where the next line begins. */
   read(kept: Buffer): { text: string; rest: number };
@@ -289,12 +298,12 @@ function createCutLine(
       const fromOpenCharacter = Buffer.concat([utf8Open, line]);
       const validUtf8 = utf8Valid && isUtf8(fromOpenCharacter);
       if (
-        inCodePage !== undefined &&
+        codePage !== undefined &&
         readsInCodePage(validUtf8, holdsNul || line.includes(0))
       ) {
         const second =
           twoBytesOpen && line.length > 0 && isSecondByte(line[0]!);
-        return { text: inCodePage(line.subarray(second ? 1 : 0)), rest };
+        return { text: codePage.decode(line.subarray(second ? 1 : 0)), rest };
       }
       const text = fromOpenCharacter.toString('utf8');
       return {
@@ -312,16 +321,16 @@ function createCutLine(
  */
 function readWholeLines(
   bytes: Buffer,
-  inCodePage: ((line: Buffer) => string) | undefined,
+  codePage: CodePageReader | undefined,
 ): string {
-  if (inCodePage === undefined || isUtf8(bytes)) return bytes.toString('utf8');
+  if (codePage === undefined || isUtf8(bytes)) return bytes.toString('utf8');
   let text = '';
   for (let start = 0; start < bytes.length; ) {
     const newline = bytes.indexOf(NEWLINE, start);
     const end = newline === -1 ? bytes.length : newline + 1;
     const line = bytes.subarray(start, end);
     text += readsInCodePage(isUtf8(line), line.includes(0))
-      ? inCodePage(line)
+      ? codePage.decode(line)
       : line.toString('utf8');
     start = afterNewlineNul(bytes, end);
   }
@@ -343,8 +352,8 @@ export function createScriptOutputTail(
   const chunks: Buffer[] = [];
   let size = 0;
   let truncated = false;
-  const inCodePage = createCodePageReader(codePage);
-  const cutLine = createCutLine(codePage, inCodePage);
+  const reader = createCodePageReader(codePage);
+  const cutLine = createCutLine(reader);
   return {
     push(chunk) {
       chunks.push(chunk);
@@ -371,7 +380,7 @@ export function createScriptOutputTail(
       let rest = 0;
       let text = '';
       if (truncated) ({ text, rest } = cutLine.read(bytes));
-      text += readWholeLines(bytes.subarray(rest), inCodePage);
+      text += readWholeLines(bytes.subarray(rest), reader);
       return { output: text.replace(/\0/g, ''), outputTruncated: truncated };
     },
   };

@@ -153,21 +153,24 @@ function afterFirstCharacter(text) {
     return first === undefined ? text : text.slice(first > 0xffff ? 2 : 1);
 }
 /**
- * A reader of whole lines in a code page. Nothing a decoder does with
- * bytes it cannot read may fail the step: such a line stays UTF-8.
+ * The reader of a code page. Nothing a decoder does with bytes it cannot
+ * read may fail the step: such a line stays UTF-8.
  */
 function createCodePageReader(codePage) {
     if (codePage === undefined)
         return undefined;
     let decoder = new TextDecoder(codePage.label);
-    return (line) => {
-        try {
-            return decoder.decode(line);
-        }
-        catch {
-            decoder = new TextDecoder(codePage.label);
-            return line.toString('utf8');
-        }
+    return {
+        opensTwoBytes: codePage.opensTwoBytes,
+        decode: (line) => {
+            try {
+                return decoder.decode(line);
+            }
+            catch {
+                decoder = new TextDecoder(codePage.label);
+                return line.toString('utf8');
+            }
+        },
     };
 }
 /**
@@ -177,7 +180,7 @@ function createCodePageReader(codePage) {
  * code page marks none in the bytes themselves — and the line is judged as
  * the one line it is.
  */
-function createCutLine(codePage, inCodePage) {
+function createCutLine(codePage) {
     // UTF-8: the bytes of the character the dropped bytes leave open, and
     // whether the dropped bytes before it are valid. The first stands on its
     // own: a line that is not UTF-8 is still read from a UTF-8 boundary.
@@ -249,10 +252,10 @@ function createCutLine(codePage, inCodePage) {
             // read as UTF-8 exactly as the whole line would.
             const fromOpenCharacter = Buffer.concat([utf8Open, line]);
             const validUtf8 = utf8Valid && isUtf8(fromOpenCharacter);
-            if (inCodePage !== undefined &&
+            if (codePage !== undefined &&
                 readsInCodePage(validUtf8, holdsNul || line.includes(0))) {
                 const second = twoBytesOpen && line.length > 0 && isSecondByte(line[0]);
-                return { text: inCodePage(line.subarray(second ? 1 : 0)), rest };
+                return { text: codePage.decode(line.subarray(second ? 1 : 0)), rest };
             }
             const text = fromOpenCharacter.toString('utf8');
             return {
@@ -267,8 +270,8 @@ function createCutLine(codePage, inCodePage) {
  * invalid sequence becoming U+FFFD, except that a line the system code
  * page reads is read in it, where the system has one.
  */
-function readWholeLines(bytes, inCodePage) {
-    if (inCodePage === undefined || isUtf8(bytes))
+function readWholeLines(bytes, codePage) {
+    if (codePage === undefined || isUtf8(bytes))
         return bytes.toString('utf8');
     let text = '';
     for (let start = 0; start < bytes.length;) {
@@ -276,7 +279,7 @@ function readWholeLines(bytes, inCodePage) {
         const end = newline === -1 ? bytes.length : newline + 1;
         const line = bytes.subarray(start, end);
         text += readsInCodePage(isUtf8(line), line.includes(0))
-            ? inCodePage(line)
+            ? codePage.decode(line)
             : line.toString('utf8');
         start = afterNewlineNul(bytes, end);
     }
@@ -292,8 +295,8 @@ export function createScriptOutputTail(codePage) {
     const chunks = [];
     let size = 0;
     let truncated = false;
-    const inCodePage = createCodePageReader(codePage);
-    const cutLine = createCutLine(codePage, inCodePage);
+    const reader = createCodePageReader(codePage);
+    const cutLine = createCutLine(reader);
     return {
         push(chunk) {
             chunks.push(chunk);
@@ -322,7 +325,7 @@ export function createScriptOutputTail(codePage) {
             let text = '';
             if (truncated)
                 ({ text, rest } = cutLine.read(bytes));
-            text += readWholeLines(bytes.subarray(rest), inCodePage);
+            text += readWholeLines(bytes.subarray(rest), reader);
             return { output: text.replace(/\0/g, ''), outputTruncated: truncated };
         },
     };
