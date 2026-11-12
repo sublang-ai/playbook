@@ -1581,7 +1581,8 @@ The provided actor shall:
   Windows the runtime shall make that pipe from a FIFO in the temporary
   directory, opened at both ends and then removed, so the command can open it
   again by path, as through `/dev/stdout` or `/dev/stderr`; where it cannot,
-  and on native Windows, the pipe is the platform's `pipe` stdio. The runtime
+  and on native Windows, the pipe is the platform's `pipe` stdio, which a
+  command opens by path neither on Linux nor under Git's `sh`. The runtime
   shall start a relay process (`sh -c 'cat || exec cat >/dev/null'`) detached
   beside the shell, give it the read end of that pipe as stdin, and close its
   own copies before reading from it. The relay copies to the runtime, and

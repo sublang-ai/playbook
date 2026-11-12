@@ -2068,22 +2068,26 @@ describe('player + script workflow over the shared factory', () => {
     },
   );
 
-  it('records what a command writes to /dev/stderr and /dev/stdout by path', async () => {
-    // Linux opens the stream again for such a path, which a socket refuses
-    // and a pipe allows.
-    const { runtime, result, scriptEvents } = await runScriptStep(
-      'echo oops > /dev/stderr; echo hi > /dev/stdout',
-    );
+  // Linux opens the stream again for such a path, which a socket refuses and
+  // a pipe allows. Native Windows keeps Node's pipe, which Git's `sh` cannot
+  // open by path.
+  it.skipIf(process.platform === 'win32')(
+    'records what a command writes to /dev/stderr and /dev/stdout by path',
+    async () => {
+      const { runtime, result, scriptEvents } = await runScriptStep(
+        'echo oops > /dev/stderr; echo hi > /dev/stdout',
+      );
 
-    expect(result.state.stateId).toBe('done');
-    expect(scriptEvents).toHaveLength(1);
-    expect(scriptEvents[0]).toMatchObject({
-      exitStatus: 0,
-      output: 'oops\nhi\n',
-      outputTruncated: false,
-    });
-    await runtime.dispose();
-  });
+      expect(result.state.stateId).toBe('done');
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({
+        exitStatus: 0,
+        output: 'oops\nhi\n',
+        outputTruncated: false,
+      });
+      await runtime.dispose();
+    },
+  );
 
   it('keeps the last 16384 bytes of a longer script output, begun at a character boundary', async () => {
     // 5000 + 6000 × 3 + 3 = 23003 bytes. The last 16384 are one trailing

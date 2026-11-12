@@ -35,7 +35,7 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 ### 1. One text, in the order written
 
 The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
-Where the host allows, it is a pipe the command can open again by path, as through `/dev/stderr`.
+Off native Windows, where the host allows, it is a pipe the command can open again by path, as through `/dev/stderr`.
 The stream a line came from is not kept.
 The runtime starts a relay process beside the command's shell and hands it the reading of that pipe: the relay copies to the runtime and, once the runtime stops reading or its process exits, reads on and discards.
 
@@ -78,6 +78,7 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - On native Windows, a host process's first script step waits for one registry read of the system's code pages.
 - A step whose descendant holds the pipe open settles later by at most the bounded wait, and its relay runs for as long as that descendant holds the pipe.
 - The bounded wait cannot tell a descendant that holds the pipe from a relay that is still copying: a relay that falls behind the shell's exit by more than the wait costs the record its last bytes, with nothing to mark the loss.
+- On native Windows, and on Linux where the runtime cannot make its pipe, a command that opens `/dev/stderr` or `/dev/stdout` by path fails, where it passed with its output discarded.
 - A script step needs `cat` beside `sh` and starts one more process, the relay; without `cat` a command's writes fail. The command's own shell, its process group, and its exit status are as before.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
 
