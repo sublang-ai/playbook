@@ -3011,14 +3011,38 @@ const SUPPRESSED_ENTRY_STATES: ReadonlySet<string> = new Set(['ready', 'done']);
 // SIGKILL after this grace, so settlement (gated on the shell's own exit)
 // stays bounded even for TERM-immune commands.
 const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
-// DR-103: the outer shell joins stderr to the one stdout pipe and execs
-// `sh -c <command>`, so a script's output is read in the order written.
+// DR-103: the command's stdout and stderr go to one pipe, so a script's
+// output is read in the order written, and a relay reads that pipe. The
+// relay copies to this process until this process closes its end or exits,
+// then reads on and discards, so a descendant that outlives the shell — or
+// this process — never writes to a pipe nobody reads. Who makes the pipe
+// decides the rest.
+//
+// Where this process makes it, the outer shell only joins stderr to stdout
+// and execs `sh -c <command>`, and this process starts the relay beside it.
 const SCRIPT_MERGED_OUTPUT_COMMAND = 'exec sh -c "$1" 2>&1';
-// DR-103: a relay takes over the reading of that pipe from this process. It
-// copies to this process until this process closes its end or exits, then
-// reads on and discards, so a descendant that outlives the shell — or this
-// process — never writes to a pipe nobody reads.
 const SCRIPT_OUTPUT_RELAY_COMMAND = 'cat || exec cat >/dev/null';
+// Where this process can make none — native Windows, or a temporary
+// directory that admits no FIFO — the outer shell makes the pipe, as a
+// pipeline, and runs the same relay at its end.
+// - The relay runs in the background, unawaited, so the outer shell exits
+//   when the command does. A pipeline reports its last command's status
+//   alone, so the command's comes back through the command substitution,
+//   on fd 4.
+// - fd 3 is this process's pipe and fd 5 the relay's end of the command's;
+//   the command inherits none of them.
+// - An abort's SIGTERM reaches the whole group. The outer shell and the
+//   subshell that reports the status trap it, which defers them until the
+//   command has handled it and exited; the relay ignores it, so a command
+//   that cleans up can still write. The SIGKILL that follows ends the relay.
+const SCRIPT_SHELL_PIPED_COMMAND = [
+  'trap : TERM',
+  'exec 3>&1',
+  'code=$({ { trap : TERM; sh -c "$1" 2>&1 3>&- 4>&-; echo "$?" >&4; } | ' +
+    `{ { trap '' TERM; ${SCRIPT_OUTPUT_RELAY_COMMAND}; } ` +
+    '<&5 >&3 3>&- 4>&- 5<&- & } 5<&0; } 4>&1)',
+  'exit "${code:-1}"',
+].join('\n');
 // How long a script's record waits, after the shell's exit, for the relay
 // to end. It ends at once unless a surviving descendant holds the command's
 // pipe open, so the wait is spent only then. A relay that is merely slow
@@ -8562,8 +8586,9 @@ export function createXStatePlaybookRuntime<
           // DR-103: the code page a non-UTF-8 line is read in is settled
           // before the command runs, because the capture follows it.
           const codePage = await readSystemCodePage();
-          // DR-103: where the host can give one, the command writes to a
-          // pipe it can open again by path, as through `/dev/stderr`.
+          // DR-103: the command writes to a pipe it can open again by path,
+          // as through `/dev/stderr`. This process makes it where it can;
+          // elsewhere the step's shell does.
           const outputPipe = await openScriptOutputPipe();
           if (active.aborted) closeScriptOutputPipe(outputPipe);
           active.throwIfAborted();
@@ -8668,7 +8693,7 @@ export function createXStatePlaybookRuntime<
           // and this process holds nothing of the step once it settles.
           const releaseOutputPipe = (): void => {
             capturing = false;
-            relay?.stdout?.destroy();
+            (relay ?? child)?.stdout?.destroy();
           };
           let durationMs = 0;
           try {
@@ -8680,35 +8705,41 @@ export function createXStatePlaybookRuntime<
                   // so an abort can terminate the command's whole group — a
                   // lone SIGTERM to the wrapper never reaches backgrounded
                   // members.
-                  // DR-103: the wrapper only joins stderr to the stdout pipe
-                  // and execs, so `input.command` still runs verbatim through
-                  // `sh -c` in the same process, as the same group leader.
+                  // DR-103: with a pipe of this process's making, the
+                  // wrapper only joins stderr to stdout and execs, so
+                  // `input.command` still runs verbatim through `sh -c` in
+                  // the same process, as the same group leader. With none,
+                  // the wrapper leads the group, makes the pipe, and runs
+                  // `input.command` through `sh -c` inside it.
                   child = spawn(
                     'sh',
-                    ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command],
+                    [
+                      '-c',
+                      outputPipe === undefined
+                        ? SCRIPT_SHELL_PIPED_COMMAND
+                        : SCRIPT_MERGED_OUTPUT_COMMAND,
+                      'sh',
+                      input.command,
+                    ],
                     {
                       cwd,
                       stdio: ['ignore', outputPipe?.write ?? 'pipe', 'ignore'],
                       detached: true,
                     },
                   );
-                  // The relay inherits the read end of the command's pipe,
-                  // and this process closes its own copies before it reads
-                  // a byte: from here the relay alone reads the command.
-                  // Detached, it stands outside the command's group, which
-                  // an abort signals, and outlives this process for as long
-                  // as a descendant holds the pipe.
-                  relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
-                    cwd,
-                    stdio: [
-                      outputPipe?.read ?? child.stdout ?? 'ignore',
-                      'pipe',
-                      'ignore',
-                    ],
-                    detached: true,
-                  });
-                  child.stdout?.destroy();
-                  relay.unref();
+                  if (outputPipe !== undefined) {
+                    // The relay reads the pipe this process made, and this
+                    // process closes its own copies of both ends below.
+                    // Detached, the relay stands outside the command's
+                    // group, which an abort signals, and outlives this
+                    // process for as long as a descendant holds the pipe.
+                    relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
+                      cwd,
+                      stdio: [outputPipe.read, 'pipe', 'ignore'],
+                      detached: true,
+                    });
+                    relay.unref();
+                  }
                 } catch (error) {
                   // A command already started has no reader: end it.
                   signalGroup('SIGKILL');
@@ -8717,11 +8748,13 @@ export function createXStatePlaybookRuntime<
                 } finally {
                   closeScriptOutputPipe(outputPipe);
                 }
-                relay.on('error', (error) => {
+                relay?.on('error', (error) => {
                   signalGroup('SIGKILL');
                   reject(error);
                 });
-                const stdout = relay.stdout;
+                // The relay's output: this process's own relay, or the one
+                // the step's shell runs behind the shell's stdout.
+                const stdout = (relay ?? child).stdout;
                 const outputEnded = new Promise<void>((ended) => {
                   // No stream at all where the relay could not be started
                   // for want of descriptors: its 'error' rejects the step.

@@ -16,8 +16,9 @@ export const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
  * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
  * again by path, so a command that writes to `/dev/stderr` fails on one. A
  * FIFO opened at both ends is a pipe, and stays one once its name is gone.
- * None on native Windows, and none where the FIFO cannot be made: the
- * caller then falls back on Node's, which no command can open by path.
+ * None on native Windows, where Git's `sh` opens by path only a pipe of
+ * its own making, and none where the FIFO cannot be made: the caller then
+ * has the step's shell make the pipe.
  */
 export async function openScriptOutputPipe() {
     if (process.platform === 'win32')
