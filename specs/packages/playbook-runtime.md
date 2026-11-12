@@ -569,15 +569,25 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 | `stateId`, `sourceItem` | the invocation's own |
 | `exitStatus` | the shell's exit status, or `1` when it ended without one |
 | `durationMs` | the whole milliseconds from spawning the shell to its exit, never negative |
-| `output` | the tail of what the command wrote to stdout and stderr, as one text |
-| `outputTruncated` | whether captured bytes before that tail were dropped |
+| `output` | the last 16384 captured bytes of what the command wrote to stdout and stderr, as the one text of [[playbook-runtime-111](#playbook-runtime-111)] |
+| `outputTruncated` | whether captured bytes before those were dropped |
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
-- `output` shall hold the last 16384 captured bytes, decoded as UTF-8 with each invalid sequence replaced by U+FFFD and every NUL removed.
-- Where the host runs on native Windows whose registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, a line of `output` that is not valid UTF-8 and holds no NUL shall be decoded in that code page instead, a NUL directly after a newline counting as part of that newline, as in UTF-16LE, and of neither line; the runtime shall read those values once per process, a failed read or an unavailable decoder shall leave every line to UTF-8, and a line the decoder fails on shall stay UTF-8.
-- Where earlier bytes were dropped, the first kept line shall be decoded as the rest of the one line the cut fell in: that line's dropped bytes shall count in whether it is valid UTF-8 and whether it holds a NUL, and the runtime shall follow them as it drops them — in UTF-8, and in the code page by the bytes that open a two-byte character — so that the kept rest is read from a character boundary, less the character the cut split.
 - Capture shall end when the last writer closes that pipe or, where a descendant holds it open past the shell's exit, 250 ms after that exit, 2 s on native Windows; a later write by such a descendant shall succeed, unrecorded, whether or not the host process still runs.
 - The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
+
+#### playbook-runtime-111
+
+The runtime shall read the bytes of a `playbook.script` event's `output` [[playbook-runtime-108](#playbook-runtime-108)] as text line by line, each line in one encoding, and remove every NUL from that text ([DR-103](../decisions/103-a-script-step-records-its-output.md) §2):
+
+| Line | Read as |
+| --- | --- |
+| Valid UTF-8, or holding a NUL, or on a host with no code page for script output | UTF-8, each invalid sequence replaced by U+FFFD |
+| Any other | The host's code page for script output |
+
+- A host shall have a code page for script output where it runs on native Windows, its registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, and the runtime reads those values and holds that page's decoder.
+- A line shall end with its newline byte, and a NUL directly after a newline shall be part of that newline, as in UTF-16LE, and of neither line.
+- Where captured bytes before the kept ones were dropped, the first kept line shall be read as the rest of the one line the cut fell in: in the encoding that whole line takes, the bytes before the cut counted, and from that line's first character boundary at or after the cut, so the character the cut split is dropped and no other.
 
 ### Host adapter and registry
 
@@ -1174,22 +1184,22 @@ When the integration suite drives transition and status profiles, it shall fail 
 
 #### playbook-runtime-109
 
-When the runtime suite runs real commands through a player-and-script machine, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-108](#playbook-runtime-108)]):
+When the runtime suite runs real commands through a player-and-script machine, it shall fail unless every case in this matrix holds:
 
-| Command | Required record |
-| --- | --- |
-| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` |
-| Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true |
-| Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL |
-| Writes a byte that is not UTF-8 and then, on the same line, more than 16384 bytes of multibyte characters, on a host with no code page for it | The kept whole characters alone: the one the cut split is dropped and leaves no U+FFFD |
-| Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true |
-| Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding |
-| The same, under a host process that exits when the run ends, the descendant writing only after that exit | The later write succeeding |
-| Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot |
+| Command | Required record | Verifying |
+| --- | --- | --- |
+| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
+| The same, under a host process that exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes a marker text and exits nonzero, then runs again on the next turn | The marker absent from every player and judge prompt, status line, other telemetry event including `playbook.trace`, run result, saved step record, and exported snapshot | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes more than 16384 bytes ending in multibyte characters | Exactly the last 16384 bytes less a leading partial character, with `outputTruncated` true | [[playbook-runtime-108](#playbook-runtime-108)], [[playbook-runtime-111](#playbook-runtime-111)] |
+| Writes invalid UTF-8 and NUL bytes | U+FFFD for each invalid sequence and no NUL | [[playbook-runtime-111](#playbook-runtime-111)] |
+| Writes a byte that is not UTF-8 and then, on the same line, more than 16384 bytes of multibyte characters, on a host with no code page for script output | The kept whole characters alone: the one the cut split is dropped and leaves no U+FFFD | [[playbook-runtime-111](#playbook-runtime-111)] |
 
 #### playbook-runtime-110
 
-Where the suite runs on native Windows whose system locale has one of the code pages 874, 932, 936, 949, 950, and 1258 as both its ANSI and OEM code page, when scripts write in that code page, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-108](#playbook-runtime-108)]):
+Where the suite runs on native Windows whose system locale has one of the code pages 874, 932, 936, 949, 950, and 1258 as both its ANSI and OEM code page, when scripts write in that code page, it shall fail unless every case in this matrix holds (verifying [[playbook-runtime-111](#playbook-runtime-111)]):
 
 | Command writes | Required `output` |
 | --- | --- |
