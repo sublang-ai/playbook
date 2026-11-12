@@ -82,6 +82,8 @@ jobs:
             'reference/sdlc/inspect.playbook/inspect.*.d.ts' \
             'src/accepted-outcome.js' \
             'src/accepted-outcome.d.ts' \
+            'src/script-output.js' \
+            'src/script-output.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -99,6 +101,8 @@ jobs:
             'reference/sdlc/inspect.playbook' \
             'src/accepted-outcome.js' \
             'src/accepted-outcome.d.ts' \
+            'src/script-output.js' \
+            'src/script-output.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -116,6 +120,8 @@ jobs:
               'reference/sdlc/inspect.playbook' \
               'src/accepted-outcome.js' \
               'src/accepted-outcome.d.ts' \
+              'src/script-output.js' \
+              'src/script-output.d.ts' \
               'src/runtime.js' \
               'src/runtime.d.ts' \
               'src/xstate-runtime.js' \
