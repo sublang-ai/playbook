@@ -1191,6 +1191,7 @@ When the runtime suite runs real commands through a player-and-script machine, i
 | --- | --- | --- |
 | Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes to `/dev/stderr` and to `/dev/stdout` by path, on a host other than native Windows | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Is ended by a signal, on a host other than native Windows | `exitStatus` `1`, the earlier write recorded, and the nonzero guard | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes exactly 16384 bytes, and one byte more | Those bytes with `outputTruncated` false, and the last 16384 with it true | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Leaves a descendant holding the pipe that writes again only once the step has settled | Only the earlier write recorded, and the later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |
 | The same, under a host process that exits when the run ends, the descendant writing only after that exit | The later write succeeding | [[playbook-runtime-108](#playbook-runtime-108)] |

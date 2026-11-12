@@ -2050,6 +2050,24 @@ describe('player + script workflow over the shared factory', () => {
     },
   );
 
+  // Native Windows gives a shell ended this way a status of its own.
+  it.skipIf(process.platform === 'win32')(
+    'reports exit status 1 for a command that ended without one',
+    async () => {
+      const { runtime, result, scriptEvents } = await runScriptStep(
+        'echo before; kill -KILL $$',
+      );
+
+      expect(result.state.stateId).toBe('failed');
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({
+        exitStatus: 1,
+        output: 'before\n',
+      });
+      await runtime.dispose();
+    },
+  );
+
   it('records what a command writes to /dev/stderr and /dev/stdout by path', async () => {
     // Linux opens the stream again for such a path, which a socket refuses
     // and a pipe allows.
@@ -2196,8 +2214,9 @@ describe('player + script workflow over the shared factory', () => {
 
   // A descendant that outlives the shell with the output pipe open: it
   // writes `started` at once, and `late` only when the gate file exists.
-  // Its later `echo` must not fail, or it never reaches the marker. It stops
-  // waiting when its directory goes, so a failed test leaves none behind.
+  // The marker is written only if that later `echo` itself succeeds. The
+  // descendant stops waiting when its directory goes, so a failed test
+  // leaves none behind.
   const lingering = async () => {
     const dir = await mkdtemp(join(tmpdir(), 'playbook-script-linger-'));
     // Forward slashes, which `sh` reads the same on every platform.
@@ -2207,7 +2226,7 @@ describe('player + script workflow over the shared factory', () => {
       dir,
       command:
         `(while [ -d ${path('.')} ] && [ ! -e ${path('gate')} ]; ` +
-        `do sleep 0.1; done; echo late; ` +
+        `do sleep 0.1; done; echo late && ` +
         `echo survived > ${path('marker')}) & echo started`,
       // Opens the gate and returns what the descendant then wrote. The write
       // itself bounds the wait: a test that never sees it fails at its
