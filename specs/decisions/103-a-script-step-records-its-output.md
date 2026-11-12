@@ -20,6 +20,8 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 - Considered and declined:
   - separate stdout and stderr tails: each line keeps its stream and loses its place among the other stream's lines, which is what a reader follows;
   - two pipes merged as read: the order of near-simultaneous writes on two pipes is arbitrary;
+  - the runtime as the pipe's only reader: a process the command left running would be killed by its next write once the host process exited, where discarded output never failed it;
+  - a file the runtime reads back: a long-lived process the command left running would fill it without bound;
   - recording only a nonzero exit: a pass that should have failed needs the same evidence as a failure;
   - UTF-8 alone: on a Chinese Windows, `cmd`, PowerShell, Python, and the system tools print their messages in code page 936, which then read as U+FFFD and unrelated characters beyond recovery;
   - choosing between a system's differing ANSI and OEM code pages: both are single-byte, so a line is valid in either and a wrong choice prints plausible wrong letters;
@@ -33,6 +35,7 @@ Script output stays out of machine context, guards, prompts, status lines, and `
 
 The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
 The stream a line came from is not kept.
+The runtime starts a relay process beside the command's shell and hands it the reading of that pipe: the relay copies to the runtime and, once the runtime stops reading or its process exits, reads on and discards.
 
 ### 2. A bounded, leniently decoded tail
 
@@ -41,7 +44,7 @@ The stream a line came from is not kept.
 - On native Windows, a line that is not UTF-8 decodes in the system code page instead, where one code page — 874, 932, 936, 949, 950, or 1258 — serves as both the system's ANSI and OEM code page; a line holding a NUL is UTF-16 and stays UTF-8.
 - A tail cut inside a line reads the rest of that line from a character boundary, less the character the cut split; a two-byte code page marks no boundary in the kept bytes, so the runtime follows the line's dropped bytes, in UTF-8 and in the code page, as it drops them.
 - NUL characters are removed, so a UTF-16 line of ASCII text reads as its text and no record holds U+0000.
-- Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr.
+- Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr, also after the host process has exited.
 
 ### 3. The record is the `playbook.script` telemetry event
 
@@ -70,7 +73,8 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - On a Windows whose ANSI and OEM code pages differ, a line that is not UTF-8 is lost beyond recovery: it reads as U+FFFD and unrelated characters, with only its ASCII intact; so does the non-ASCII text of a UTF-16 line.
 - A short code-page line whose bytes happen to form valid UTF-8 reads as UTF-8.
 - The runtime reads the system's code pages from the registry once per process, before its first script step.
-- A step whose descendant holds the pipe open settles later by at most the bounded wait.
+- A step whose descendant holds the pipe open settles later by at most the bounded wait, and its relay runs for as long as that descendant holds the pipe.
+- A script step needs `cat` beside `sh` and starts one more process, the relay; the command's own shell, its process group, and its exit status are as before.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
 
 ## References
