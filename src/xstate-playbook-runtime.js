@@ -5930,7 +5930,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         });
                         const stdout = relay.stdout;
                         const outputEnded = new Promise((ended) => {
-                            if (stdout === null) {
+                            // No stream at all where the relay could not be started
+                            // for want of descriptors: its 'error' rejects the step.
+                            if (stdout == null) {
                                 ended();
                                 return;
                             }
