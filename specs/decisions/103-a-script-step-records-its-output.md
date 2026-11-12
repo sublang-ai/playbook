@@ -42,7 +42,8 @@ The runtime starts a relay process beside the command's shell and hands it the r
 - The record keeps the last 16 KiB of the captured bytes and states whether earlier bytes were dropped.
 - The kept bytes decode as UTF-8, each invalid sequence becoming U+FFFD.
 - On native Windows, a line that is not UTF-8 decodes in the system code page instead, where one code page — 874, 932, 936, 949, 950, or 1258 — serves as both the system's ANSI and OEM code page; a line holding a NUL is UTF-16 and stays UTF-8, and the NUL that ends a UTF-16 newline belongs to that newline, not to the line after it.
-- A tail cut inside a line reads the rest of that line from a character boundary, less the character the cut split; a two-byte code page marks no boundary in the kept bytes, so the runtime follows the line's dropped bytes, in UTF-8 and in the code page, as it drops them.
+- A tail cut inside a line reads the rest of that line as part of the whole line: in the encoding the whole line takes, from its first character boundary at or after the cut, less the character the cut split.
+- The kept bytes alone settle neither: a two-byte code page marks no boundary in them, and the NUL or the invalid byte that decides the encoding may lie before the cut, so the capture accounts for that line's dropped bytes.
 - NUL characters are removed, so a UTF-16 line of ASCII text reads as its text and no record holds U+0000.
 - Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr, also after the host process has exited.
 
@@ -72,7 +73,7 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - On a Chinese, Japanese, Korean, Thai, or Vietnamese Windows, a tool's messages in the system code page read as their text beside UTF-8 lines.
 - On a Windows whose ANSI and OEM code pages differ, a line that is not UTF-8 is lost beyond recovery: it reads as U+FFFD and unrelated characters, with only its ASCII intact; so does the non-ASCII text of a UTF-16 line.
 - A short code-page line whose bytes happen to form valid UTF-8 reads as UTF-8.
-- The runtime reads the system's code pages from the registry once per process, before its first script step.
+- On native Windows, a host process's first script step waits for one registry read of the system's code pages.
 - A step whose descendant holds the pipe open settles later by at most the bounded wait, and its relay runs for as long as that descendant holds the pipe.
 - A script step needs `cat` beside `sh` and starts one more process, the relay; the command's own shell, its process group, and its exit status are as before.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
