@@ -574,7 +574,7 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 
 - The command's stdout and stderr shall share one pipe, so `output` keeps the order of the writes and not their stream.
 - `output` shall hold the last 16384 captured bytes, decoded as UTF-8 with each invalid sequence replaced by U+FFFD and every NUL removed.
-- Where the host runs on native Windows whose registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, a line of `output` that is not valid UTF-8 and holds no NUL shall be decoded in that code page instead; the runtime shall read those values once per process, a failed read or an unavailable decoder shall leave every line to UTF-8, and a line the decoder fails on shall stay UTF-8.
+- Where the host runs on native Windows whose registry names one of the code pages 874, 932, 936, 949, 950, and 1258 as both `ACP` and `OEMCP`, a line of `output` that is not valid UTF-8 and holds no NUL shall be decoded in that code page instead, a NUL directly after a newline counting as part of that newline, as in UTF-16LE, and of neither line; the runtime shall read those values once per process, a failed read or an unavailable decoder shall leave every line to UTF-8, and a line the decoder fails on shall stay UTF-8.
 - Where earlier bytes were dropped, the first kept line shall be decoded as the rest of the one line the cut fell in: that line's dropped bytes shall count in whether it is valid UTF-8 and whether it holds a NUL, and the runtime shall follow them as it drops them — in UTF-8, and in the code page by the bytes that open a two-byte character — so that the kept rest is read from a character boundary, less the character the cut split.
 - Capture shall end when the last writer closes that pipe or, where a descendant holds it open past the shell's exit, 250 ms after that exit, 2 s on native Windows; a later write by such a descendant shall succeed, unrecorded, whether or not the host process still runs.
 - The output shall enter nothing else: no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
@@ -1194,6 +1194,7 @@ Where the suite runs on native Windows whose system locale has one of the code p
 | Command writes | Required `output` |
 | --- | --- |
 | A UTF-8 line, a code-page line, and a UTF-16 line of non-ASCII text | The first two lines as their text and the third as UTF-8 with U+FFFD for its invalid bytes |
+| A UTF-16 line of ASCII text and then a code-page line | Both lines as their text |
 | More than 16384 bytes of one code-page character whose every byte is a UTF-8 continuation byte, cut between two characters | That character alone, every kept one intact |
 | The same, cut inside a character | The same, less the partial character |
 | The same followed by ASCII letters and a newline, cut inside a character | That character and the ASCII, less the partial character |

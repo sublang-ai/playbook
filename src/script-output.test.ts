@@ -170,6 +170,62 @@ describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
       );
     });
 
+    it('reads a code-page line that follows a UTF-16 line', () => {
+      // The second UTF-16 line is one CJK character and a bare newline: no
+      // byte of it but the newline's own is NUL, so it reads as whatever
+      // the code page makes of its two bytes.
+      const cjk = utf16Line('\u9519');
+      const garbled = new TextDecoder(codePage.label).decode(cjk.subarray(0, 3));
+      expectRecord(
+        codePage,
+        Buffer.concat([utf16Line('WSL error\r'), line, cjk, line]),
+        `WSL error\r\n${sample.text}\n${garbled}${sample.text}\n`,
+        false,
+      );
+    });
+
+    it.each([
+      ['before the newline', 3],
+      ['inside the newline', 1],
+      ['after the newline', 0],
+    ] as const)(
+      'reads it where the cut falls %s of the UTF-16 line',
+      (_where, keptOfUtf16Line) => {
+        // The kept tail holds the last bytes of the UTF-16 line — `\r`'s
+        // NUL and the newline, the newline's NUL alone, or nothing — then
+        // the code-page line and ASCII to the bound.
+        const ascii = LIMIT - keptOfUtf16Line - line.length;
+        expectRecord(
+          codePage,
+          Buffer.concat([
+            lead,
+            utf16Line('WSL error\r'),
+            line,
+            repeat(utf8('a'), ascii),
+          ]),
+          `${keptOfUtf16Line === 3 ? '\n' : ''}${sample.text}\n${'a'.repeat(ascii)}`,
+          true,
+        );
+      },
+    );
+
+    it('keeps a cut UTF-16 line as UTF-8 where only its dropped bytes hold a NUL', () => {
+      // `A` in UTF-16LE, then bytes that are no UTF-8 and hold no NUL, then
+      // the UTF-16 newline: the kept rest alone would pass for code-page
+      // text, and the whole line does not.
+      const kept = LIMIT - 2;
+      expectRecord(
+        codePage,
+        Buffer.concat([
+          Buffer.from('A', 'utf16le'),
+          repeat(char, kept / width + 10),
+          utf16Line(''),
+        ]),
+        `${'\uFFFD'.repeat(kept)}\n`,
+        true,
+      );
+    });
+
     it('reads random mixes of lines as the characters they were built from', () => {
       // A deterministic generator: each line is a list of characters whose
       // bytes and width are known, so where a cut may fall is known too.
@@ -222,8 +278,9 @@ describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
         'code-page',
         'mixed-utf8',
         'mixed-code-page',
+        'utf16',
       ] as const;
-      const makeLine = (): Buffer[] => {
+      const makeLine = (): { units: Buffer[]; newline: Buffer } => {
         const kind = pick(kinds);
         const length = pick([0, 1, 2, 3, 5, 20, 80, 300, 2000, 9000, 20000]);
         const units: Buffer[] = [];
@@ -233,21 +290,30 @@ describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
           else if (kind === 'code-page') units.push(codePageChar[page]!());
           else if (kind === 'mixed-utf8') {
             units.push(random() < 0.5 ? asciiChar() : utf8Char());
+          } else if (kind === 'utf16') {
+            // ASCII text in UTF-16LE: valid UTF-8 whose NULs go.
+            units.push(Buffer.concat([asciiChar(), Buffer.from([0])]));
           } else units.push(random() < 0.5 ? asciiChar() : codePageChar[page]!());
         }
-        return units;
+        return {
+          units,
+          newline: Buffer.from(kind === 'utf16' ? [0x0a, 0] : [0x0a]),
+        };
       };
       const text = (bytes: Buffer): string =>
-        isUtf8(bytes) ? bytes.toString('utf8') : decoder.decode(bytes);
+        (isUtf8(bytes) ? bytes.toString('utf8') : decoder.decode(bytes)).replace(
+          /\0/g,
+          '',
+        );
 
       for (let iteration = 0; iteration < 120; iteration += 1) {
         const lines = Array.from({ length: int(1, 6) }, makeLine);
         const endsWithNewline = random() < 0.7;
-        const lineBytes = lines.map((units, index) =>
+        const lineBytes = lines.map(({ units, newline }, index) =>
           Buffer.concat([
             ...units,
             index < lines.length - 1 || endsWithNewline
-              ? utf8('\n')
+              ? newline
               : Buffer.alloc(0),
           ]),
         );
@@ -257,7 +323,7 @@ describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
         // The expected text, from the boundaries the generator knows.
         let expected = '';
         let offset = 0;
-        lines.forEach((units, index) => {
+        lines.forEach(({ units }, index) => {
           const bytes = lineBytes[index]!;
           const lineStart = offset;
           offset += bytes.length;

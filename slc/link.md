@@ -1631,7 +1631,9 @@ The provided actor shall:
     states whether earlier bytes were dropped. On native Windows whose ANSI
     and OEM code pages are one of 874, 932, 936, 949, 950, and 1258, a line
     that is not valid UTF-8 and holds no NUL is decoded in that code page
-    instead. Where earlier bytes were dropped, the first kept line is
+    instead; a NUL directly after a newline is part of that newline, as in
+    UTF-16LE, and of neither line. Where earlier bytes were dropped, the
+    first kept line is
     decoded as the rest of the one line the cut fell in: that line's dropped
     bytes count in whether it is valid UTF-8 and holds a NUL, and the runtime
     follows them as it drops them — in UTF-8, and in the code page by the
