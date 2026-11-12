@@ -244,6 +244,7 @@ function createCutLine(codePage, inCodePage) {
             const newline = kept.indexOf(NEWLINE, start);
             const end = newline === -1 ? kept.length : newline + 1;
             const line = kept.subarray(start, end);
+            const rest = afterNewlineNul(kept, end);
             // With the open character's dropped bytes restored, the kept bytes
             // read as UTF-8 exactly as the whole line would.
             const fromOpenCharacter = Buffer.concat([utf8Open, line]);
@@ -251,12 +252,12 @@ function createCutLine(codePage, inCodePage) {
             if (inCodePage !== undefined &&
                 readsInCodePage(validUtf8, holdsNul || line.includes(0))) {
                 const second = twoBytesOpen && line.length > 0 && isSecondByte(line[0]);
-                return { text: inCodePage(line.subarray(second ? 1 : 0)), rest: end };
+                return { text: inCodePage(line.subarray(second ? 1 : 0)), rest };
             }
             const text = fromOpenCharacter.toString('utf8');
             return {
                 text: utf8Open.length === 0 ? text : afterFirstCharacter(text),
-                rest: end,
+                rest,
             };
         },
     };
@@ -270,7 +271,7 @@ function readWholeLines(bytes, inCodePage) {
     if (inCodePage === undefined || isUtf8(bytes))
         return bytes.toString('utf8');
     let text = '';
-    for (let start = afterNewlineNul(bytes, 0); start < bytes.length;) {
+    for (let start = 0; start < bytes.length;) {
         const newline = bytes.indexOf(NEWLINE, start);
         const end = newline === -1 ? bytes.length : newline + 1;
         const line = bytes.subarray(start, end);

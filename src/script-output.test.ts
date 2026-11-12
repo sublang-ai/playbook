@@ -209,6 +209,17 @@ describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
       },
     );
 
+    it('reads a line that opens the output with a NUL as UTF-8', () => {
+      // No newline precedes that NUL, so it is the line's own: the line
+      // holds a NUL and is no code-page text.
+      expectRecord(
+        codePage,
+        Buffer.concat([Buffer.from([0]), char, utf8('\n')]),
+        `${'\uFFFD'.repeat(width)}\n`,
+        false,
+      );
+    });
+
     it('keeps a cut UTF-16 line as UTF-8 where only its dropped bytes hold a NUL', () => {
       // `A` in UTF-16LE, then bytes that are no UTF-8 and hold no NUL, then
       // the UTF-16 newline: the kept rest alone would pass for code-page
