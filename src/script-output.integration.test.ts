@@ -390,6 +390,20 @@ describe.skipIf(codePageSample === undefined)(
       ]);
     });
 
+    it('reads a code-page line that follows a UTF-16 line', async () => {
+      const { text, bytes } = codePageSample!;
+      // `WSL` and a CRLF in UTF-16LE, as `wsl.exe` prints a line, then a line
+      // in the system code page: the newline's NUL is no part of that line.
+      const payloads = await runGate(
+        String.raw`printf 'W\000S\000L\000\r\000\n\000'; ` +
+          `printf '${bytes}\\n'; exit 1`,
+      );
+
+      expect(payloads.map(({ output }) => output.normalize('NFC'))).toEqual([
+        `WSL\r\n${text.normalize('NFC')}\n`,
+      ]);
+    });
+
     // A long localized diagnostic: one line of code-page characters, longer
     // than the 16384 bytes the record keeps.
     const repeated = (count: number, tail: string): string =>

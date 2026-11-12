@@ -92,6 +92,15 @@ export function readSystemCodePage(): Promise<ScriptOutputCodePage | undefined> 
 const NEWLINE = 0x0a;
 
 /**
+ * Where the line after a newline starts: past the NUL that directly
+ * follows it. A UTF-16LE newline is `0A 00`, and that NUL is part of the
+ * newline, not of the next line.
+ */
+function afterNewlineNul(bytes: Buffer, start: number): number {
+  return bytes[start] === 0 ? start + 1 : start;
+}
+
+/**
  * Whether a line is read in the system code page (DR-103 §2): it is not
  * UTF-8, and it holds no NUL, which marks UTF-16 and never code-page text.
  * The one rule for a whole line and for the line a cut fell in.
@@ -163,6 +172,8 @@ function createCutLine(
   // two-byte character.
   let twoBytesOpen = false;
   let holdsNul = false;
+  // Whether the dropped bytes end on a newline, whose NUL may follow.
+  let newlineOpen = false;
   const restart = (): void => {
     utf8Valid = true;
     utf8Open = Buffer.alloc(0);
@@ -193,16 +204,28 @@ function createCutLine(
   };
   return {
     drop(dropped) {
+      if (dropped.length === 0) return;
+      let start = newlineOpen ? afterNewlineNul(dropped, 0) : 0;
+      newlineOpen = false;
       // A newline ends a character in every encoding read here, so only
       // the bytes after the last one belong to the line the cut falls in.
       const newline = dropped.lastIndexOf(NEWLINE);
-      if (newline !== -1) restart();
-      follow(dropped.subarray(newline + 1));
+      if (newline >= start) {
+        restart();
+        start = newline + 1;
+        if (start === dropped.length) {
+          newlineOpen = true;
+          return;
+        }
+        start = afterNewlineNul(dropped, start);
+      }
+      follow(dropped.subarray(start));
     },
     read(kept) {
-      const newline = kept.indexOf(NEWLINE);
+      const start = newlineOpen ? afterNewlineNul(kept, 0) : 0;
+      const newline = kept.indexOf(NEWLINE, start);
       const end = newline === -1 ? kept.length : newline + 1;
-      const line = kept.subarray(0, end);
+      const line = kept.subarray(start, end);
       // With the open character's dropped bytes restored, the kept bytes
       // read as UTF-8 exactly as the whole line would.
       const fromOpenCharacter = Buffer.concat([utf8Open, line]);
@@ -235,14 +258,14 @@ function readWholeLines(
 ): string {
   if (inCodePage === undefined || isUtf8(bytes)) return bytes.toString('utf8');
   let text = '';
-  for (let start = 0; start < bytes.length; ) {
+  for (let start = afterNewlineNul(bytes, 0); start < bytes.length; ) {
     const newline = bytes.indexOf(NEWLINE, start);
     const end = newline === -1 ? bytes.length : newline + 1;
     const line = bytes.subarray(start, end);
     text += readsInCodePage(isUtf8(line), line.includes(0))
       ? inCodePage(line)
       : line.toString('utf8');
-    start = end;
+    start = afterNewlineNul(bytes, end);
   }
   return text;
 }
