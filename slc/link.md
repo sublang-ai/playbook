@@ -1637,16 +1637,20 @@ The provided actor shall:
     that is not valid UTF-8 and holds no NUL is decoded in that code page
     instead; a NUL directly after a newline is part of that newline, as in
     UTF-16LE, and of neither line. Where earlier bytes were dropped, the
-    first kept line is
-    decoded as the rest of the one line the cut fell in: that line's dropped
-    bytes count in whether it is valid UTF-8 and holds a NUL, and the runtime
-    follows them as it drops them — in UTF-8, and in the code page by the
-    bytes that open a two-byte character — so the kept rest is read from a
-    character boundary, less the character the cut split.
-  - Capture ends when the pipe closes or, where a descendant holds it open
-    past the shell's exit, 250 ms after that exit, 2 s on native Windows. The
-    runtime then closes its end, and the relay discards what such a
-    descendant writes later.
+    first kept line is read as the rest of the one line the cut fell in: in
+    the encoding that whole line takes, the bytes before the cut counted,
+    and from that line's first character boundary at or after the cut, so
+    the character the cut split is dropped and no other. The kept bytes
+    alone settle neither, so the runtime follows that line's dropped bytes
+    as it drops them: whether they are valid UTF-8 and hold a NUL, the UTF-8
+    character they leave open, and, in the code page, whether they end on
+    the first byte of a two-byte character.
+  - Capture ends when the relay ends or 250 ms after the shell's exit, 2 s on
+    native Windows, whichever comes first: what a descendant that holds the
+    pipe writes later, and what a relay has not yet passed on, is not
+    recorded. The runtime then closes its end, and the relay discards the
+    rest. The relay needs `cat` on the host's `PATH`; without it a command's
+    write to stdout or stderr fails.
 
 Script execution emits no `*.call.*` trace pair: the surrounding FSM
 transition trace and the `playbook.script` telemetry are its record, so trace

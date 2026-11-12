@@ -47,7 +47,7 @@ The runtime starts a relay process beside the command's shell and hands it the r
 - A tail cut inside a line reads the rest of that line as part of the whole line: in the encoding the whole line takes, from its first character boundary at or after the cut, less the character the cut split.
 - The kept bytes alone settle neither: a two-byte code page marks no boundary in them, and the NUL or the invalid byte that decides the encoding may lie before the cut, so the capture accounts for that line's dropped bytes.
 - NUL characters are removed, so a UTF-16 line of ASCII text reads as its text and no record holds U+0000.
-- Capture ends when the pipe closes or, where a descendant holds it open past the shell's exit, after a short bounded wait; such a descendant keeps a working stdout and stderr, also after the host process has exited.
+- Capture ends when the pipe closes with everything passed on, or after a short bounded wait from the shell's exit, whichever comes first; a descendant that holds the pipe open past that exit keeps a working stdout and stderr, also after the host process has exited.
 
 ### 3. The record is the `playbook.script` telemetry event
 
@@ -77,7 +77,8 @@ The runtime redacts nothing; a host that must not retain the output drops the tw
 - A short code-page line whose bytes happen to form valid UTF-8 reads as UTF-8.
 - On native Windows, a host process's first script step waits for one registry read of the system's code pages.
 - A step whose descendant holds the pipe open settles later by at most the bounded wait, and its relay runs for as long as that descendant holds the pipe.
-- A script step needs `cat` beside `sh` and starts one more process, the relay; the command's own shell, its process group, and its exit status are as before.
+- The bounded wait cannot tell a descendant that holds the pipe from a relay that is still copying: a relay that falls behind the shell's exit by more than the wait costs the record its last bytes, with nothing to mark the loss.
+- A script step needs `cat` beside `sh` and starts one more process, the relay; without `cat` a command's writes fail. The command's own shell, its process group, and its exit status are as before.
 - `playbook run` is unchanged: it prints the status line, and telemetry topic names under `--verbose`.
 
 ## References

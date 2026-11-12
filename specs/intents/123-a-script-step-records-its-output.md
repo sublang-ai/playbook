@@ -21,6 +21,7 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 - [x] A cut tail whose first line keeps its characters in the encoding that decodes it, verified on the same host.
 - [x] A relay between the command and the runtime, so a process the command leaves running can still write after the step and after the host process exits, verified on macOS and on the same Windows host.
 - [x] The tail's decoding and cut tracking in a module of their own, tested on every platform in each of the six code pages.
+- [x] A command able to open its output again by path, as through `/dev/stderr`, verified in a Linux container.
 
 ## Tasks
 
@@ -34,6 +35,13 @@ Record what a script step printed on its `playbook.script` telemetry event, for 
 8. Keep a newline's NUL out of the next line.
 9. Tie the Captain-shell and cut-row assertions to what their spec items state.
 10. Give decoding its own spec item, and state outcomes where the items stated mechanism.
+11. Give the command a pipe it can open again by path.
+12. Take a relay that could not start as a failed step.
+13. Put the script-output build under the drift check.
+14. Leave a NUL that opens the output in its line.
+15. Pass a code page's reader as one value.
+16. Tie the descendant's marker to its write's own status, and pin the status of a signal-ended command.
+17. State what the capture needs, and that its wait bounds a slow relay too.
 
 ## Verification
 
