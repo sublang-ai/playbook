@@ -324,7 +324,7 @@ describe('script output under the Captain shell (DR-103)', () => {
 // system code page, where the system has one for both its ANSI and OEM
 // forms. Each sample is a text and one character with their bytes in that
 // code page, as octal escapes, so the command's own text never spells them.
-// Every `char` opens with a byte in 0x80–0xBF, which UTF-8 reads as the
+// Every byte of every `char` lies in 0x80–0xBF, which UTF-8 reads as the
 // continuation of a character.
 interface CodePageSample {
   text: string;
@@ -351,8 +351,8 @@ const CODE_PAGE_SAMPLES: Record<string, CodePageSample> = {
   '936': {
     text: '系统找不到指定的文件。',
     bytes: String.raw`\317\265\315\263\325\322\262\273\265\275\326\270\266\250\265\304\316\304\274\376\241\243`,
-    char: '测',
-    charBytes: String.raw`\262\342`,
+    char: '啊',
+    charBytes: String.raw`\260\241`,
     charWidth: 2,
   },
   '949': {
@@ -479,6 +479,40 @@ describe.skipIf(codePageSample === undefined)(
       expect(output.slice(0, 4)).toBe(char.repeat(4));
       expect([...output]).toHaveLength(kept);
       expect(output === char.repeat(kept)).toBe(true);
+    });
+
+    it('keeps a cut code-page line aligned where ASCII follows it', async () => {
+      const { char, charWidth } = codePageSample!;
+      // The character run, then `ok` and a newline: the cut falls inside a
+      // character, and the ASCII would complete a wrong reading of the line.
+      const whole = Math.floor(16381 / charWidth);
+      const payloads = await runGate(repeated(16384 / charWidth, 'ok\\n'));
+
+      expect(payloads).toHaveLength(1);
+      const { output, outputTruncated } = payloads[0]!;
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 4)).toBe(char.repeat(4));
+      expect(output.slice(-5)).toBe(`${char.repeat(2)}ok\n`);
+      expect([...output]).toHaveLength(whole + 3);
+      expect(output === `${char.repeat(whole)}ok\n`).toBe(true);
+    });
+
+    it('keeps a whole code-page character that opens the kept tail', async () => {
+      const { char, charBytes, charWidth } = codePageSample!;
+      // 100 ASCII bytes, the character and a newline, then ASCII to the
+      // bound: the kept tail opens exactly on the character.
+      const ascii = 16384 - charWidth - 1;
+      const payloads = await runGate(
+        `LC_ALL=C awk 'BEGIN { for (i = 0; i < 100; i++) printf "x"; ` +
+          `printf "${charBytes}\\n"; ` +
+          `for (i = 0; i < ${ascii}; i++) printf "a" }'`,
+      );
+
+      expect(payloads).toHaveLength(1);
+      const { output, outputTruncated } = payloads[0]!;
+      expect(outputTruncated).toBe(true);
+      expect(output.slice(0, 4)).toBe(`${char}\naa`);
+      expect(output === `${char}\n${'a'.repeat(ascii)}`).toBe(true);
     });
 
     it('drops the partial character of a cut UTF-8 line before a code-page line', async () => {
