@@ -235,6 +235,8 @@ exit status, and hand it to no agent on the run's behalf. The runtime and the
 Captain shell place it in no prompt, machine context, status line, or trace.
 It is stored with the session's other telemetry and is not redacted; a host
 that must not retain it drops the two fields in its own `emitTelemetry` port.
+A process the command leaves running keeps a working stdout and stderr after
+the step, and after the host process exits; what it writes then is discarded.
 
 ## Constructing worktree host capabilities
 

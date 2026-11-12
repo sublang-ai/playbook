@@ -8,11 +8,14 @@
 // defaults (entry event, parked-state classifier, prompt composition,
 // adjudication, statuses).
 
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
@@ -2154,36 +2157,95 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it('settles without waiting for a descendant that holds the output pipe, and leaves its later write working', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-linger-'));
-    try {
-      const startedAt = Date.now();
-      // The backgrounded subshell outlives the shell with the pipe open. Its
-      // later `echo` must not fail, or it never reaches the marker.
-      const { runtime, result, scriptEvents } = await runScriptStep(
-        `(sleep 2; echo late; echo survived > ${dir}/marker) & echo started`,
+  it.each([
+    [16384, false],
+    [16385, true],
+  ] as const)(
+    'reports whether a script output of %i bytes lost earlier bytes',
+    async (bytes, outputTruncated) => {
+      const { runtime, scriptEvents } = await runScriptStep(
+        `awk 'BEGIN { for (i = 0; i < ${bytes}; i++) printf "x" }'`,
       );
-      const settledAfterMs = Date.now() - startedAt;
+
+      expect(scriptEvents).toHaveLength(1);
+      expect(scriptEvents[0]).toMatchObject({ outputTruncated });
+      const { output } = scriptEvents[0] as { output: string };
+      expect(output === 'x'.repeat(16384)).toBe(true);
+      await runtime.dispose();
+    },
+  );
+
+  // A descendant that outlives the shell with the output pipe open: it
+  // writes `started` at once, and `late` only when the gate file exists.
+  // Its later `echo` must not fail, or it never reaches the marker. It stops
+  // waiting when its directory goes, so a failed test leaves none behind.
+  const lingering = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-linger-'));
+    // Forward slashes, which `sh` reads the same on every platform.
+    const path = (name: string): string =>
+      join(dir, name).replaceAll('\\', '/');
+    return {
+      dir,
+      command:
+        `(while [ -d ${path('.')} ] && [ ! -e ${path('gate')} ]; ` +
+        `do sleep 0.1; done; echo late; ` +
+        `echo survived > ${path('marker')}) & echo started`,
+      // Opens the gate and returns what the descendant then wrote. The write
+      // itself bounds the wait: a test that never sees it fails at its
+      // timeout.
+      release: async (): Promise<string> => {
+        await writeFile(join(dir, 'gate'), '');
+        for (;;) {
+          const marker = await readFile(join(dir, 'marker'), 'utf8').catch(
+            () => '',
+          );
+          if (marker !== '') return marker;
+          await new Promise((tick) => setTimeout(tick, 25));
+        }
+      },
+    };
+  };
+
+  it('settles before a descendant that holds the output pipe writes again, and leaves that write working', async () => {
+    const { dir, command, release } = await lingering();
+    try {
+      // The gate opens only below, so the step settled before the write.
+      const { runtime, result, scriptEvents } = await runScriptStep(command);
 
       expect(result.state.stateId).toBe('done');
-      // Before the descendant's two-second sleep ends: the bounded wait.
-      expect(settledAfterMs).toBeLessThan(1500);
       expect(scriptEvents).toHaveLength(1);
       expect(scriptEvents[0]).toMatchObject({
         exitStatus: 0,
         output: 'started\n',
         outputTruncated: false,
       });
-      let marker: string | undefined;
-      for (let attempt = 0; attempt < 200 && marker === undefined; attempt += 1) {
-        try {
-          marker = await readFile(join(dir, 'marker'), 'utf8');
-        } catch {
-          await new Promise((tick) => setTimeout(tick, 25));
-        }
-      }
-      expect(marker).toBe('survived\n');
+      expect(await release()).toBe('survived\n');
       await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a descendant\'s later write working after the host process has exited', async () => {
+    const { dir, command, release } = await lingering();
+    try {
+      // A host of its own, which exits when the run ends: from then on no
+      // process reads the host's end of the script's output.
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        fileURLToPath(
+          new URL('./fixtures/script-step-host.mjs', import.meta.url),
+        ),
+        command,
+      ]);
+
+      expect(JSON.parse(stdout)).toEqual([
+        expect.objectContaining({
+          exitStatus: 0,
+          output: 'started\n',
+          outputTruncated: false,
+        }),
+      ]);
+      expect(await release()).toBe('survived\n');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

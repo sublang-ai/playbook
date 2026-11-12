@@ -1830,10 +1830,18 @@ const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
 // DR-103: the outer shell joins stderr to the one stdout pipe and execs
 // `sh -c <command>`, so a script's output is read in the order written.
 const SCRIPT_MERGED_OUTPUT_COMMAND = 'exec sh -c "$1" 2>&1';
+// DR-103: a relay takes over the reading of that pipe from this process. It
+// copies to this process until this process closes its end or exits, then
+// reads on and discards, so a descendant that outlives the shell — or this
+// process — never writes to a pipe nobody reads.
+const SCRIPT_OUTPUT_RELAY_COMMAND = 'cat || exec cat >/dev/null';
 const SCRIPT_OUTPUT_TAIL_BYTES = 16384;
-// How long a script's record waits, after the shell's exit, for an output
-// pipe that a surviving descendant still holds open.
-const SCRIPT_OUTPUT_DRAIN_GRACE_MS = 250;
+// How long a script's record waits, after the shell's exit, for the relay
+// to end. It ends at once unless a surviving descendant holds the command's
+// pipe open, so the wait is spent only then. A relay that is merely slow
+// to start must not cost the record its last bytes, and native Windows
+// starts a process far more slowly, so its wait is longer.
+const SCRIPT_OUTPUT_DRAIN_GRACE_MS = process.platform === 'win32' ? 2000 : 250;
 const SCRIPT_OUTPUT_CODE_PAGES = {
     '874': { label: 'windows-874' },
     '932': {
@@ -6016,6 +6024,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // members before the actor settles (slc/link.md §Script
                 // execution). One finally releases both.
                 let child;
+                let relay;
                 let killTimer;
                 const signalGroup = (sig) => {
                     if (child?.pid !== undefined) {
@@ -6091,16 +6100,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 let invocationFailed = false;
                 const outputTail = createScriptOutputTail(codePage);
                 let capturing = true;
-                // Stops recording and lets the pipe go without closing it: the
-                // stream stays flowing and unreferenced, so a descendant that
-                // outlived the shell keeps a working stdout and stderr whose
-                // later writes are read and dropped, never refused (DR-103).
+                // Stops recording and closes this process's end of the relay's
+                // pipe. The relay reads on and discards, so a descendant that
+                // outlived the shell keeps a working stdout and stderr (DR-103)
+                // and this process holds nothing of the step once it settles.
                 const releaseOutputPipe = () => {
                     capturing = false;
-                    const stdout = child?.stdout;
-                    // A pipe that already closed has nothing left to release.
-                    if (stdout && !stdout.destroyed)
-                        stdout.unref?.();
+                    relay?.stdout?.destroy();
                 };
                 let durationMs = 0;
                 try {
@@ -6115,12 +6121,31 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // and execs, so `input.command` still runs verbatim through
                             // `sh -c` in the same process, as the same group leader.
                             child = spawn('sh', ['-c', SCRIPT_MERGED_OUTPUT_COMMAND, 'sh', input.command], { cwd, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+                            // The relay inherits this process's end of the command's
+                            // pipe, and this process closes its own copy before it
+                            // reads a byte: from here the relay alone reads the
+                            // command. Detached, it stands outside the command's
+                            // group, which an abort signals, and outlives this
+                            // process for as long as a descendant holds the pipe.
+                            relay = spawn('sh', ['-c', SCRIPT_OUTPUT_RELAY_COMMAND], {
+                                cwd,
+                                stdio: [child.stdout ?? 'ignore', 'pipe', 'ignore'],
+                                detached: true,
+                            });
+                            child.stdout?.destroy();
+                            relay.unref();
                         }
                         catch (error) {
+                            // A command already started has no reader: end it.
+                            signalGroup('SIGKILL');
                             reject(error);
                             return;
                         }
-                        const stdout = child.stdout;
+                        relay.on('error', (error) => {
+                            signalGroup('SIGKILL');
+                            reject(error);
+                        });
+                        const stdout = relay.stdout;
                         const outputEnded = new Promise((ended) => {
                             if (stdout === null) {
                                 ended();
@@ -6144,8 +6169,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         child.on('error', (error) => {
                             reject(error);
                         });
-                        // 'exit', not 'close': a descendant holding the output pipe
-                        // delays 'close' for as long as it lives.
+                        // The shell's 'exit', not the end of its output: the relay
+                        // runs for as long as a descendant holds the command's pipe.
                         child.on('exit', (code) => {
                             if (active.aborted) {
                                 // The shell may exit cooperatively on the group SIGTERM
@@ -6158,8 +6183,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                                 return;
                             }
                             durationMs = Math.max(0, Math.round(performance.now() - startedAt));
-                            // The record ends when the pipe closes, or a bounded wait
-                            // after the shell's exit when a descendant holds it open.
+                            // The record ends when the relay does, or a bounded wait
+                            // after the shell's exit when a descendant keeps it running.
                             const settle = () => {
                                 clearTimeout(drainTimer);
                                 releaseOutputPipe();

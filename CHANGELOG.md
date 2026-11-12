@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A script step records its output** ([DR-103](specs/decisions/103-a-script-step-records-its-output.md)): the `playbook.script` telemetry event carries `durationMs`, `output` — the last 16 KiB the command wrote to stdout and stderr, as one text in the order written, decoded as UTF-8 or, for a line that is not UTF-8 on a Windows with one system code page, in that code page — and `outputTruncated`, at a zero or nonzero exit alike, so a host can show why a gate failed instead of only its exit status. The output enters no prompt, machine context, status line, or trace, and the exit status alone still selects the guard. A consumer that compares the `playbook.script` payload exactly must accept the three new fields.
+- **A script step records its output** ([DR-103](specs/decisions/103-a-script-step-records-its-output.md)): the `playbook.script` telemetry event carries `durationMs`, `output` — the last 16 KiB the command wrote to stdout and stderr, as one text in the order written, decoded as UTF-8 or, for a line that is not UTF-8 on a Windows with one system code page, in that code page — and `outputTruncated`, at a zero or nonzero exit alike, so a host can show why a gate failed instead of only its exit status. The output enters no prompt, machine context, status line, or trace, and the exit status alone still selects the guard. A consumer that compares the `playbook.script` payload exactly must accept the three new fields. A script step now needs `cat` beside `sh`.
 
 ## [18.2.0] - 2026-11-08
 

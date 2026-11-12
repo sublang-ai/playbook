@@ -1576,8 +1576,13 @@ The provided actor shall:
   working directory. The linker shall declare the optional `cwd` option on the
   emitted options interface whenever the FSM contains a script state; the
   validated option reaches the shared script actor through the spec. The
-  command's stdout and stderr shall share one pipe that the runtime reads, so
-  the output is recorded in the order written; stdin stays unconnected.
+  command's stdout and stderr shall share one pipe, so the output is recorded
+  in the order written; stdin stays unconnected. The runtime shall start a
+  relay process (`sh -c 'cat || exec cat >/dev/null'`) detached beside the
+  shell, give it the runtime's end of that pipe as stdin, and close its own
+  copy before reading from it. The relay copies to the runtime, and reads on
+  and discards once the runtime closes its end or its process exits, so a
+  write by a process the command left running never fails.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
@@ -1609,7 +1614,9 @@ The provided actor shall:
   emission already started when the abort lands completes through the
   ordinary serialized channel and the rejection follows it. A
   descendant that leaves the process group is beyond the runtime's kill
-  scope.
+  scope. The relay stands outside that group, so a command that handles
+  the group's `SIGTERM` can still write, and ends when the pipe's last writer
+  does.
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
@@ -1631,9 +1638,9 @@ The provided actor shall:
     bytes that open a two-byte character — so the kept rest is read from a
     character boundary, less the character the cut split.
   - Capture ends when the pipe closes or, where a descendant holds it open
-    past the shell's exit, 250 ms after that exit. The runtime shall keep
-    reading and discarding what such a descendant writes later, so that write
-    never fails.
+    past the shell's exit, 250 ms after that exit, 2 s on native Windows. The
+    runtime then closes its end, and the relay discards what such a
+    descendant writes later.
 
 Script execution emits no `*.call.*` trace pair: the surrounding FSM
 transition trace and the `playbook.script` telemetry are its record, so trace
