@@ -48,7 +48,7 @@ names, nesting, and ancestry never infer a binding.
 
 Each `captain` or `players.<player-id>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`, `model`,
-`effort`, `fastMode`, `subagentModel`, `subagentEffort`, `instruction`, and
+`effort`, `fastMode`, `ultracode`, `subagentModel`, `subagentEffort`, `instruction`, and
 `permissions`. Settings are inline per stable agent
 ([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)).
 Dots in a player ID are literal characters, not YAML hierarchy. Other adapter
@@ -203,6 +203,14 @@ A present fast-mode boolean, subagent model, or subagent effort is accepted
 only for adapters Cligent reports as supporting it. A role binding cannot override adapter, instruction,
 permissions, workspace, or tool posture; those define the stable player
 envelope, so an overriding model must be one that player's adapter serves.
+
+`ultracode: true` independently enables Claude Ultracode while retaining the
+chosen `effort`. Captain, player, and role blocks accept it; a role inherits
+its player's setting unless it supplies `true` or `false`. Enabling it requires
+an installed Cligent runtime that reports Ultracode support. Explicit `false`
+is safe on other adapters; older Claude runtimes reject either explicit boolean
+with update guidance because they cannot enforce it. Legacy `effort: ultracode` remains
+supported.
 
 `subagentModel` selects the model for delegated work —
 `inherit` names the agent's own, a model name pins another, and `false` on a

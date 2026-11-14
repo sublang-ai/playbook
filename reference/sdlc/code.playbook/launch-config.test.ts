@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { isUltracodeSupported } from './playbook-captain.js';
 import { readFileSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2941,4 +2942,50 @@ it('refuses config relocation that would retarget any shared or agent skill', as
   expect(() => launchConfig.relocateLegacyUserConfig(newPath, oldPath, () => {})).toThrow(/skills\[0\].*captain.skills\[0\].*players.dev.coder.skills\[0\]/);
   expect(await readFile(oldPath, 'utf8')).toBe(source);
   await expect(access(newPath)).rejects.toThrow();
+});
+
+
+describe('independent Ultracode tuning', () => {
+  const load = { loadModule: moduleLoader({ 'mod://ultra': entry('ultra', ['coder']) }) };
+  const config = (ultracode: unknown, adapter = 'codex') => ({
+    captain: { adapter, ultracode: false },
+    players: { 'dev.coder': { adapter, effort: 'high', ultracode: false } },
+    playbooks: { ultra: { from: 'mod://ultra', roles: { coder: { player: 'dev.coder', ultracode } } } },
+  });
+  it('preserves disabled tuning independently of effort through both projections', async () => {
+    const plan: any = await launchConfig.normalizeLaunchPlan(config(false), load);
+    expect(plan.captain.ultracode).toBe(false);
+    expect(plan.players[0].agent.ultracode).toBe(false);
+    expect(plan.catalog.ultra.roles.coder.ultracode).toBe(false);
+    expect(plan.catalog.ultra.roles.coder.effort).toEqual({ kind: 'value', value: 'high' });
+    const execution: any = executionConfigFromPlan(plan);
+    expect(execution.players[0].ultracode).toBe(false);
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain('ultracode');
+    const projected: any = launchConfig.projectTmuxConfig(plan);
+    expect(projected.captain.options.sessionAgents.captain.ultracode).toBe(false);
+    await expect(launchConfig.normalizeHostConfig(projected)).resolves.toBeDefined();
+  });
+  it.skipIf(!isUltracodeSupported('claude'))('preserves enabled tuning with independent effort and resets it on ordinary reopen', async () => {
+    const initial: any = await launchConfig.normalizeLaunchPlan(config(true, 'claude'), load);
+    expect(initial.catalog.ultra.roles.coder).toMatchObject({ ultracode: true, effort: { kind: 'value', value: 'high' } });
+    const projected: any = launchConfig.projectTmuxConfig(initial);
+    expect(projected.captain.options.playbooks.ultra.roles.coder.ultracode).toBe(true);
+    const reopened: any = await launchConfig.normalizeSelectedLaunchPlanDataOnly(config(false, 'claude'), {
+      configPath: '/tmp/playbook.config.yaml', stored: structuralProjection(initial),
+    });
+    expect(reopened.catalog.ultra.roles.coder.ultracode).toBe(false);
+    expect(structuralProjection(reopened)).toEqual(structuralProjection(initial));
+  });
+  it.skipIf(isUltracodeSupported('claude'))('rejects disabled Claude tuning an older runtime cannot enforce', async () => {
+    await expect(launchConfig.normalizeLaunchPlan(config(false, 'claude'), load)).rejects.toThrow(/ultracode.*update Cligent/);
+    const legacy = config(false, 'claude');
+    legacy.captain = { adapter: 'claude', effort: 'ultracode', ultracode: false } as any;
+    await expect(launchConfig.normalizeLaunchPlan(legacy, load)).rejects.toThrow(/ultracode.*update Cligent/);
+  });
+  it('rejects enabled Ultracode on an incapable adapter before registry work', async () => {
+    await expect(launchConfig.normalizeLaunchPlan(config(true), load)).rejects.toThrow(/ultracode.*not supported/);
+  });
+  it('rejects nonboolean Ultracode', async () => {
+    await expect(launchConfig.normalizeLaunchPlan(config('yes'), load)).rejects.toThrow(/ultracode must be a boolean/);
+  });
 });

@@ -28,6 +28,8 @@ import {
   parseDocument as parseYamlDocument,
   stringify as stringifyYaml,
 } from "yaml";
+import { isUltracodeSupported } from "../playbook-captain.js";
+import * as cligent from "@sublang/cligent";
 import { isSubagentModelSupported } from "@sublang/cligent";
 import { loadTmuxPlayConfig } from "@sublang/cligent/tmux-play";
 import {
@@ -624,6 +626,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
+        binding.ultracode !== undefined ||
         binding.subagentModel !== undefined ||
         binding.subagentEffort !== undefined
       ) {
@@ -742,6 +745,11 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
                       ? {}
                       : { fastMode: agent.fastMode }
                     : { fastMode: binding.fastMode }),
+                  ...(binding.ultracode === undefined
+                    ? agent.ultracode === undefined
+                      ? {}
+                      : { ultracode: agent.ultracode }
+                    : { ultracode: binding.ultracode }),
                   ...effectiveOptionalTuning(binding, agent, "subagentModel"),
                   ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
                 },
@@ -1012,6 +1020,7 @@ async function normalizeLaunchPlanWith(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
+        binding.ultracode !== undefined ||
         binding.subagentModel !== undefined ||
         binding.subagentEffort !== undefined
       ) {
@@ -1229,6 +1238,11 @@ async function normalizeLaunchPlanWith(
                 ? {}
                 : { fastMode: agent.fastMode }
               : { fastMode: binding.fastMode }),
+            ...(binding.ultracode === undefined
+              ? agent.ultracode === undefined
+                ? {}
+                : { ultracode: agent.ultracode }
+              : { ultracode: binding.ultracode }),
             ...effectiveOptionalTuning(binding, agent, "subagentModel"),
             ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
           },
@@ -1330,8 +1344,33 @@ export async function normalizeHostConfig(config) {
   const dir = mkdtempSync(join(tmpdir(), "playbook-host-config-"));
   const path = join(dir, "tmux-play.config.yaml");
   try {
-    writeFileSync(path, stringifyYaml(config));
-    return (await loadTmuxPlayConfig({ configPath: path })).config;
+    const normalizeUltracode = (agent, label) => {
+      if (agent?.ultracode === undefined) return agent;
+      if (typeof agent.ultracode !== "boolean") throw new Error(`${label}.ultracode must be a boolean`);
+      if (!isUltracodeSupported(agent.adapter) && (agent.ultracode || agent.adapter === "claude")) {
+        throw new Error(`${label}.ultracode is not supported by the installed runtime for ${agent.adapter}; update Cligent to use independent Ultracode tuning`);
+      }
+      // Older loaders reject even an explicitly disabled new field.
+      if (typeof cligent.isUltracodeSupported !== "function") {
+        const { ultracode: _disabled, ...rest } = agent;
+        return rest;
+      }
+      return agent;
+    };
+    const compatible = {
+      ...config,
+      captain: normalizeUltracode(config.captain, "captain"),
+      players: config.players?.map((agent, index) => normalizeUltracode(agent, `players[${index}]`)),
+    };
+    writeFileSync(path, stringifyYaml(compatible));
+    const normalized = (await loadTmuxPlayConfig({ configPath: path })).config;
+    // Preserve explicit false for other adapters on the older floor.
+    if (config.captain?.ultracode !== undefined) normalized.captain.ultracode = config.captain.ultracode;
+    for (const agent of normalized.players) {
+      const authored = config.players?.find(item => item.id === agent.id);
+      if (authored?.ultracode !== undefined) agent.ultracode = authored.ultracode;
+    }
+    return normalized;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -2341,6 +2380,7 @@ function resolveRoleBinding(value, path) {
         "model",
         "effort",
         "fastMode",
+        "ultracode",
         "subagentModel",
         "subagentEffort",
       ].includes(key),
@@ -2366,11 +2406,15 @@ function resolveRoleBinding(value, path) {
   if (block.fastMode !== undefined && typeof block.fastMode !== "boolean") {
     throw new Error(`${path}.fastMode must be a boolean`);
   }
+  if (block.ultracode !== undefined && typeof block.ultracode !== "boolean") {
+    throw new Error(`${path}.ultracode must be a boolean`);
+  }
   return {
     playerId: block.player,
     ...(block.model === undefined ? {} : { model: block.model }),
     ...(block.effort === undefined ? {} : { effort: block.effort }),
     ...(block.fastMode === undefined ? {} : { fastMode: block.fastMode }),
+    ...(block.ultracode === undefined ? {} : { ultracode: block.ultracode }),
     ...(block.subagentModel === undefined
       ? {}
       : { subagentModel: block.subagentModel }),
@@ -2421,6 +2465,7 @@ function applyTuningOverrides(agent, binding) {
     else effective.effort = binding.effort;
   }
   if (binding.fastMode !== undefined) effective.fastMode = binding.fastMode;
+  if (binding.ultracode !== undefined) effective.ultracode = binding.ultracode;
   for (const field of ["subagentModel", "subagentEffort"]) {
     if (binding[field] === false) delete effective[field];
     else if (binding[field] !== undefined) effective[field] = binding[field];
@@ -2441,6 +2486,9 @@ function sessionAgentFromHostAgent(agent, path, defaultSkills) {
     ...(agent.fastMode === undefined
       ? {}
       : { fastMode: fastModeSelection(agent.fastMode, `${path}.fastMode`) }),
+    ...(agent.ultracode === undefined
+      ? {}
+      : { ultracode: fastModeSelection(agent.ultracode, `${path}.ultracode`) }),
     ...(agent.subagentModel === undefined
       ? {}
       : {
@@ -2471,6 +2519,9 @@ function sessionAgentFromHostAgent(agent, path, defaultSkills) {
 // default; the complete tagged selection remains in sessionAgents.
 export function projectHostAgent(agent, path = "agent") {
   const normalized = cloneJson(agent, path);
+  if (normalized.ultracode !== undefined && !isUltracodeSupported(normalized.adapter) && (normalized.ultracode || normalized.adapter === "claude")) {
+    throw new Error(`${path}.ultracode is not supported by the installed runtime for ${normalized.adapter}; update Cligent to use independent Ultracode tuning`);
+  }
   return {
     adapter: normalized.adapter,
     ...(normalized.skills === undefined ? {} : { skills: normalized.skills }),
@@ -2484,6 +2535,9 @@ export function projectHostAgent(agent, path = "agent") {
     ...(normalized.fastMode === undefined
       ? {}
       : { fastMode: normalized.fastMode }),
+    ...(normalized.ultracode === undefined || !isUltracodeSupported(normalized.adapter)
+      ? {}
+      : { ultracode: normalized.ultracode }),
     ...(normalized.subagentModel === undefined
       ? {}
       : { subagentModel: normalized.subagentModel }),

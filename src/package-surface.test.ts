@@ -1327,6 +1327,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertPlaybookCaptainShellSnapshot',
       'projectUnresolvedEffects',
       'createPlaybookCaptainShell',
+      'isUltracodeSupported',
       'default',
     ],
     './session-store': [
@@ -1702,6 +1703,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertPlaybookCaptainShellSnapshot',
       'projectUnresolvedEffects',
       'createPlaybookCaptainShell',
+      'isUltracodeSupported',
       'default',
     ],
     './session-store': [

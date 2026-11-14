@@ -17,6 +17,13 @@ import {
   type TuningSelection,
 } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
+import * as cligent from '@sublang/cligent';
+
+/** Whether the installed runtime can honor independent Ultracode tuning. */
+export function isUltracodeSupported(adapter: string): boolean {
+  const probe = (cligent as unknown as { isUltracodeSupported?: (adapter: string) => boolean }).isUltracodeSupported;
+  return typeof probe === 'function' && probe(adapter);
+}
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
@@ -78,6 +85,7 @@ interface SessionAgent {
   /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
    * literal request, so this carries no provider-default sentinel. */
   readonly fastMode?: boolean;
+  readonly ultracode?: boolean;
   /** The model every subagent of this agent runs on (DR-075), or `inherit`
    * for the agent's own model (DR-076). Absence is the provider default. */
   readonly subagentModel?: string;
@@ -93,6 +101,7 @@ type TuningKey =
   | 'model'
   | 'effort'
   | 'fastMode'
+  | 'ultracode'
   | 'subagentModel'
   | 'subagentEffort';
 
@@ -491,6 +500,7 @@ interface EffectivePlayerBinding {
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
   readonly fastMode?: boolean;
+  readonly ultracode?: boolean;
   readonly subagentModel?: string;
   readonly subagentEffort?: string;
   readonly agent: SessionAgent;
@@ -4081,6 +4091,7 @@ function snapshotSessionAgent(
       'model',
       'effort',
       'fastMode',
+      'ultracode',
       'subagentModel',
       'subagentEffort',
       'browser',
@@ -4097,6 +4108,7 @@ function snapshotSessionAgent(
           key !== 'model' &&
           key !== 'effort' &&
           key !== 'fastMode' &&
+          key !== 'ultracode' &&
           key !== 'subagentModel' &&
           key !== 'subagentEffort' &&
           key !== 'browser' &&
@@ -4120,6 +4132,9 @@ function snapshotSessionAgent(
     ...(agent.fastMode === undefined
       ? {}
       : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
+    ...(agent.ultracode === undefined
+      ? {}
+      : { ultracode: snapshotFastMode(agent.ultracode, `${path}.ultracode`) }),
     ...(agent.subagentModel === undefined
       ? {}
       : {
@@ -4151,6 +4166,9 @@ function callSettings(
   agent: SessionAgent,
   tuning: Pick<SessionAgent, TuningKey> = agent,
 ): AgentCallSettings {
+  if (tuning.ultracode !== undefined && !isUltracodeSupported(agent.adapter) && (tuning.ultracode || agent.adapter === 'claude')) {
+    throw new Error(`ultracode is not supported by the installed runtime for ${agent.adapter}; update Cligent to use independent Ultracode tuning`);
+  }
   // cligent treats supplied call settings as a complete replacement, so an
   // omitted fastMode or subagentModel here is a request for the provider
   // default, and an omitted subagentEffort leaves each subagent's effort to
@@ -4162,6 +4180,8 @@ function callSettings(
     browser: agent.browser ?? false,
     skills: agent.skills === undefined ? [] : [...agent.skills],
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
+    ...(tuning.ultracode === undefined || !isUltracodeSupported(agent.adapter)
+      ? {} : { ultracode: tuning.ultracode }),
     ...(tuning.subagentModel === undefined
       ? {}
       : { subagentModel: tuning.subagentModel }),
@@ -4421,6 +4441,7 @@ async function buildEnablements(
           'model',
           'effort',
           'fastMode',
+          'ultracode',
           'subagentModel',
           'subagentEffort',
         ],
@@ -4446,6 +4467,14 @@ async function buildEnablements(
               fastMode: snapshotFastMode(
                 rawBinding.fastMode,
                 `${path}.fastMode`,
+              ),
+            }),
+        ...(rawBinding.ultracode === undefined
+          ? {}
+          : {
+              ultracode: snapshotFastMode(
+                rawBinding.ultracode,
+                `${path}.ultracode`,
               ),
             }),
         ...(rawBinding.subagentModel === undefined

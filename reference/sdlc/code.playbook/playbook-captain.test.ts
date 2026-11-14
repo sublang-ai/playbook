@@ -44,6 +44,7 @@ import {
   assertPlaybookCaptainUnresolvedEffects,
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
+  isUltracodeSupported,
   type PlaybookCaptainDeps,
   type PlaybookCaptainFrameSnapshot,
   type PlaybookCaptainRegistryEntryV3,
@@ -1533,6 +1534,7 @@ interface TestSessionAgent {
     | { readonly kind: 'value'; readonly value: 'low' | 'medium' | 'high' }
     | { readonly kind: 'provider-default' };
   readonly fastMode?: boolean;
+  readonly ultracode?: boolean;
   readonly subagentModel?: string;
   readonly subagentEffort?: string;
   readonly skills?: readonly string[];
@@ -1630,6 +1632,7 @@ function makeShell(
               | 'model'
               | 'effort'
               | 'fastMode'
+              | 'ultracode'
               | 'subagentModel'
               | 'subagentEffort'
             >
@@ -1678,6 +1681,12 @@ function makeShell(
               : {
                   fastMode:
                     opts.roleTunings?.[r.entry.id]?.[role]?.fastMode,
+                }),
+            ...(opts.roleTunings?.[r.entry.id]?.[role]?.ultracode === undefined
+              ? {}
+              : {
+                  ultracode:
+                    opts.roleTunings?.[r.entry.id]?.[role]?.ultracode,
                 }),
             ...(opts.roleTunings?.[r.entry.id]?.[role]?.subagentModel ===
             undefined
@@ -10610,6 +10619,153 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           effort: { kind: 'value', value: 'high' },
           subagentModel: 'inherit',
           subagentEffort: 'xhigh',
+        },
+      });
+
+      await target.dispose?.();
+    }
+
+    await source.dispose?.();
+  });
+
+  it.skipIf(!isUltracodeSupported('claude'))('resumes with independent Ultracode disabled or reset while keeping effort high', async () => {
+    const tunedAgent = (ultracode?: boolean): TestSessionAgent => ({
+      adapter: 'claude',
+      model: { kind: 'value', value: 'stable-model' },
+      effort: { kind: 'value', value: 'high' },
+      subagentModel: 'inherit',
+      ...(ultracode === undefined ? {} : { ultracode }),
+    });
+    const tuning = (ultracode?: boolean) => ({
+      model: { kind: 'value', value: 'stable-model' } as const,
+      effort: { kind: 'value', value: 'high' } as const,
+      subagentModel: 'inherit',
+      ...(ultracode === undefined ? {} : { ultracode }),
+    });
+    const reviewerAgent: TestSessionAgent = {
+      adapter: 'codex',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+    };
+    const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'pin player under Ultracode A',
+        runtimeTurn.signal,
+        false,
+      );
+      return quiescentResult('ready');
+    });
+    const source = makeShell(sourceCode, {
+      sessionIds: [ROOT_ID],
+      captainAgent: tunedAgent(true),
+      roleTunings: { code: { coder: tuning(true) } },
+      playerAgents: {
+        'code-coder': tunedAgent(true),
+        'code-reviewer': reviewerAgent,
+      },
+    });
+    const sourceContext = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Pinned under A.' },
+    ]);
+    sourceContext.context.callPlayer = async (playerId, _prompt, options) => {
+      expect(options?.settings).toMatchObject({ ultracode: true, effort: { kind: 'value', value: 'high' } });
+      return {
+        status: 'ok',
+        playerId,
+        turnId: 1,
+        finalText: 'player A',
+        resumeToken: 'player-retained-token',
+      };
+    };
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(turn('/code pin A'), sourceContext.context);
+    sourceCode.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      {
+        turn: 1,
+        roleResumeTokens: { coder: 'player-retained-token' },
+      },
+    );
+    const snapshot = source.exportSnapshot()!;
+    expect(JSON.stringify(snapshot)).not.toMatch(/ultracode/);
+
+    // The role either pins its own changed Ultracode or leaves it to
+    // the agent; the player's changed default leaks into neither.
+    for (const roleUltracode of [false, undefined]) {
+      const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          'resume player under Ultracode B',
+          runtimeTurn.signal,
+          { resume: runtime.session!.playerSessions!.select('coder') },
+        );
+        runtime.session!.playerSessions!.update('coder', result.resumeToken);
+        return quiescentResult('ready');
+      });
+      const target = makeShell(targetCode, {
+        captainAgent: tunedAgent(false),
+        roleTunings: { code: { coder: tuning(roleUltracode) } },
+        playerAgents: {
+          'code-coder': tunedAgent(true),
+          'code-reviewer': reviewerAgent,
+        },
+      });
+      await target.restore(
+        stubSession(roster).session,
+        JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+      );
+      expect(target.exportSnapshot()).toEqual(snapshot);
+      const targetContext = stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Continued under B.' },
+      ]);
+      targetContext.context.callPlayer = async (playerId, _prompt, options) => {
+        targetContext.playerCalls.push({
+          playerId,
+          prompt: 'captured',
+          options,
+        });
+        return {
+          status: 'ok',
+          playerId,
+          turnId: 2,
+          finalText: 'player B',
+          resumeToken: 'player-next-token',
+        };
+      };
+      await target.handleBossTurn(
+        turn('/code tune B', 2),
+        targetContext.context,
+      );
+
+      expect(targetContext.playerCalls[0]).toEqual({
+        playerId: 'code-coder',
+        prompt: 'captured',
+        options: {
+          resume: 'player-retained-token',
+          settings: {
+            browser: false,
+            skills: [],
+            model: { kind: 'value', value: 'stable-model' },
+            effort: { kind: 'value', value: 'high' },
+            subagentModel: 'inherit',
+            ...(roleUltracode === undefined
+              ? {}
+              : { ultracode: roleUltracode }),
+          },
+        },
+      });
+      expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
+        resume: 'conversation-1',
+        settings: {
+          browser: false,
+          skills: [],
+          model: { kind: 'value', value: 'stable-model' },
+          effort: { kind: 'value', value: 'high' },
+          subagentModel: 'inherit',
+          ultracode: false,
         },
       });
 

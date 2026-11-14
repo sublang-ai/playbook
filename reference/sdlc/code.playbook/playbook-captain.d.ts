@@ -1,4 +1,6 @@
 import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
+/** Whether the installed runtime can honor independent Ultracode tuning. */
+export declare function isUltracodeSupported(adapter: string): boolean;
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookFailureCause, PlaybookRuntime, PlaybookRuntimeSnapshot, PlaybookStepRecord } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
@@ -15,6 +17,7 @@ interface SessionAgent {
     /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
      * literal request, so this carries no provider-default sentinel. */
     readonly fastMode?: boolean;
+    readonly ultracode?: boolean;
     /** The model every subagent of this agent runs on (DR-075), or `inherit`
      * for the agent's own model (DR-076). Absence is the provider default. */
     readonly subagentModel?: string;
@@ -25,7 +28,7 @@ interface SessionAgent {
     readonly permissions?: PermissionPolicy;
 }
 /** Per-call tuning: erased from every structural envelope and snapshot. */
-type TuningKey = 'model' | 'effort' | 'fastMode' | 'subagentModel' | 'subagentEffort';
+type TuningKey = 'model' | 'effort' | 'fastMode' | 'ultracode' | 'subagentModel' | 'subagentEffort';
 interface PlayerLedgerEntry {
     readonly adapter: string;
     readonly instruction?: string;

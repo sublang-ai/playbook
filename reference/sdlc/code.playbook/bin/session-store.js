@@ -5314,6 +5314,7 @@ function validateCaptainSessionProjection(
             'instruction',
             'permissions',
             'fastMode',
+            'ultracode',
             'subagentModel',
             'subagentEffort',
             'browser',
@@ -5419,7 +5420,7 @@ function validateCaptainSessionProjection(
         structural
           ? ['playerId']
           : ['playerId', 'model', 'effort'],
-        structural ? [] : ['fastMode', 'subagentModel', 'subagentEffort'],
+        structural ? [] : ['fastMode', 'ultracode', 'subagentModel', 'subagentEffort'],
         bindingPath,
       );
       assertPlayerId(binding.playerId, `${bindingPath}.playerId`);
@@ -5465,6 +5466,9 @@ function validateCaptainSessionProjection(
 // Absence is the canonical provider default, so the key stays optional and
 // the structural projection erases it beside model and effort.
 function validateProjectedFastMode(record, path) {
+  if (Object.hasOwn(record, 'ultracode') && typeof record.ultracode !== 'boolean') {
+    throw new Error(`${path.replace(/fastMode$/, 'ultracode')} must be a boolean`);
+  }
   if (
     Object.hasOwn(record, 'fastMode') &&
     typeof record.fastMode !== 'boolean'
@@ -5502,6 +5506,7 @@ function validateProjectedAgent(value, path, { structural, hasId = false }) {
             'instruction',
             'permissions',
             'fastMode',
+            'ultracode',
             'subagentModel',
             'subagentEffort',
             'browser',

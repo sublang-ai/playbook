@@ -24,6 +24,7 @@ import {
   isPlaybookEffectLedgerMonotonicExtension,
 } from "../../../../src/xstate-runtime.js";
 import {
+  isUltracodeSupported,
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
   projectUnresolvedEffects,
@@ -1453,6 +1454,9 @@ const FROZEN_ADAPTER_SCOPED_TUNING = [
 
 function assertFrozenTuningSupported(config) {
   const assertSupported = (record, adapter, path) => {
+    if (record.ultracode !== undefined && !isUltracodeSupported(adapter) && (record.ultracode || adapter === "claude")) {
+      throw new Error(`${path} ultracode is not supported by the installed runtime for ${adapter}; update Cligent to use independent Ultracode tuning`);
+    }
     for (const [field, assertFieldSupported] of FROZEN_ADAPTER_SCOPED_TUNING) {
       if (record[field] !== undefined) {
         assertFieldSupported(adapter, `${path} ${field}`);
@@ -1474,7 +1478,7 @@ function assertFrozenTuningSupported(config) {
   for (const [playbookId, item] of Object.entries(config.catalog)) {
     for (const [roleId, binding] of Object.entries(item.roles)) {
       if (
-        FROZEN_ADAPTER_SCOPED_TUNING.every(
+        binding.ultracode === undefined && FROZEN_ADAPTER_SCOPED_TUNING.every(
           ([field]) => binding[field] === undefined,
         )
       ) {
