@@ -127,6 +127,7 @@ meta.md       The spec of specs
 | [DR-101](decisions/101-a-store-rereads-only-what-it-has-not-verified.md) | 101-a-store-rereads-only-what-it-has-not-verified.md | A store rereads only what it has not verified: a per-store bounded cursor of the verified head, byte count, sequence and digest; a later monotonic read verifies only the nodes after that head, and any read without such a boundary verifies the complete chain; amends DR-094 |
 | [DR-102](decisions/102-code-reviews-the-intent-once.md) | 102-code-reviews-the-intent-once.md | CODE reviews the intent once: one nested REVIEW after the direct phase or final IR task over every phase commit, no prior-phase relay, and REVIEW bounded to three Reviewer rounds ending at a distinct `unsettled` failure terminal; amends DR-004 and DR-088, supersedes DR-081 |
 | [DR-103](decisions/103-independent-ultracode-tuning.md) | 103-independent-ultracode-tuning.md | Independent Ultracode boolean tuning, legacy effort compatibility, mutable session projections, and optional installed-runtime capability detection |
+| [DR-104](decisions/104-parent-and-child-seed-models.md) | 104-parent-and-child-seed-models.md | Claude Fable / Opus and Codex Astra / Sol starter pairs, with capability-gated child pins |
 
 ## Packages
 

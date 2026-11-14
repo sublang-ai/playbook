@@ -11,6 +11,8 @@ Amends [DR-096](096-a-second-adapter-reviews.md) in "The Reviewer keeps its own 
 Applies [DR-074](074-seeds-name-the-latest-models.md) to the Codex row: `gpt-6.1-sol` is now the latest Sol model.
 Selection, precedence, the none-ready notice and the public seed export stand.
 
+Amended by [DR-104](104-parent-and-child-seed-models.md) in its model choices alone; the established efforts and selection stand.
+
 ## Context
 
 - The seed ran the Captain, Coder and Inspector at `high` and the Reviewer and Analyst at `xhigh`; the owner judges `medium` enough for a first run, and cheaper and faster for those who meet Playbook first through a workshop.

@@ -36,7 +36,8 @@
 # list, so those captains degrade to a prompt-level restriction (DR-013 A1).
 captain:
   adapter: claude
-  model: claude-opus-5-5
+  model: claude-fable-5-2
+  subagentModel: claude-opus-5-5
   effort: medium
   permissions:
     mode: auto
@@ -53,7 +54,8 @@ notifications:
 players:
   dev.coder:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     # Adapter-scoped fast mode is validated by the installed Cligent contract;
     # omitting it takes the provider default.
@@ -62,7 +64,8 @@ players:
 
   dev.reviewer:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -72,7 +75,8 @@ players:
   # conversations (DR-044).
   dev.analyst:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -80,7 +84,8 @@ players:
   # Inspection has its own conversation. Browser tools stay off until enabled.
   inspect.inspector:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto

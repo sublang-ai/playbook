@@ -11,6 +11,8 @@ Amends [DR-044](044-dev-planning-workflow.md) in one scope: the seeded `dev.anal
 Amended by [DR-075](075-subagent-model-is-tuning.md) in its Cligent floor alone, now `^0.29.0`.
 Amended by [DR-076](076-subagents-delegate-by-default.md) in its Cligent floor alone, now `^0.30.0`.
 
+Amended by [DR-104](104-parent-and-child-seed-models.md) in its fixed model-line choices: the parent models become Fable and Astra, with Opus and Sol child pins where supported.
+
 ## Context
 
 The starter's seed table named `claude-opus-5` for `claude` and `gpt-5.6-sol` for `codex`, and the documentation's examples, the live acceptance gate's Codex defaults, and the CI acceptance configuration named these models or older ones.

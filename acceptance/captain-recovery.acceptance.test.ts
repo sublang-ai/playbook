@@ -9,6 +9,7 @@ import { assign, createMachine } from 'xstate';
 import { expect, it } from 'vitest';
 import {
   createEvent,
+  isSubagentModelSupported,
   type AgentEvent,
   type AgentOptions,
 } from '@sublang/cligent';
@@ -289,15 +290,16 @@ it.each(['player', 'judge', 'files', 'preparation', 'missing-transition'])(
       configPath,
       `captain:
   adapter: claude
-  model: ${process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-5-5'}
+  model: ${process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-fable-5-2'}
+  subagentModel: claude-opus-5-5
   effort: low
   permissions: { mode: auto }
 notifications: { player_finished: off, turn_finished: off, turn_aborted: off }
 players:
   worker:
     adapter: codex
-    model: ${process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6.1-sol'}
-    effort: low
+    model: ${process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6-astra'}
+${isSubagentModelSupported('codex') ? '    subagentModel: gpt-6.1-sol\n' : ''}    effort: low
     permissions: { mode: auto, writablePaths: ['.git'] }
 playbooks:
   recovery-flow:

@@ -267,20 +267,24 @@ jobs:
           cat > "$HOME/.spex/config/playbook.config.yaml" <<'YAML'
           captain:
             adapter: claude
-            model: claude-opus-5-5
+            model: claude-fable-5-2
+            subagentModel: claude-opus-5-5
             effort: high
             permissions:
               mode: auto
           players:
             dev.coder:
               adapter: claude
-              model: claude-opus-5-5
+              model: claude-fable-5-2
+              subagentModel: claude-opus-5-5
               effort: high
               permissions:
                 mode: auto
             dev.reviewer:
               adapter: codex
-              model: gpt-6.1-sol
+              model: gpt-6-astra
+              # Deliberately exercise the omitted child pin: this missing-SDK
+              # gate must validate on both Cligent 0.38 and capable releases.
               effort: high
               permissions:
                 mode: auto

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+import { isSubagentModelSupported } from '@sublang/cligent';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,6 +37,7 @@ it.each(['SDK', 'CLI'])('Boss clarifies, reopens, and answers using only Captain
   await writeFile(configPath, `captain:
   adapter: claude
   model: ${JSON.stringify(claude)}
+  subagentModel: claude-opus-5-5
   effort: low
   permissions: { mode: auto }
 notifications: { player_finished: off, turn_finished: off, turn_aborted: off }
@@ -43,7 +45,7 @@ players:
   worker:
     adapter: codex
     model: ${JSON.stringify(codex)}
-    effort: low
+${isSubagentModelSupported('codex') ? '    subagentModel: gpt-6.1-sol\n' : ''}    effort: low
     permissions: { mode: auto }
 playbooks:
   question-flow:

@@ -379,11 +379,12 @@ file is written from the adapters the credential check of
 [[playbook-cli-12](playbook-cli.md#playbook-cli-12)] already sees, by this fixed
 order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md); [DR-096](../decisions/096-a-second-adapter-reviews.md); [DR-099](../decisions/099-seeds-run-at-medium-effort.md)):
 
-| Order | Adapter | Model |
-| --- | --- | --- |
-| 1 | `claude` | `claude-opus-5-5` |
-| 2 | `codex` | `gpt-6.1-sol` |
+| Order | Adapter | Model | Subagent model |
+| --- | --- | --- | --- |
+| 1 | `claude` | `claude-fable-5-2` | `claude-opus-5-5` |
+| 2 | `codex` | `gpt-6-astra` | `gpt-6.1-sol` where installed Cligent reports subagent-model support; omitted otherwise |
 
+- every seeded agent shall carry its row's subagent model where the installed Cligent reports request support, and omit it otherwise ([DR-104](../decisions/104-parent-and-child-seed-models.md));
 - the first ready adapter in that order supplies every seeded agent, except
   that where both listed adapters are ready, `dev.reviewer` alone takes the
   second row;
@@ -1242,12 +1243,13 @@ shall fail unless the command creates that file from the bundled starter config,
 
 | Credentials visible to the seed | Seeded lineup | Notice |
 | --- | --- | --- |
-| claude only | every agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
-| codex only | every agent on `codex` / `gpt-6.1-sol`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
-| both | `dev.reviewer` on `codex` / `gpt-6.1-sol` at effort `high` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-opus-5-5`, no writable-path grant | the resolved path alone |
-| neither | every agent on `claude` / `claude-opus-5-5` | the resolved path, plus one line naming that no adapter probed ready |
+| claude only | every agent on `claude` / `claude-fable-5-2`, no writable-path grant | the resolved path alone |
+| codex only | every agent on `codex` / `gpt-6-astra`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
+| both | `dev.reviewer` on `codex` / `gpt-6-astra` at effort `high` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-fable-5-2`, no writable-path grant | the resolved path alone |
+| neither | every agent on `claude` / `claude-fable-5-2` | the resolved path, plus one line naming that no adapter probed ready |
 
 - every agent takes effort `medium` in every row, except the both row's `dev.reviewer`;
+- every row carries its adapter's child pin when the installed Cligent reports request support and omits it otherwise, as [[playbook-cli-11](#playbook-cli-11)] requires;
 - each row shall be driven by an injected home directory and an explicit environment, so no case depends on the machine running the suite;
 - seeding twice in one invocation shall write one file and select one lineup;
 - a session `playbook run` starts on the both row's seed shall continue through `run --session` on that seed, its turn count advancing and its provider resumed [[playbook-cli-11](#playbook-cli-11)].

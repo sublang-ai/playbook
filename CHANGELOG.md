@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Seed Claude Fable 5.2 with Opus 5.5 subagents and GPT-6 Astra with GPT-6.1 Sol subagents where installed Cligent supports the child pin; preserve existing configs and adapter selection, and test against Claude Agent SDK 0.3.325.
+
 - Carry independent optional `ultracode` boolean tuning through agent and role config, complete calls, and session execution records; retain legacy effort shorthand and safely detect installed runtime support without raising the published dependency floor.
 
 - Accept Cligent `^0.38.0 || ^0.39.0`, retaining the published 0.38.0 lock. With Cligent 0.39, Codex native subagents receive the existing model and effort tuning, and an unset subagent model defaults to `inherit` through the installed adapter capability.

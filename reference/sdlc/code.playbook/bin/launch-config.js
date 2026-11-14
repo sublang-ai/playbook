@@ -1699,8 +1699,10 @@ function assertLegacyRelocationLocatorsSafe(
 // row names the latest model of its adapter's line; the template names
 // the first row's model, because the default seed is its byte copy.
 const SEED_LINEUP = Object.freeze([
-  Object.freeze({ adapter: "claude", model: "claude-opus-5-5" }),
-  Object.freeze({ adapter: "codex", model: "gpt-6.1-sol" }),
+  Object.freeze({ adapter: "claude", model: "claude-fable-5-2", subagentModel: "claude-opus-5-5" }),
+  Object.freeze({ adapter: "codex", model: "gpt-6-astra",
+    ...(isSubagentModelSupported("codex") ? { subagentModel: "gpt-6.1-sol" } : {}),
+  }),
 ]);
 
 // DR-096: where both adapters are ready, this player alone takes the
@@ -1758,6 +1760,11 @@ function seedTextForLineup(template, { lineup, reviewer }) {
     changed = true;
     doc.setIn([...path, "adapter"], entry.adapter);
     doc.setIn([...path, "model"], entry.model);
+    if (entry.subagentModel !== undefined) {
+      doc.setIn([...path, "subagentModel"], entry.subagentModel);
+    } else {
+      doc.deleteIn([...path, "subagentModel"]);
+    }
     if (second) doc.setIn([...path, "effort"], SECOND_ADAPTER_EFFORT);
     // A codex agent writes git metadata under its sandbox; claude's
     // auto mode needs no grant, so the key exists for one adapter only.

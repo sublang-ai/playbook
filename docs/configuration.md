@@ -85,7 +85,8 @@ The Claude default is shown below. Each Codex agent also carries
 ```yaml
 captain:
   adapter: claude
-  model: claude-opus-5-5
+  model: claude-fable-5-2
+  subagentModel: claude-opus-5-5
   effort: medium
   permissions:
     mode: auto # protected auto mode for the Claude Captain
@@ -93,28 +94,32 @@ captain:
 players:
   dev.coder:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Coder
 
   dev.reviewer:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Reviewer
 
   dev.analyst:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Analyst
 
   inspect.inspector:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -212,6 +217,10 @@ is safe on other adapters; older Claude runtimes reject either explicit boolean
 with update guidance because they cannot enforce it. Legacy `effort: ultracode` remains
 supported.
 
+New starter configs use Claude Fable 5.2 with Opus 5.5 subagents, or GPT-6 Astra with GPT-6.1 Sol subagents.
+The Codex child pin is included only when installed Cligent supports it; older supported installs omit that pin.
+Seeding preserves existing files and all settings remain tunable.
+
 `subagentModel` selects the model for delegated work —
 `inherit` names the agent's own, a model name pins another, and `false` on a
 `captain` or `players.<player-id>` block switches delegation off — and tells
@@ -259,7 +268,7 @@ second top-level player and change only its binding:
 players:
   review.coder:
     adapter: codex
-    model: gpt-6.1-sol
+    model: gpt-6-astra
     effort: ultra
     permissions:
       mode: auto
@@ -528,12 +537,12 @@ playbooks:
   code:
     from: '@sublang/playbook/code/registry'
     players:
-      coder: { adapter: claude, model: claude-opus-5-5 }
+      coder: { adapter: claude, model: claude-fable-5-2 }
   review:
     from: '@sublang/playbook/review/registry'
     players:
-      coder: { adapter: claude, model: claude-opus-5-5 }
-      reviewer: { adapter: codex, model: gpt-6.1-sol }
+      coder: { adapter: claude, model: claude-fable-5-2 }
+      reviewer: { adapter: codex, model: gpt-6-astra }
 ```
 
 Move each provider agent into the flat top-level map, choose stable IDs, and
@@ -541,8 +550,8 @@ bind the local roles explicitly:
 
 ```yaml
 players:
-  dev.coder: { adapter: claude, model: claude-opus-5-5 }
-  dev.reviewer: { adapter: codex, model: gpt-6.1-sol }
+  dev.coder: { adapter: claude, model: claude-fable-5-2 }
+  dev.reviewer: { adapter: codex, model: gpt-6-astra }
 
 playbooks:
   code:

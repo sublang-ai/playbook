@@ -1801,7 +1801,8 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.dev.roles).toEqual({ analyst: 'dev.analyst' });
     expect(template.players['dev.analyst']).toEqual({
       adapter: 'claude',
-      model: 'claude-opus-5-5',
+      model: 'claude-fable-5-2',
+      subagentModel: 'claude-opus-5-5',
       effort: 'medium',
       permissions: { mode: 'auto' },
     });
@@ -1811,7 +1812,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.inspect.roles).toEqual({ inspector: 'inspect.inspector' });
-    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-opus-5-5', effort: 'medium', permissions: { mode: 'auto' } });
+    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-fable-5-2', subagentModel: 'claude-opus-5-5', effort: 'medium', permissions: { mode: 'auto' } });
     expect(Object.keys(template.playbooks)).toEqual([
       'code',
       'review',
