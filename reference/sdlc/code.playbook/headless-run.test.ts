@@ -3514,11 +3514,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       );
       const playerId = execution.catalog.code.roles.coder.playerId;
       structural.players.find((player: any) => player.id === playerId).adapter =
-        'codex';
+        'gemini';
       const player = execution.players.find(
         (candidate: any) => candidate.id === playerId,
       );
-      player.adapter = 'codex';
+      player.adapter = 'gemini';
       clearSubagentTuning(player, execution.catalog.code.roles.coder);
       if (where === 'player') player.subagentModel = 'frozen-subagents';
       else execution.catalog.code.roles.coder.subagentModel = 'frozen-subagents';
@@ -3530,7 +3530,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           prepareRegistryModule,
           loadModule,
         }),
-      ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+      ).rejects.toThrow(/subagentModel is not supported for adapter "gemini"/);
       expect(prepareRegistryModule).not.toHaveBeenCalled();
       expect(loadModule).not.toHaveBeenCalled();
     }
@@ -3565,15 +3565,15 @@ describe('durable Captain continuation (PBCLI-24)', () => {
             ? player
             : execution.catalog.code.roles.coder;
       if (where === 'captain') {
-        structural.captain.adapter = 'codex';
-        execution.captain.adapter = 'codex';
+        structural.captain.adapter = 'gemini';
+        execution.captain.adapter = 'gemini';
         clearSubagentTuning(execution.captain);
         execution.captain.effort = { kind: 'provider-default' };
       } else {
         structural.players.find(
           (candidate: any) => candidate.id === playerId,
-        ).adapter = 'codex';
-        player.adapter = 'codex';
+        ).adapter = 'gemini';
+        player.adapter = 'gemini';
         player.effort = { kind: 'provider-default' };
         execution.catalog.code.roles.coder.effort = { kind: 'provider-default' };
         clearSubagentTuning(player, execution.catalog.code.roles.coder);
@@ -3587,7 +3587,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           prepareRegistryModule,
           loadModule,
         }),
-      ).rejects.toThrow(/subagentEffort is not supported for adapter "codex"/);
+      ).rejects.toThrow(/subagentEffort is not supported for adapter "gemini"/);
       expect(prepareRegistryModule).not.toHaveBeenCalled();
       expect(loadModule).not.toHaveBeenCalled();
     }

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Accept Cligent `^0.38.0 || ^0.39.0`, retaining the published 0.38.0 lock. With Cligent 0.39, Codex native subagents receive the existing model and effort tuning, and an unset subagent model defaults to `inherit` through the installed adapter capability.
+
 ## [18.2.0] - 2026-11-08
 
 ### Changed

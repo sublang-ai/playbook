@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { getSubagentModelSupport } from '@sublang/cligent';
 import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -131,12 +132,14 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
           playerId: 'dev.coder',
           model: { kind: 'value', value: 'm-agent' },
           effort: { kind: 'provider-default' },
+          ...(getSubagentModelSupport('codex').requestSupported
+            ? { subagentModel: 'inherit' } : {}),
         },
         reviewer: {
           playerId: 'dev.reviewer',
           model: { kind: 'provider-default' },
           effort: { kind: 'provider-default' },
-          // DR-076: a Claude agent delegates by default; codex serves none.
+          // DR-076: delegation defaults follow the installed adapter capability.
           subagentModel: 'inherit',
         },
       },
@@ -144,7 +147,10 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
     });
     // Exact stable player ids survive the host roster.
     expect(config.players).toEqual([
-      { id: 'dev.coder', adapter: 'codex', model: 'm-agent' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-agent',
+        ...(getSubagentModelSupport('codex').requestSupported
+          ? { subagentModel: 'inherit' } : {}),
+      },
       { id: 'dev.reviewer', adapter: 'claude', subagentModel: 'inherit' },
     ]);
     // Launcher owns initialVisible (first playbook's generated players);
@@ -3681,8 +3687,14 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(out.code).toBe(0);
     const composed = parseYaml(spawn.configs[0].content);
     expect(composed.players).toEqual([
-      { id: 'dev.coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh' },
-      { id: 'dev.reviewer', adapter: 'codex' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh',
+        ...(getSubagentModelSupport('codex').requestSupported
+          ? { subagentModel: 'inherit' } : {}),
+      },
+      { id: 'dev.reviewer', adapter: 'codex',
+        ...(getSubagentModelSupport('codex').requestSupported
+          ? { subagentModel: 'inherit' } : {}),
+      },
     ]);
     expect(
       composed.captain.options.playbooks.code.roles.coder.model,

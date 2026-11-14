@@ -256,7 +256,8 @@ export function assertFastModeSupported(agent, path = 'fastMode') {
       subagentModelAssertionRuntime
         ? `export const SUBAGENT_MODEL_SUPPORT = Object.freeze({
   'claude-code': Object.freeze({ requestSupported: true }),
-  codex: Object.freeze({ requestSupported: false }),
+  codex: Object.freeze({ requestSupported: true }),
+  gemini: Object.freeze({ requestSupported: false }),
 });
 export function assertSubagentModelSupported(agent, path = 'subagentModel') {
   ${

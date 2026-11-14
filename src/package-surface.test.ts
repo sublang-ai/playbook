@@ -109,7 +109,7 @@ const CI_LOCKFILE_SETTINGS = {
 // rather than to a published artifact.
 const LOCAL_PROTOCOL = /^(?:link|file|portal):/;
 
-const CARET_RANGE = /^\^\d+\.\d+\.\d+$/;
+const CARET_RANGE = /^\^\d+\.\d+\.\d+(?: \|\| \^\d+\.\d+\.\d+)*$/;
 
 /**
  * Whether a lockfile resolution falls inside a declared caret range.
@@ -127,6 +127,9 @@ const CARET_RANGE = /^\^\d+\.\d+\.\d+$/;
  * itself resolves, where SemVer's rule is the one that governs.
  */
 function satisfiesCaret(version: string, range: string): boolean {
+  if (range.includes(' || ')) {
+    return range.split(' || ').some((part) => satisfiesCaret(version, part));
+  }
   // SemVer's numeric-identifier grammar, not `parseInt`, which would accept
   // a leading zero, interior whitespace, and trailing garbage that SemVer
   // rejects — reading `1.2.9zzz` as the in-range `1.2.9`.
@@ -208,14 +211,16 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     );
     const recordsLocalLink = lockEntry.version.startsWith('link:');
 
-    expect(packageSpecifier).toMatch(/^\^\d+\.\d+\.\d+$/);
-    const declaredFloor = packageSpecifier.slice(1).split('.').map(Number);
-    expect(
-      declaredFloor[0] > 0 ||
-        (declaredFloor[0] === 0 &&
-          declaredFloor[1] >= 37),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
-    ).toBe(true);
+    expect(packageSpecifier).toMatch(CARET_RANGE);
+    for (const range of packageSpecifier.split(' || ')) {
+      const declaredFloor = range.slice(1).split('.').map(Number);
+      expect(
+        declaredFloor[0] > 0 ||
+          (declaredFloor[0] === 0 &&
+            declaredFloor[1] >= 37),
+        `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+      ).toBe(true);
+    }
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
     // override file exists.
@@ -230,6 +235,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         : recordsConcreteVersion,
     ).toBe(true);
     if (!recordsLocalLink) {
+      expect(satisfiesCaret(lockEntry.version, packageSpecifier)).toBe(true);
       const resolvedFloor = lockEntry.version
         .split('(')[0]
         .split('.')

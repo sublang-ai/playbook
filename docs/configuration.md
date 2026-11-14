@@ -204,7 +204,7 @@ only for adapters Cligent reports as supporting it. A role binding cannot overri
 permissions, workspace, or tool posture; those define the stable player
 envelope, so an overriding model must be one that player's adapter serves.
 
-`subagentModel` makes every subagent the agent starts run on one model —
+`subagentModel` selects the model for delegated work —
 `inherit` names the agent's own, a model name pins another, and `false` on a
 `captain` or `players.<player-id>` block switches delegation off — and tells
 the agent to hand well-defined, fine-grained tasks to its subagents while
@@ -219,7 +219,11 @@ choice runs through `delegate-<effort>` subagents and a call naming no type
 runs `general-purpose` at `medium`; `Explore` and `Plan` are never replaced and
 keep the agent's own effort
 ([Cligent DR-029](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/029-subagent-effort.md)).
-An agent whose adapter serves a subagent model (Claude today) and whose block
+On Codex with Cligent 0.39 or later, these fields set native subagent defaults;
+`subagentEffort` accepts `minimal`, `low`, `medium`, `high`, and `xhigh`.
+Explicit spawn settings and custom role definitions can override these defaults;
+a full-history fork inherits the parent model and effort.
+An agent whose adapter serves a subagent model (Claude, and Codex with Cligent 0.39 or later) and whose block
 leaves `subagentModel` unset resolves to `inherit`: it delegates by default.
 The launcher resolves this on its own copy and never rewrites your config, and
 the starter config names neither field

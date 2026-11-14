@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
+import { getSubagentModelSupport } from '@sublang/cligent';
 import * as launchConfig from './bin/launch-config.js';
 import * as launcher from './bin/playbook.js';
 import { executionConfigFromPlan } from './bin/run.js';
@@ -432,6 +433,8 @@ describe('shared launch-config plan (PBCLI-47)', () => {
         adapter: 'codex',
         model: 'coder-default',
         effort: 'high',
+        ...(getSubagentModelSupport('codex').requestSupported
+          ? { subagentModel: 'inherit' } : {}),
       },
       {
         id: 'dev.reviewer',
@@ -1978,9 +1981,7 @@ describe('adapter-scoped subagent model', () => {
     expect(plan.captain.subagentModel).toBe('captain-subagents');
     expect(plan.players[0].agent.subagentModel).toBe('player-subagents');
     expect(plan.catalog.code.roles.coder.subagentModel).toBe('role-subagents');
-    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty(
-      'subagentModel',
-    );
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty('subagentModel');
     expect(plan.catalog.code.roles.tester.subagentModel).toBe(
       'player-subagents',
     );
@@ -2006,9 +2007,7 @@ describe('adapter-scoped subagent model', () => {
     expect(execution.catalog.code.roles.coder.subagentModel).toBe(
       'role-subagents',
     );
-    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
-      'subagentModel',
-    );
+    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty('subagentModel');
     expect(execution.catalog.code.roles.tester.subagentModel).toBe(
       'player-subagents',
     );
@@ -2172,7 +2171,7 @@ describe('adapter-scoped subagent model', () => {
       'a role binding',
       {
         captain: 'claude',
-        players: { 'dev.coder': 'codex' },
+        players: { 'dev.coder': 'gemini' },
         playbooks: {
           code: {
             from: 'mod://code',
@@ -2185,14 +2184,14 @@ describe('adapter-scoped subagent model', () => {
       'a player block',
       {
         captain: 'claude',
-        players: { 'dev.coder': { adapter: 'codex', subagentModel: 'sub' } },
+        players: { 'dev.coder': { adapter: 'gemini', subagentModel: 'sub' } },
         playbooks: {
           code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
         },
       },
     ],
   ])(
-    'rejects a subagent model on a codex player in %s before registry work',
+    'rejects a subagent model on a gemini player in %s before registry work',
     async (_case, config) => {
       const prepareRegistryModule = vi.fn();
       const loadModule = vi.fn();
@@ -2201,16 +2200,16 @@ describe('adapter-scoped subagent model', () => {
           prepareRegistryModule,
           loadModule,
         }),
-      ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+      ).rejects.toThrow(/subagentModel is not supported for adapter "gemini"/);
       expect(prepareRegistryModule).not.toHaveBeenCalled();
       expect(loadModule).not.toHaveBeenCalled();
     },
   );
 
-  it('rejects a codex binding subagent model on a selected reopen', async () => {
+  it('rejects a gemini binding subagent model on a selected reopen', async () => {
     const config = {
       captain: 'claude',
-      players: { 'dev.coder': 'codex' },
+      players: { 'dev.coder': 'gemini' },
       playbooks: {
         code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
       },
@@ -2234,7 +2233,7 @@ describe('adapter-scoped subagent model', () => {
           stored: structuralProjection(initial),
         },
       ),
-    ).rejects.toThrow(/subagentModel is not supported for adapter "codex"/);
+    ).rejects.toThrow(/subagentModel is not supported for adapter "gemini"/);
   });
 });
 
@@ -2255,7 +2254,7 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     };
   }
 
-  it('resolves an unset Claude subagent model to inherit, and nothing for codex or false', async () => {
+  it('resolves delegation defaults from the installed adapter capability and honors false', async () => {
     const root = await mkdtemp(join(tmpdir(), 'playbook-delegation-default-'));
     tempDirs.push(root);
     const configPath = join(root, 'playbook.config.yaml');
@@ -2283,12 +2282,12 @@ describe('subagent effort and the delegation default (DR-076)', () => {
       plan.players.map((player: any) => [player.id, player.agent]),
     );
     expect(agents['dev.coder'].subagentModel).toBe('inherit');
-    expect(agents['dev.reviewer']).not.toHaveProperty('subagentModel');
+    const codexDefault = getSubagentModelSupport('codex').requestSupported
+      ? 'inherit' : undefined;
+    expect(agents['dev.reviewer'].subagentModel).toBe(codexDefault);
     expect(agents['dev.tester']).not.toHaveProperty('subagentModel');
     expect(plan.catalog.code.roles.coder.subagentModel).toBe('inherit');
-    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty(
-      'subagentModel',
-    );
+    expect(plan.catalog.code.roles.reviewer.subagentModel).toBe(codexDefault);
     expect(plan.catalog.code.roles.tester).not.toHaveProperty('subagentModel');
 
     // Both front ends receive the resolved default.
@@ -2307,15 +2306,38 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     const execution: any = executionConfigFromPlan(plan);
     expect(execution.captain.subagentModel).toBe('inherit');
     expect(execution.catalog.code.roles.coder.subagentModel).toBe('inherit');
-    expect(execution.catalog.code.roles.reviewer).not.toHaveProperty(
-      'subagentModel',
-    );
+    expect(execution.catalog.code.roles.reviewer.subagentModel).toBe(codexDefault);
 
     // The config file is never rewritten, and structure carries no default.
     expect(await readFile(configPath, 'utf8')).toBe(source);
     expect(JSON.stringify(structuralProjection(plan))).not.toContain(
       'subagent',
     );
+  });
+
+  it.each(['claude', 'codex'].filter(
+    (adapter) => getSubagentModelSupport(adapter).requestSupported,
+  ))('carries %s subagent tuning through both front ends and role overrides', async (adapter) => {
+    const plan: any = await launchConfig.normalizeLaunchPlan({
+      captain: { adapter, subagentModel: 'inherit', subagentEffort: 'low' },
+      players: {
+        'dev.coder': { adapter, subagentModel: 'inherit', subagentEffort: 'medium' },
+      },
+      playbooks: { code: { from: 'mod://code', roles: {
+        coder: { player: 'dev.coder', subagentEffort: 'high' },
+        reviewer: 'dev.coder',
+        tester: { player: 'dev.coder', subagentModel: false, subagentEffort: false },
+      } } },
+    }, load);
+    for (const projection of [launchConfig.projectTmuxConfig(plan), executionConfigFromPlan(plan)] as any[]) {
+      expect(projection.captain).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'low' });
+    }
+    const roles = plan.catalog.code.roles;
+    expect(roles.coder).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'high' });
+    expect(roles.reviewer).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'medium' });
+    expect(roles.tester).not.toHaveProperty('subagentModel');
+    expect(roles.tester).not.toHaveProperty('subagentEffort');
+    expect(JSON.stringify(structuralProjection(plan))).not.toContain('subagent');
   });
 
   it('accepts an explicit inherit on a block and a binding', async () => {
@@ -2509,7 +2531,7 @@ describe('subagent effort and the delegation default (DR-076)', () => {
       'a role binding',
       {
         captain: 'claude',
-        players: { 'dev.coder': 'codex' },
+        players: { 'dev.coder': 'gemini' },
         playbooks: {
           code: {
             from: 'mod://code',
@@ -2522,14 +2544,14 @@ describe('subagent effort and the delegation default (DR-076)', () => {
       'a player block',
       {
         captain: 'claude',
-        players: { 'dev.coder': { adapter: 'codex', subagentEffort: 'high' } },
+        players: { 'dev.coder': { adapter: 'gemini', subagentEffort: 'high' } },
         playbooks: {
           code: { from: 'mod://code', roles: { coder: 'dev.coder' } },
         },
       },
     ],
   ])(
-    'rejects a subagent effort on a codex player in %s before registry work',
+    'rejects a subagent effort on a gemini player in %s before registry work',
     async (_case, config) => {
       const prepareRegistryModule = vi.fn();
       const loadModule = vi.fn();
@@ -2538,7 +2560,7 @@ describe('subagent effort and the delegation default (DR-076)', () => {
           prepareRegistryModule,
           loadModule,
         }),
-      ).rejects.toThrow(/subagentEffort is not supported for adapter "codex"/);
+      ).rejects.toThrow(/subagentEffort is not supported for adapter "gemini"/);
       expect(prepareRegistryModule).not.toHaveBeenCalled();
       expect(loadModule).not.toHaveBeenCalled();
     },
