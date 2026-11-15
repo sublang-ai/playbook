@@ -93,6 +93,8 @@ Every requirement Source states that is not itself an action or the content of a
 
 A requirement item shall keep the Source's own wording where that wording is already a requirement, and shall add no obligation Source does not state: it adds a citation, never a scope, a qualifier, or an output field name that Source does not give.
 Where the Source's wording names a machine part, such as a transition, the item states the same rule as what follows in the run.
+What a workflow operates on is its behavior and keeps the Source's name for it: a coding workflow that creates and works through intent records names them as its Source does.
+That differs from citing a record: Target cites or names no particular decision or intent record of any specs tree.
 
 ### Citations
 

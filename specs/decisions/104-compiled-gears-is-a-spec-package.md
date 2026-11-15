@@ -50,6 +50,7 @@ A compiled GEARS file shall be a spec package in the form of [[1]], with the one
 - Every invariant, terminal return, bound, child-return rule and Boss-answer resumption is a requirement item, stated once; an action item carries nothing but its statement, its prompt and its result contract.
 - Reliance of one item on another is an inline citation within the package.
 - Departure from [[1]]: a peer playbook is named by its backticked id, not bound by a citation of its External Behavior, because a package compiles without its peers' packages and cannot know their item IDs; the relying item states in its own statement the behavior it relies on.
+- A package names what its workflow operates on as its Source does — the `code` package names the intent records Coder creates and works through — because that is the workflow's behavior; it cites or names no particular record of any specs tree.
 - Test items cite every action and requirement item and describe flows a run shows from outside.
 - A test item maps its scenario as Given-When-Then — what has already happened is `While` or `Where`, the one event under test is `When` — and its assertions cite the action that delivers a prompt instead of restating the prompt.
 
