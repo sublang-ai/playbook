@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// This suite exercises Playbook's call boundary with a capable runtime.
-vi.mock('@sublang/cligent', async (load) => ({
-  ...await load<typeof import('@sublang/cligent')>(),
-  isUltracodeSupported: (adapter: string) => adapter === 'claude',
-}));
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createEvent } from '@sublang/cligent';
@@ -2542,7 +2537,12 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       });
       delete registry.entry.summaryPolicy;
       const shell = makeShell(registry, {
-        captainAdapter,
+        captainAgent: {
+          adapter: captainAdapter,
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+          ...(['claude', 'codex'].includes(captainAdapter) ? { subagentModel: 'inherit', subagentEffort: 'low' } : {}),
+        },
       });
       const session = stubSession();
       const context = stubContext();
@@ -2552,6 +2552,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
 
       expect(context.captainCalls).toHaveLength(3);
       for (const call of context.captainCalls) {
+        expect(call.options?.settings).not.toHaveProperty('subagentModel');
+        expect(call.options?.settings).not.toHaveProperty('subagentEffort');
         expect(call.options?.visibility).toBe('hidden');
         expect(
           call.options !== undefined &&
@@ -16832,4 +16834,12 @@ describe('attachment scope across Captain engagement boundaries (playbook-captai
       if ('frames' in snapshot) expect(snapshot.frames.map(frame => frame.attachments)).toEqual([undefined, undefined]);
     } finally { await shell.dispose?.(); }
   });
+});
+
+ it('reports the public adapter-scoped Ultracode capability through Cligent', async () => {
+  const runtime = await import('@sublang/cligent');
+  const facade = await import('./playbook-captain.js');
+  for (const adapter of ['claude', 'claude-code', 'codex', 'gemini', 'kimi', 'opencode'] as const) {
+    expect(facade.isUltracodeSupported(adapter)).toBe(runtime.isUltracodeSupported(adapter));
+  }
 });

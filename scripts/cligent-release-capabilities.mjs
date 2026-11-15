@@ -444,6 +444,30 @@ export const exact: Exact = true;
 `,
   ),
   typeCapability(
+    'AgentCallSettings.ultracode',
+    'agent-call-settings-ultracode.ts',
+    'Ultracode is an optional literal boolean in complete settings.',
+    `import type { AgentCallSettings } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends
+        (<T>() => T extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+type Assert<T extends true> = T;
+type Optional = Assert<
+  {} extends Pick<AgentCallSettings, 'ultracode'> ? true : false
+>;
+type Exact = Assert<Equal<AgentCallSettings['ultracode'], boolean | undefined>>;
+export const disabled: AgentCallSettings['ultracode'] = false;
+export const enabled: AgentCallSettings['ultracode'] = true;
+export const optional: Optional = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'AgentCallSettings.subagentModel',
     'agent-call-settings-subagent-model.ts',
     'The subagent model is an optional model string in complete settings (DR-075).',
@@ -908,6 +932,7 @@ export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'launchManagedTmuxPlay runtime export',
   'runManagedTmuxPlaySession runtime export',
   'getNativeSkillSupport runtime semantics',
+  'provider defaults and independent Ultracode runtime semantics',
 ]);
 
 function formatDiagnostic(diagnostic) {
@@ -1379,6 +1404,24 @@ if (getNativeSkillSupport('playbook-unlisted-adapter') !== undefined) {
     runner: nativeSkillRunner,
     args: [],
   });
+
+  const modelTuningRunner = join(root, 'provider-model-tuning.mjs');
+  writeFileSync(modelTuningRunner, `import { defaultAgentModels, isUltracodeSupported } from '@sublang/cligent';
+import { loadTmuxPlayConfig } from '${CLIGENT_RELEASE_SPECIFIER}';
+const pair = defaultAgentModels('codex', {}, undefined);
+if (!pair?.model || !pair?.subagentModel) throw new Error('official Codex route lacks model pair');
+if (!isUltracodeSupported('claude') || isUltracodeSupported('codex')) throw new Error('invalid Ultracode adapter boundary');
+for (const ultracode of [true, false]) {
+ const loaded = await loadTmuxPlayConfig({ configPath: process.argv[ultracode ? 2 : 3] });
+ if (loaded.config.players[0].ultracode !== ultracode) throw new Error('Ultracode boolean was lost');
+}
+`);
+  const tuningPaths = [true, false].map(value => {
+    const path = join(root, 'ultracode-' + value + '.yaml');
+    writeFileSync(path, 'captain:\n  from: "@sublang/cligent/captains/fanout"\n  adapter: claude\n  options: {}\nplayers:\n  - id: dev.coder\n    adapter: claude\n    ultracode: ' + value + '\n');
+    return path;
+  });
+  probes.push({ id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[8], why: 'The required floor supplies provider model defaults and independent adapter-scoped Ultracode tuning.', runner: modelTuningRunner, args: tuningPaths });
 
   const proven = [];
   const unproven = [];

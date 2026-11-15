@@ -7,7 +7,7 @@
 
 Accepted
 
-Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and optional installed-runtime capability detection.
+Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
 
 ## Context
 

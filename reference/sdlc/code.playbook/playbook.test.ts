@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import * as cligent from '@sublang/cligent';
 import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -828,13 +827,8 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
   });
 });
 
-// Check both supported installations against the release's literal model IDs.
-const hasModelDefaults = 'defaultAgentModels' in cligent;
-const claudePins = hasModelDefaults
-  ? { model: 'claude-fable-5-2', subagentModel: 'claude-opus-5-5' } : {};
-const codexPins = hasModelDefaults
-  ? { model: 'gpt-6-astra', subagentModel: 'gpt-6.1-sol' } : {};
-const claudeCallPins = { subagentModel: 'inherit', ...claudePins };
+const claudePins = { model: 'claude-fable-5-2', subagentModel: 'claude-opus-5-5' };
+const codexPins = { model: 'gpt-6-astra', subagentModel: 'gpt-6.1-sol' };
 
 describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
   // PBCLI-11 / DR-053: the seeded lineup follows the credentials the seed can
@@ -1007,7 +1001,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/dev/registry');
     expect(seeded).toContain('@sublang/playbook/branch/registry');
     expect(seeded).toContain('@sublang/playbook/pr/registry');
-    expect(seeded.includes('claude-fable-5-2')).toBe(hasModelDefaults);
+    expect(seeded).toContain('claude-fable-5-2');
     expect(seeded).not.toContain('committer:');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
@@ -1064,26 +1058,26 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(composed.captain).toMatchObject({
       adapter: 'claude',
-      ...claudeCallPins,
+      ...claudePins,
       effort: 'medium',
       // PBCLI-11: every seeded agent, including the claude Captain, runs in
       // cligent's protected auto mode.
       permissions: { mode: 'auto' },
     });
     // The seeded child pin survives composition and role inheritance.
-    expect(composed.captain.subagentModel).toBe(claudeCallPins.subagentModel);
+    expect(composed.captain.subagentModel).toBe(claudePins.subagentModel);
     expect(composed.players).toEqual([
       {
         id: 'dev.coder',
         adapter: 'claude',
-        ...claudeCallPins,
+        ...claudePins,
         effort: 'medium',
         permissions: { mode: 'auto' },
       },
       {
         id: 'dev.reviewer',
         adapter: 'claude',
-        ...claudeCallPins,
+        ...claudePins,
         effort: 'medium',
         // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
         permissions: { mode: 'auto' },
@@ -1091,11 +1085,11 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       {
         id: 'dev.analyst',
         adapter: 'claude',
-        ...claudeCallPins,
+        ...claudePins,
         effort: 'medium',
         permissions: { mode: 'auto' },
       },
-      { id: 'inspect.inspector', adapter: 'claude', ...claudeCallPins, effort: 'medium', permissions: { mode: 'auto' } },
+      { id: 'inspect.inspector', adapter: 'claude', ...claudePins, effort: 'medium', permissions: { mode: 'auto' } },
     ]);
     expect(composed.layout.initialVisible).toEqual(['dev.coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
@@ -1107,9 +1101,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
           // PBCLI-11: the role names no model or effort of its own, so
           // both inherit the seeded player default rather than falling
           // back to the provider's.
-          model: claudePins.model ? { kind: 'value', value: claudePins.model } : { kind: 'provider-default' },
+          model: { kind: 'value', value: claudePins.model },
           effort: { kind: 'value', value: 'medium' },
-          subagentModel: claudeCallPins.subagentModel,
+          subagentModel: claudePins.subagentModel,
         },
       },
       options: {},

@@ -283,8 +283,7 @@ jobs:
             dev.reviewer:
               adapter: codex
               model: gpt-6-astra
-              # Deliberately exercise the omitted child pin: this missing-SDK
-              # gate must validate on both Cligent 0.38 and capable releases.
+              subagentModel: gpt-6.1-sol
               effort: high
               permissions:
                 mode: auto

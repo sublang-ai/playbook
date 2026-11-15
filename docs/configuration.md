@@ -73,13 +73,13 @@ credentials (an API key in the environment, or `~/.claude` / `~/.codex`):
 | Codex only | every agent on Codex |
 | both | `dev.reviewer` on Codex, every other agent on Claude |
 
-On official services, Cligent’s model defaults select Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Custom providers and older Cligent installs without the model-defaults API supply their own models.
+On official services, Cligent’s model defaults select Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Cligent takes account of provider overrides in the supplied environment, local Claude user settings, and local Codex `config.toml`. A custom route keeps its provider’s models. For Claude project or managed settings, an embedding host can supply its resolved environment.
 
 Every agent runs at `medium` effort, except a `dev.reviewer` seeded on Codex
 beside Claude agents, which runs at `high`. Credentials do not prove SDK availability or remaining quota; launch
 still checks the configured adapter. Existing configs are left unchanged.
 Embedding hosts seed the same agent settings through
-`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`. A host that has already resolved the provider environment for its user can pass it as `modelEnv` independently of the credentials used to select adapters.
+`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`. A host that has already resolved the provider environment for its user can pass it as `modelEnv` independently of the credentials used to select adapters. With that option, pass `modelHome` to consult the local user home or `{ codexHome }` to consult a server seat’s approved Codex settings directory.
 
 The example below shows an official Claude setup with Cligent’s model defaults. Each Codex agent also carries
 `permissions.writablePaths: ['.git']`:
@@ -203,8 +203,11 @@ roles:
 
 Omitting any override inherits that player's top-level default. For `model`,
 `effort`, `subagentModel`, and `subagentEffort`, boolean `false` selects the
-provider default explicitly, so a resumed conversation cannot accidentally
-retain an earlier selection. For `fastMode`, `false` is a literal request to
+provider default for that field instead of inheriting the player's setting.
+For a Claude primary model this starts a fresh conversation on its current
+default. A resumed conversation keeps its last recorded primary model unless
+a call names a replacement. Roles sharing a player share that conversation.
+For `fastMode`, `false` is a literal request to
 disable fast mode; omitting the top-level setting selects the provider default.
 A present fast-mode boolean, subagent model, or subagent effort is accepted
 only for adapters Cligent reports as supporting it. A role binding cannot override adapter, instruction,
@@ -214,9 +217,7 @@ envelope, so an overriding model must be one that player's adapter serves.
 `ultracode: true` independently enables Claude Ultracode while retaining the
 chosen `effort`. Captain, player, and role blocks accept it; a role inherits
 its player's setting unless it supplies `true` or `false`. Enabling it requires
-an installed Cligent runtime that reports Ultracode support. Explicit `false`
-is safe on other adapters; older Claude runtimes reject either explicit boolean
-with update guidance because they cannot enforce it. Legacy `effort: ultracode` remains
+an adapter for which Cligent reports Ultracode support. Other adapters accept explicit `false` and reject `true`. Legacy `effort: ultracode` remains
 supported.
 
 `subagentModel` selects the model for delegated work —
@@ -414,6 +415,8 @@ directory; only model, effort, fast mode, subagent model, and subagent effort
 may change. The next call reapplies both complete model and effort selections,
 the optional effective fast-mode boolean, and the optional effective subagent
 model and subagent effort. An uncertain retry accepts no tuning overlay and only restores and reports the recorded attempt. Later turns use the current compatible settings.
+A Claude player whose primary selection is provider default resumes on its last
+recorded primary model. Set a named model to switch that conversation.
 
 ## Session storage
 

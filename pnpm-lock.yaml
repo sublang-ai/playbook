@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@sublang/cligent':
-        specifier: ^0.38.0 || ^0.39.0
-        version: 0.38.0(@anthropic-ai/claude-agent-sdk@0.3.325(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))(zod@4.6.6))(@openai/codex-sdk@0.159.3)
+        specifier: ^0.39.0
+        version: 0.39.0(@anthropic-ai/claude-agent-sdk@0.3.325(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))(zod@4.6.6))(@openai/codex-sdk@0.159.3)
       '@sublang/spex':
         specifier: ^3.0.0
         version: 3.0.0
@@ -39,6 +39,7 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.19)(yaml@2.9.0)
+
     optionalDependencies:
       '@openclaw/fs-safe':
         specifier: 0.26.13
@@ -550,12 +551,12 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@sublang/cligent@0.38.0':
-    resolution: {integrity: sha512-/5cBfO4piJeJTEWhcG3Wm5QBuEMT055+zU1xtoQe43nba8VR7qKAkNUKvoYm/nZENtDJte8qz9xd0QHaul4ihQ==}
+  '@sublang/cligent@0.39.0':
+    resolution: {integrity: sha512-Ga+dY7qUKUjVUkQb0lQMAM7k6zGX056frdD6XO5/UvTviigOUtlHey8KfdcQvK6QB9mffrklaOxL6bLYISYxeA==, tarball: https://registry.npmjs.org/@sublang/cligent/-/cligent-0.39.0.tgz}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:
-      '@anthropic-ai/claude-agent-sdk': '>=0.3.284'
+      '@anthropic-ai/claude-agent-sdk': '>=0.3.321'
       '@openai/codex-sdk': '>=0.159.1'
       '@opencode-ai/sdk': '>=1.18.29'
     peerDependenciesMeta:
@@ -1262,6 +1263,10 @@ packages:
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
+  smol-toml@1.9.1:
+    resolution: {integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==, tarball: https://registry.npmjs.org/smol-toml/-/smol-toml-1.9.1.tgz}
+    engines: {node: '>= 18'}
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -1784,10 +1789,11 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@sublang/cligent@0.38.0(@anthropic-ai/claude-agent-sdk@0.3.325(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))(zod@4.6.6))(@openai/codex-sdk@0.159.3)':
+  '@sublang/cligent@0.39.0(@anthropic-ai/claude-agent-sdk@0.3.325(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))(zod@4.6.6))(@openai/codex-sdk@0.159.3)':
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.6.6)
       '@playwright/mcp': 0.0.77
+      smol-toml: 1.9.1
       yaml: 2.9.0
       zod: 4.6.6
     optionalDependencies:
@@ -2749,6 +2755,8 @@ snapshots:
       side-channel-weakmap: 1.0.2
 
   siginfo@2.0.0: {}
+
+  smol-toml@1.9.1: {}
 
   source-map-js@1.2.1: {}
 

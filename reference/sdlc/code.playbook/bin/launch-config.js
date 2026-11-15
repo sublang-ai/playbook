@@ -29,8 +29,7 @@ import {
   stringify as stringifyYaml,
 } from "yaml";
 import { ultracodeForCall } from "../ultracode.js";
-import * as cligent from "@sublang/cligent";
-import { isSubagentModelSupported } from "@sublang/cligent";
+import { defaultAgentModels } from "@sublang/cligent";
 import { loadTmuxPlayConfig } from "@sublang/cligent/tmux-play";
 import {
   defaultCaptainSessionsDir,
@@ -1338,26 +1337,8 @@ export async function normalizeHostConfig(config) {
   const dir = mkdtempSync(join(tmpdir(), "playbook-host-config-"));
   const path = join(dir, "tmux-play.config.yaml");
   try {
-    const normalizeUltracode = (agent, label) => {
-      if (agent?.ultracode === undefined) return agent;
-      const { ultracode, ...rest } = agent;
-      return { ...rest, ...ultracodeForCall(agent.adapter, ultracode, label) };
-
-    };
-    const compatible = {
-      ...config,
-      captain: normalizeUltracode(config.captain, "captain"),
-      players: config.players?.map((agent, index) => normalizeUltracode(agent, `players[${index}]`)),
-    };
-    writeFileSync(path, stringifyYaml(compatible));
-    const normalized = (await loadTmuxPlayConfig({ configPath: path })).config;
-    // The configured false survives even where the runtime projection omits it.
-    if (config.captain?.ultracode !== undefined) normalized.captain.ultracode = config.captain.ultracode;
-    for (const agent of normalized.players) {
-      const authored = config.players?.find(item => item.id === agent.id);
-      if (authored?.ultracode !== undefined) agent.ultracode = authored.ultracode;
-    }
-    return normalized;
+    writeFileSync(path, stringifyYaml(config));
+    return (await loadTmuxPlayConfig({ configPath: path })).config;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1701,13 +1682,13 @@ const SECOND_ADAPTER_EFFORT = "high";
  * consulting it would differ between a developer's machine and a clean
  * one, and would make creating a file asynchronous.
  */
-export function selectSeedLineup(env = process.env, home = homedir(), modelEnv) {
+export function selectSeedLineup(env = process.env, home = homedir(), modelEnv, modelHome) {
   const ready = SEED_ADAPTERS.filter(
     adapter => checkReadiness([adapter], env, home).failingAdapters.length === 0,
   );
   const models = (adapter) => ({
     adapter,
-    ...cligent.defaultAgentModels?.(adapter, modelEnv ?? env, modelEnv === undefined ? home : undefined),
+    ...defaultAgentModels(adapter, modelEnv ?? env, modelHome ?? (modelEnv === undefined ? home : undefined)),
   });
   const lineup = models(ready[0] ?? SEED_ADAPTERS[0]);
   return {
@@ -1761,8 +1742,9 @@ export function seedConfigText(
   env = process.env,
   homeDir = env.HOME ?? homedir(),
   modelEnv,
+  modelHome,
 ) {
-  const selection = selectSeedLineup(env, homeDir, modelEnv);
+  const selection = selectSeedLineup(env, homeDir, modelEnv, modelHome);
   return {
     text: seedTextForLineup(readFileSync(templatePath, "utf8"), selection),
     anyReady: selection.anyReady,
@@ -2413,15 +2395,17 @@ function resolveRoleBinding(value, path) {
 // Resolve both fields together so an explicit Codex effort can request
 // inheritance, while a block or binding's explicit Off is never re-enabled.
 function delegationFields(agent, binding = {}) {
+  if (agent.subagentEffort === false) throw new Error("subagentEffort must be an effort string; false is allowed only on role bindings");
   const model = binding.subagentModel === undefined ? agent.subagentModel : binding.subagentModel;
-  const effort = binding.subagentEffort === undefined ? agent.subagentEffort : binding.subagentEffort;
+  // Only role bindings accept false as a reset. Pass the block value through
+  // to Cligent so its agent schema can reject a malformed effort.
+  const effort = binding.subagentEffort === false ? undefined : (binding.subagentEffort ?? agent.subagentEffort);
   const effortOnly = agent.adapter === "codex" && effort !== undefined && effort !== false;
-  const inherit = model === undefined && (agent.adapter === "claude" || effortOnly)
-    && isSubagentModelSupported(agent.adapter);
+  const inherit = model === undefined && (agent.adapter === "claude" || effortOnly);
   const effectiveModel = inherit ? "inherit" : model;
   return {
     ...(effectiveModel !== false && effectiveModel !== undefined ? { subagentModel: effectiveModel } : {}),
-    ...(effort !== false && effort !== undefined ? { subagentEffort: effort } : {}),
+    ...(effort !== undefined ? { subagentEffort: effort } : {}),
   };
 }
 

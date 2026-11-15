@@ -10,7 +10,7 @@ Supersedes the top-level `profiles` map and the agent-block `profile` key of [DR
 [DR-032](032-explicit-roles-session-players.md) moves inline agent blocks to identity-bearing top-level players and explicit role bindings; they do not regain profile indirection.
 Amended by [DR-075](075-subagent-model-is-tuning.md) in §1: an agent block carries a fourth tuning field, `subagentModel`.
 
-Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and optional installed-runtime capability detection.
+Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
 
 ## Context
 

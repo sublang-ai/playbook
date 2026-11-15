@@ -19,5 +19,6 @@ export function seedConfigText(options = {}) {
     env,
     options.homeDir,
     options.modelEnv,
+    options.modelHome,
   );
 }

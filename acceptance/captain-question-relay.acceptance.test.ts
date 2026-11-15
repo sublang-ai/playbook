@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
-import { isSubagentModelSupported } from '@sublang/cligent';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -45,7 +44,8 @@ players:
   worker:
     adapter: codex
     model: ${JSON.stringify(codex)}
-${isSubagentModelSupported('codex') ? '    subagentModel: gpt-6.1-sol\n' : ''}    effort: low
+    subagentModel: gpt-6.1-sol
+    effort: low
     permissions: { mode: auto }
 playbooks:
   question-flow:

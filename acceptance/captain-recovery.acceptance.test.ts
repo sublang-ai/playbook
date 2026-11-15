@@ -9,7 +9,6 @@ import { assign, createMachine } from 'xstate';
 import { expect, it } from 'vitest';
 import {
   createEvent,
-  isSubagentModelSupported,
   type AgentEvent,
   type AgentOptions,
 } from '@sublang/cligent';
@@ -299,7 +298,8 @@ players:
   worker:
     adapter: codex
     model: ${process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6-astra'}
-${isSubagentModelSupported('codex') ? '    subagentModel: gpt-6.1-sol\n' : ''}    effort: low
+    subagentModel: gpt-6.1-sol
+    effort: low
     permissions: { mode: auto, writablePaths: ['.git'] }
 playbooks:
   recovery-flow:

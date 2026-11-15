@@ -50,6 +50,7 @@ interface FixtureShape {
   readonly settingsModel?: string;
   readonly settingsEffort?: string;
   readonly settingsFastMode?: string;
+  readonly settingsUltracode?: string;
   readonly settingsSubagentModel?: string;
   readonly settingsSubagentEffort?: string;
   readonly rootEffort?: string;
@@ -129,6 +130,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsModel = 'readonly model: TuningSelection;',
     settingsEffort = 'readonly effort: TuningSelection<Effort>;',
     settingsFastMode = 'readonly fastMode?: boolean;',
+    settingsUltracode = 'readonly ultracode?: boolean;',
     settingsSubagentModel = 'readonly subagentModel?: string;',
     settingsSubagentEffort = 'readonly subagentEffort?: Effort;',
     rootEffort = `export type Effort =
@@ -288,7 +290,9 @@ export function getNativeSkillSupport(agent) {
 }
 `
         : ''
-    }export {};
+    }export function defaultAgentModels() { return { model: 'primary', subagentModel: 'child' }; }
+export function isUltracodeSupported(adapter) { return adapter === 'claude' || adapter === 'claude-code'; }
+export {};
 `,
   );
   write(
@@ -331,7 +335,7 @@ export async function loadTmuxPlayConfig({ configPath }) {
         adapter: 'claude',
         options: {},
       },
-      players: [{ id }],
+      players: [{ id, ...(/ultracode: true/.test(text) ? { ultracode: true } : /ultracode: false/.test(text) ? { ultracode: false } : {}) }],
       layout: { initialVisible: [id], columnWeights: [1, 1] },
     },
   };
@@ -391,6 +395,7 @@ export interface AgentCallSettings {
   ${settingsModel}
   ${settingsEffort}
   ${settingsFastMode}
+  ${settingsUltracode}
   ${settingsSubagentModel}
   ${settingsSubagentEffort}
   ${settingsInstruction}
@@ -623,6 +628,7 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.model',
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
+      'AgentCallSettings.ultracode',
       'AgentCallSettings.subagentModel',
       'AgentCallSettings.subagentEffort',
       'AgentCallSettings.instruction',
@@ -651,6 +657,7 @@ describe('the cligent release-capability guard', () => {
       'launchManagedTmuxPlay runtime export',
       'runManagedTmuxPlaySession runtime export',
       'getNativeSkillSupport runtime semantics',
+      'provider defaults and independent Ultracode runtime semantics',
     ]);
     expect(result.ok).toBe(true);
     expect(result.specifier).toBe('@sublang/cligent/tmux-play');
@@ -943,6 +950,16 @@ describe('the cligent release-capability guard', () => {
       'narrowed root effort value domain',
       { rootEffort: "export type Effort = 'low' | 'high';" },
       'AgentCallSettings.effort',
+    ],
+    [
+      'independent Ultracode setting',
+      { settingsUltracode: '' },
+      'AgentCallSettings.ultracode',
+    ],
+    [
+      'independent Ultracode boolean domain',
+      { settingsUltracode: 'readonly ultracode?: true;' },
+      'AgentCallSettings.ultracode',
     ],
     [
       'fast-mode setting',

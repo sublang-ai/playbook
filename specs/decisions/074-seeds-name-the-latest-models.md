@@ -12,6 +12,7 @@ Amended by [DR-075](075-subagent-model-is-tuning.md) in its Cligent floor alone,
 Amended by [DR-076](076-subagents-delegate-by-default.md) in its Cligent floor alone, now `^0.30.0`.
 
 Amended by [DR-104](104-parent-and-child-seed-models.md) in its fixed model-line choices: the parent models become Fable and Astra, with Opus and Sol child pins where supported.
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md) in model ownership and provider-dependent seed selection.
 
 ## Context
 

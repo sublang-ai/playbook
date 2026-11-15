@@ -172,14 +172,10 @@ function walkDirectories(root, onDirectory) {
   }
 }
 
-// SemVer caret membership, including unions of `^x.y.z` ranges the manifest
+// SemVer caret membership, enough for the single `^x.y.z` range the manifest
 // declares. Nothing here needs a dependency: a prerelease is outside a stable
 // caret, and that is the only subtlety the guard depends on.
 function satisfiesCaret(version, range) {
-  if (range.includes('||')) {
-    const results = range.split('||').map((part) => satisfiesCaret(version, part));
-    return results.includes(undefined) ? undefined : results.some(Boolean);
-  }
   const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range.trim());
   if (!caret) return undefined;
   const parsed = /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/.exec(version.trim());
@@ -2921,8 +2917,8 @@ function stepCligentFloor(root, state) {
   const satisfied = satisfiesCaret(installedVersion, declared);
   if (satisfied === undefined) {
     fail(
-      `@sublang/cligent is declared as ${declared}, not a caret range or union of caret ranges`,
-      'RELEASE-14 requires caret SemVer ranges, never a moving dist-tag.',
+      `@sublang/cligent is declared as ${declared}, not a caret range`,
+      'RELEASE-14 requires a caret SemVer range, never a moving dist-tag.',
     );
   }
   if (!satisfied) {

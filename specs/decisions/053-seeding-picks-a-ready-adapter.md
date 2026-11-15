@@ -11,6 +11,7 @@ Model-currency scope amended by [DR-074](074-seeds-name-the-latest-models.md): t
 Amended by [DR-096](096-a-second-adapter-reviews.md): where both adapters are ready, the seeded `dev.reviewer` takes the second adapter; the selection is a public export, so the desktop app's diverging copy recorded below ends once that host seeds through it.
 Credential scope amended by [DR-097](097-readiness-reads-each-agents-token-forms.md): an adapter's credential is any of its agent's documented environment forms or its sign-in folder.
 Amended by [DR-099](099-seeds-run-at-medium-effort.md) in its efforts: every seeded agent takes `medium`.
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md) in replacing the fixed model table with Cligent’s provider-specific defaults.
 
 ## Context
 

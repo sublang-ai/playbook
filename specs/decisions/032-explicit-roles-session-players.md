@@ -10,7 +10,9 @@ Supersedes [DR-030](030-shared-mapped-player-continuity.md).
 Amends the configuration and binding model of [DR-009](009-generic-playbook-cli-and-registry.md), the continuation ownership of [DR-010](010-playbook-session-tracing-and-resume.md), the same-player constraint of [DR-011](011-composable-playbook-execution.md), the continuation tuning rules of [DR-015](015-per-run-agent-tuning.md), the fixed source labels of [DR-018](018-gears-grammar-provenance-from-spex.md), the linker metadata of [DR-019](019-shared-linked-runtime-factory.md), the inline-agent placement of [DR-021](021-inline-agent-settings.md), the compatibility transition of [DR-022](022-runtime-compatibility-contract.md), and the configuration and persistence boundary of [DR-031](031-shared-captain-session-front-ends.md).
 Amended by [DR-075](075-subagent-model-is-tuning.md): a role binding's tuning is four fields — model, subagent model, effort, and fast mode.
 
-Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and optional installed-runtime capability detection.
+Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
+
+The primary model on Claude resume follows [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -79,9 +81,10 @@ The current structural projection restricted to the stored playbook ids, Captain
 A missing or changed stored member shall reject before agent work, while additional current playbooks and players unreferenced by the stored catalog shall neither invalidate nor enter the reopened session; a new logical session is required to change that topology or provider identity.
 
 The next Captain or player call shall use the current normalized model, effort, and optional fast-mode settings for its stable id while resuming the stored provider token under the established adapter.
-Normalization shall represent each model and effort selection explicitly as either one concrete value or `provider-default`, so removing a prior selection is not confused with inheriting mutable provider-session state or inventing a provider default.
+Normalization shall represent each model and effort selection explicitly as either one concrete value or `provider-default`, so an explicit provider-default selection clears the configured pin for the call.
 Fast mode shall remain an optional plain boolean: top-level omission selects the provider default, role omission inherits its player's top-level value, and explicit `false` is a retained literal request rather than a provider-default sentinel.
-The host shall pass both complete model and effort selections plus the optional effective fast mode on every call rather than rely on provider state left by another role; an adapter that cannot explicitly restore a provider default or accept a present fast-mode request on a resumed conversation shall reject that selection before provider work.
+The host shall pass both complete model and effort selections plus the optional effective fast mode on every call on the selected conversation.
+The adapter resolves a provider-default selection for that conversation and rejects unsupported explicit tuning.
 The Captain-to-tmux-play host call surface shall therefore carry each delegated-player and durable session-Captain invocation's atomic complete-settings block containing model, effort, optional fast mode, instruction, and permissions alongside resume selection; omission of that block retains the host's legacy configured defaults, while a present block inherits no omitted model, effort, instruction, or permission member, and only model, effort, and fast mode may differ from the stored structural projection on ordinary reopen.
 Where an adapter cannot enforce the requested settings on that resumed conversation, the call shall fail explicitly and retain the prior token; it shall never retry fresh or silently fork the session.
 For the durable session Captain, that typed preflight rejection shall retain the selected token or never-opened `false` value plus the journal watermark already represented to it; the next supported call shall resume that selection with only the authoritative missed journal suffix.

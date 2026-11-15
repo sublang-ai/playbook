@@ -7,7 +7,6 @@
 // `pnpm test` and CI, so a config-model change would otherwise break the
 // release gate silently and only surface during a manual pre-tag run.
 
-import { isSubagentModelSupported } from '@sublang/cligent';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -48,7 +47,7 @@ export function liveConfig(
     '  acceptance.dev.reviewer:',
     '    adapter: codex',
     `    model: ${JSON.stringify(codexModel)}`,
-    ...(isSubagentModelSupported('codex') ? ['    subagentModel: gpt-6.1-sol'] : []),
+    '    subagentModel: gpt-6.1-sol',
     '    effort: xhigh',
     ...(options.reviewerInstruction === undefined
       ? []
@@ -210,7 +209,7 @@ export function skillsConfig(repo: string): string {
     '    adapter: codex',
     '    skills: ["../../native-skills/codex/release-acceptance-token"]',
     `    model: ${JSON.stringify(codexModel)}`,
-    ...(isSubagentModelSupported('codex') ? ['    subagentModel: gpt-6.1-sol'] : []),
+    '    subagentModel: gpt-6.1-sol',
     '    effort: low',
     '    permissions: { mode: auto }',
     'playbooks:',
