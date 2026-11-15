@@ -19,12 +19,12 @@ const definition = readFileSync(new URL('../slc/prefix.md', import.meta.url), 'u
 const SECTION = '## Prefixed prompts';
 
 const workflows = [
-  { id: 'code', prefixed: ['CODE-1', 'CODE-2'], nested: ['CODE-3'] },
-  { id: 'review', prefixed: ['REVIEW-1', 'REVIEW-2', 'REVIEW-3', 'REVIEW-4'], nested: [] },
-  { id: 'decide', prefixed: ['DECIDE-1', 'DECIDE-2'], nested: ['DECIDE-4'] },
-  { id: 'dev', prefixed: ['DEV-1'], nested: ['DEV-2', 'DEV-3', 'DEV-4', 'DEV-5', 'DEV-6'] },
-  { id: 'branch', prefixed: ['BRANCH-1'], nested: [] },
-  { id: 'pr', prefixed: ['PR-1'], nested: ['PR-3'] },
+  { id: 'code', prefixed: ['code-1', 'code-2'], nested: ['code-3'] },
+  { id: 'review', prefixed: ['review-1', 'review-2', 'review-3', 'review-4'], nested: [] },
+  { id: 'decide', prefixed: ['decide-1', 'decide-2'], nested: ['decide-4'] },
+  { id: 'dev', prefixed: ['dev-1'], nested: ['dev-2', 'dev-3', 'dev-4', 'dev-5', 'dev-6'] },
+  { id: 'branch', prefixed: ['branch-1'], nested: [] },
+  { id: 'pr', prefixed: ['pr-1'], nested: ['pr-3'] },
 ] as const;
 
 function reference(id: string): { source: string; gears: string } {
@@ -56,7 +56,7 @@ function prefix(
 /**
  * A relay-first pre-image of a GEARS the pass already rewrote: the trailing
  * relay block of each named item's prompt moves back to the head of its
- * blockquote. For REVIEW-2 this is exactly its Source order, and the shipped
+ * blockquote. For review-2 this is exactly its Source order, and the shipped
  * tool rewrites the result back to the maintained GEARS byte for byte.
  */
 function relayFirst(gears: string, ids: readonly string[]): string {
@@ -188,8 +188,9 @@ describe('prompt-prefix pass tool (compiler-prompt-prefix-6)', () => {
     expect(again.text).toBe(gears);
 
     // A relay-first pre-image rewrites back byte for byte: exactly the
-    // relay-first items are rewritten, and every other item, the metadata,
-    // and an `## Optimizations` section are untouched.
+    // relay-first items are rewritten, and every other item — requirement and
+    // test items included — the metadata, and every section heading are
+    // untouched.
     const before = relayFirst(gears, prefixed);
     for (const [itemId, prompt] of prompts(before)) {
       expect(relaysTrail(prompt), itemId).toBe(!prefixed.includes(itemId as never));
@@ -204,19 +205,19 @@ describe('prompt-prefix pass tool (compiler-prompt-prefix-6)', () => {
     expect(removed.stdout).toBe('no eligible item; legacy ## Prefixed prompts section removed\n');
     expect(removed.text).toBe(gears);
     expect(prefix(dir, `${before}\n${legacySection(prefixed)}`).text).toBe(gears);
-    if (id === 'pr') {
-      const inner = gears.replace('\n## Optimizations\n', `\n${legacySection(prefixed)}\n## Optimizations\n`);
-      expect(inner).not.toBe(gears);
-      expect(prefix(dir, inner).text).toBe(gears);
-    }
+    // A legacy section between two package sections is removed up to the
+    // next section heading, which stays byte for byte.
+    const inner = gears.replace('\n## Verification\n', `\n${legacySection(prefixed)}\n## Verification\n`);
+    expect(inner).not.toBe(gears);
+    expect(prefix(dir, inner).text).toBe(gears);
   });
 
   it('skips a kept item and leaves an ineligible package untouched', () => {
     const review = workflows.find(({ id }) => id === 'review')!;
     const gears = relayFirst(reference('review').gears, review.prefixed);
-    const { text, stdout } = prefix(dir, gears, ['REVIEW-2']);
-    expect(stdout.trim().split('\n')).toEqual(['REVIEW-1', 'REVIEW-3', 'REVIEW-4']);
-    expect(prompts(text).get('REVIEW-2')).toEqual(prompts(gears).get('REVIEW-2'));
+    const { text, stdout } = prefix(dir, gears, ['review-2']);
+    expect(stdout.trim().split('\n')).toEqual(['review-1', 'review-3', 'review-4']);
+    expect(prompts(text).get('review-2')).toEqual(prompts(gears).get('review-2'));
 
     const captain = readFileSync(
       new URL('../reference/sdlc/captain.playbook/captain.gears.md', import.meta.url),
@@ -319,15 +320,15 @@ describe('prompt-prefix pass tool (compiler-prompt-prefix-6)', () => {
     expect(examples).toHaveLength(2);
     const [before, after] = examples;
     const { text, stdout } = prefix(dir, before);
-    expect(stdout.trim()).toBe('REVIEW-2');
+    expect(stdout.trim()).toBe('review-2');
     expect(text).toBe(after);
   });
 
   it('rewrites a kept item on a later application to the text of one run', () => {
     const review = workflows.find(({ id }) => id === 'review')!;
     const gears = relayFirst(reference('review').gears, review.prefixed);
-    const again = prefix(dir, prefix(dir, gears, ['REVIEW-2']).text);
-    expect(again.stdout.trim()).toBe('REVIEW-2');
+    const again = prefix(dir, prefix(dir, gears, ['review-2']).text);
+    expect(again.stdout.trim()).toBe('review-2');
     expect(again.text).toBe(prefix(dir, gears).text);
     expect(again.text).toBe(reference('review').gears);
     expect(again.text).not.toContain(SECTION);
@@ -335,7 +336,7 @@ describe('prompt-prefix pass tool (compiler-prompt-prefix-6)', () => {
 });
 
 describe('prefix-first prompts share their instructions as a cache prefix (compiler-prompt-prefix-7)', () => {
-  it('composes REVIEW-2 with two requests sharing the whole instruction block', () => {
+  it('composes review-2 with two requests sharing the whole instruction block', () => {
     const dir = mkdtempSync(join(tmpdir(), 'playbook-prefix-'));
     try {
       const review = workflows.find(({ id }) => id === 'review')!;
@@ -356,8 +357,8 @@ describe('prefix-first prompts share their instructions as a cache prefix (compi
         while (index < left.length && left[index] === right[index]) index++;
         return left.slice(0, index);
       };
-      const before = prompts(gears).get('REVIEW-2')!;
-      const after = prompts(text).get('REVIEW-2')!;
+      const before = prompts(gears).get('review-2')!;
+      const after = prompts(text).get('review-2')!;
       const instructions = after.filter((line) => !line.startsWith('>')).join('\n').trimEnd();
       expect(instructions).toContain('For each review item, accept or reject it.');
 
@@ -386,7 +387,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
     // Two legacy sections listing the rewritten items, every nested-call
     // item, an unknown ID, and a malformed entry carry no meaning.
     expect(nestedCallItems(gears)).toEqual([...nested]);
-    const unknown = `${id.toUpperCase()}-99`;
+    const unknown = `${id}-99`;
     const legacy = [
       rewritten,
       `${legacySection([...prefixed, ...nested, unknown])}- ${prefixed[0]} moved\n`,
@@ -397,7 +398,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
 
   it('reports the mutants', () => {
     const { source, gears } = reference('code');
-    // No section lists CODE-1 or CODE-3, yet both pass in the prefix-first
+    // No section lists code-1 or code-3, yet both pass in the prefix-first
     // layout.
     const prefixed = prefix(dir, gears).text;
     expect(checkSourceGearsContract(source, prefixed)).toEqual([]);
@@ -405,7 +406,7 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
     expect(checkSourceGearsContract(source, dropped)).toEqual([
       'source relay fragment at line 27 was dropped or changed',
     ]);
-    // Moving CODE-1's trailing relays back before its first instruction
+    // Moving code-1's trailing relays back before its first instruction
     // restores the Source-order layout, which still passes.
     const relays = '>\n> > Original request: <caller-input>\n> > Run results: <run-results>\n';
     const relayFirst = prefixed
@@ -473,19 +474,19 @@ describe('fidelity checker reads the prefix-first layout from each prompt (compi
   });
 
   it('orders every occurrence, so a relay block repeated after a later fragment fails', () => {
-    // DECIDE-3's trailing block relays the topic and then the proposal, so a
-    // repeated block puts a topic after the proposal; CODE-3's first block
+    // decide-3's trailing block relays the topic and then the proposal, so a
+    // repeated block puts a topic after the proposal; code-3's first block
     // repeated after its last stands after the IR-number relay.
     const cases = [
       {
         id: 'decide',
-        item: 'DECIDE-3',
+        item: 'decide-3',
         after: "> > Original topic: <caller-topic>\n> > Reviewer's independent proposal: <reviewer-proposal>\n",
         block: "> > Original topic: <caller-topic>\n> > Reviewer's independent proposal: <reviewer-proposal>\n",
       },
       {
         id: 'code',
-        item: 'CODE-3',
+        item: 'code-3',
         after: '> > Coder output: <coder-output>\n>\n> > IR number: <ir-number>\n',
         block: [
           '> > Original intent: <caller-input>',

@@ -166,9 +166,10 @@ function labelledSection(text: string, label: string, endings: readonly string[]
 it("derives a Source-defined labelled section wherever the relayed text is stored", async () => {
   const producer = collapseWhitespace(text2gearsDefinition);
   const fsm = collapseWhitespace(gears2fsmDefinition);
-  // compiler-prompt-relays-7: kept verbatim, named as authored, no producer.
+  // compiler-prompt-relays-7: a requirement item keeping the Source's words,
+  // named as authored, no producer.
   expect(producer).toContain(
-    "A placeholder the Source defines as a labelled section of another relayed value, naming the label that opens the section and the labels that end it — `<original-intent>` as the `Original intent:` section of the caller's request, which runs to the `Review scope:` line or to the end of the request, for instance — is derived, not produced: text2gears shall keep that defining sentence verbatim in the package introduction, or in the item's prose where the Source states it there, name the placeholder as the Source does, and declare no result property for it",
+    "A placeholder the Source defines as a labelled section of another relayed value, naming the label that opens the section and the labels that end it — `<original-intent>` as the `Original intent:` section of the caller's request, which runs to the `Review scope:` line or to the end of the request, for instance — is derived, not produced: text2gears shall state that definition in a requirement item that keeps the Source's defining words, name the placeholder as the Source does, and declare no result property for it",
   );
   // compiler-prompt-relays-9: the rule, cited where placeholder binding is
   // described.

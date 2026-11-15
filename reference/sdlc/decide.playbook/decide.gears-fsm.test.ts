@@ -5,7 +5,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createActor, fromPromise, waitFor } from 'xstate';
 
-import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
+import {
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
+} from '../../../scripts/check-slc-source-gears.mjs';
 import {
   concurrentRoleSets,
   decideMachine,
@@ -53,8 +57,11 @@ const gearsText = readFileSync(
   new URL('./decide.gears.md', import.meta.url),
   'utf8',
 );
-const gears = parseGearsContract(gearsText);
+// DR-104: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
+const itemBodies = gearsItemBodies(gearsText);
 const machineConfig = (
   decideMachine as unknown as { config: RawState & { states: Record<string, RawState> } }
 ).config;
@@ -449,11 +456,18 @@ describe('DECIDE GEARS to FSM compilation', () => {
 
   it('maps exactly DECIDE-1 through DECIDE-4 to the declared actor topology', () => {
     expect(gears.map(({ id }) => id)).toEqual([
-      'DECIDE-1',
-      'DECIDE-2',
-      'DECIDE-3',
-      'DECIDE-4',
+      'decide-1',
+      'decide-2',
+      'decide-3',
+      'decide-4',
     ]);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of itemBodies) {
+      if (byId.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
 
     const invocations = invokedStates(states);
     expect(
@@ -515,7 +529,8 @@ describe('DECIDE GEARS to FSM compilation', () => {
 
   it('preserves each delegated role, prompt, and result contract exactly', () => {
     for (const expected of expectedPlayerStates) {
-      const item = byId.get(expected.sourceItem);
+      // A state cites its item ignoring ASCII letter case (DR-104 §4).
+      const item = gearsItemFor(gears, expected.sourceItem);
       const state = stateAt(expected.path);
       const input = state?.invoke?.input?.({ context: CONTEXT });
       expect(input, expected.path).toBeDefined();
@@ -553,7 +568,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
       sourceItem: 'DECIDE-4',
       playbookId: 'review',
       text: byId
-        .get('DECIDE-4')
+        .get('decide-4')
         ?.prompt.join('\n')
         .replaceAll('<caller-topic>', CONTEXT.callerTopic)
         .replaceAll('<decide-commit>', CONTEXT.decideCommit)
@@ -581,15 +596,20 @@ describe('DECIDE GEARS to FSM compilation', () => {
     ]) {
       expect(sourceText).toContain(clause);
     }
-    const reviewSection = gearsText.slice(gearsText.indexOf('### DECIDE-4'));
-    expect(reviewSection).toContain(
-      '`decide` is complete only when `review` returns a result that applies to the supplied review scope, gives the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.\nIt then returns the `decide`-owned commit and that evaluated revision to its caller.',
+    // DR-104: each post-REVIEW outcome is a requirement item of its own.
+    const itemBody = (id: string) => {
+      const item = itemBodies.find((candidate) => candidate.id === id);
+      expect(item, id).toBeDefined();
+      return item?.body ?? '';
+    };
+    expect(itemBody('decide-6')).toContain(
+      '`decide` shall complete, returning to its caller the `decide`-owned commit [[decide-14](#decide-14)] and the evaluated repository revision, only when `review` returns a result [[decide-4](#decide-4)] that:\n\n- applies to the supplied review scope;\n- gives the exact evaluated repository revision;\n- affirmatively establishes that no unsettled findings remain.',
     );
-    expect(reviewSection).toContain(
-      'When `review` returns an authored abort or failure, or a terminal result that does not establish those facts, `decide` shall report the failure and the last `decide`-owned commit to its caller.',
+    expect(itemBody('decide-7')).toContain(
+      'When `review` [[decide-4](#decide-4)] returns an authored abort or failure, or a terminal result that leaves unestablished any fact that completion requires [[decide-6](#decide-6)], `decide` shall report the failure and the last `decide`-owned commit [[decide-14](#decide-14)] to its caller.',
     );
-    expect(reviewSection).toContain(
-      'When the nested `review` call fails outside that authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
+    expect(itemBody('decide-8')).toContain(
+      'When the nested `review` call [[decide-4](#decide-4)] fails outside its authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
     );
 
     const review = states.reviewCommit?.invoke;

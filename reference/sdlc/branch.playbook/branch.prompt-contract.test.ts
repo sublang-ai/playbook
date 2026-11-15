@@ -24,7 +24,7 @@ const gearsItem = parseGearsContract(
     fileURLToPath(new URL('./branch.gears.md', import.meta.url)),
     'utf8',
   ),
-).find(({ id }) => id === 'BRANCH-1');
+).find(({ id }) => id === 'branch-1');
 
 const ACTUAL_CONTEXT: BranchContext = {
   callerInput: 'Fix #12: the retry loop never backs off.\nKeep the CLI stable.',

@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   checkSourceGearsContract,
-  parseGearsContract,
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
   verbatimFieldsFromGears,
 } from '../../../scripts/check-slc-source-gears.mjs';
 import {
@@ -30,8 +32,11 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./dev.gears.md', import.meta.url)),
   'utf8',
 );
-const gears = parseGearsContract(gearsText);
+// DR-104: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
+const itemBodies = gearsItemBodies(gearsText);
 
 interface RawTransition {
   guard?: string;
@@ -46,23 +51,23 @@ interface RawChildState {
   };
 }
 
-type NestedItemId = 'DEV-2' | 'DEV-3' | 'DEV-4' | 'DEV-5' | 'DEV-6';
+type NestedItemId = 'dev-2' | 'dev-3' | 'dev-4' | 'dev-5' | 'dev-6';
 
 const NESTED_ITEM_IDS: readonly NestedItemId[] = [
-  'DEV-2',
-  'DEV-3',
-  'DEV-4',
-  'DEV-5',
-  'DEV-6',
+  'dev-2',
+  'dev-3',
+  'dev-4',
+  'dev-5',
+  'dev-6',
 ];
 
-// Each nested item carries the source's control-plane rule for its own child.
+// The child each nested item calls, which the rules below govern.
 const NESTED_CHILD: Readonly<Record<NestedItemId, string>> = {
-  'DEV-2': 'code',
-  'DEV-3': 'decide',
-  'DEV-4': 'code',
-  'DEV-5': 'branch',
-  'DEV-6': 'pr',
+  'dev-2': 'code',
+  'dev-3': 'decide',
+  'dev-4': 'code',
+  'dev-5': 'branch',
+  'dev-6': 'pr',
 };
 
 // The DEV-2, DEV-3, and DEV-4 blockquotes as the pre-DR-050 artifact
@@ -79,11 +84,15 @@ const CODE_AFTER_DECIDE_TEMPLATE = [
   '> Evaluated revision: <evaluated-revision>',
 ];
 
-function gearsSection(id: NestedItemId): string {
-  const start = gearsText.indexOf(`### ${id}`);
-  const nextHeading = gearsText.indexOf('### ', start + 1);
-  return gearsText.slice(start, nextHeading === -1 ? undefined : nextHeading);
+// One GEARS item's own text, up to the next item or section heading.
+function gearsSection(id: string): string {
+  const item = itemBodies.find((candidate) => candidate.id === id);
+  expect(item, id).toBeDefined();
+  return item?.body ?? '';
 }
+
+// The inline citation of one item within the package (DR-104 §2).
+const citation = (id: string): string => `[[${id}](#${id})]`;
 
 function arms(value: unknown): readonly RawTransition[] {
   if (value === undefined) return [];
@@ -131,18 +140,28 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
 
   it('maps exactly DEV-1 through DEV-6 once', () => {
     expect(gears.map(({ id }) => id)).toEqual([
-      'DEV-1',
-      'DEV-2',
-      'DEV-3',
-      'DEV-4',
-      'DEV-5',
-      'DEV-6',
+      'dev-1',
+      'dev-2',
+      'dev-3',
+      'dev-4',
+      'dev-5',
+      'dev-6',
     ]);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of itemBodies) {
+      if (byId.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
     const stateItems = [
       ...enumeratePlayerStates(devMachine),
       ...enumerateNestedPlaybookStates(devMachine),
     ].map(({ sourceItem }) => sourceItem);
-    expect(stateItems.sort()).toEqual(gears.map(({ id }) => id).sort());
+    // A state cites its item ignoring ASCII letter case (DR-104 §4).
+    expect(
+      stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
+    ).toEqual(gears.map(({ id }) => id).sort());
   });
 
   it('declares exactly the one Analyst role with no alias', () => {
@@ -164,7 +183,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     const states = enumeratePlayerStates(devMachine);
     expect(states.map(({ stateId }) => stateId)).toEqual(['planAnalysis']);
     for (const state of states) {
-      const item = byId.get(state.sourceItem);
+      const item = gearsItemFor(gears, state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
       expect(item?.player).toBe('Analyst');
@@ -188,23 +207,37 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // playbook-1: DEV-1 carries each authored outcome, the last attached to
-    // its own `discussionComplete` result.
-    const planning = gearsText.slice(
-      gearsText.indexOf('### DEV-1'),
-      gearsText.indexOf('### DEV-2'),
-    );
-    for (const clause of [
-      'The planning result has six semantic outcomes: needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request.',
-      "Each outcome requires affirmative support in Analyst's result; absence of a reason to choose another outcome is not support.",
-      "No outcome depends on a fixed presentation format of Analyst's reply.",
-      '`dev` shall act on the accepted outcome itself and shall not return to the session Captain for another routing decision.',
-      "For needs Boss reply, `dev` shall use the standard Boss-question suspension with Analyst's complete response;",
-      '- `discussionComplete`: After a Boss reply that settles that no repository work should follow, Analyst concluded the discussion; dev completes without a child call or repository change.',
-    ]) {
-      expect(planning).toContain(clause);
+    // DR-104: each planning rule is a requirement item of its own; the
+    // discussion-complete outcome stays attached to its own result.
+    for (const [id, clause] of [
+      [
+        'dev-19',
+        "`dev` shall recognize six semantic outcomes of Analyst's planning result [[dev-1](#dev-1)]:\n\n- needs Boss reply;\n- discussion complete;\n- code;\n- decide then code;\n- code via pull request;\n- decide then code via pull request.",
+      ],
+      [
+        'dev-20',
+        "`dev` shall accept an outcome [[dev-19](#dev-19)] only on affirmative support in Analyst's result, never on the absence of a reason to choose another outcome.",
+      ],
+      [
+        'dev-21',
+        "`dev` shall make no outcome [[dev-19](#dev-19)] depend on a fixed presentation format of Analyst's reply.",
+      ],
+      [
+        'dev-23',
+        '`dev` shall act on the accepted outcome [[dev-20](#dev-20)] itself and shall not return to the session Captain for another routing decision.',
+      ],
+      [
+        'dev-12',
+        "When Analyst's planning result needs a Boss reply [[dev-1](#dev-1)], `dev` shall use the standard Boss-question suspension with Analyst's complete response.",
+      ],
+      [
+        'dev-1',
+        '- `discussionComplete`: After a Boss reply that settles that no repository work should follow, Analyst concluded the discussion; dev completes without a child call or repository change.',
+      ],
+    ] as const) {
+      expect(gearsSection(id), id).toContain(clause);
     }
-    const item = byId.get('DEV-1');
+    const item = byId.get('dev-1');
     expect(item?.results.map(({ guard }) => guard)).toEqual([
       'discussionComplete',
       'code',
@@ -242,6 +275,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       ]),
     );
     for (const id of NESTED_ITEM_IDS) {
+      expect(byId.get(id), id).toBeDefined();
       expect(byId.get(id)?.delegated).toBe(false);
       expect(byId.get(id)?.player).toBeUndefined();
       expect(byId.get(id)?.results, id).toEqual([]);
@@ -254,13 +288,13 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
   });
 
   it('keeps the plain paths byte-identical to the pre-DR-050 artifact', () => {
-    expect(byId.get('DEV-2')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
-    expect(byId.get('DEV-3')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
-    expect(byId.get('DEV-4')?.prompt).toEqual(CODE_AFTER_DECIDE_TEMPLATE);
+    expect(byId.get('dev-2')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('dev-3')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('dev-4')?.prompt).toEqual(CODE_AFTER_DECIDE_TEMPLATE);
     // The `branch` call reuses the plain planning relay; the `pr` call is
     // the one template whose every placeholder is a typed child-owned field.
-    expect(byId.get('DEV-5')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
-    expect(byId.get('DEV-6')?.prompt).toEqual([
+    expect(byId.get('dev-5')?.prompt).toEqual(PLANNING_RELAY_TEMPLATE);
+    expect(byId.get('dev-6')?.prompt).toEqual([
       '> Original request: <development-request>',
       '> Issue summary: <issue-summary>',
       '> Branch: <branch>',
@@ -353,51 +387,59 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // Each nested item states the source's relay and park rules for its own
-    // child, and the identity rule where its child supplies identities.
+    // DR-104: the source's relay, park and identity rules are requirement
+    // items stated once, each citing every nested item it governs.
+    expect(gearsSection('dev-9')).toContain(
+      'returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.',
+    );
+    expect(gearsSection('dev-10')).toContain(
+      'fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.',
+    );
+    expect(gearsSection('dev-26')).toContain(
+      "`dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose:",
+    );
     for (const id of NESTED_ITEM_IDS) {
-      const child = NESTED_CHILD[id];
       expect(gearsSection(id), id).toContain(
-        `If \`${child}\` returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, \`dev\` shall`,
+        `Captain shall call playbook \`${NESTED_CHILD[id]}\`:`,
       );
-      expect(gearsSection(id), id).toContain(
-        `If the \`${child}\` call fails outside its authored result contract, \`dev\` shall park as failed and retain the control-plane error.`,
-      );
-      expect(gearsSection(id), id).toContain(
-        "`dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose.",
-      );
+      for (const rule of ['dev-9', 'dev-10', 'dev-26']) {
+        expect(gearsSection(rule), `${rule} cites ${id}`).toContain(citation(id));
+      }
     }
-    for (const id of ['DEV-2', 'DEV-3', 'DEV-4', 'DEV-5'] as const) {
-      expect(gearsSection(id), id).toContain('`dev` shall start no later child');
-    }
-    for (const id of ['DEV-3', 'DEV-4'] as const) {
-      expect(gearsSection(id), id).toContain(
-        '`dev` shall not separately call `review` for the design scope already reviewed by `decide`.',
-      );
-    }
-    expect(gearsSection('DEV-3')).toContain(
-      "Only after `decide` succeeds shall `dev` call playbook `code` with the `decide`-owned commit and exact evaluated repository revision from `decide`'s canonical structured result.",
+    expect(gearsSection('dev-25')).toContain(
+      '`dev` shall not separately call `review` for the design scope [[dev-4](#dev-4)] already reviewed by `decide` [[dev-3](#dev-3)].',
     );
-    expect(gearsSection('DEV-2')).toContain(
-      'On the code path, `code` success completes `dev` with that successful `code` result; a plain request calls neither `branch` nor `pr`.',
+    // Only after `decide` succeeds does `dev` call `code`, with the
+    // `decide`-owned commit and evaluated revision from `decide`'s result.
+    expect(gearsSection('dev-4')).toContain(
+      'When `decide` succeeds [[dev-3](#dev-3)], Captain shall call playbook `code`:',
     );
-    expect(gearsSection('DEV-2')).toContain(
-      'On the code via pull request path, only after `code` succeeds shall `dev` call playbook `pr`.',
+    expect(gearsSection('dev-26')).toContain(
+      '- the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];',
     );
-    expect(gearsSection('DEV-4')).toContain(
-      'On the decide then code path, `code` success completes `dev` with that successful `code` result; a plain request calls neither `branch` nor `pr`.',
+    // On the plain paths `code` success completes `dev`, which calls neither
+    // `branch` nor `pr`; on the pull-request paths `pr` success does.
+    expect(gearsSection('dev-8')).toContain(
+      "When the final child call of the selected path succeeds, `dev` shall complete with that call's successful result:\n\n- `code` on the code path [[dev-2](#dev-2)] and on the decide then code path [[dev-4](#dev-4)];\n- `pr` on the code via pull request path and on the decide then code via pull request path [[dev-6](#dev-6)].",
     );
-    expect(gearsSection('DEV-4')).toContain(
-      'On the decide then code via pull request path, only after `code` succeeds shall `dev` call playbook `pr`.',
+    expect(gearsSection('dev-24')).toContain(
+      'While the selected path is code or decide then code, `dev` shall call neither `branch` [[dev-5](#dev-5)] nor `pr` [[dev-6](#dev-6)].',
     );
-    expect(gearsSection('DEV-5')).toContain(
-      'Only after `branch` succeeds shall `dev` continue with the `code` call for code via pull request, or the `decide` call and then the `code` call for decide then code via pull request, each with the same input as its plain path.',
+    // On a pull-request path, only after `code` succeeds does `dev` call `pr`.
+    expect(gearsSection('dev-6')).toContain(
+      'While the selected path is code via pull request or decide then code via pull request, when `code` succeeds [[dev-2](#dev-2)] [[dev-4](#dev-4)], Captain shall call playbook `pr`:',
     );
-    expect(gearsSection('DEV-6')).toContain(
-      "The branch and base revision come from `branch`'s canonical structured result, and the last `code`-owned commit and exact final evaluated repository revision come from the successful `code` call's canonical structured result.",
+    // Only after `branch` succeeds does `dev` continue with `code`, or with
+    // `decide` and then `code`, through the plain path's own call.
+    expect(gearsSection('dev-2')).toContain(
+      'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `code`:',
     );
-    expect(gearsSection('DEV-6')).toContain(
-      '`pr` success completes `dev` with that successful `pr` result.',
+    expect(gearsSection('dev-3')).toContain(
+      'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `decide`:',
+    );
+    // The `pr` call's identities come from the `branch` and `code` results.
+    expect(gearsSection('dev-26')).toContain(
+      '- the branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
     );
 
     const states = (devMachine as unknown as {
@@ -696,7 +738,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     const declaredRoles = new Map(
       enumeratePlayerStates(devMachine).map(({ stateId, sourceItem }) => [
         stateId,
-        byId.get(sourceItem)?.player?.toLowerCase(),
+        gearsItemFor(gears, sourceItem)?.player?.toLowerCase(),
       ]),
     );
     for (const [id, state] of Object.entries(states)) {

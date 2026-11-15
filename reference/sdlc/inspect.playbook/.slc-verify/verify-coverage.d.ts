@@ -1,6 +1,18 @@
-import { type MachineConfigLike } from './verify.js';
+import { type GearsFsmConformanceOptions, type MachineConfigLike } from './verify.js';
 /** The `gears2fsm`-mandated captain actor name a machine declares. */
 export declare const CAPTAIN_ACTOR = "captain";
+/** Finite per-target search limits; omission retains historical defaults. */
+export interface CoverageBudget {
+    maxInvocations?: number;
+    maxAttempts?: number;
+    /**
+     * Duration ceiling in milliseconds: 1..1,800,000; default 300,000.
+     * Smaller derived allowances and caller timeouts still apply.
+     */
+    maxDurationMs?: number;
+}
+/** Validate before artifact access and return an independent immutable policy. */
+export declare function resolveCoverageBudget(value?: CoverageBudget): Readonly<Required<CoverageBudget>>;
 /** Incomplete coverage is not an unsatisfiable transition or Source question. */
 export declare class FsmCoverageDeadlineError extends Error {
     constructor();
@@ -61,7 +73,7 @@ export declare function guardSatisfiable(guard: (arg: {
  * guard search, and a final scheduling margin. Generated tests use this instead
  * of Vitest's five-second default.
  */
-export declare function fsmCoverageTestTimeout(fsmModule: unknown): number;
+export declare function fsmCoverageTestTimeout(fsmModule: unknown, coverage?: CoverageBudget): number;
 /**
  * Checks transition coverage over a compiled `playbook` artifact's machine
  * (verification-6) and returns findings (empty when every declared transition is
@@ -70,11 +82,25 @@ export declare function fsmCoverageTestTimeout(fsmModule: unknown): number;
  * surface entirely, in which case interrupt coverage is skipped.
  */
 export declare function checkFsmCoverage(fsmModule: unknown, opts?: {
-    /** The artifact's source text, mined for routing-value candidates. */
+    artifactSchema?: 1 | 3;
     sourceText?: string;
     signal?: AbortSignal;
-    /** A caller may shorten, never extend, the derived cooperative deadline. */
     timeoutMs?: number;
+    coverage?: CoverageBudget;
+}): Promise<string[]>;
+/** Conformance suites replay only pending literal bindings; coverage stays separate. */
+export declare function checkGearsFsmConformanceAsync(gears: string, fsmModule: unknown, options?: GearsFsmConformanceOptions & {
+    sourceText?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    coverage?: CoverageBudget;
+}): Promise<string[]>;
+/** One bounded replay owns transition coverage and reached literal-child proof. */
+export declare function checkGearsFsmArtifact(gears: string, fsmModule: unknown, options?: GearsFsmConformanceOptions & {
+    sourceText?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    coverage?: CoverageBudget;
 }): Promise<string[]>;
 /**
  * Builds a per-artifact vitest module running the transition-coverage check
@@ -87,6 +113,8 @@ export declare function generateFsmCoverageTest(opts: {
     /** Physical TypeScript source path, relative to the generated test. */
     fsmSourceFile: string;
     verifyModule: string;
+    artifactSchema?: 1 | 3;
+    coverage?: CoverageBudget;
 }): string;
 /**
  * Emits the transition-coverage test beside a compiled `playbook` artifact
@@ -100,6 +128,9 @@ export declare function emitFsmCoverageTest(opts: {
     artifactDir: string;
     basename: string;
     verifyModule?: string;
+    artifactSchema?: 1 | 3;
+    coverage?: CoverageBudget;
+    write?: (path: string, content: string) => Promise<void>;
 }): Promise<{
     path: string;
     diagnostics: string[];

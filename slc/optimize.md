@@ -28,6 +28,8 @@ pass trades a compile-time rewrite for cheaper, deterministic runtime steps.
 
 The pass shall rewrite an item only when **all** of the following hold:
 
+- The item is a direct-Captain action item; a requirement or test item is
+  never eligible.
 - The item's behavior is mechanical: a fixed shell command performs it
   completely, with no judgment, no natural-language generation, and no
   reading of conversational context.
@@ -106,7 +108,7 @@ For each eligible item, the pass shall:
   first the zero-exit guard, then the nonzero-exit guard. When the original
   item declared exactly two guards that align with success and failure, keep
   those guard names in that order; otherwise use `ok` and `failed`.
-- Preserve every other item and every non-item section byte-for-byte.
+- Preserve every other item — action, requirement, and test items alike — and every section heading byte-for-byte.
 
 Target shall be written in the same language as Source: rewritten conditions
 and result descriptions stay in the source language; only guard names and the
@@ -114,14 +116,11 @@ shell script are language-independent.
 
 ## Provenance
 
-The pass shall append one `## Optimizations` section at the end of the target
-listing every rewritten item, one bullet per item:
-`- <ITEM-ID>: captain → script`, where `captain` is the fixed token for the
-direct-Captain behavior kind the pass rewrites — the only kind eligible — so
-the section reads the same in every target and a consumer can match it
-exactly.
-When no item is eligible, the target shall be the source content unchanged,
-with no `## Optimizations` section.
+The pass shall record nothing beside the rewritten items: a script item is
+its own provenance, because [text2gears](text2gears.md#script-behaviors-optimizer-introduced)
+never emits one, and the target keeps exactly the sections of a spec package
+([text2gears "Target package"](text2gears.md#target-package)).
+When no item is eligible, the target shall be the source content unchanged.
 
 ## Out of scope
 

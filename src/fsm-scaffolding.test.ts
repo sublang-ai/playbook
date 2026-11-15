@@ -169,6 +169,35 @@ it.each([
   expect(readFileSync(input, 'utf8')).toBe(text);
 });
 
+it.each(['captain', 'code', 'review'])('copies only the action items of the maintained %s spec package', (name) => {
+  // DR-104: requirement and test items carry no blockquote and no
+  // `Captain shall`, so they contribute no constant; the four section
+  // headings close items and contribute nothing either.
+  const gears = readFileSync(join(root, `reference/sdlc/${name}.playbook/${name}.gears.md`), 'utf8');
+  const actions = gears.split(/^(?=### )/m).slice(1).flatMap((section) => {
+    const [heading, ...body] = section.split('\n');
+    const statement = body.find((line) => line.trim() !== '') ?? '';
+    if (!/\bCaptain shall\b/.test(statement)) {
+      expect(section, heading).not.toMatch(/^>/m);
+      return [];
+    }
+    const first = body.findIndex((line) => line.startsWith('>'));
+    const end = body.findIndex((line, index) => index > first && !line.startsWith('>'));
+    const prompt = body.slice(first, end).map((line) => line.replace(/^>[ \t]?/, '')).join('\n');
+    return [{ id: heading.slice(4), prompt }];
+  });
+  expect(actions.length).toBeGreaterThan(0);
+  expect(gears).toMatch(/^## Verification$/m);
+  const { input, output } = workspace(gears);
+  const result = initialize(input, output);
+  expect(result.status, result.stderr).toBe(0);
+  const target = readFileSync(output, 'utf8');
+  const constants = [...target.matchAll(/^ {2}\[("[^"\n]+")\]: \{ prompt: ("(?:[^"\\\n]|\\.)*"),/gm)]
+    .map((match) => ({ id: JSON.parse(match[1]) as string, prompt: JSON.parse(match[2]) as string }));
+  expect(constants).toEqual(actions);
+  expect(readFileSync(input, 'utf8')).toBe(gears);
+}, 15_000);
+
 it.each([
   ['CRLF', source.replaceAll('\n', '\r\n')],
   ['top-level fence', '```markdown\n' + source + '\n```'],

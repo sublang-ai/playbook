@@ -350,7 +350,10 @@ it("carries domain evidence qualifications while preserving the framework questi
   expect(definition).toContain(
     "shall be carried in that outcome's result description, the only text the adjudicator reads when it selects the guard",
   );
-  expect(definition).toContain("left in the item's prose, it reaches no judge");
+  expect(definition).toContain("stated only in a requirement item, it reaches no judge");
+  expect(definition).toContain(
+    "The qualification is also a requirement of the workflow: text2gears shall state it once as a requirement item citing the actions it governs.",
+  );
   expect(definition).toContain("qualifies an authored domain outcome's evidence");
   expect(definition).toContain("qualifies the one authored domain outcome's evidence");
   expect(definition).toContain("The framework-owned question is interpreted under the runtime's current-call adjudication rule");

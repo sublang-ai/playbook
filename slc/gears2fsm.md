@@ -6,7 +6,7 @@
 Second phase of a playbook (a state-machine agent orchestrating other agents).
 Transforms normative GEARS spec items into an XState v5 finite state machine.
 
-- Source: GEARS spec items produced by the first phase.
+- Source: the spec package of GEARS items produced by the first phase.
 - Target: an XState v5 machine object artifact [[1]].
 
 Target is an object artifact only: it defines the machine, actor contracts, and typed inputs, but shall not bind a runner or supply concrete runtime implementations.
@@ -331,8 +331,12 @@ For an item in which Captain acts directly, the corresponding invocation uses
 
 ## Mapping
 
-Each Source spec item shall map to exactly one state in Target.
-A state's `invoke.input.sourceItem` shall be that item's ID, and `invoke.input.prompt` shall carry the item's prompt verbatim.
+Source is a spec package of three item kinds ([text2gears "Target package"](text2gears.md#target-package)); Target implements it and cites it, and Source never names a part of Target.
+Each Source action item — an item whose statement carries a `Captain shall` acting clause — shall map to exactly one state in Target.
+A state's `invoke.input.sourceItem` shall be that item's ID as Source writes it, and `invoke.input.prompt` shall carry the item's prompt verbatim.
+A requirement item shall map to no state: the compiler shall realize it in the transitions, guards, context, final states, and outputs of the states that implement the actions it cites or governs.
+A test item shall map to nothing and add no behavior: the compiler shall emit no state, transition, or guard for it, and shall treat a behavior that only a test item mentions as absent from Source.
+The `## Intent` sentences state no requirement.
 
 An item written as direct Captain work shall map to exactly one `captain` invocation.
 An item that prompts or relays to a named role shall map to exactly one `player` invocation.
@@ -354,9 +358,9 @@ A script state's success guard shall target the next workflow step and its
 failure guard shall route to `failed` unless the source items define a
 different recovery.
 
-Per text2gears [composition](text2gears.md#composition), each spec item already carries the full final prompt for one state behavior, with no duplicate lines.
+Per text2gears [composition](text2gears.md#composition), each action item already carries the full final prompt for one behavior, with no duplicate lines.
 The FSM compiler shall not concatenate prompts across items, re-compose them, or silently dedupe.
-A spec item that still contains duplicate prompt lines is malformed; the compiler shall reject or flag it rather than silently propagate the duplication into `invoke.input.prompt`.
+An action item that still contains duplicate prompt lines is malformed; the compiler shall reject or flag it rather than silently propagate the duplication into `invoke.input.prompt`.
 
 ## Parallel groups
 
@@ -423,6 +427,7 @@ still requires the host's source-clarification protocol.
 An item whose behavior is a literal or dynamic
 `Captain shall call playbook ...:` shall compile to a state that invokes a
 typed `playbook` actor, not the `captain` or `player` actor.
+What follows the child's success, abort, or failure is stated by the requirement items that cite the call item; the compiler shall route `invoke.onDone` and `invoke.onError` from them.
 The setup types shall declare `PlaybookInput` with stable `stateId`, target
 `playbookId`, composed `text`, and optional `sourceItem`. The playbook actor's
 successful output is the child's JSON-safe machine output itself (or
@@ -697,7 +702,7 @@ When multiple are possible, a synchronous guard [[5]] picks the path.
 Transitions shall persist relevant typed fields from `event.output` to context via `assign` [[6]] so downstream prompts can read them.
 Where a Source outcome's availability condition is deterministically knowable from execution state, such as a prior Boss reply already received by the machine, the transition shall enforce that condition with authored guards or typed state before the result can be accepted; stating the condition only in a Results description, Judge prose, or prompt text is not enough.
 The compiler shall update or reset those source-owned facts only at their actual Source lifecycle boundaries, and shall not attempt to mechanically decide semantic judgments that Source leaves to the acting agent.
-Transitions shall be self-driving when source items define the next obligation.
+Transitions shall be self-driving when source items define the next obligation: an action item's `When` clause names the outcome it follows, and requirement items state bounds, completion, and what follows a nested call's return.
 Routing to an idle hub is for recovery, unrecoverable Boss input, or one-shot entry events — not the happy path.
 
 Where an artifact-schema-3 delegated-player state's outcomes are governed by the

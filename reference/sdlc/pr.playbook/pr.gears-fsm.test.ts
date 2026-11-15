@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   checkSourceGearsContract,
-  parseGearsContract,
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
   verbatimFieldsFromGears,
 } from '../../../scripts/check-slc-source-gears.mjs';
 import { concurrentRoleSets, prMachine, type PrContext } from './pr.fsm.js';
@@ -27,10 +29,12 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./pr.gears.md', import.meta.url)),
   'utf8',
 );
-const gears = parseGearsContract(gearsText);
+// DR-104: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
+const itemBodies = gearsItemBodies(gearsText);
 
-type ItemId = 'PR-1' | 'PR-2' | 'PR-3' | 'PR-4' | 'PR-5' | 'PR-6' | 'PR-7';
 type ScriptItemId = 'PR-2' | 'PR-4' | 'PR-5' | 'PR-6' | 'PR-7';
 
 interface RawTransition {
@@ -49,8 +53,7 @@ interface RawInvokingState {
 
 const SCRIPT_ITEMS: readonly ScriptItemId[] = ['PR-2', 'PR-4', 'PR-5', 'PR-6', 'PR-7'];
 
-// The optimize pass keeps every rewritten item's condition text unchanged and
-// replaces only its acting clause with the script form.
+// Each mechanical step's condition as the source authors it.
 const SCRIPT_CONDITIONS: Readonly<Record<ScriptItemId, string>> = {
   'PR-2': 'When the pull request is open and no fix has been attempted, Captain shall',
   'PR-4': 'When `code` succeeds, Captain shall',
@@ -59,16 +62,22 @@ const SCRIPT_CONDITIONS: Readonly<Record<ScriptItemId, string>> = {
   'PR-7': 'When the pull request is merged, Captain shall',
 };
 
-function gearsSection(id: ItemId): string {
-  const start = gearsText.indexOf(`### ${id}\n`);
-  expect(start, id).toBeGreaterThanOrEqual(0);
-  const nextHeading = gearsText.indexOf('\n## ', start + 1);
-  const nextItem = gearsText.indexOf('\n### ', start + 1);
-  const candidates = [nextHeading, nextItem].filter((index) => index !== -1);
-  return gearsText.slice(
-    start,
-    candidates.length === 0 ? undefined : Math.min(...candidates),
-  );
+// DR-104: each script item's GEARS statement restates that condition in the
+// package's form, citing the action whose outcome triggers it, and carries
+// the script acting clause.
+const SCRIPT_STATEMENTS: Readonly<Record<ScriptItemId, string>> = {
+  'PR-2': 'While no fix has been attempted, when the pull request is open [[pr-1](#pr-1)], Captain shall run:',
+  'PR-4': 'When `code` succeeds [[pr-3](#pr-3)], Captain shall run:',
+  'PR-5': 'When the fix is published [[pr-4](#pr-4)], Captain shall run:',
+  'PR-6': "When the pull request's checks pass, before any fix attempt [[pr-2](#pr-2)] or after the one published fix [[pr-5](#pr-5)], Captain shall run:",
+  'PR-7': 'When the pull request is merged [[pr-6](#pr-6)], Captain shall run:',
+};
+
+// One GEARS item's own text, up to the next item or section heading.
+function gearsSection(id: string): string {
+  const item = itemBodies.find((candidate) => candidate.id === id);
+  expect(item, id).toBeDefined();
+  return item?.body ?? '';
 }
 
 function route(transition: RawTransition | undefined) {
@@ -116,20 +125,30 @@ describe('PR Source, GEARS, and FSM agreement', () => {
 
   it('maps exactly PR-1 through PR-7 once, across the player, playbook, and script actor kinds', () => {
     expect(gears.map(({ id }) => id)).toEqual([
-      'PR-1',
-      'PR-2',
-      'PR-3',
-      'PR-4',
-      'PR-5',
-      'PR-6',
-      'PR-7',
+      'pr-1',
+      'pr-2',
+      'pr-3',
+      'pr-4',
+      'pr-5',
+      'pr-6',
+      'pr-7',
     ]);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of itemBodies) {
+      if (byId.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
     const stateItems = [
       ...enumeratePlayerStates(prMachine),
       ...enumerateNestedPlaybookStates(prMachine),
       ...enumerateScriptStates(prMachine),
     ].map(({ sourceItem }) => sourceItem);
-    expect(stateItems.sort()).toEqual(gears.map(({ id }) => id).sort());
+    // A state cites its item ignoring ASCII letter case (DR-104 §4).
+    expect(
+      stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
+    ).toEqual(gears.map(({ id }) => id).sort());
     const actorKinds = new Set(
       Object.values(rawStates)
         .map((state) => state.invoke?.src)
@@ -156,7 +175,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     const states = enumeratePlayerStates(prMachine);
     expect(states.map(({ stateId }) => stateId)).toEqual(['openPullRequest']);
     for (const state of states) {
-      const item = byId.get(state.sourceItem);
+      const item = gearsItemFor(gears, state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
       expect(item?.player).toBe('Coder');
@@ -177,7 +196,20 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       "Every outcome keeps the repository exact: pushing a branch and opening a pull request change neither HEAD's commit nor the working tree.",
     ]) {
       expect(source).toContain(clause);
-      expect(gearsSection('PR-1')).toContain(clause);
+    }
+    // DR-104: each invariant of the publication is a requirement item of its
+    // own, citing the publication item.
+    for (const [id, requirement] of [
+      [
+        'pr-30',
+        "`pr` shall select an outcome of the publication [[pr-1](#pr-1)] only on affirmative support in Coder's result, never on a fixed presentation format of Coder's reply.",
+      ],
+      [
+        'pr-19',
+        "`pr` shall keep the repository exact in every outcome of the publication [[pr-1](#pr-1)]: pushing a branch and opening a pull request change neither HEAD's commit nor the working tree.",
+      ],
+    ] as const) {
+      expect(gearsSection(id), id).toContain(requirement);
     }
     // The source's outcome set and its not-published failure attach to the
     // item's two results rather than to a separate outcome list.
@@ -187,7 +219,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     expect(source).toContain(
       "For not published, `pr` fails and reports Coder's complete result with its reason to its caller.",
     );
-    const item = byId.get('PR-1');
+    const item = byId.get('pr-1');
     expect(item?.results.map(({ guard }) => guard)).toEqual([
       'opened',
       'notPublished',
@@ -200,7 +232,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       'pullRequest',
       'pullRequestUrl',
     ]);
-    expect(byId.get('PR-3')?.prompt).toContain('> Pull request: <pull-request-url>');
+    expect(byId.get('pr-3')?.prompt).toContain('> Pull request: <pull-request-url>');
     expect(item?.results[1]?.fields).toEqual([
       { name: 'coderOutput', verbatim: true },
     ]);
@@ -219,12 +251,12 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     ]);
     for (const script of scripts) {
       const id = script.sourceItem as ScriptItemId;
-      const item = byId.get(id);
+      const item = gearsItemFor(gears, id);
       expect(item, id).toBeDefined();
       // The optimize pass rewrote a direct-Captain item: no role, no player.
       expect(item?.delegated).toBe(false);
       expect(item?.player).toBeUndefined();
-      expect(gearsSection(id)).toContain(`${SCRIPT_CONDITIONS[id]} run:\n`);
+      expect(gearsSection(item?.id ?? id)).toContain(`${SCRIPT_STATEMENTS[id]}\n`);
       expect(source).toContain(SCRIPT_CONDITIONS[id]);
       const input = script.getInput(CONTEXT);
       const blockquote = item?.prompt.join('\n') ?? '';
@@ -319,24 +351,38 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     expect(commands.get('PR-7')).toBe('git pull --ff-only');
   });
 
-  it('lists exactly the five mechanical items as captain → script optimizations', () => {
-    const marker = '## Optimizations';
-    const start = gearsText.indexOf(marker);
-    expect(start).toBeGreaterThan(gearsText.lastIndexOf('### PR-7'));
-    expect(gearsText.indexOf(marker, start + 1)).toBe(-1);
-    // The section runs to the next `## ` heading or to the end of the file.
-    const bullets = gearsText
-      .slice(start + marker.length)
-      .replace(/\n## [\s\S]*$/, '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-    expect(bullets).toEqual(
-      SCRIPT_ITEMS.map((id) => `- ${id}: captain → script`),
+  it('carries the script acting clause on exactly the five mechanical items', () => {
+    // DR-104 §6: a script item is its own provenance; the package carries no
+    // `## Optimizations` section, only its four sections in order, with
+    // `Roles:` under `## Intent`.
+    expect(gearsText).not.toContain('## Optimizations');
+    expect(gearsText.match(/^## .*$/gm)).toEqual([
+      '## Intent',
+      '## External Behavior',
+      '## Internal Behavior',
+      '## Verification',
+    ]);
+    const intent = gearsText.slice(
+      gearsText.indexOf('\n## Intent\n'),
+      gearsText.indexOf('\n## External Behavior\n'),
     );
+    expect(intent).toContain('\nRoles:\n\n- Coder\n');
+    // Exactly the five mechanical items carry `Captain shall run:`.
+    expect(
+      itemBodies
+        .filter(({ statement }) => statement.includes('Captain shall run:'))
+        .map(({ id }) => id),
+    ).toEqual(SCRIPT_ITEMS.map((id) => gearsItemFor(gears, id)?.id));
+    expect(gears.filter(({ script }) => script).map(({ id }) => id)).toEqual([
+      'pr-2',
+      'pr-4',
+      'pr-5',
+      'pr-6',
+      'pr-7',
+    ]);
     // Neither the governed Coder item nor the nested call was rewritten.
-    expect(gearsSection('PR-1')).toContain('Captain shall relay the complete caller input in quotes (`>`) to Coder');
-    expect(gearsSection('PR-3')).toContain('Captain shall call playbook `code`:');
+    expect(gearsSection('pr-1')).toContain('Captain shall relay the complete caller input in quotes (`>`) to Coder');
+    expect(gearsSection('pr-3')).toContain('Captain shall call playbook `code`:');
     expect(occurrences(gearsText, 'Captain shall run:')).toBe(SCRIPT_ITEMS.length);
   });
 
@@ -347,11 +393,11 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     ).toEqual([{ stateId: 'fixChecks', sourceItem: 'PR-3' }]);
     expect(nested[0]?.getInput(CONTEXT).playbookId).toBe('code');
     expect(rawStates.fixChecks?.invoke?.src).toBe('playbook');
-    const item = byId.get('PR-3');
+    const item = byId.get('pr-3');
     expect(item?.delegated).toBe(false);
     expect(item?.player).toBeUndefined();
     expect(item?.results).toEqual([]);
-    expect(gearsSection('PR-3')).not.toContain('Results:');
+    expect(gearsSection('pr-3')).not.toContain('Results:');
     expect(item?.prompt).toEqual([
       '> Original request: <caller-input>',
       '> Pull request: <pull-request-url>',
@@ -372,9 +418,25 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       'When the nested `code` call fails outside that authored result contract, `pr` shall park as failed and retain the control-plane error instead of reporting an authored outcome.',
     ]) {
       expect(source).toContain(clause);
-      // The GEARS carries each child outcome in the source's own words; the
-      // one-fix bound gains its owner (`code`) in the same sentence.
-      expect(gearsSection('PR-3')).toContain(clause.replace(/\.$/, ''));
+    }
+    // DR-104: each child outcome is a requirement item of its own, citing
+    // the `code` call it governs.
+    for (const [id, requirement] of [
+      ['pr-21', '`pr` shall make no more than one fix attempt [[pr-3](#pr-3)].'],
+      [
+        'pr-22',
+        '`pr` shall publish the fix [[pr-4](#pr-4)] and wait for the checks again [[pr-5](#pr-5)] only after `code` succeeds [[pr-3](#pr-3)].',
+      ],
+      [
+        'pr-11',
+        'When `code` returns an authored abort or failure, or a terminal result that does not prove its success [[pr-3](#pr-3)], `pr` shall fail relaying that canonical result and leave the pull request open.',
+      ],
+      [
+        'pr-12',
+        'When the nested `code` call [[pr-3](#pr-3)] fails outside its authored result contract, `pr` shall park as failed and retain the control-plane error instead of reporting an authored outcome.',
+      ],
+    ] as const) {
+      expect(gearsSection(id), id).toContain(requirement);
     }
     const fixChecks = rawStates.fixChecks?.invoke;
     expect({
@@ -487,17 +549,17 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     // Each source outcome clause travels in its item's result descriptions.
     for (const [id, clause, carried] of [
       [
-        'PR-5',
+        'pr-5',
         'Checks still failing is an authored failure that leaves the pull request open; there is no second fix attempt.',
         'an authored failure of the workflow that leaves the pull request open; there is no second fix attempt.',
       ],
       [
-        'PR-2',
+        'pr-2',
         'A pull request whose repository still reports no checks after a brief wait for them to register counts as passed.',
         'a pull request whose repository still reports no checks after a brief wait for them to register counts as passed.',
       ],
       [
-        'PR-7',
+        'pr-7',
         'Both complete `pr`: the pull request is merged either way, and the result states whether the local default branch was fast-forwarded to the merged head.',
         'the workflow completes, since the pull request is merged either way,',
       ],
@@ -619,7 +681,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     const declaredRoles = new Map(
       enumeratePlayerStates(prMachine).map(({ stateId, sourceItem }) => [
         stateId,
-        byId.get(sourceItem)?.player?.toLowerCase(),
+        gearsItemFor(gears, sourceItem)?.player?.toLowerCase(),
       ]),
     );
     for (const [id, state] of Object.entries(rawStates)) {

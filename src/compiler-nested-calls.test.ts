@@ -21,8 +21,22 @@ it('defines exact nested call syntax without sequencing inside the verb phrase',
     'Text2gears shall not insert sequencing words such as `first`, `then`, `next`,\nor `finally` between `shall` and `call`',
   );
   expect(text2gears).toContain(
-    '`When` or `While` clause or in continuation prose around the item',
+    'or `finally` between `shall` and `call`, and no other words between the target and the colon;',
   );
+  expect(text2gears).toContain(
+    '`When` or `While` clause or in a requirement item that cites the call.',
+  );
+  // Every maintained nested call ends at its target: no word stands between
+  // the target and the colon.
+  for (const name of ['branch', 'captain', 'code', 'decide', 'dev', 'inspect', 'pr', 'review']) {
+    const gears = readFileSync(
+      new URL(`../reference/sdlc/${name}.playbook/${name}.gears.md`, import.meta.url),
+      'utf8',
+    );
+    for (const line of gears.split('\n').filter((l) => l.includes('Captain shall call playbook'))) {
+      expect(line, name).toMatch(/Captain shall call playbook (?:`[^`]+`|selected by `[^`]+`):$/);
+    }
+  }
   expect(text2gears).toContain('`Captain shall call playbook <playbook-id>:`');
   expect(text2gears).toContain(
     '``Captain shall call playbook selected by `<playbook-id-context>`:``',
@@ -55,26 +69,48 @@ it('joins the paths that share one nested call in one item, as the maintained DE
   ).replace(/\s+/g, ' ');
   expect(definition).toContain('do not split by trigger alone');
   expect(definition).toContain(
-    'text2gears shall emit one item whose condition joins the triggers and shall keep each path\'s continuation as that item\'s prose',
+    'text2gears shall emit one action item whose one `When` clause lists the entry paths and shall state each path\'s continuation as a requirement item citing it',
   );
   const gears = readFileSync(
     new URL('../reference/sdlc/dev.playbook/dev.gears.md', import.meta.url),
     'utf8',
   );
-  const items = [...gears.matchAll(/^### (DEV-\d+)$/gm)].map((match) => match[1]);
-  expect(items).toEqual(['DEV-1', 'DEV-2', 'DEV-3', 'DEV-4', 'DEV-5', 'DEV-6']);
-  const conditions = gears.split(/^### DEV-\d+$/m).slice(1).map((section) =>
-    section.split('\n').find((line) => /Captain shall call playbook/.test(line)) ?? '',
+  const sections = gears
+    .split(/^(?=### )/m)
+    .slice(1)
+    .map((section) => {
+      const [heading, ...body] = section.split('\n');
+      const statement = body.find((line) => line.trim() !== '') ?? '';
+      return { id: /^### (\S+)$/.exec(heading)?.[1] ?? '', statement, section };
+    });
+  const actions = sections.filter((item) => /\bCaptain shall\b/.test(item.statement));
+  expect(actions.map((item) => item.id)).toEqual([
+    'dev-1', 'dev-2', 'dev-3', 'dev-4', 'dev-5', 'dev-6',
+  ]);
+  const statement = (id: string): string =>
+    actions.find((item) => item.id === id)?.statement ?? '';
+  // dev-2 (`code`), dev-3 (`decide`), and dev-5 (`branch`) each list both
+  // paths that enter the call in one `When` clause.
+  expect(statement('dev-2')).toBe(
+    'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `code`:',
   );
-  // DEV-2 (`code`), DEV-3 (`decide`), and DEV-5 (`branch`) each name both
-  // paths that enter the call in one condition.
-  expect(conditions[1]).toMatch(
-    /^When the accepted planning result is code, or when `branch` has succeeded on the code via pull request path, Captain shall call playbook `code`:$/,
+  expect(statement('dev-3')).toBe(
+    'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `decide`:',
   );
-  expect(conditions[2]).toMatch(
-    /^When the accepted planning result is decide then code, or when `branch` has succeeded on the decide then code via pull request path, Captain shall call playbook `decide`:$/,
+  expect(statement('dev-5')).toBe(
+    'When Analyst chooses the code via pull request path or the decide then code via pull request path [[dev-1](#dev-1)], Captain shall call playbook `branch`:',
   );
-  expect(conditions[4]).toMatch(
-    /^When the accepted planning result is code via pull request or decide then code via pull request and no child call has started yet, Captain shall call playbook `branch`:$/,
+  // Each path's continuation is a requirement item citing the call, never
+  // prose on the call item itself.
+  const requirements = sections.filter(
+    (item) => !/\bCaptain shall\b/.test(item.section) && !item.section.includes('\n> '),
   );
+  for (const id of ['dev-2', 'dev-3', 'dev-5']) {
+    expect(
+      requirements.some((item) => item.statement.includes(`[[${id}](#${id})]`)),
+      id,
+    ).toBe(true);
+    const call = actions.find((item) => item.id === id)?.section ?? '';
+    expect(call.trimEnd().split('\n').at(-1)).toMatch(/^> /);
+  }
 });

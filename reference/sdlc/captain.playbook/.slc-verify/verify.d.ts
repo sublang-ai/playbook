@@ -1,3 +1,4 @@
+import { type CoverageBudget } from './verify-coverage.js';
 /** A GEARS spec item with its acting prompt and optional source-owned results. */
 export interface GearsItem {
     id: string;
@@ -6,7 +7,8 @@ export interface GearsItem {
     prompt: string;
     /**
      * Direct Captain work, delegated player work, or an optimizer-introduced
-     * script item (`Captain shall run:`); absent for playbook calls.
+     * script item (`Captain shall run:`); absent for playbook calls and for
+     * declarative (requirement or test) items, which carry no `Captain shall`.
      */
     actor?: 'captain' | 'player' | 'script';
     /** Target id when this item invokes another playbook rather than a player. */
@@ -185,6 +187,17 @@ export interface GearsRoleContract {
 export declare function canonicalRoleId(name: string): string;
 /** Parses Roles/Players plus source-derived concurrent role sets without host bindings. */
 export declare function inspectGearsRoleContract(gears: string): GearsRoleContract;
+interface StateNodeRef {
+    key: string;
+    path: readonly string[];
+    statePath: string;
+    state: StateLike;
+}
+interface PlaybookBinding {
+    state: PlaybookInvocationState;
+    node: StateNodeRef;
+    invoke: InvokeLike;
+}
 /**
  * Enumerates a machine's direct-Captain and delegated-player states, reading
  * `invoke.input` under a stub context to recover the static source binding.
@@ -205,6 +218,13 @@ export interface GearsFsmConformanceOptions {
     /** Reviewed artifact schema for roleless non-controller machines. */
     artifactSchema?: 1 | 3;
 }
+/** Conservative synchronous check; no reached-context evidence is assumed. */
+export declare function checkGearsFsmConformance(gears: string, config: MachineConfigLike, options?: GearsFsmConformanceOptions): string[];
+/** Structural findings plus binding-local work for the shared bounded replay. */
+export declare function prepareGearsFsmConformance(gears: string, config: MachineConfigLike, options?: GearsFsmConformanceOptions): {
+    findings: string[];
+    literalChecks: ReachedLiteralChildChecks;
+};
 /** Exact action guards of Playbook 10's controller decision result. */
 export declare const CONTROLLER_ACTION_GUARDS: readonly ['respond', 'resume', 'start', 'switch', 'dismiss', 'deliver', 'runtime'];
 /** Exact legacy or recovery-capable controller domain. */
@@ -221,14 +241,6 @@ export declare function isControllerMachine(config: MachineConfigLike): boolean;
 export declare function hasControllerDecisionNearMiss(config: MachineConfigLike): boolean;
 /** Reject tags that prevent the public runtime returning a pending child. */
 export declare function checkFsmChildSuspension(config: MachineConfigLike): string[];
-/**
- * Checks GEARS↔FSM conformance and returns human-readable findings (empty when
- * conformant): every GEARS item maps to one state with the same player and the
- * prompt verbatim, every captain state references a known item, and every
- * captain state's `result` map declares the Boss-reply suspension key with its
- * adjudicator contract (verification-1, verification-3; DR-009).
- */
-export declare function checkGearsFsmConformance(gears: string, config: MachineConfigLike, options?: GearsFsmConformanceOptions): string[];
 /** The `gears2fsm`-mandated root pre-emption event name. */
 export declare const INTERRUPT_EVENT = "BOSS_INTERRUPT";
 /** The `gears2fsm`-mandated Boss-reply event and wait-state names. */
@@ -357,6 +369,8 @@ export declare function capturePromptContract(config: MachineConfigLike): Prompt
  * (verification-5).
  */
 export declare function deriveSubstitutions(config: MachineConfigLike, compose: PromptComposer, actor?: CaptainState['actor']): Record<string, string[]>;
+/** The shared runtime selects its keyed profile from direct root children. */
+export declare function usesKeyedBossQuestionContext(config: MachineConfigLike): boolean;
 /** Known-schema FSM input checks, without requiring a linked composer. */
 export declare function checkFsmContinuationInputs(config: MachineConfigLike, artifactSchema: 1 | 3): string[];
 /**
@@ -379,6 +393,17 @@ export declare function checkPromptComposition(opts: {
 }): string[];
 type PromptIdentity = (roleId: string) => string;
 type PromptComposer = (input: unknown, promptIdentity: PromptIdentity, resuming?: boolean) => string;
+/** Invocation object identity prevents evidence sharing between sibling calls. */
+export declare class ReachedLiteralChildChecks {
+    private readonly work;
+    check(item: GearsItem, binding: PlaybookBinding, initial: Record<string, unknown> | undefined): string | undefined;
+    pending(): boolean;
+    needs(invoke: object): boolean;
+    private proved;
+    private mapped;
+    observe(invoke: object, context: Record<string, unknown>, actual: Record<string, unknown>): void;
+    findings(): string[];
+}
 /**
  * Package-export default for direct emitter callers. Full reserved-pipeline
  * runs override it with the artifact-local verifier support module.
@@ -407,10 +432,13 @@ export declare function generateGearsFsmConformanceTest(opts: {
     fsmModule: string;
     /** Path to the `gears` artifact, relative to the test. */
     gearsFile: string;
+    /** Source text used by the same bounded entry search as coverage. */
+    fsmSourceFile?: string;
     /** Import specifier for this checker, relative to the test. */
     verifyModule: string;
     /** Reviewed schema baked into roleless artifact checks when available. */
     artifactSchema?: 1 | 3;
+    coverage?: CoverageBudget;
     /** Emission-time schema evidence that must remain empty for a valid artifact. */
     schemaFindings?: readonly string[];
 }): string;
@@ -430,8 +458,10 @@ export declare function emitGearsFsmConformanceTest(opts: {
     verifyModule?: string;
     /** Reviewed schema baked into roleless artifact checks when available. */
     artifactSchema?: 1 | 3;
+    coverage?: CoverageBudget;
     /** Emission-time schema evidence that must remain empty for a valid artifact. */
     schemaFindings?: readonly string[];
+    write?: (path: string, content: string) => Promise<void>;
 }): Promise<string>;
 /**
  * Imports a produced `fsm` artifact module for emission-time derivation. The
@@ -550,13 +580,15 @@ export declare function emitPromptContractTest(opts: {
     verifyModule?: string;
     /** Reviewed schema when the FSM shape alone cannot distinguish generations. */
     artifactSchema?: 1 | 3;
-    /** Actual reviewed full-link target provenance, when the caller has it. */
+    /** Declared engine target provenance, not proof of the artifact's origin. */
     provenance?: unknown;
     /** The full-link target's installed engine declaration, when read (DR-028). */
     runtimeDeclaration?: PlaybookRuntimeDeclaration;
+    write?: (path: string, content: string) => Promise<void>;
 }): Promise<{
     path: string;
     diagnostics: string[];
+    advisories: string[];
 }>;
 /**
  * Emits the introspection test beside a compiled `playbook` artifact
@@ -570,5 +602,6 @@ export declare function emitFsmIntrospectionTest(opts: {
     artifactDir: string;
     basename: string;
     verifyModule?: string;
+    write?: (path: string, content: string) => Promise<void>;
 }): Promise<string>;
 export * from './verify-coverage.js';

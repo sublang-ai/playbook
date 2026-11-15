@@ -23,10 +23,31 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { createActor, fromPromise } from 'xstate';
-import { AWAIT_BOSS_REPLY_STATE, BOSS_REPLY_EVENT, INTERRUPT_EVENT, NEEDS_BOSS_REPLY, VERIFY_MODULE, controllerDecisionNearMiss, enumerateCaptainStates, enumerateScriptStates, initialStateTarget, isControllerDecisionResult, isControllerMachine, loadFsmModule, normalizeArms, } from './verify.js';
+import { AWAIT_BOSS_REPLY_STATE, BOSS_REPLY_EVENT, INTERRUPT_EVENT, NEEDS_BOSS_REPLY, VERIFY_MODULE, controllerDecisionNearMiss, enumerateCaptainStates, enumeratePlaybookStates, enumerateScriptStates, initialStateTarget, isControllerDecisionResult, isControllerMachine, loadFsmModule, normalizeArms, prepareGearsFsmConformance, findConcurrentRoleSets, ReachedLiteralChildChecks, resolveArtifactSchemaForVerification, usesKeyedBossQuestionContext, } from './verify.js';
 /** The `gears2fsm`-mandated captain actor name a machine declares. */
 export const CAPTAIN_ACTOR = 'captain';
+/** Validate before artifact access and return an independent immutable policy. */
+export function resolveCoverageBudget(value = {}) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+        throw new TypeError('coverage must be an object');
+    for (const key of Reflect.ownKeys(value))
+        if (key !== 'maxInvocations' &&
+            key !== 'maxAttempts' &&
+            key !== 'maxDurationMs')
+            throw new TypeError(`Unknown coverage budget key: ${String(key)}`);
+    const { maxInvocations = 8, maxAttempts = 64, maxDurationMs = 300_000, } = value;
+    for (const [key, limit, cap] of [
+        ['maxInvocations', maxInvocations, 64],
+        ['maxAttempts', maxAttempts, 1024],
+        ['maxDurationMs', maxDurationMs, 1_800_000],
+    ]) {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > cap)
+            throw new RangeError(`coverage.${key} must be an integer from 1 to ${cap}`);
+    }
+    return Object.freeze({ maxInvocations, maxAttempts, maxDurationMs });
+}
 // Each check owns its resources, including concurrent checks and async actor
 // callbacks. No current-run variable is shared between invocations.
 const coverageRuns = new AsyncLocalStorage();
@@ -210,8 +231,6 @@ const SETTLE_MS = 1_000;
 const PARALLEL_SETTLE_MS = 250;
 const PARALLEL_QUESTION_SETTLE_MS = 500;
 const MAX_PARALLEL_COMBINATIONS = 64;
-const MAX_COVERAGE_PATH_STEPS = 8;
-const MAX_COVERAGE_PATH_ATTEMPTS = 64;
 /** Stable values shared by machine input, result output, and guard probing. */
 const COVERAGE_PLAYBOOK_ID = 'coverage-child-playbook';
 const COVERAGE_PLAYBOOK_INPUT = 'coverage: complete the child request';
@@ -233,13 +252,41 @@ const COVERAGE_MACHINE_INPUT = {
     bossIntent: 'Exercise the compiled playbook transitions.',
     enabledPlaybooks: COVERAGE_ENABLED_PLAYBOOKS,
 };
+/** Literal bindings, not arbitrary guard literals, declare extra child ids. */
+function coverageMachineInput(machine) {
+    const cached = coverageRuns.getStore()?.machineInputs.get(machine.config);
+    if (cached !== undefined)
+        return cached;
+    const enabledPlaybooks = [
+        ...COVERAGE_ENABLED_PLAYBOOKS,
+    ];
+    const ids = new Set(enabledPlaybooks.map((entry) => entry.id));
+    for (const binding of enumeratePlaybookStates(machine.config)) {
+        if (binding.playbookIdContext !== undefined ||
+            binding.textContext !== undefined ||
+            (binding.bindingFindings?.length ?? 0) > 0 ||
+            binding.playbookId === '' ||
+            ids.has(binding.playbookId)) {
+            continue;
+        }
+        ids.add(binding.playbookId);
+        enabledPlaybooks.push({
+            id: binding.playbookId,
+            command: `/${binding.playbookId}`,
+            intent: 'Exercise a declared literal child transition.',
+        });
+    }
+    const input = { ...COVERAGE_MACHINE_INPUT, enabledPlaybooks };
+    coverageRuns.getStore()?.machineInputs.set(machine.config, input);
+    return input;
+}
 /**
  * A valid Captain context for direct guard evaluation. Dynamic call fields use
  * the same id as the catalog entry, preserving exact catalog-membership guards.
  */
-function coverageGuardContext(dynamic) {
+function coverageGuardContext(dynamic, input = COVERAGE_MACHINE_INPUT) {
     return {
-        ...COVERAGE_MACHINE_INPUT,
+        ...input,
         remainingPlan: [],
         completedCallResults: [
             {
@@ -265,7 +312,7 @@ function initializedMachineContext(machine) {
     let actor;
     let failed = false;
     try {
-        actor = trackCoverageActor(createActor(machine, { input: COVERAGE_MACHINE_INPUT }));
+        actor = trackCoverageActor(createActor(machine, { input: coverageMachineInput(machine) }));
         return actor.getSnapshot().context;
     }
     catch {
@@ -281,22 +328,24 @@ function initializedMachineContext(machine) {
 function initializedCoverageContext(machine, dynamic) {
     return {
         ...initializedMachineContext(machine),
-        ...coverageGuardContext(dynamic),
+        ...coverageGuardContext(dynamic, coverageMachineInput(machine)),
     };
 }
 /** The `Output shall include` clause a result description declares. */
-const OUTPUT_CLAUSE = /Output shall include\s+(.+)$/;
-/** Every backticked `field:` property named inside that clause. */
-const REQUIRED_FIELD = /`([A-Za-z_$][A-Za-z0-9_$]*):/g;
+const OUTPUT_CLAUSE = /(?:Output shall include|输出应包含)\s*(.*)$/s;
+/** Every plain or annotated backticked identifier field inside that clause. */
+const REQUIRED_FIELD = /`([A-Za-z_$][A-Za-z0-9_$]*)(?::[^`]*)?`/g;
 /** Structured fields named by the generic Captain result contracts. */
 const STRUCTURED_RESULT_FIELD = /\b(response|question|remainingPlan|nextPlaybookId|nextPlaybookInput)\b/g;
 function requiredFields(description) {
-    const clause = OUTPUT_CLAUSE.exec(description)?.[1] ?? '';
+    const clause = OUTPUT_CLAUSE.exec(description)?.[1];
+    // An explicit clause owns the payload schema. Generic Captain words in the
+    // preceding outcome prose must not invent extra fields in a closed record.
+    // Preserve older Captain descriptions that predate explicit output clauses.
     return [
         ...new Set([
-            ...[...clause.matchAll(REQUIRED_FIELD)].map((match) => match[1]),
-            ...[...description.matchAll(STRUCTURED_RESULT_FIELD)].map((match) => match[1]),
-        ]),
+            ...(clause ?? description).matchAll(clause === undefined ? STRUCTURED_RESULT_FIELD : REQUIRED_FIELD),
+        ].map((match) => match[1])),
     ];
 }
 function synthesizedFieldValue(field) {
@@ -605,7 +654,7 @@ function resolvedStateNode(machine, ref) {
     return node;
 }
 function persistedSnapshotWithContext(provided, context) {
-    const seed = trackCoverageActor(createActor(provided, { input: COVERAGE_MACHINE_INPUT }));
+    const seed = trackCoverageActor(createActor(provided, { input: coverageMachineInput(provided) }));
     let completed = false;
     try {
         const snapshot = {
@@ -622,8 +671,15 @@ function persistedSnapshotWithContext(provided, context) {
 }
 function makeActor(machine, script, playbookScript = () => null, restoredContext, observeTransition) {
     coverageCheckpoint();
+    const coverageInputs = new Map();
     const coverageErrors = [];
+    const coverageTransitions = [];
     const workActor = fromPromise(async ({ input, self, }) => {
+        coverageInputs.set(self.id, {
+            stateId: input?.stateId,
+            sourceItem: input?.sourceItem,
+            role: input?.role,
+        });
         const output = await script(input ?? {}, self.id);
         if (output === null)
             return new Promise(() => { });
@@ -652,7 +708,7 @@ function makeActor(machine, script, playbookScript = () => null, restoredContext
         ? undefined
         : persistedSnapshotWithContext(provided, restoredContext);
     const actor = trackCoverageActor(createActor(provided, {
-        input: COVERAGE_MACHINE_INPUT,
+        input: coverageMachineInput(machine),
         ...(restoredSnapshot === undefined
             ? {}
             : { snapshot: restoredSnapshot }),
@@ -671,7 +727,18 @@ function makeActor(machine, script, playbookScript = () => null, restoredContext
                     }
                     const source = transition.source;
                     const target = transition.target;
-                    observeTransition?.({
+                    const event = inspection.event;
+                    const arms = source?.transitions?.get(typeof event === 'object' && event !== null
+                        ? String(event.type)
+                        : '');
+                    const observed = {
+                        root: source === provided.root,
+                        ...(typeof event === 'object' && event !== null
+                            ? { event: event }
+                            : {}),
+                        ...(arms === undefined
+                            ? {}
+                            : { armIndex: arms.indexOf(transition) }),
                         ...(typeof source === 'object' &&
                             source !== null &&
                             typeof source.id === 'string'
@@ -684,7 +751,9 @@ function makeActor(machine, script, playbookScript = () => null, restoredContext
                                 ? [candidate.id]
                                 : [])
                             : [],
-                    });
+                    };
+                    coverageTransitions.push(observed);
+                    observeTransition?.(observed);
                 }
             }
             const event = inspection.event;
@@ -700,8 +769,12 @@ function makeActor(machine, script, playbookScript = () => null, restoredContext
             }
         },
     }));
+    Object.defineProperty(actor, 'coverageInputs', { value: coverageInputs });
     Object.defineProperty(actor, 'coverageErrors', {
         value: coverageErrors,
+    });
+    Object.defineProperty(actor, 'coverageTransitions', {
+        value: coverageTransitions,
     });
     actor.subscribe({ error: () => { } });
     actor.start();
@@ -966,8 +1039,13 @@ function interruptDriveForRef(machine, refs, target, targetId, extraValues = [],
             satisfiable: true,
         };
 }
-/** A bounded satisfying initial/root event that enters one Captain state. */
+/** The existing first satisfying event remains unchanged for direct callers. */
 function entryDriveForRef(machine, refs, target, extraValues = [], initialContext = initializedCoverageContext(machine)) {
+    const first = entryDrivesForRef(machine, refs, target, extraValues, initialContext).next();
+    return first.done ? undefined : first.value;
+}
+/** Lazy one-field public events, never new context or an unguarded entry. */
+function* entryDrivesForRef(machine, refs, target, extraValues = [], initialContext = initializedCoverageContext(machine), allEntrySurfaces = false) {
     const initialPath = initialActiveRefs(machine.config, refs);
     const surfaces = [
         ...initialPath
@@ -991,7 +1069,7 @@ function entryDriveForRef(machine, refs, target, extraValues = [], initialContex
                 if (guard === undefined)
                     continue;
                 const base = { type: eventType };
-                const assignment = probeGuardAssignment(guard.run, {}, [{ tag: 'e:', base }], [
+                const values = [
                     ...guard.probeValues,
                     ...refs.flatMap((ref) => [
                         ref.key,
@@ -999,21 +1077,70 @@ function entryDriveForRef(machine, refs, target, extraValues = [], initialContex
                         ...(ref.configId === undefined ? [] : [ref.configId]),
                     ]),
                     ...extraValues,
-                ], {
+                ];
+                const probeBudget = { probes: 0 };
+                const assignment = probeGuardAssignment(guard.run, {}, [{ tag: 'e:', base }], values, {
                     initialContext,
                     varyExistingContext: true,
+                    probeBudget,
                 });
                 if (assignment !== undefined) {
-                    return {
-                        event: assignedPayload(base, assignment, 'e:'),
-                        context: assignment.context,
-                        satisfiable: true,
-                    };
+                    const event = assignedPayload(base, assignment, 'e:');
+                    yield { event, context: assignment.context, satisfiable: true };
+                    const fields = Object.keys(assignment.payloads['e:'] ?? {})
+                        .filter((field) => field !== 'type')
+                        .map((field) => ({ field, cursor: 0 }));
+                    const candidates = [
+                        ...new Set([
+                            ...minedLiterals(guard.run),
+                            ...values,
+                            ...GENERIC_VALUES,
+                        ]),
+                    ];
+                    // Scan each field to its next admitted value before returning to a
+                    // permissive sibling field. Only accepted variants consume replays.
+                    while (fields.some((field) => field.cursor < candidates.length)) {
+                        for (const field of fields) {
+                            while (field.cursor < candidates.length) {
+                                coverageCheckpoint();
+                                const value = candidates[field.cursor++];
+                                if (Object.is(value, event[field.field]))
+                                    continue;
+                                if (++probeBudget.probes > MAX_PROBES)
+                                    return;
+                                const nextEvent = { ...event, [field.field]: value };
+                                let accepted = false;
+                                try {
+                                    accepted = Boolean(guard.run({
+                                        context: assignment.context,
+                                        event: nextEvent,
+                                    }));
+                                }
+                                catch {
+                                    coverageCheckpoint();
+                                }
+                                finally {
+                                    coverageCheckpoint();
+                                }
+                                if (!accepted)
+                                    continue;
+                                yield {
+                                    event: nextEvent,
+                                    context: assignment.context,
+                                    satisfiable: true,
+                                };
+                                break;
+                            }
+                        }
+                    }
+                    // Literal proof may need another authored entry on this same iterator.
+                    if (!allEntrySurfaces)
+                        return;
                 }
             }
         }
     }
-    return undefined;
+    return;
 }
 /** The arm XState selects for one concrete invocation output and context. */
 function directlySelectedArm(machine, captain, output, context = coverageGuardContext()) {
@@ -1044,6 +1171,7 @@ function directTargetRef(machine, refs, captain, output, context = coverageGuard
 const GENERIC_VALUES = [
     'coverage',
     true,
+    false,
     1,
     ['coverage'],
     COVERAGE_ENABLED_PLAYBOOKS,
@@ -1053,7 +1181,6 @@ const MAX_SCRIPT_EXIT_STATUSES = 8;
 const PROBES_PER_TIMEOUT_MILLISECOND = 50;
 const COVERAGE_TIMEOUT_MARGIN_MS = 5_000;
 const MIN_COVERAGE_TEST_TIMEOUT_MS = 10_000;
-const MAX_COVERAGE_TEST_TIMEOUT_MS = 300_000;
 function minedLiterals(fn) {
     let source;
     try {
@@ -1070,7 +1197,7 @@ function minedLiterals(fn) {
 // helper call sites, invisible in the guard closures themselves; the module's
 // identifier-like string literals recover them without dragging prompt prose
 // into the candidate pool.
-const IDENTIFIER_LITERAL = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const IDENTIFIER_LITERAL = /^[A-Za-z][A-Za-z0-9_-]*$/;
 // Bound comparisons (cycle limits, retry counters, exit statuses) route on
 // integers that neither the string miner nor the generic value pool supplies:
 // GENERIC_VALUES carries only 1, and minedLiterals matches quoted text alone. A
@@ -1119,16 +1246,120 @@ function probeGuardAssignment(guard, fixedEvent, payloads, extraValues, options 
                 prototype: Object.getPrototypeOf(base),
                 descriptors: Object.getOwnPropertyDescriptors(base),
             };
+            const descriptors = shape.descriptors;
+            if ((shape.prototype === Object.prototype || shape.prototype === null) &&
+                Reflect.ownKeys(descriptors).every((key) => {
+                    const descriptor = Reflect.get(descriptors, key);
+                    return ('value' in descriptor &&
+                        descriptor.enumerable === true &&
+                        descriptor.configurable === true &&
+                        descriptor.writable === true);
+                })) {
+                // Define once from descriptors: never read seed getters or assign an
+                // own __proto__ through a setter. Spread only this private data seed.
+                shape.data = Object.create(Object.prototype, descriptors);
+            }
             bases.set(base, shape);
         }
-        const copy = Object.create(shape.prototype, shape.descriptors);
+        const copy = shape.data === undefined
+            ? Object.create(shape.prototype, shape.descriptors)
+            : { ...shape.data };
+        if (shape.data !== undefined && shape.prototype === null)
+            Object.setPrototypeOf(copy, null);
         return Object.assign(copy, assigned);
     };
     // Guard-source literals first: the likeliest matches are tried earliest.
     const values = [
         ...new Set([...minedLiterals(guard), ...extraValues, ...GENERIC_VALUES]),
     ];
-    let probes = 0;
+    const reachedContext = (options.discoverPayloadShape === true ||
+        options.declaredResultFields !== undefined) &&
+        options.assignContext === false
+        ? Object.getOwnPropertyDescriptors(options.initialContext ?? {})
+        : undefined;
+    let reachedValues = 0;
+    const reachedCandidates = [];
+    const declaredValues = new Map();
+    const declaredDistinct = new Set();
+    const noteContextRead = (field, declaredField) => {
+        if (reachedContext === undefined || !Object.hasOwn(reachedContext, field))
+            return;
+        const descriptor = reachedContext[field];
+        if (!('value' in descriptor))
+            return;
+        const value = descriptor.value;
+        if (options.declaredResultFields !== undefined) {
+            // A declared placeholder already has a string shape. Associate only a
+            // following context read with that output field, rather than varying
+            // unrelated fields or spending the budget on initial preconditions.
+            if (declaredField === undefined ||
+                typeof value !== 'string' ||
+                value === '')
+                return;
+            if (!declaredDistinct.has(value)) {
+                if (reachedValues >= 4)
+                    return;
+                reachedValues++;
+                declaredDistinct.add(value);
+            }
+            const candidates = declaredValues.get(declaredField) ?? [];
+            if (!candidates.includes(value)) {
+                candidates.push(value);
+                declaredValues.set(declaredField, candidates);
+            }
+            return;
+        }
+        if (reachedValues >= 4 ||
+            !(value === null ||
+                typeof value === 'string' ||
+                typeof value === 'boolean' ||
+                (typeof value === 'number' && Number.isFinite(value))) ||
+            values.some((candidate) => Object.is(candidate, value)) ||
+            reachedCandidates.some((candidate) => Object.is(candidate, value)))
+            return;
+        reachedValues++;
+        reachedCandidates.push(value);
+    };
+    function* candidateValues(key, hasBaseline, baseline, deferBaseline = false) {
+        if (hasBaseline && !deferBaseline)
+            yield baseline;
+        const guided = key.startsWith('o:')
+            ? declaredValues.get(key.slice(2))
+            : undefined;
+        if (guided !== undefined) {
+            for (let index = 0; index < guided.length; index++) {
+                if (guided[index] !== baseline)
+                    yield guided[index];
+            }
+            if (hasBaseline && deferBaseline)
+                yield baseline;
+            return;
+        }
+        // A deeper failed candidate can reveal a fixed-context value needed by
+        // this field. On every resume, try new bounded hints before the static tail.
+        // Admission keeps the two pools disjoint; Object.is retains signed zero.
+        const triedReached = [];
+        let index = 0;
+        while (true) {
+            const hint = reachedCandidates.findIndex((value) => (!hasBaseline || value !== baseline) &&
+                !triedReached.some((tried) => Object.is(tried, value)));
+            if (hint !== -1) {
+                const value = reachedCandidates[hint];
+                triedReached.push(value);
+                yield value;
+                continue;
+            }
+            if (index === values.length)
+                break;
+            const value = values[index++];
+            if (!hasBaseline || value !== baseline)
+                yield value;
+        }
+        if (hasBaseline && deferBaseline)
+            yield baseline;
+    }
+    const probeBudget = options.probeBudget ?? { probes: 0 };
+    const discovered = new Map();
     const eventFor = (assignment) => {
         let event = { ...fixedEvent };
         for (const payload of payloads) {
@@ -1141,11 +1372,11 @@ function probeGuardAssignment(guard, fixedEvent, payloads, extraValues, options 
         }
         return event;
     };
-    const passes = (assignment) => {
+    const passes = (assignment, predicate = guard) => {
         coverageCheckpoint();
-        probes++;
+        probeBudget.probes++;
         try {
-            return Boolean(guard({ context: assignment.context, event: eventFor(assignment) }));
+            return Boolean(predicate({ context: assignment.context, event: eventFor(assignment) }));
         }
         catch {
             coverageCheckpoint();
@@ -1156,58 +1387,261 @@ function probeGuardAssignment(guard, fixedEvent, payloads, extraValues, options 
         }
     };
     // Records the unassigned fields the guard reads under the given assignment.
-    const readsUnder = (assignment) => {
+    const readsUnder = (assignment, discoverShape = false) => {
         coverageCheckpoint();
         const reads = new Set();
-        const recording = (base, assigned, tag, varyExisting = false) => new Proxy(overlay(base, assigned), {
-            get(target, prop) {
-                if (typeof prop !== 'string')
-                    return undefined;
-                if (prop in target) {
-                    const payload = payloads.find((item) => item.tag === tag);
-                    if ((varyExisting || payload?.varyExisting === true) &&
-                        !(prop in assigned)) {
-                        reads.add(`${tag}${prop}`);
+        // Enumeration also queries descriptors. Prefer semantic property reads so
+        // those incidental queries cannot starve the existing bounded search.
+        let descriptorRead;
+        const enumerated = new Set();
+        let declaredField;
+        const contextRead = (field) => {
+            noteContextRead(field, declaredField);
+            if (declaredField !== undefined && declaredValues.has(declaredField))
+                reads.add(`o:${declaredField}`);
+        };
+        // An earlier arm's fields cannot satisfy a false selected guard. Once that
+        // guard accepts, ordered reads can discover how to exclude the earlier arm.
+        // This concrete guidance check shares the existing acceptance-probe budget.
+        const selectedPending = !discoverShape &&
+            options.discoverPayloadShape === true &&
+            options.payloadShapeGuard !== undefined &&
+            !passes(assignment, options.payloadShapeGuard);
+        if (probeBudget.probes > MAX_PROBES)
+            return [];
+        let shapeTag;
+        let shapeWidth = 0;
+        const noteShapeField = (tag, field) => {
+            if (!discoverShape || tag !== shapeTag)
+                return;
+            const fields = discovered.get(tag) ?? new Set();
+            fields.add(field);
+            discovered.set(tag, fields);
+        };
+        const recording = (base, assigned, tag, varyExisting = false) => {
+            const target = overlay(base, assigned);
+            if (tag === shapeTag) {
+                // These placeholders only expose reads behind a key-count predicate.
+                // They never enter an assignment or the real guard/replay evaluation.
+                let index = 0;
+                while (Object.keys(target).length < shapeWidth) {
+                    const key = `__slc_probe_${index++}`;
+                    if (!Object.hasOwn(target, key)) {
+                        Object.defineProperty(target, key, {
+                            value: null,
+                            enumerable: true,
+                            configurable: true,
+                            writable: true,
+                        });
                     }
-                    return target[prop];
-                }
-                reads.add(`${tag}${prop}`);
-                return undefined;
-            },
-            has(target, prop) {
-                if (typeof prop === 'string' && !(prop in target)) {
-                    reads.add(`${tag}${prop}`);
-                }
-                return prop in target;
-            },
-        });
-        try {
-            let event = { ...fixedEvent };
-            for (const payload of payloads) {
-                if (payload.eventField === undefined) {
-                    event = recording(overlay(payload.base, event), assignment.payloads[payload.tag] ?? {}, payload.tag);
-                }
-                else {
-                    event[payload.eventField] = recording(payload.base, assignment.payloads[payload.tag] ?? {}, payload.tag);
                 }
             }
-            guard({
-                context: recording(baseContext, assignment.contextOverrides, 'c:', options.varyExistingContext === true),
-                event,
+            return new Proxy(target, {
+                ownKeys(target) {
+                    enumerated.add(tag);
+                    return Reflect.ownKeys(target);
+                },
+                getOwnPropertyDescriptor(target, prop) {
+                    const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+                    if (tag === 'c:' && typeof prop === 'string')
+                        contextRead(prop);
+                    if (tag !== 'c:' &&
+                        typeof prop === 'string' &&
+                        descriptor === undefined) {
+                        // Ordinary descriptor reads guide values without inventing one.
+                        reads.add(`${tag}${prop}`);
+                        enumerated.add(tag);
+                        noteShapeField(tag, prop);
+                        // Discovery can follow a chain of Object.hasOwn checks without
+                        // choosing semantic values. Only concrete evaluation may accept
+                        // the resulting named shape; this descriptor never reaches replay.
+                        if (discoverShape && tag === shapeTag) {
+                            return {
+                                value: null,
+                                enumerable: true,
+                                configurable: true,
+                                writable: true,
+                            };
+                        }
+                    }
+                    if (tag !== 'c:' &&
+                        typeof prop === 'string' &&
+                        descriptor !== undefined &&
+                        'value' in descriptor &&
+                        !discoverShape &&
+                        shapeTag === undefined) {
+                        if (tag === 'o:' &&
+                            options.declaredResultFields?.includes(prop) &&
+                            !Object.hasOwn(assigned, prop))
+                            declaredField = prop;
+                        const payload = payloads.find((item) => item.tag === tag);
+                        // An assigned field cannot guide another choice, but reading it
+                        // must not erase an earlier unresolved descriptor-value hint.
+                        if ((varyExisting ||
+                            payload?.varyExisting === true ||
+                            payload?.shapeFields?.includes(prop)) &&
+                            !Object.hasOwn(assigned, prop))
+                            descriptorRead = `${tag}${prop}`;
+                    }
+                    return descriptor;
+                },
+                get(target, prop) {
+                    if (typeof prop !== 'string')
+                        return undefined;
+                    if (tag !== 'c:' && !discoverShape && shapeTag === undefined)
+                        descriptorRead = undefined;
+                    if (tag === 'c:')
+                        contextRead(prop);
+                    else if (tag === 'o:' && options.declaredResultFields !== undefined) {
+                        declaredField =
+                            options.declaredResultFields.includes(prop) &&
+                                !Object.hasOwn(assigned, prop)
+                                ? prop
+                                : undefined;
+                    }
+                    if (prop in target) {
+                        const payload = payloads.find((item) => item.tag === tag);
+                        if ((varyExisting ||
+                            payload?.varyExisting === true ||
+                            payload?.shapeFields?.includes(prop)) &&
+                            !(prop in assigned)) {
+                            reads.add(`${tag}${prop}`);
+                        }
+                        return target[prop];
+                    }
+                    reads.add(`${tag}${prop}`);
+                    noteShapeField(tag, prop);
+                    return undefined;
+                },
+                has(target, prop) {
+                    if (typeof prop === 'string' && !(prop in target)) {
+                        reads.add(`${tag}${prop}`);
+                    }
+                    return prop in target;
+                },
             });
+        };
+        const trace = () => {
+            try {
+                let event = { ...fixedEvent };
+                for (const payload of payloads) {
+                    if (payload.eventField === undefined) {
+                        event = recording(overlay(payload.base, event), assignment.payloads[payload.tag] ?? {}, payload.tag);
+                    }
+                    else {
+                        event[payload.eventField] = recording(payload.base, assignment.payloads[payload.tag] ?? {}, payload.tag);
+                    }
+                }
+                (discoverShape || shapeTag !== undefined || selectedPending
+                    ? (options.payloadShapeGuard ?? guard)
+                    : guard)({
+                    context: recording(baseContext, assignment.contextOverrides, 'c:', options.varyExistingContext === true),
+                    event,
+                });
+            }
+            catch {
+                coverageCheckpoint();
+                // Reads observed before the throw still guide the search.
+            }
+            finally {
+                coverageCheckpoint();
+            }
+        };
+        trace();
+        // Exact cardinality may short-circuit before any named property is read.
+        // Fixed-context reads cannot guide values, so they do not suppress padding.
+        // Explore only an observed payload enumeration, within the same four-field
+        // assignment bound. Context and fixed event fields remain unchanged.
+        if (options.discoverPayloadShape === true &&
+            (discoverShape ||
+                ![...reads].some((key) => !key.startsWith('c:') ||
+                    (options.assignContext !== false &&
+                        !options.fixedContextFields?.includes(key.slice(2)))))) {
+            for (const payload of payloads) {
+                if (!enumerated.has(payload.tag))
+                    continue;
+                shapeTag = payload.tag;
+                // Overriding existing default data keys preserves their enumerable set.
+                // New keys can encounter inherited setters; keep the original trials
+                // for those, event-level merges and descriptor-backed seeds.
+                const data = bases.get(payload.base)?.data;
+                const assigned = assignment.payloads[payload.tag] ?? {};
+                const unpaddedWidth = payload.eventField !== undefined &&
+                    data !== undefined &&
+                    !Object.hasOwn(assigned, '__proto__') &&
+                    Object.keys(assigned).every((key) => Object.hasOwn(data, key))
+                    ? Object.keys(data).length
+                    : undefined;
+                let previousWidth;
+                for (shapeWidth = 1; shapeWidth <= 4; shapeWidth++) {
+                    coverageCheckpoint();
+                    if (++probeBudget.probes > MAX_PROBES)
+                        return [...reads];
+                    // Keep every logical trial's charge, but evaluate an identical
+                    // guidance-only padding shape once within this payload/read pass.
+                    // The first selected-shape trace remains separate from trace() above.
+                    const width = unpaddedWidth === undefined
+                        ? undefined
+                        : Math.max(unpaddedWidth, shapeWidth);
+                    if (width !== undefined && width === previousWidth)
+                        continue;
+                    previousWidth = width;
+                    trace();
+                }
+            }
         }
-        catch {
-            coverageCheckpoint();
-            // Reads observed before the throw still guide the search.
-        }
-        finally {
-            coverageCheckpoint();
-        }
-        return [...reads];
+        // An explicit assignable read is the next useful constraint. Descriptor
+        // queries made by enumeration are fallback guidance only when none remains.
+        return [
+            ...reads,
+            ...([...reads].some((key) => !key.startsWith('c:') ||
+                (options.assignContext !== false &&
+                    !options.fixedContextFields?.includes(key.slice(2))))
+                ? []
+                : descriptorRead === undefined
+                    ? []
+                    : [descriptorRead]),
+        ];
     };
-    const search = (assignment, depth) => {
+    const initial = {
+        context: baseContext,
+        contextOverrides: {},
+        payloads: {},
+    };
+    if (options.discoverPayloadShape === true) {
+        // Enrichment must not add an optional field to an already valid seed.
+        if (passes(initial))
+            return initial;
+        // Exact own-field tests may hide every semantic read. Learn their names
+        // once, then let ordinary value reads guide the same bounded search over
+        // a fresh JSON-safe shape rather than exhausting unrelated combinations.
+        readsUnder(initial, true);
+        payloads = payloads.map((payload) => {
+            const fields = discovered.get(payload.tag);
+            if (fields === undefined || fields.size > 4)
+                return payload;
+            const shapeFields = [...fields].filter((field) => !Object.hasOwn(payload.base, field));
+            const base = overlay(payload.base, {});
+            for (const field of shapeFields) {
+                Object.defineProperty(base, field, {
+                    value: null,
+                    enumerable: true,
+                    configurable: true,
+                    writable: true,
+                });
+            }
+            return {
+                ...payload,
+                base,
+                shapeFields,
+            };
+        });
+    }
+    function* search(assignment, depth, deferred) {
+        // Resume before evaluation so the other traversal shares every probe charge.
+        yield;
         coverageCheckpoint();
-        if (probes > MAX_PROBES)
+        if (probeBudget.probes > MAX_PROBES)
             return undefined;
         if (passes(assignment))
             return assignment;
@@ -1216,24 +1650,32 @@ function probeGuardAssignment(guard, fixedEvent, payloads, extraValues, options 
         for (const key of readsUnder(assignment)) {
             const tag = key.slice(0, 2);
             const field = key.slice(2);
-            if (tag === 'c:' && options.assignContext === false)
+            if (tag === 'c:' &&
+                (options.assignContext === false ||
+                    options.fixedContextFields?.includes(field)))
                 continue;
             const assigned = tag === 'c:'
                 ? assignment.contextOverrides
                 : (assignment.payloads[tag] ?? {});
             const payload = payloads.find((item) => item.tag === tag);
+            if (payload?.shapeFields !== undefined &&
+                discovered.get(tag)?.has(field) &&
+                !payload.shapeFields.includes(field))
+                continue;
+            if (payload?.shapeFields !== undefined &&
+                new Set([...payload.shapeFields, ...Object.keys(assigned), field])
+                    .size > 4)
+                continue;
             const base = tag === 'c:' ? baseContext : payload?.base;
             const hasBaseline = base !== undefined && Object.prototype.hasOwnProperty.call(base, field);
             const baseline = hasBaseline
                 ? base[field]
                 : undefined;
-            const candidates = [
-                ...(hasBaseline ? [baseline] : []),
-                ...values.filter((value) => !hasBaseline || value !== baseline),
-            ];
-            for (const value of candidates) {
+            for (const value of candidateValues(key, hasBaseline, baseline, deferred &&
+                payload?.shapeFields?.includes(field) === true &&
+                baseline === null)) {
                 coverageCheckpoint();
-                if (probes > MAX_PROBES)
+                if (probeBudget.probes > MAX_PROBES)
                     return undefined;
                 const nextDepth = depth + (hasBaseline && value === baseline ? 0 : 1);
                 const next = tag === 'c:'
@@ -1252,21 +1694,81 @@ function probeGuardAssignment(guard, fixedEvent, payloads, extraValues, options 
                             },
                         },
                     };
-                const found = search(next, nextDepth);
+                const found = yield* search(next, nextDepth, deferred);
                 if (found !== undefined)
                     return found;
             }
         }
         return undefined;
-    };
-    return search({
-        context: baseContext,
-        contextOverrides: {},
-        payloads: {},
-    }, 0);
+    }
+    const shapes = payloads;
+    const slots = shapes.flatMap((payload, index) => (payload.shapeFields ?? []).map((field) => ({ index, field })));
+    if (slots.length > 4)
+        return undefined;
+    // An observed own-field read may be an optional branch discriminator.
+    // Try at most sixteen concrete shapes, sharing the same probe budget.
+    for (let mask = 0; mask < 1 << slots.length && probeBudget.probes <= MAX_PROBES; mask++) {
+        payloads = shapes.map((payload, index) => {
+            if (payload.shapeFields === undefined)
+                return payload;
+            const fields = slots
+                .filter((slot, bit) => slot.index === index && (mask & (1 << bit)) !== 0)
+                .map((slot) => slot.field);
+            const base = overlay(payload.base, {});
+            for (const field of payload.shapeFields) {
+                if (!fields.includes(field))
+                    delete base[field];
+            }
+            return { ...payload, base, shapeFields: fields };
+        });
+        const paired = payloads.some((payload) => (payload.shapeFields?.length ?? 0) > 0);
+        const continuations = [
+            search(initial, 0, false),
+            ...(paired ? [search(initial, 0, true)] : []),
+        ];
+        const active = continuations.map(() => true);
+        let found;
+        try {
+            while (active.some(Boolean) && found === undefined) {
+                for (let index = 0; index < continuations.length; index++) {
+                    if (!active[index])
+                        continue;
+                    const step = continuations[index].next();
+                    if (step.done) {
+                        active[index] = false;
+                        if (step.value !== undefined) {
+                            found = step.value;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        finally {
+            // Neither continuation may retain a suspended read across presence masks.
+            for (const continuation of continuations)
+                continuation.return(undefined);
+        }
+        if (found === undefined)
+            continue;
+        for (const payload of payloads) {
+            if (payload.shapeFields === undefined)
+                continue;
+            found.payloads[payload.tag] = {
+                ...Object.fromEntries(payload.shapeFields.map((field) => [field, null])),
+                ...found.payloads[payload.tag],
+            };
+        }
+        return found;
+    }
+    return undefined;
 }
-function probeGuardSatisfiable(guard, fixedEvent, payloads, extraValues) {
-    return (probeGuardAssignment(guard, fixedEvent, payloads, extraValues) !== undefined);
+function probeGuardSatisfiable(guard, fixedEvent, payloads, extraValues, initialContext) {
+    return (probeGuardAssignment(guard, fixedEvent, payloads, extraValues, {
+        initialContext,
+        varyExistingContext: true,
+        fixedContextFields: ['enabledPlaybooks'],
+    }) !== undefined);
 }
 function overlaidObject(base, assigned) {
     const copy = Object.create(Object.getPrototypeOf(base));
@@ -1279,15 +1781,15 @@ function overlaidObject(base, assigned) {
  * named nested payloads are assignable; event-level fields such as `type` and
  * `actorId` remain the values XState actually supplies.
  */
-function doneGuardSatisfiable(guard, event, output, extraValues, fixedOutput = false) {
-    return probeGuardSatisfiable(guard.run, fixedOutput ? { ...event, output } : event, fixedOutput ? [] : [{ eventField: 'output', tag: 'o:', base: output }], [...guard.probeValues, ...extraValues]);
+function doneGuardSatisfiable(guard, event, output, extraValues, fixedOutput = false, initialContext) {
+    return probeGuardSatisfiable(guard.run, fixedOutput ? { ...event, output } : event, fixedOutput ? [] : [{ eventField: 'output', tag: 'o:', base: output }], [...guard.probeValues, ...extraValues], initialContext);
 }
 /** A concrete initialized-context/output assignment selecting one done arm. */
 function controllerDoneGuardAssignment(guard, event, output, extraValues, initialContext) {
     return probeGuardAssignment(guard.run, event, [{ eventField: 'output', tag: 'o:', base: output }], [...guard.probeValues, ...extraValues], { initialContext, varyExistingContext: true });
 }
-function errorGuardSatisfiable(guard, event, error, extraValues) {
-    return probeGuardSatisfiable(guard.run, event, [{ eventField: 'error', tag: 'r:', base: error, varyExisting: true }], [...guard.probeValues, ...extraValues]);
+function errorGuardSatisfiable(guard, event, error, extraValues, initialContext) {
+    return probeGuardSatisfiable(guard.run, event, [{ eventField: 'error', tag: 'r:', base: error, varyExisting: true }], [...guard.probeValues, ...extraValues], initialContext);
 }
 function isDescendantOf(ref, ancestor) {
     return (ref.path.length > ancestor.path.length &&
@@ -1365,11 +1867,15 @@ function callCount(calls, captain) {
 /** One public drive or the actual initialized state, never a private jump. */
 function childCoverageDrive(machine, refs, ref, targetId, candidates) {
     const interrupt = interruptDriveForRef(machine, refs, ref, targetId, candidates);
+    const alternatives = entryDrivesForRef(machine, refs, ref, candidates, coverageRuns.getStore()?.literalChecks?.pending()
+        ? initializedMachineContext(machine)
+        : initializedCoverageContext(machine), coverageRuns.getStore()?.literalChecks?.pending() ?? false);
+    // A valid interrupt need not preserve every public entry's reached context.
     if (interrupt.satisfiable)
-        return { drive: interrupt };
-    const entry = entryDriveForRef(machine, refs, ref, candidates);
-    if (entry !== undefined)
-        return { drive: entry };
+        return { drive: interrupt, alternatives };
+    const entry = alternatives.next();
+    if (!entry.done)
+        return { drive: entry.value, alternatives };
     return initialActiveRefs(machine.config, refs).some((active) => sameStateRef(active, ref))
         ? {}
         : undefined;
@@ -1389,6 +1895,12 @@ function coverageArmResults(machine, node, outcome, armIndex, context, input, ca
     const guard = orderedArmPredicate(machine, arms, armIndex);
     if (guard === undefined)
         return [];
+    const shapeGuard = node.kind === 'child' && outcome === 'onDone'
+        ? resolveGuard(machine, armGuard(arms[armIndex]))?.run
+        : undefined;
+    const childValues = node.kind === 'child' && outcome === 'onDone'
+        ? [{ name: 'Error', message: 'coverage: child failure' }]
+        : [];
     const actorId = invocationActorId(machine, node.value);
     const event = {
         type: `xstate.${outcome === 'onDone' ? 'done' : 'error'}.actor.${actorId}`,
@@ -1398,6 +1910,9 @@ function coverageArmResults(machine, node, outcome, armIndex, context, input, ca
         ? node.kind === 'child'
             ? [
                 nestedFailure(typeof input.playbookId === 'string'
+                    ? input.playbookId
+                    : COVERAGE_PLAYBOOK_ID),
+                nestedAborted(typeof input.playbookId === 'string'
                     ? input.playbookId
                     : COVERAGE_PLAYBOOK_ID),
                 nestedFailureTerminal(typeof input.playbookId === 'string'
@@ -1448,13 +1963,34 @@ function coverageArmResults(machine, node, outcome, armIndex, context, input, ca
                 base,
                 ...(outcome === 'onError' ? { varyExisting: true } : {}),
             },
-        ], [...guard.probeValues, ...GENERIC_VALUES, ...candidates], { initialContext: context, assignContext: false });
+        ], [...guard.probeValues, ...GENERIC_VALUES, ...candidates, ...childValues], {
+            initialContext: context,
+            assignContext: false,
+            discoverPayloadShape: node.kind === 'child' && outcome === 'onDone',
+            ...(node.kind === 'acting' && outcome === 'onDone'
+                ? {
+                    declaredResultFields: requiredFields(node.value.binding.result[String(base.guard)] ?? '').filter((field) => field !== 'guard' &&
+                        base[field] ===
+                            `coverage:${field}`),
+                }
+                : {}),
+            ...(shapeGuard === undefined ? {} : { payloadShapeGuard: shapeGuard }),
+        });
         if (assignment !== undefined) {
             results.push(assignedPayload(base, assignment, outcome === 'onDone' ? 'o:' : 'r:'));
             if (firstOnly)
                 return results;
         }
     }
+    // The public successful child envelope may omit output entirely. Probe that
+    // one concrete value without object synthesis or mutable reached context.
+    if (node.kind === 'child' &&
+        outcome === 'onDone' &&
+        probeGuardAssignment(guard.run, { ...event, output: undefined }, [], [], {
+            initialContext: context,
+            assignContext: false,
+        }) !== undefined)
+        results.push(undefined);
     return results;
 }
 /** Replay every prefix transition; no persisted private-state restoration. */
@@ -1478,6 +2014,16 @@ async function replayCoveragePath(machine, nodes, path) {
         });
     };
     const actor = makeActor(machine, script, script, path.drive?.context);
+    const trustedEntry = path.drive === undefined ||
+        isDeepStrictEqual(path.drive.context, initializedMachineContext(machine));
+    const observe = (current) => {
+        if (trustedEntry &&
+            current?.node.kind === 'child' &&
+            atState(current.node.value.ref)(actor.getSnapshot()))
+            coverageRuns
+                .getStore()
+                ?.literalChecks?.observe(current.node.value.invocation, actor.getSnapshot().context, current.input);
+    };
     gate.armed = true;
     if (path.drive !== undefined)
         actor.send(path.drive.event);
@@ -1494,6 +2040,7 @@ async function replayCoveragePath(machine, nodes, path) {
             completedPrefix = false;
             break;
         }
+        observe(current);
         pending = undefined;
         expected = step.next;
         current.complete(step.result);
@@ -1502,15 +2049,22 @@ async function replayCoveragePath(machine, nodes, path) {
                 completedPrefix = false;
                 break;
             }
+            const questioning = step.node.value;
+            if (reachedBossQuestionFinding(machine, questioning, actor, step.result) !==
+                undefined) {
+                completedPrefix = false;
+                break;
+            }
             actor.send({
                 type: BOSS_REPLY_EVENT,
-                questionId: captainPublicStateId(step.node.value),
+                questionId: captainPublicStateId(questioning),
                 answer: 'Proceed as planned.',
             });
         }
     }
     await wait();
     const snapshot = actor.getSnapshot();
+    observe(pending);
     const failure = actor.coverageErrors.find(({ eventType }) => eventType ===
         `xstate.error.actor.${invocationActorId(machine, expected.value)}`);
     return {
@@ -1527,8 +2081,9 @@ async function replayCoveragePath(machine, nodes, path) {
                 : {}),
     };
 }
-/** Finite path replay, with one canonical question/reply revisit at most. */
+/** Finite path replay, including bounded canonical question/reply revisits. */
 async function searchCoverageEntry(machine, target, refs, captains, playbooks, candidates, check) {
+    const budget = coverageRuns.getStore().coverage;
     const nodes = coverageNodes(captains, playbooks);
     const nodesForTarget = (raw, source) => {
         const targetName = rawArmTarget(raw);
@@ -1559,29 +2114,54 @@ async function searchCoverageEntry(machine, target, refs, captains, playbooks, c
         if (entry !== undefined)
             queue.push({ root: node, ...entry, steps: [] });
     }
+    // Family identity is only the declared root invocation. Keep every actual
+    // context, prefix and lazy entry alternative distinct within that family.
+    const rootFamilies = [
+        ...new Set(queue.map((path) => coverageNodeKey(path.root))),
+    ];
+    let familyCursor = 0;
     let attempts = 0;
     let entered = false;
-    let limitation;
+    let transitionCovered = false;
+    const needsLiteral = () => target.kind === 'child' &&
+        (coverageRuns.getStore()?.literalChecks?.needs(target.value.invocation) ??
+            false);
+    const limitations = new Set();
     let inputFailure;
-    while (queue.length > 0 && attempts < MAX_COVERAGE_PATH_ATTEMPTS) {
+    while (queue.length > 0 && attempts < budget.maxAttempts) {
         await coverageYield();
-        const path = queue.shift();
+        let pathIndex = 0;
+        for (let scanned = 0; scanned < rootFamilies.length; scanned++) {
+            const family = rootFamilies[familyCursor];
+            familyCursor = (familyCursor + 1) % rootFamilies.length;
+            const candidate = queue.findIndex((path) => coverageNodeKey(path.root) === family);
+            if (candidate < 0)
+                continue;
+            pathIndex = candidate;
+            break;
+        }
+        const [path] = queue.splice(pathIndex, 1);
         attempts++;
         let replay = await replayCoveragePath(machine, nodes, path);
+        let covered = false;
         try {
             if (replay.inputFailure !== undefined)
                 inputFailure = replay.inputFailure;
             if (replay.pending !== undefined &&
                 coverageNodeKey(replay.pending.node) === coverageNodeKey(target)) {
                 entered = true;
-                if (await check(replay.actor, replay.pending))
-                    return { covered: true, entered };
+                if (await check(replay.actor, replay.pending)) {
+                    covered = true;
+                    transitionCovered = true;
+                    if (!needsLiteral())
+                        return { covered: true, entered };
+                }
                 // A target check may have completed its actor. Re-enter the same
                 // authored prefix before considering successors, charging that replay
                 // against the same attempt limit.
                 replay.actor.stop();
-                if (attempts >= MAX_COVERAGE_PATH_ATTEMPTS) {
-                    limitation = `exhausted ${MAX_COVERAGE_PATH_ATTEMPTS}-attempt path budget`;
+                if (attempts >= budget.maxAttempts) {
+                    limitations.add(`exhausted ${budget.maxAttempts}-attempt path budget`);
                     break;
                 }
                 attempts++;
@@ -1608,8 +2188,7 @@ async function searchCoverageEntry(machine, target, refs, captains, playbooks, c
                 }
             }
             if (node.kind === 'acting' &&
-                Object.hasOwn(node.value.binding.result, NEEDS_BOSS_REPLY) &&
-                !path.steps.some((step) => step.questionWait !== undefined)) {
+                Object.hasOwn(node.value.binding.result, NEEDS_BOSS_REPLY)) {
                 for (const [index, arm] of transitionArms(node.value.invocation.onDone).entries()) {
                     const rawTarget = rawArmTarget(arm);
                     const waitRef = rawTarget === undefined
@@ -1620,34 +2199,66 @@ async function searchCoverageEntry(machine, target, refs, captains, playbooks, c
                             !tagsOf(waitRef.state).includes('playbook.parked')))
                         continue;
                     for (const result of coverageArmResults(machine, node, 'onDone', index, context, pending.input, candidates, undefined, NEEDS_BOSS_REPLY)) {
+                        // A malformed question can legitimately reach a parked failure;
+                        // ordinary arm coverage owns it, not a question/reply prefix.
+                        if (result === undefined ||
+                            result instanceof Error ||
+                            typeof result.question !== 'string')
+                            continue;
                         nextSteps.push({ node, result, next: node, questionWait: waitRef });
                     }
                 }
             }
+            const continuations = [];
             for (const step of nextSteps) {
-                if (path.steps.length + 1 >= MAX_COVERAGE_PATH_STEPS) {
-                    limitation = `exhausted ${MAX_COVERAGE_PATH_STEPS}-invocation path depth`;
+                if (path.steps.length + 1 >= budget.maxInvocations) {
+                    limitations.add(`exhausted ${budget.maxInvocations}-invocation path depth`);
                     continue;
                 }
                 const visited = [path.root, ...path.steps.map((step) => step.next)].map(coverageNodeKey);
                 if (step.questionWait === undefined &&
                     visited.includes(coverageNodeKey(step.next))) {
-                    limitation ??= 'unsupported repeated-invocation path';
+                    limitations.add('unsupported repeated-invocation path');
                     continue;
                 }
-                queue.push({ ...path, steps: [...path.steps, step] });
+                const successor = {
+                    root: path.root,
+                    drive: path.drive,
+                    steps: [...path.steps, step],
+                };
+                if (coverageNodeKey(step.next) === coverageNodeKey(target))
+                    continuations.push(successor);
+                else
+                    queue.push(successor);
             }
+            // Replay a discovered target, including its canonical question continuation,
+            // before unrelated prefixes in its family; retain candidate order and budgets.
+            queue.unshift(...continuations);
         }
         finally {
             replay.actor.stop();
+            if ((!covered || needsLiteral()) &&
+                path.alternatives !== undefined &&
+                attempts < budget.maxAttempts) {
+                const next = path.alternatives.next();
+                if (!next.done)
+                    queue.push({
+                        root: path.root,
+                        drive: next.value,
+                        steps: [],
+                        alternatives: path.alternatives,
+                    });
+            }
         }
     }
     if (queue.length > 0)
-        limitation = `exhausted ${MAX_COVERAGE_PATH_ATTEMPTS}-attempt path budget`;
+        limitations.add(`exhausted ${budget.maxAttempts}-attempt path budget`);
     return {
-        covered: false,
+        covered: transitionCovered,
         entered,
-        ...(limitation === undefined ? {} : { limitation }),
+        ...(limitations.size === 0
+            ? {}
+            : { limitation: [...limitations].join('; ') }),
         ...(inputFailure === undefined ? {} : { inputFailure }),
     };
 }
@@ -1678,6 +2289,18 @@ function nestedFailure(playbookId) {
                 message: 'coverage: forced nested playbook failure',
             },
         },
+    });
+    return error;
+}
+/** A public aborted result may omit both child-session and error data. */
+function nestedAborted(playbookId) {
+    const error = new Error(`Child playbook ${playbookId} aborted`);
+    error.name = 'NestedPlaybookCallError';
+    Object.defineProperty(error, 'result', {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: { status: 'aborted', playbookId },
     });
     return error;
 }
@@ -1796,6 +2419,19 @@ function captainPredecessorPlan(machine, target, playbooks, refs, captains) {
         }
     }
     return undefined;
+}
+/** The direct interrupt required by the retained one-child legacy driver. */
+function captainPredecessorDrive(machine, predecessor, refs, values) {
+    const entryRef = predecessor.entry?.captain.ref ?? predecessor.playbook.ref;
+    const entryId = predecessor.entry === undefined
+        ? interruptTargetForRef(predecessor.playbook.ref, predecessor.playbook.ref.stableId)
+        : captainInterruptTarget(predecessor.entry.captain);
+    return interruptDriveForRef(machine, refs, entryRef, entryId, values);
+}
+function unavailableCaptainPredecessorDrive(machine, captain, refs, captains, playbooks, values = []) {
+    const predecessor = captainPredecessorPlan(machine, captain, playbooks, refs, captains);
+    return (predecessor !== undefined &&
+        !captainPredecessorDrive(machine, predecessor, refs, values).satisfiable);
 }
 /**
  * Finds a controller path from a hub event to an acting state. Controller-only
@@ -1968,11 +2604,7 @@ function captainProbeActor(machine, captain, result, gate, refs, captains, playb
     let childUsed = false;
     const actorId = invocationActorId(machine, predecessor.playbook);
     const dynamic = dynamicPlaybookFields(predecessor.playbook);
-    const entryRef = predecessor.entry?.captain.ref ?? predecessor.playbook.ref;
-    const entryId = predecessor.entry === undefined
-        ? interruptTargetForRef(predecessor.playbook.ref, predecessor.playbook.ref.stableId)
-        : captainInterruptTarget(predecessor.entry.captain);
-    const drive = interruptDriveForRef(machine, refs, entryRef, entryId, interruptValues);
+    const drive = captainPredecessorDrive(machine, predecessor, refs, interruptValues);
     if (!drive.satisfiable)
         return undefined;
     const actor = makeActor(machine, (input) => {
@@ -2065,20 +2697,64 @@ async function probePlaybookOutcome(machine, playbook, refs, captains, outcome, 
         if (result.covered)
             continue;
         const label = `state ${playbook.ref.stableId}: nested playbook ${outcome} arm ${armIndex}`;
-        if (result.limitation !== undefined)
-            findings.push(`${label}: ${result.limitation}`);
-        else if (result.inputFailure !== undefined && !result.entered)
+        if (result.inputFailure !== undefined && !result.entered)
             findings.push(`state ${playbook.ref.stableId}: nested playbook actor failed to start during ${outcome} coverage: ${result.inputFailure}`);
         else if (!result.entered)
             findings.push(`${label} has no reachable entry under probing (dead or unsupported entry path)`);
-        else if (!satisfiable)
+        else if (result.limitation === undefined && !satisfiable)
             findings.push(`${label} is unsatisfiable under probing`);
-        else
+        else if (satisfiable)
             findings.push(`${label} did not reach ${target.stableId}`);
+        if (result.limitation !== undefined)
+            findings.push(`${label}: ${result.limitation}`);
     }
     return findings;
 }
-/** No preemption is needed to audit ordinary acting outcomes and one reply. */
+/** Inspect the machine-produced question, never an injected context sentinel. */
+function reachedBossQuestionFinding(machine, captain, actor, output) {
+    if (coverageRuns.getStore()?.artifactSchema !== 3)
+        return undefined;
+    const input = actor.coverageInputs.get(invocationActorId(machine, captain));
+    const context = actor.getSnapshot().context;
+    const keyed = usesKeyedBossQuestionContext(machine.config);
+    const id = captainPublicStateId(captain);
+    const records = context.pendingBossQuestions;
+    const question = keyed
+        ? typeof records === 'object' && records !== null && !Array.isArray(records)
+            ? records[id]
+            : undefined
+        : context.pendingBossQuestion;
+    const record = question;
+    const asker = record?.asker;
+    const expectedRole = input?.role;
+    const askerMatches = typeof asker === 'object' &&
+        asker !== null &&
+        !Array.isArray(asker) &&
+        (captain.binding.actor === 'captain'
+            ? asker.kind === 'captain' && Object.keys(asker).length === 1
+            : typeof expectedRole === 'string' &&
+                asker.kind === 'role' &&
+                asker.roleId === expectedRole &&
+                Object.keys(asker).length === 2);
+    const finding = typeof record === 'object' &&
+        record !== null &&
+        input?.stateId === id &&
+        record.questionId === input.stateId &&
+        record.resumeStateId === input.stateId &&
+        typeof input.sourceItem === 'string' &&
+        record.sourceItem === input.sourceItem &&
+        askerMatches &&
+        output !== undefined &&
+        !(output instanceof Error) &&
+        typeof output.question === 'string' &&
+        record.question === output.question
+        ? undefined
+        : `state ${id}: reached ${NEEDS_BOSS_REPLY} wait has no matching canonical ${keyed ? 'keyed' : 'scalar'} pending Boss question`;
+    if (finding !== undefined)
+        coverageRuns.getStore()?.questionFindings.add(finding);
+    return finding;
+}
+/** No preemption is needed to audit ordinary acting outcomes and replies. */
 async function probeNonPreemptiveActor(machine, captain, refs, captains, playbooks, candidates) {
     const node = { kind: 'acting', value: captain };
     const findings = [];
@@ -2112,6 +2788,12 @@ async function probeNonPreemptiveActor(machine, captain, refs, captains, playboo
                 if (target.stableId !== AWAIT_BOSS_REPLY_STATE &&
                     !tagsOf(target.state).includes('playbook.parked'))
                     return false;
+                const questionFinding = reachedBossQuestionFinding(machine, captain, actor, outputs[0]);
+                if (questionFinding !== undefined) {
+                    if (!findings.includes(questionFinding))
+                        findings.push(questionFinding);
+                    return false;
+                }
                 if (!blankReply && target.stableId !== AWAIT_BOSS_REPLY_STATE) {
                     actor.send({
                         type: BOSS_REPLY_EVENT,
@@ -2213,6 +2895,14 @@ async function probeParallelQuestions(machine, parallel, refs, captains, interru
             `parallel state ${parallel.stableId}: branch questions did not become simultaneously pending`,
         ];
     }
+    const questionFindings = plans.flatMap(({ captain, output }) => {
+        const finding = reachedBossQuestionFinding(machine, captain, actor, output);
+        return finding === undefined ? [] : [finding];
+    });
+    if (questionFindings.length > 0) {
+        actor.stop();
+        return questionFindings;
+    }
     const [selected, ...others] = plans;
     actor.send({
         type: BOSS_REPLY_EVENT,
@@ -2307,7 +2997,8 @@ async function probeParallelJoins(machine, parallel, refs, captains, interruptVa
  * guard search, and a final scheduling margin. Generated tests use this instead
  * of Vitest's five-second default.
  */
-export function fsmCoverageTestTimeout(fsmModule) {
+export function fsmCoverageTestTimeout(fsmModule, coverage) {
+    const budget = resolveCoverageBudget(coverage);
     const machine = findMachine(fsmModule);
     const config = machine.config;
     const refs = stateRefs(config);
@@ -2324,23 +3015,55 @@ export function fsmCoverageTestTimeout(fsmModule) {
     entryEvents.delete(INTERRUPT_EVENT);
     const entrySettles = entryEvents.size * SETTLE_MS;
     let captainSettles = 0;
-    let guardProbeCalls = rootInterruptProbes;
+    // Each ordinary dispatch may inspect two child-output seeds per predecessor
+    // arm, then the selected legacy predecessor's required interrupt drive.
+    let guardProbeCalls = rootInterruptProbes +
+        (controller
+            ? 0
+            : captains.length *
+                (1 +
+                    2 *
+                        playbooks.reduce((n, p) => n + transitionArms(p.invocation.onDone).length, 0)));
     let pathSearches = controller
         ? 0
         : playbooks.reduce((total, playbook) => total +
             transitionArms(playbook.invocation.onDone).length +
             transitionArms(playbook.invocation.onError).length, 0);
+    if (!controller) {
+        for (const [index, arm] of transitionArms((config.on ?? {})[INTERRUPT_EVENT]).entries()) {
+            const targetName = rawArmTarget(arm);
+            const target = targetName === undefined
+                ? undefined
+                : stateRefForTarget(refs, targetName);
+            const captain = captains.find((candidate) => target !== undefined && sameStateRef(candidate.ref, target));
+            if (captain !== undefined &&
+                captain.binding.actor !== 'script' &&
+                !interruptDriveForRef(machine, refs, captain.ref, captainPublicStateId(captain), [], index).satisfiable)
+                pathSearches += 1;
+        }
+    }
     for (const captain of captains) {
         const resultKeys = Object.keys(captain.binding.result);
         const guardedDoneArms = transitionArms(captain.invocation.onDone).filter((arm) => armGuard(arm) !== undefined).length;
         const errorArms = transitionArms(captain.invocation.onError).length;
-        if (!controller && rootInterruptProbes === 0) {
+        if (!controller &&
+            (rootInterruptProbes === 0 ||
+                (captain.binding.actor !== 'script' &&
+                    !interruptDriveForRef(machine, refs, captain.ref, captainInterruptTarget(captain)).satisfiable) ||
+                unavailableCaptainPredecessorDrive(machine, captain, refs, captains, playbooks))) {
             pathSearches +=
                 resultKeys.length +
                     (resultKeys.includes(NEEDS_BOSS_REPLY) ? 1 : 0) +
                     guardedDoneArms +
                     errorArms;
             continue;
+        }
+        if (!controller &&
+            captain.binding.actor !== 'script' &&
+            resultKeys.includes(NEEDS_BOSS_REPLY)) {
+            // An otherwise unproved arm uses the same bounded reached-context
+            // search, including each actual canonical question/reply revisit.
+            pathSearches += guardedDoneArms;
         }
         captainSettles +=
             resultKeys.reduce((total, key) => total + (key === NEEDS_BOSS_REPLY ? 4 : controller ? 2 : 1), 0) * SETTLE_MS;
@@ -2374,7 +3097,7 @@ export function fsmCoverageTestTimeout(fsmModule) {
         const done = transitionArms(node.value.invocation.onDone).length;
         const error = transitionArms(node.value.invocation.onError).length;
         if (node.kind === 'child')
-            return 3 * (done + error);
+            return 4 * done + 4 * error;
         const keys = Object.keys(node.value.binding.result);
         const candidates = node.value.binding.actor === 'script'
             ? keys.length * MAX_SCRIPT_EXIT_STATUSES
@@ -2386,21 +3109,22 @@ export function fsmCoverageTestTimeout(fsmModule) {
     guardProbeCalls +=
         pathSearches *
             (nodes.length * (1 + entryArmCount) +
-                MAX_COVERAGE_PATH_ATTEMPTS * 2 * maxNodeCandidates);
+                budget.maxAttempts * 2 * maxNodeCandidates);
     // Parallel question/join helpers retain their independent entry probes.
     guardProbeCalls += 2 * parallels.length;
-    // Each charged replay contains at most eight invocation waits, one parked
-    // question wait and two target/reply settles, plus no-transition checks.
+    // Each charged replay contains at most the selected invocation count and
+    // one fewer parked question waits, plus two target/reply settles and
+    // no-transition checks.
     const pathSettles = pathSearches *
-        MAX_COVERAGE_PATH_ATTEMPTS *
-        ((MAX_COVERAGE_PATH_STEPS + 3) * PARALLEL_SETTLE_MS + 2 * 10);
+        budget.maxAttempts *
+        ((2 * budget.maxInvocations + 1) * PARALLEL_SETTLE_MS + 2 * 10);
     const parallelSettles = parallels.reduce((total, parallel) => total +
         2 * PARALLEL_QUESTION_SETTLE_MS +
         transitionArms(parallel.state.onDone).length *
             MAX_PARALLEL_COMBINATIONS *
             PARALLEL_SETTLE_MS, 0);
     const guardAllowance = guardProbeCalls * Math.ceil(MAX_PROBES / PROBES_PER_TIMEOUT_MILLISECOND);
-    return Math.min(MAX_COVERAGE_TEST_TIMEOUT_MS, Math.max(MIN_COVERAGE_TEST_TIMEOUT_MS, rootSettles +
+    return Math.min(budget.maxDurationMs, Math.max(MIN_COVERAGE_TEST_TIMEOUT_MS, rootSettles +
         entrySettles +
         captainSettles +
         pathSettles +
@@ -2416,32 +3140,91 @@ export function fsmCoverageTestTimeout(fsmModule) {
  * surface entirely, in which case interrupt coverage is skipped.
  */
 export async function checkFsmCoverage(fsmModule, opts = {}) {
+    return fsmCoverage(fsmModule, opts);
+}
+/** Conformance suites replay only pending literal bindings; coverage stays separate. */
+export async function checkGearsFsmConformanceAsync(gears, fsmModule, options = {}) {
+    options = { ...options, coverage: resolveCoverageBudget(options.coverage) };
+    const { findings, literalChecks } = prepareGearsFsmConformance(gears, findMachine(fsmModule).config, { concurrentRoleSets: findConcurrentRoleSets(fsmModule), ...options });
+    options.signal?.throwIfAborted();
+    return findings.length > 0 || !literalChecks.pending()
+        ? findings
+        : fsmCoverage(fsmModule, options, literalChecks, true);
+}
+/** One bounded replay owns transition coverage and reached literal-child proof. */
+export async function checkGearsFsmArtifact(gears, fsmModule, options = {}) {
+    options = { ...options, coverage: resolveCoverageBudget(options.coverage) };
+    const { findings, literalChecks } = prepareGearsFsmConformance(gears, findMachine(fsmModule).config, {
+        concurrentRoleSets: findConcurrentRoleSets(fsmModule),
+        ...options,
+    });
+    options.signal?.throwIfAborted();
+    return findings.length > 0
+        ? findings
+        : fsmCoverage(fsmModule, options, literalChecks);
+}
+async function fsmCoverage(fsmModule, opts = {}, literalChecks, literalOnly = false) {
+    const coverage = resolveCoverageBudget(opts.coverage);
     opts.signal?.throwIfAborted();
     if (opts.timeoutMs !== undefined &&
         (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0))
         throw new RangeError('FSM coverage timeout must be a positive finite number');
     const started = performance.now();
     const run = {
+        coverage,
+        literalChecks,
         signal: opts.signal,
-        deadline: started +
-            Math.min(opts.timeoutMs ?? Infinity, MAX_COVERAGE_TEST_TIMEOUT_MS),
+        deadline: started + Math.min(opts.timeoutMs ?? Infinity, coverage.maxDurationMs),
         lastYield: started,
         actors: new Set(),
+        questionFindings: new Set(),
+        machineInputs: new WeakMap(),
     };
     return coverageRuns.run(run, async () => {
         let completed = false;
         try {
-            run.deadline = Math.min(run.deadline, started + fsmCoverageTestTimeout(fsmModule));
+            run.deadline = Math.min(run.deadline, started + fsmCoverageTestTimeout(fsmModule, coverage));
             await coverageYield(true);
-            const findings = await runFsmCoverage(fsmModule, opts.sourceText ?? '');
+            const schema = resolveArtifactSchemaForVerification({
+                config: findMachine(fsmModule).config,
+                requireContinuationSchema: false,
+                ...(opts.artifactSchema === undefined
+                    ? {}
+                    : { artifactSchema: opts.artifactSchema }),
+            });
+            run.artifactSchema = schema.artifactSchema;
+            const findings = [
+                ...schema.findings,
+                ...(literalOnly
+                    ? await reachedLiteralContexts(fsmModule, opts.sourceText ?? '', literalChecks)
+                    : await runFsmCoverage(fsmModule, opts.sourceText ?? '')),
+                ...run.questionFindings,
+                ...(literalChecks?.findings() ?? []),
+            ];
             await coverageYield(true);
             completed = true;
-            return findings;
+            return [...new Set(findings)];
         }
         finally {
             stopCoverageActors(run.actors, !completed);
         }
     });
+}
+/** A conformance-only suite uses one existing bounded search per pending call. */
+async function reachedLiteralContexts(fsmModule, sourceText, checks) {
+    const machine = findMachine(fsmModule);
+    const refs = stateRefs(machine.config), captains = captainRefs(machine.config), playbooks = playbookRefs(machine.config);
+    const candidates = [
+        ...identifierLiterals(sourceText),
+        ...numericLiterals(sourceText),
+    ];
+    for (const playbook of playbooks) {
+        if (!checks.needs(playbook.invocation))
+            continue;
+        await coverageYield();
+        await searchCoverageEntry(machine, { kind: 'child', value: playbook }, refs, captains, playbooks, candidates, async () => true);
+    }
+    return [];
 }
 async function runFsmCoverage(fsmModule, sourceText) {
     const findings = [];
@@ -2559,6 +3342,45 @@ async function runFsmCoverage(fsmModule, sourceText) {
             }
             const drive = interruptDriveForRef(machine, refs, target, targetId, sourceCandidates, armIndex);
             if (!drive.satisfiable) {
+                if (!isController &&
+                    targetCaptain !== undefined &&
+                    targetCaptain.binding.actor !== 'script') {
+                    const guard = orderedArmPredicate(machine, transitionArms((machine.config.on ?? {})[INTERRUPT_EVENT]), armIndex);
+                    const reached = await searchCoverageEntry(machine, { kind: 'acting', value: targetCaptain }, refs, captains, playbooks, sourceCandidates, async (actor) => {
+                        try {
+                            if (guard === undefined ||
+                                !guard.run({
+                                    context: actor.getSnapshot().context,
+                                    event: drive.event,
+                                }))
+                                return false;
+                        }
+                        catch {
+                            coverageCheckpoint();
+                            return false;
+                        }
+                        const before = actor.coverageTransitions.length;
+                        actor.send(drive.event);
+                        const completed = await settle(actor, atState(target));
+                        return (completed &&
+                            actor.coverageTransitions
+                                .slice(before)
+                                .some((transition) => transition.root &&
+                                transition.armIndex === armIndex &&
+                                transition.event === drive.event &&
+                                transition.targetIds.includes(resolvedStateNode(machine, target)?.id ?? '')));
+                    });
+                    if (reached.covered)
+                        continue;
+                    if (reached.inputFailure !== undefined) {
+                        findings.push(`${INTERRUPT_EVENT} target ${arm.target}: ${reached.inputFailure}`);
+                        continue;
+                    }
+                    if (reached.limitation !== undefined) {
+                        findings.push(`${INTERRUPT_EVENT} target ${arm.target}: ${reached.limitation}`);
+                        continue;
+                    }
+                }
                 findings.push(`${INTERRUPT_EVENT} target ${arm.target} is unsatisfiable under context/event probing`);
                 continue;
             }
@@ -2608,7 +3430,11 @@ async function runFsmCoverage(fsmModule, sourceText) {
         return findings;
     for (const captain of captains) {
         await coverageYield();
-        if (!canJump && !isController) {
+        if (!isController &&
+            (!canJump ||
+                (captain.binding.actor !== 'script' &&
+                    !interruptDriveForRef(machine, refs, captain.ref, captainInterruptTarget(captain), sourceCandidates).satisfiable) ||
+                unavailableCaptainPredecessorDrive(machine, captain, refs, captains, playbooks, sourceCandidates))) {
             findings.push(...(await probeNonPreemptiveActor(machine, captain, refs, captains, playbooks, [...stateCandidates, ...sourceCandidates])));
             continue;
         }
@@ -2621,6 +3447,7 @@ async function runFsmCoverage(fsmModule, sourceText) {
         const rawDoneArms = transitionArms(captain.invocation.onDone);
         const onDoneArms = normalizeArms(captain.invocation.onDone);
         const controllerResultByArm = new Map();
+        let validatedQuestion;
         // Every declared result needs an ordered arm accepting its valid output.
         // A fallback is reachable exactly when all preceding guards reject it.
         // Result names alone cannot distinguish authored failure from an orphan.
@@ -2676,7 +3503,7 @@ async function runFsmCoverage(fsmModule, sourceText) {
                     ]);
                     for (const candidate of outputs) {
                         await coverageYield();
-                        if (doneGuardSatisfiable(guard, doneEvent, candidate, candidates, state.actor === 'script')) {
+                        if (doneGuardSatisfiable(guard, doneEvent, candidate, candidates, state.actor === 'script', initialCoverageContext)) {
                             accepting.set(index, undefined);
                             acceptedOutputs.set(JSON.stringify(candidate), candidate);
                         }
@@ -2757,6 +3584,13 @@ async function runFsmCoverage(fsmModule, sourceText) {
                 continue;
             }
             const actor = probe.actor;
+            const transitionStart = actor.coverageTransitions.length;
+            const sourceId = resolvedStateNode(machine, captain.ref)?.id;
+            const questionCompletion = () => actor.coverageTransitions
+                .slice(transitionStart)
+                .find((transition) => sourceId !== undefined &&
+                transition.sourceId === sourceId &&
+                transition.event?.type === doneEvent.type);
             gate.armed = true;
             actor.send(probe.event);
             if (controllerDirectTarget !== undefined &&
@@ -2773,22 +3607,41 @@ async function runFsmCoverage(fsmModule, sourceText) {
                 : await settle(actor, isController
                     ? (snapshot) => snapshot.status === 'done' ||
                         (initialRef !== undefined && atState(initialRef)(snapshot))
-                    : leftState(captain.ref));
+                    : key === NEEDS_BOSS_REPLY
+                        ? (snapshot) => questionCompletion() !== undefined &&
+                            leftState(captain.ref)(snapshot)
+                        : leftState(captain.ref));
             if (!transitioned) {
                 findings.push(isController
                     ? `state ${stateKey}: controller result "${key}" reached neither the session hub nor a shutdown final`
                     : `state ${stateKey}: result "${key}" fired no transition`);
             }
             else if (key === NEEDS_BOSS_REPLY) {
-                const waitTarget = rawArmTarget(rawDoneArms[directArm]) ?? onDoneArms[directArm]?.target;
+                const completion = questionCompletion();
+                const completedArm = completion?.armIndex;
+                const waitTarget = completedArm === undefined
+                    ? undefined
+                    : (rawArmTarget(rawDoneArms[completedArm]) ??
+                        onDoneArms[completedArm]?.target);
                 const waitRef = waitTarget === null || waitTarget === undefined
                     ? undefined
                     : stateRefForTarget(refs, waitTarget, captain.ref);
+                const waitNodeId = waitRef === undefined
+                    ? undefined
+                    : resolvedStateNode(machine, waitRef)?.id;
                 if (waitRef === undefined ||
+                    waitNodeId === undefined ||
+                    completion?.targetIds.includes(waitNodeId) !== true ||
                     (waitRef.stableId !== AWAIT_BOSS_REPLY_STATE &&
                         !tagsOf(waitRef.state).includes('playbook.parked')) ||
                     !(await settle(actor, atState(waitRef)))) {
                     findings.push(`state ${stateKey}: ${NEEDS_BOSS_REPLY} did not suspend in ${AWAIT_BOSS_REPLY_STATE} or a branch-local Boss-reply wait state`);
+                    actor.stop();
+                    continue;
+                }
+                const questionFinding = reachedBossQuestionFinding(machine, captain, actor, drivenOutput);
+                if (questionFinding !== undefined) {
+                    findings.push(questionFinding);
                     actor.stop();
                     continue;
                 }
@@ -2814,6 +3667,9 @@ async function runFsmCoverage(fsmModule, sourceText) {
                 });
                 if (!(await settle(actor, atState(captain.ref)))) {
                     findings.push(`state ${stateKey}: ${BOSS_REPLY_EVENT} did not resume the suspended state`);
+                }
+                else if (!isController && state.actor !== 'script') {
+                    validatedQuestion = { output: drivenOutput, wait: waitRef };
                 }
                 actor.stop();
                 const blankGate = { armed: false };
@@ -2867,11 +3723,55 @@ async function runFsmCoverage(fsmModule, sourceText) {
                     ...declaredGuard.probeValues,
                     ...candidates,
                 ]);
-                return (outputs.some((candidate) => doneGuardSatisfiable(guard, doneEvent, candidate, candidates, state.actor === 'script')) ||
+                return (outputs.some((candidate) => doneGuardSatisfiable(guard, doneEvent, candidate, candidates, state.actor === 'script', initialCoverageContext)) ||
                     (state.actor !== 'script' &&
-                        doneGuardSatisfiable(guard, doneEvent, { guard: key }, candidates)));
+                        doneGuardSatisfiable(guard, doneEvent, { guard: key }, candidates, false, initialCoverageContext)));
             });
             if (!anyOutput) {
+                const targetName = rawArmTarget(arm);
+                const target = targetName === undefined
+                    ? undefined
+                    : stateRefForTarget(refs, targetName, captain.ref);
+                const sourceId = resolvedStateNode(machine, captain.ref)?.id;
+                const targetId = target === undefined
+                    ? undefined
+                    : resolvedStateNode(machine, target)?.id;
+                if (validatedQuestion !== undefined &&
+                    target !== undefined &&
+                    sourceId !== undefined &&
+                    targetId !== undefined) {
+                    const node = { kind: 'acting', value: captain };
+                    let missedTarget = false;
+                    const reached = await searchCoverageEntry(machine, node, refs, captains, playbooks, candidates, async (actor, pending) => {
+                        const outputs = coverageArmResults(machine, node, 'onDone', index, actor.getSnapshot().context, pending.input, candidates, undefined, undefined, true, true);
+                        if (outputs.length === 0)
+                            return false;
+                        const before = actor.coverageTransitions.length;
+                        pending.complete(outputs[0]);
+                        const landed = await settle(actor, (snapshot) => atState(target)(snapshot) &&
+                            actor.coverageTransitions
+                                .slice(before)
+                                .some((transition) => transition.sourceId === sourceId &&
+                                transition.armIndex === index &&
+                                transition.event?.type === doneEvent.type &&
+                                transition.targetIds.includes(targetId)), PARALLEL_SETTLE_MS);
+                        if (!landed)
+                            missedTarget = true;
+                        return landed;
+                    });
+                    if (reached.covered)
+                        continue;
+                    if (missedTarget)
+                        findings.push(`state ${stateKey}: onDone arm ${index} did not reach ${target.stableId} after canonical Boss reply`);
+                    if (reached.inputFailure !== undefined && !reached.entered)
+                        findings.push(`state ${stateKey}: onDone arm ${index} actor failed to start: ${reached.inputFailure}`);
+                    if (reached.limitation !== undefined)
+                        findings.push(`state ${stateKey}: onDone arm ${index} remains unproved: ${reached.limitation}`);
+                    if (missedTarget ||
+                        (reached.inputFailure !== undefined && !reached.entered) ||
+                        reached.limitation !== undefined)
+                        continue;
+                }
                 findings.push(`state ${stateKey}: onDone arm ${index} (target ${onDoneArms[index]?.target ?? 'none'}) is unsatisfiable under probing`);
             }
         }
@@ -2900,7 +3800,7 @@ async function runFsmCoverage(fsmModule, sourceText) {
             const guard = orderedArmPredicate(machine, rawErrorArms, index);
             if (guard === undefined)
                 continue;
-            if (!errorGuardSatisfiable(guard, errorEvent, forcedError, candidates)) {
+            if (!errorGuardSatisfiable(guard, errorEvent, forcedError, candidates, initialCoverageContext)) {
                 findings.push(`state ${stateKey}: onError arm ${index} (target ${onErrorArms[index]?.target ?? 'none'}) is unsatisfiable under probing`);
             }
         }
@@ -2971,6 +3871,7 @@ async function runFsmCoverage(fsmModule, sourceText) {
  * beside the artifacts (verification-6).
  */
 export function generateFsmCoverageTest(opts) {
+    const coverage = resolveCoverageBudget(opts.coverage);
     const commentBasename = JSON.stringify(opts.basename)
         .replaceAll('\u2028', '\\u2028')
         .replaceAll('\u2029', '\\u2029');
@@ -2990,14 +3891,16 @@ import { describe, expect, it } from 'vitest';
 import { checkFsmCoverage, fsmCoverageTestTimeout } from ${verifyModule};
 import * as fsm from ${fsmModule};
 
+const coverage = ${JSON.stringify(coverage)};
+
 describe(${suiteName}, () => {
   it('reaches every declared transition', async () => {
     const sourceText = readFileSync(
       fileURLToPath(new URL(${fsmSourceFile}, import.meta.url)),
       'utf8',
     );
-    expect(await checkFsmCoverage(fsm, { sourceText })).toEqual([]);
-  }, fsmCoverageTestTimeout(fsm));
+    expect(await checkFsmCoverage(fsm, { coverage, sourceText${opts.artifactSchema === undefined ? '' : `, artifactSchema: ${opts.artifactSchema}`} })).toEqual([]);
+  }, fsmCoverageTestTimeout(fsm, coverage));
 });
 `;
 }
@@ -3010,20 +3913,36 @@ describe(${suiteName}, () => {
  * @throws when the `fsm` artifact cannot be imported or exports no machine.
  */
 export async function emitFsmCoverageTest(opts) {
+    const coverage = resolveCoverageBudget(opts.coverage);
     const fsmPath = join(opts.artifactDir, `${opts.basename}.fsm.ts`);
     const module = await loadFsmModule(fsmPath);
+    const schema = resolveArtifactSchemaForVerification({
+        config: findMachine(module).config,
+        requireContinuationSchema: false,
+        ...(opts.artifactSchema === undefined
+            ? {}
+            : { artifactSchema: opts.artifactSchema }),
+    });
+    const artifactSchema = schema.artifactSchema;
     const findings = await checkFsmCoverage(module, {
+        coverage,
         sourceText: await readFile(fsmPath, 'utf8'),
+        ...(opts.artifactSchema === undefined
+            ? {}
+            : { artifactSchema: opts.artifactSchema }),
     });
     const content = generateFsmCoverageTest({
+        coverage,
         basename: opts.basename,
         fsmModule: `./${opts.basename}.fsm.js`,
         fsmSourceFile: `./${opts.basename}.fsm.ts`,
         verifyModule: opts.verifyModule ?? VERIFY_MODULE,
+        ...(artifactSchema === undefined ? {} : { artifactSchema }),
     });
-    await mkdir(opts.artifactDir, { recursive: true });
+    if (opts.write === undefined)
+        await mkdir(opts.artifactDir, { recursive: true });
     const path = join(opts.artifactDir, `${opts.basename}.fsm.coverage.test.ts`);
-    await writeFile(path, content);
+    await (opts.write ?? writeFile)(path, content);
     return {
         path,
         diagnostics: findings.map((finding) => `fsm coverage: ${finding}`),

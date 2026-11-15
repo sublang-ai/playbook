@@ -7,7 +7,7 @@ First phase of a playbook (a state-machine agent orchestrating other agents).
 Transforms a user's procedure description into normative GEARS [[1]] spec items.
 
 - Source: free-form natural-language description.
-- Target: a package of GEARS spec items.
+- Target: a spec package of GEARS items that a person reviews and confirms ([Target package](#target-package)).
 
 The second phase (spec items → state machine) is out of scope.
 
@@ -38,13 +38,81 @@ E.g.:
 Each role name shall be one capitalized word — an uppercase letter, or a letter of a script without case, followed only by letters and digits — so a two-word role is written as one word, e.g. `RiskOfficer`, never `Risk Officer`.
 Quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
+## Target package
+
+Target is a spec package that a person reviews and confirms, in the form the GEARS definition [[1]] gives a spec package.
+The state machine a later phase builds implements the package and cites its action items; the package never names a state, a transition, or any other part of that machine.
+
+### Layout
+
+Target shall contain, in this order and with no other `##` section:
+
+| Part | Content |
+| --- | --- |
+| `# <pack>: <Title>` | `<pack>` is the Source's basename; `<Title>` is the Source's title |
+| `## Intent` | one to three sentences stating what the workflow is for and when it ends, then the `Roles:` list where Source declares roles; no requirement |
+| `## External Behavior` | requirement items a caller, Boss, or a calling playbook may rely on: the caller's input, each terminal return and failure report, and guarantees about commits, repository state, and Boss questions |
+| `## Internal Behavior` | the action items in workflow order, then the requirement items that govern them: routing, bounds, evidence rules, identity authority |
+| `## Verification` | test items |
+
+Nothing but the Intent sentences and the `Roles:` list shall stand outside an item.
+The four section headings follow the matching localization of [[1]]'s section list.
+
+### Items
+
+Every item shall use the exact Markdown heading form `### <pack>-<N>`, lowercase, with `<N>` a positive integer unique in the package.
+An item heading at `##`, `####`, or another level is not GEARS item syntax and will not be visible to downstream compilers or verification.
+Where the phase host supplies a prior Target, an item that keeps its concern shall keep its ID.
+
+Each item shall be exactly one GEARS statement, `[Where <static precondition>] [While <run state>] [When <one event>] <subject> shall <behavior>`, standing first in the item, followed only by the attachments its closing colon introduces.
+The one line that may precede the statement is an action item's `Parallel group:` label ([Parallel behaviors](#parallel-behaviors)).
+
+| Kind | Section | Subject | Attachments |
+| --- | --- | --- | --- |
+| Action | Internal Behavior | `Captain`, in one of the acting clauses [Behaviors](#behaviors) defines | the prompt blockquote, then `Results:` where [Result contracts](#result-contracts) requires one |
+| Requirement | External or Internal Behavior | the workflow by its backticked id, a role, Boss, the caller, or the host | an optional plain list or table |
+| Test | Verification | the run or the workflow | an optional plain list or table |
+
+- `Captain shall` shall appear only in an action item's statement, on one line; a Captain obligation that is not an action takes the workflow as its subject.
+- A requirement or test item shall carry no blockquote and no `Results:` label, and no bullet of the result-bullet shape.
+- `When` holds one event, `While` holds run state such as a round count or a selected path, and `Where` holds static configuration; an invariant is a requirement item of its own, never a clause of another item's statement.
+- A statement states one requirement: what the workflow is for stands in `Intent` alone and is not restated as an item, and a guarantee that holds throughout the run is an item of its own, not a trailing clause of another.
+- Where one action is entered from several paths, its one `When` clause lists the entry paths.
+
+### Requirement items
+
+Every requirement Source states that is not itself an action or the content of a prompt shall become one requirement item, stated once:
+
+- the caller's input;
+- each terminal return or failure report, with its condition;
+- each rule on what follows an action's outcome that is not already the trigger of the next action: loop bounds, completion, what follows a nested call's return, resumption after Boss answers;
+- each invariant, such as commit ownership, identity authority, or what supports an outcome.
+
+A requirement item shall keep the Source's own wording where that wording is already a requirement, and shall add no obligation Source does not state: it adds a citation, never a scope, a qualifier, or an output field name that Source does not give.
+Where the Source's wording names a machine part, such as a transition, the item states the same rule as what follows in the run.
+
+### Citations
+
+Every reliance of one item on another shall be an inline citation of the form `[[<pack>-<N>](#<pack>-<N>)]` at the phrase that relies on it: an action whose trigger is another action's outcome cites that action, and a requirement cites each action or requirement it governs.
+Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package, because a package compiles without its peers' packages.
+
+### Test items
+
+Target shall carry, under `## Verification`, test items that together cite every action and requirement item at least once.
+Each test item states one end-to-end flow or one case matrix that a run shows from outside — who is prompted, in what order, what Boss is asked, and what the workflow returns — and cites each behavior at the assertion that verifies it.
+A test item maps its scenario as Given-When-Then: what has already happened or currently holds is `While` or `Where`, the one event under test is `When`, and what the run shows follows `shall`; the cases of a matrix are case labels in its attachment, never further clauses of the statement.
+A test item shall assert that a prompt was delivered by citing its action item, and shall not restate what the prompt instructs: an agent's conduct inside its own turn is asserted only where a requirement item states it.
+A test item shall name no state, guard, or other machine part, and shall assert nothing Source does not state.
+
+### Machine-facing text
+
+A prompt blockquote and a `Results:` block are payloads a running workflow delivers, to the acting agent and to the adjudicator respectively.
+They are carried whole on every action item that uses them ([Composition](#composition)), their lines follow the Source's authored line structure, and they are not requirement items: the rule that a requirement is stated once does not apply to them.
+
 ## Behaviors
 
-Each spec item names a condition, one behavior kind, and the complete prompt
+Each action item names a condition, one behavior kind, and the complete prompt
 for that behavior.
-Every emitted item shall use the exact Markdown heading form `### <ITEM-ID>`.
-An item heading at `##`, `####`, or another level is not GEARS item syntax and
-will not be visible to downstream compilers or verification.
 The behavior kind shall be one of:
 
 - direct Captain work, written `Captain shall <behavior>:` without naming a
@@ -62,7 +130,7 @@ When Source already supplies the complete blockquoted acting prompt for a
 behavior, text2gears shall preserve those prompt lines exactly (apart from the
 documented Markdown unescaping) and shall not promote surrounding conditions,
 invariants, result fields, or continuation mechanics into that blockquote.
-Those requirements remain in the item's condition or `Results:` metadata.
+Those requirements remain in the item's condition, its `Results:` metadata, or requirement items.
 Adding control-oriented prompt lines merely to restate them changes the
 Boss-visible contract and is nonconformant.
 
@@ -89,27 +157,28 @@ A prompt that references an undelivered value asks its player to act on data it 
 
 Source statements that assign active-leaf routing, call identity, suspension,
 or return matching to the host describe execution preconditions rather than
-behaviors for Captain to perform. text2gears shall use such a statement only as
-a condition on an actual behavior when needed and shall not emit a standalone
+behaviors for Captain to perform. text2gears shall state such a statement as a
+requirement item with the host as its subject, or as a condition on an actual
+behavior when needed, and shall not emit a
 direct-Captain item that asks Captain to implement host stack bookkeeping.
-The same applies to a host-owned input catalog's immutability: retain it as a
-condition/invariant on the behaviors that consume the catalog, never as an LLM
+The same applies to a host-owned input catalog's immutability: state it as a
+requirement item cited by the behaviors that consume the catalog, never as an LLM
 action that can replace or mutate host configuration.
-Opening source invariants consumed by later behaviors shall remain explicit in
-the emitted conditions or prompts rather than being summarized away. In
+Opening source invariants consumed by later behaviors shall remain explicit as
+requirement items or in the emitted prompts rather than being summarized away. In
 particular, preserve the declared exact entry shape of a structured host
 catalog and any progress invariant that makes a decide-call-observe plan
 finite, such as `remainingPlan` containing only calls after the selected call
 and strictly shrinking on continuation.
 Likewise, a source invariant that restricts a nested-call target to a
-non-empty member of an input catalog is a condition on that call item, not a
+non-empty member of an input catalog is a requirement item citing that call item, not a
 separate Captain rejection behavior, unless Source requires an observable
 response distinct from taking or skipping the call.
 
 E.g.:
 
 ```markdown
-### CODE-10
+### code-10
 
 When Reviewer is about to review any change, Captain shall prompt Reviewer:
 
@@ -122,7 +191,7 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 Direct Captain example:
 
 ```markdown
-### ROUTE-1
+### route-1
 
 When Boss gives an intent, Captain shall decide how to handle it:
 
@@ -143,8 +212,8 @@ Results:
 ```
 
 A `Results:` block continues until the next item or section heading; after the label, emit only result bullets and blank lines.
-Put other acting-item conditions and invariants before the acting blockquote, never between the blockquote and `Results:` or after its bullets.
-Nested-call items remain without `Results:` and keep their child-continuation prose after the blockquote.
+An action item carries nothing but its statement, its prompt blockquote, and its `Results:` block: state its other conditions and invariants as requirement items, never as prose before the blockquote, between the blockquote and `Results:`, or after its bullets.
+Nested-call items remain without `Results:`, and what follows the child's return is stated by requirement items that cite the call item.
 
 `Results:` shall be a plain label rather than a heading.
 Every result shall occupy one bullet with exactly a backtick-delimited guard
@@ -194,7 +263,7 @@ A Source outside those ids is named from its own words as above.
 A value Source assigns to the received Boss input or reply is already runtime
 input, not a value the acting agent produces. Where Source requires that
 complete value retained for later calls, preserve the exact input's retention
-and the Source's acceptance condition in non-acting GEARS prose; do not declare
+and the Source's acceptance condition in a requirement item; do not declare
 a Judge-extracted echo property for it. The semantic approval or refusal stays
 in the acting result contract.
 
@@ -218,9 +287,8 @@ A placeholder the Source defines as a labelled section of another relayed
 value, naming the label that opens the section and the labels that end it —
 `<original-intent>` as the `Original intent:` section of the caller's request,
 which runs to the `Review scope:` line or to the end of the request, for
-instance — is derived, not produced: text2gears shall keep that defining
-sentence verbatim in the package introduction, or in the item's prose where the
-Source states it there, name the placeholder as the Source does, and declare no
+instance — is derived, not produced: text2gears shall state that definition
+in a requirement item that keeps the Source's defining words, name the placeholder as the Source does, and declare no
 result property for it, because no player produces the value and
 [gears2fsm](gears2fsm.md#context-and-prompts) derives it from the relayed text.
 
@@ -233,8 +301,9 @@ A Source statement that qualifies an authored domain outcome's evidence — what
 supports it, what supports no outcome, such as "a progress report, status
 update, or promise of a later result supports no review outcome" — shall be
 carried in that outcome's result description, the only text the adjudicator
-reads when it selects the guard; left in the item's prose, it reaches no
+reads when it selects the guard; stated only in a requirement item, it reaches no
 judge.
+The qualification is also a requirement of the workflow: text2gears shall state it once as a requirement item citing the actions it governs.
 
 Result metadata is compiler control data, not part of the acting agent's
 prompt.
@@ -266,23 +335,24 @@ because the adjudicator reads the qualification nowhere else.
 
 When Source requires a terminal return to the caller, preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS.
 Merely naming a value in a completion predicate or an acting result does not state that the workflow returns it.
-Keep this non-acting requirement outside prompt blockquotes, in the item's pre-prompt prose, an explicit terminal-return clause in the relevant Results description, or existing nested-call continuation; do not create a Captain action solely to restate the return.
+State it as a requirement item under `## External Behavior`, outside prompt blockquotes and result descriptions; do not create a Captain action solely to restate the return.
 
 ### Boss-reply continuation
 
 Where a direct-Captain or delegated-player behavior may ask Boss a question
 and wait, Boss's answer resumes that same behavior with continuation context;
-it is not a distinct behavior item. text2gears shall keep the question result,
-the wait, and the answer-dependent continuation on the originating item even
-when the answer changes its complete runtime prompt. It shall not emit a
-second item solely for "Boss answers," "after the question," or clearing the
+it is not a distinct behavior item. text2gears shall keep the question result
+and the wait on the originating action item even
+when the answer changes its complete runtime prompt, and shall state the
+answer-dependent continuation as one requirement item citing that action. It shall not emit a
+second action item solely for "Boss answers," "after the question," or clearing the
 consumed question/reply. The FSM and linker own the same-leaf suspension,
 continuation blocks, and consumed-context cleanup.
 Outside the decide-call-observe routing contract, an authored Boss question
 is the framework-owned `needsBossReply` outcome that
 [gears2fsm](gears2fsm.md#boss-reply-suspension) adds to every Captain- or
 player-invoking state: text2gears shall keep the question's conditions in the
-prompt and its continuation in the item's prose and shall declare no result
+prompt and its continuation in that requirement item and shall declare no result
 for it, because a second guard for the same wait would give the adjudicator
 two equivalent outcomes.
 Only the routing contract's own `question` and `followUpQuestion` results
@@ -295,8 +365,8 @@ the reply, not when the same decision or task continues with Boss's answer.
 
 The same consolidation applies when Source says a fresh directive interrupts
 parked work and *restarts the same behavior* with cleared context. When the
-acting prompt and result contract are identical, retain the interrupt as an
-entry condition on the originating item; do not duplicate that item solely to
+acting prompt and result contract are identical, name the interrupt among the
+entry paths of the originating action's `When` clause; do not duplicate that item solely to
 describe the restart. Split only when the fresh directive invokes genuinely
 different acting work or a different prompt/result contract.
 
@@ -321,7 +391,7 @@ next phase cannot compile.
 Example:
 
 ```markdown
-### DECIDE-1
+### decide-1
 
 Parallel group: initial-proposals
 
@@ -341,19 +411,19 @@ command or module specifier.
 In both literal and dynamic nested-call forms, the behavior's verb phrase shall
 be exact: `Captain shall call playbook ...:`.
 Text2gears shall not insert sequencing words such as `first`, `then`, `next`,
-or `finally` between `shall` and `call`; required sequencing belongs in the
-`When` or `While` clause or in continuation prose around the item.
+or `finally` between `shall` and `call`, and no other words between the target and the colon; required sequencing belongs in the
+`When` or `While` clause or in a requirement item that cites the call.
 A nested-call item shall carry no `Results:` label: the child's terminal result
 is its outcome, so Source's continuation after child success, abort, or failure
-stays as prose after the blockquote for
-[gears2fsm](gears2fsm.md#nested-playbook-calls) to route through
+is stated by requirement items that cite the call item, from which
+[gears2fsm](gears2fsm.md#nested-playbook-calls) routes
 `invoke.onDone` and `invoke.onError`; a `Results:` block on a nested-call item
 is malformed.
 
 Example:
 
 ```markdown
-### RELEASE-8
+### release-8
 
 When implementation is ready for review, Captain shall call playbook `code-review`:
 
@@ -372,7 +442,7 @@ whose runtime string is the complete child input text.
 Example:
 
 ```markdown
-### CAPTAIN-2
+### captain-2
 
 When Captain selects a next call, Captain shall call playbook selected by `nextPlaybookId`:
 
@@ -414,7 +484,7 @@ has no agent to surface questions.
 Example:
 
 ```markdown
-### CODE-1
+### code-1
 
 When the workflow starts, Captain shall run:
 
@@ -425,18 +495,19 @@ Results:
 - `failed`: The command exited with a nonzero status.
 ```
 
-Target shall be written in the same language as Source: an item's condition
-prose, acting prompts, and result descriptions follow the Source language,
+Target shall be written in the same language as Source: every statement,
+acting prompt, and result description follows the Source language,
 read per the matching localization of the GEARS definition [[1]].
 The four `Captain shall` acting-clause forms defined above (direct,
-delegated, nested playbook call, and script), guard names, and the
-`Roles:` and `Results:` labels are fixed machine syntax and stay in this
+delegated, nested playbook call, and script), item IDs, guard names, and the
+`Roles:`, `Parallel group:`, and `Results:` labels are fixed machine syntax and stay in this
 exact English form regardless of Source language.
 
 ## Transformation-spec sources
 
 A Source may itself be the normative specification of a transformation — e.g., a compiler phase definition, as when a meta pipeline compiles this file.
 Such a Source declares no roles and prompts none; Captain performs the specified transformation on request.
+The [Target package](#target-package) layout does not apply to it: its Target is the Captain-acting items alone.
 Where such a Source carries a `## Compiled execution` section, text2gears shall compile it from that section alone: the section is the Source's complete behavior — its acting item, prompt, and `Results:` contract — and the remaining definition text is relayed content, not behaviors to transcribe, so the composition below applies only to a Source without that section.
 That section's blockquote is complete as authored: text2gears shall emit it verbatim and shall append no relay line to it — the `<definition>` placeholder is its only runtime value, and the undelivered-value rule above does not add `<boss-intent>` or any other placeholder to it.
 Compose Captain-acting spec items for it: when a transformation request names the specification's source and target, Captain shall carry out the transformation as specified.
@@ -445,13 +516,13 @@ Prompts shall carry the specification's normative requirements as instructions t
 ## Composition
 
 Source snippets may overlap or duplicate.
-When composing them into a spec item, text2gears shall deduplicate identical prompt lines.
+When composing them into an action item, text2gears shall deduplicate identical prompt lines.
 It shall not deduplicate across distinct authored fragments when doing so would erase a fragment boundary or change the Source-ordered prompt.
 
-Each spec item addresses one state behavior and carries its full final prompt (the static part).
-Cross-item duplication is acceptable: spec items are compiled artifacts; Source is what users maintain.
+Each action item addresses one behavior and carries its full final prompt (the static part).
+Duplication of prompt lines across action items is acceptable: a prompt is a payload delivered whole, and Source is what users maintain.
 
-Test: a human shall be able to simulate a run by copying any single item's prompt verbatim — no cross-item composition needed.
+Test: a human shall be able to simulate a run by copying any single action item's prompt verbatim — no cross-item composition needed.
 
 ### Placeholders vs literals
 
@@ -462,10 +533,10 @@ Markdown escaping is Source syntax, not content: extraction shall resolve escape
 
 ### Split by content discriminator
 
-Partition items by every variable that determines prompt content — including accumulated state when the trigger alone doesn't.
+Partition action items by every variable that determines prompt content — including accumulated state when the trigger alone doesn't.
 
-Conversely, do not split by trigger alone: where two or more triggers lead to one behavior with the same acting clause, prompt, and result contract — a nested call Source says a later path makes "with the same input as" an earlier path's, for instance — text2gears shall emit one item whose condition joins the triggers and shall keep each path's continuation as that item's prose.
-An item per trigger duplicates an identical prompt and multiplies the FSM's states without a content difference.
+Conversely, do not split by trigger alone: where two or more triggers lead to one behavior with the same acting clause, prompt, and result contract — a nested call Source says a later path makes "with the same input as" an earlier path's, for instance — text2gears shall emit one action item whose one `When` clause lists the entry paths and shall state each path's continuation as a requirement item citing it.
+An action item per trigger duplicates an identical prompt without a content difference.
 
 ### Prune dead disjuncts
 
