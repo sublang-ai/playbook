@@ -9,6 +9,7 @@ Accepted.
 Amends [DR-044](044-dev-planning-workflow.md): DEV's planning result gains the `code via pull request` and `decide then code via pull request` outcomes, and on those outcomes DEV calls `branch` before, and `pr` after, its existing `code` or `decide`-then-`code` path.
 Amends [DR-009](009-generic-playbook-cli-and-registry.md) §6 as extended by DR-044: the starter config also enables BRANCH and PR, binding both `coder` roles to the seeded `dev.coder` player.
 Amends [DR-016](016-script-actors-and-optimize-pass.md): a script blockquote may carry a `<placeholder>` relaying a runtime value the machine retains.
+Amended by [DR-104](104-compiled-gears-is-a-spec-package.md) in one scope: PR's GEARS carry no `## Optimizations` section, so conformance recognises the five script items by their `Captain shall run:` clause.
 
 ## Context
 

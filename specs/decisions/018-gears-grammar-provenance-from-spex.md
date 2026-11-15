@@ -7,6 +7,7 @@
 
 Accepted.
 [DR-032](032-explicit-roles-session-players.md) replaces the Playbook-owned fixed `Players:` label with `Roles:` syntax; the Spex GEARS-statement provenance remains unchanged.
+Amended by [DR-104](104-compiled-gears-is-a-spec-package.md) in one scope: compiled GEARS follow the cited definition's package form, not only its statement pattern.
 
 ## Context
 
