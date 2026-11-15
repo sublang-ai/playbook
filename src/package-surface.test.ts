@@ -461,6 +461,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.model',
         'AgentCallSettings.effort',
         'AgentCallSettings.fastMode',
+        'AgentCallSettings.ultracode',
         'AgentCallSettings.subagentModel',
         'AgentCallSettings.subagentEffort',
         'AgentCallSettings.instruction',
@@ -489,6 +490,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'launchManagedTmuxPlay runtime export',
         'runManagedTmuxPlaySession runtime export',
         'getNativeSkillSupport runtime semantics',
+        'provider defaults and independent Ultracode runtime semantics',
       ]);
       expect(result.ok).toBe(true);
     } finally {
