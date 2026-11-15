@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+// This suite exercises Playbook's call boundary with a capable runtime.
+vi.mock('@sublang/cligent', async (load) => ({
+  ...await load<typeof import('@sublang/cligent')>(),
+  isUltracodeSupported: (adapter: string) => adapter === 'claude',
+}));
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createEvent } from '@sublang/cligent';
@@ -44,7 +49,6 @@ import {
   assertPlaybookCaptainUnresolvedEffects,
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
-  isUltracodeSupported,
   type PlaybookCaptainDeps,
   type PlaybookCaptainFrameSnapshot,
   type PlaybookCaptainRegistryEntryV3,
@@ -4829,7 +4833,6 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       nativeSkills: false,
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
-      subagentModel: 'captain-subagents',
     });
 
     await shell.dispose?.();
@@ -4917,8 +4920,6 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       nativeSkills: false,
       model: { kind: 'value', value: 'captain-model' },
       effort: { kind: 'provider-default' },
-      subagentModel: 'inherit',
-      subagentEffort: 'low',
     });
 
     await shell.dispose?.();
@@ -9504,9 +9505,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
 
     expect(recovered.captainCalls).toHaveLength(1);
     expect(recovered.captainCalls[0]?.options?.resume).toBe(false);
-    expect(recovered.captainCalls[0]?.options?.settings).toMatchObject({
-      subagentModel: 'catch-up-subagents',
-    });
+    expect(recovered.captainCalls[0]?.options?.settings).not.toHaveProperty('subagentModel');
     expect(JSON.stringify(restored.exportSnapshot())).not.toMatch(
       /subagentModel|catch-up-subagents/,
     );
@@ -10474,9 +10473,9 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           skills: [],
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
-          subagentModel: 'captain-subagents-b',
         },
       });
+      expect(targetContext.captainCalls.at(-1)?.options?.settings).not.toHaveProperty('subagentModel');
 
       await target.dispose?.();
     }
@@ -10617,10 +10616,9 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           skills: [],
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
-          subagentModel: 'inherit',
-          subagentEffort: 'xhigh',
         },
       });
+      expect(targetContext.captainCalls.at(-1)?.options?.settings).not.toHaveProperty('subagentEffort');
 
       await target.dispose?.();
     }
@@ -10628,7 +10626,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await source.dispose?.();
   });
 
-  it.skipIf(!isUltracodeSupported('claude'))('resumes with independent Ultracode disabled or reset while keeping effort high', async () => {
+  it('resumes with independent Ultracode disabled or reset while keeping effort high', async () => {
     const tunedAgent = (ultracode?: boolean): TestSessionAgent => ({
       adapter: 'claude',
       model: { kind: 'value', value: 'stable-model' },
@@ -10764,7 +10762,6 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           skills: [],
           model: { kind: 'value', value: 'stable-model' },
           effort: { kind: 'value', value: 'high' },
-          subagentModel: 'inherit',
           ultracode: false,
         },
       });

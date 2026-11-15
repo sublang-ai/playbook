@@ -1,6 +1,5 @@
 import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
-/** Whether the installed runtime can honor independent Ultracode tuning. */
-export declare function isUltracodeSupported(adapter: string): boolean;
+export { isUltracodeSupported } from './ultracode.js';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type { JsonValue, PlaybookEffectLedger, PlaybookEffectLedgerCommandBatch, PlaybookControlAction, PlaybookFailureCause, PlaybookRuntime, PlaybookRuntimeSnapshot, PlaybookStepRecord } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';

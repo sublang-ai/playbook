@@ -76,6 +76,8 @@
     "reference/sdlc/code.playbook/code.registry.d.ts",
     "reference/sdlc/code.playbook/playbook-captain.ts",
     "reference/sdlc/code.playbook/playbook-captain.js",
+    "reference/sdlc/code.playbook/ultracode.js",
+    "reference/sdlc/code.playbook/ultracode.d.ts",
     "reference/sdlc/code.playbook/playbook-captain.d.ts",
     "reference/sdlc/code.playbook/session-store.js",
     "reference/sdlc/code.playbook/session-store.d.ts",

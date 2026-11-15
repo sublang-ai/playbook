@@ -6,7 +6,9 @@
 ## Status
 
 Accepted (2026-11-14) on the owner's direction.
-Amends [DR-074](074-seeds-name-the-latest-models.md), [DR-075](075-subagent-model-is-tuning.md), and [DR-099](099-seeds-run-at-medium-effort.md) in the seeded model choices.
+Amends [DR-076](076-subagents-delegate-by-default.md) §3 in writing explicit child models, and [DR-074](074-seeds-name-the-latest-models.md), [DR-075](075-subagent-model-is-tuning.md), and [DR-099](099-seeds-run-at-medium-effort.md) in the seeded model choices.
+
+Amended in shared runtime model ownership and provider defaults under [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 

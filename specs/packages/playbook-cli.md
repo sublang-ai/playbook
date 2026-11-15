@@ -312,7 +312,7 @@ Each normalized `captain.options.playbooks.<id>` entry shall carry the canonical
 `hostCapabilities` shall be a reserved host-owned key and shall be rejected rather than copied into that configured option slice.
 `PermissionPolicy` shall be the exact normalized cligent shape `{ mode?: 'auto' | 'bypass'; fileWrite?: 'allow' | 'ask' | 'deny'; shellExecute?: 'allow' | 'ask' | 'deny'; networkAccess?: 'allow' | 'ask' | 'deny'; writablePaths?: readonly string[] }`.
 The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the normalized top-level default `{ adapter: string; model: TuningSelection; effort: TuningSelection; fastMode?: boolean; ultracode?: boolean; subagentModel?: string; subagentEffort?: string; browser?: boolean; skills?: readonly string[]; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, a provider-default subagent-model or subagent-effort selection resolves to absence, and each role's independently resolved model, effort, fast mode, Ultracode, subagent model, and subagent effort remain in its own binding; the shell uses the agent envelope plus that binding to form cligent's atomic complete-call settings for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
-Where the installed cligent's public capability reports a Captain or player block's adapter as serving a subagent model and that block leaves `subagentModel` unset, the launcher shall resolve the agent's subagent model to `inherit` before cligent normalization, resolve a block's `false` to absence, resolve an adapter serving none to absence, and rewrite no config file ([DR-076](../decisions/076-subagents-delegate-by-default.md)).
+When normalizing a Captain or player with an omitted subagent model, the launcher shall select `inherit` for Claude, preserve omission for Codex unless an explicit subagent effort requires `inherit`, and resolve a block's `false` or an adapter serving none to absence without rewriting the config ([DR-076](../decisions/076-subagents-delegate-by-default.md)).
 The command shall resolve a scalar `captain` or `players.<player-id>` value as an adapter shorthand and shall normalize a full block as a self-contained tmux-play agent block through the installed cligent loader ([DR-021](../decisions/021-inline-agent-settings.md)).
 Before composing, the command shall reject — with a path-named
 diagnostic naming the offending key and the inline replacement, and
@@ -377,14 +377,9 @@ The starter shall define players `dev.coder`, `dev.reviewer`, `dev.analyst`, and
 The seeded lineup shall be chosen when the
 file is written from the adapters the credential check of
 [[playbook-cli-12](playbook-cli.md#playbook-cli-12)] already sees, by this fixed
-order and with these models ([DR-053](../decisions/053-seeding-picks-a-ready-adapter.md); [DR-074](../decisions/074-seeds-name-the-latest-models.md); [DR-096](../decisions/096-a-second-adapter-reviews.md); [DR-099](../decisions/099-seeds-run-at-medium-effort.md)):
+order: `claude`, then `codex` ([DR-096](../decisions/096-a-second-adapter-reviews.md), [DR-105](../decisions/105-runtime-owned-seed-and-delegation.md)):
 
-| Order | Adapter | Model | Subagent model |
-| --- | --- | --- | --- |
-| 1 | `claude` | `claude-fable-5-2` | `claude-opus-5-5` |
-| 2 | `codex` | `gpt-6-astra` | `gpt-6.1-sol` where installed Cligent reports subagent-model support; omitted otherwise |
-
-- every seeded agent shall carry its row's subagent model where the installed Cligent reports request support, and omit it otherwise ([DR-104](../decisions/104-parent-and-child-seed-models.md));
+- the template shall carry no model IDs, and every seeded agent shall take its primary and child selections from Cligent's `defaultAgentModels` for that adapter and provider environment; an unavailable export or empty result shall leave the corresponding models unpinned;
 - the first ready adapter in that order supplies every seeded agent, except
   that where both listed adapters are ready, `dev.reviewer` alone takes the
   second row;
@@ -490,6 +485,7 @@ The package shall expose `@sublang/playbook/seed-config` as a public, semver-sta
 export interface SeedConfigOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly homeDir?: string;
+  readonly modelEnv?: NodeJS.ProcessEnv;
 }
 export interface SeedConfigText {
   readonly text: string;
@@ -501,7 +497,7 @@ export declare function seedConfigText(options?: SeedConfigOptions): SeedConfigT
 - `text` is exactly the starter text `playbook` seeds [[playbook-cli-11](#playbook-cli-11)] under that environment and home, from the same implementation;
 - `anyReady` is false exactly where no listed adapter is ready and the none-ready notice would print;
 - `env` defaults to `process.env` and `homeDir` to that environment's `HOME`, otherwise the process home directory;
-- the call is synchronous, reads only the bundled template and the credential inputs of [[playbook-cli-12](#playbook-cli-12)], and writes nothing.
+- the call is synchronous and writes nothing; model selection uses the supplied environment and home, or only an explicit `modelEnv` when the host has already resolved the provider environment.
 
 ### Non-interactive Run Host
 
@@ -1134,13 +1130,11 @@ When `createWorktreeHostCapabilities(options)` is called, it shall reject, befor
 
 #### playbook-cli-102
 
-Where a Captain, player, or role config supplies independent Ultracode tuning, the launcher shall apply the following boolean contract ([DR-103](../decisions/103-independent-ultracode-tuning.md)):
+When projecting an authored Ultracode value, the launcher shall validate the boolean against installed Cligent before a call ([DR-103](../decisions/103-independent-ultracode-tuning.md)):
 
-- `ultracode` is optional and independent of effort; a role's omission inherits its player's value, while literal `false` disables workflows.
-- Enabling requires the installed Cligent `isUltracodeSupported(adapter)` capability; an absent probe means unsupported, with no Playbook-owned adapter support list.
-- Either explicit boolean on Claude without independent support rejects with update guidance; other incapable adapters accept disabled tuning without receiving an unsupported field.
-- Execution projections and accepted-turn settings retain the effective boolean, structural identity excludes it, ordinary reopening applies current tuning, and uncertain retry retains attempted tuning.
-- Legacy `effort: ultracode` remains accepted independently.
+- A supported adapter receives the boolean independently of effort, including an explicit `false` beside legacy `effort: ultracode`.
+- Either boolean on Claude requires capable Cligent; an incapable Claude runtime reports the required upgrade.
+- Enabling it on another incapable adapter reports that adapter's lack of support. A disabled value sends no field to that adapter.
 
 ## Internal Behavior
 
@@ -1243,13 +1237,13 @@ shall fail unless the command creates that file from the bundled starter config,
 
 | Credentials visible to the seed | Seeded lineup | Notice |
 | --- | --- | --- |
-| claude only | every agent on `claude` / `claude-fable-5-2`, no writable-path grant | the resolved path alone |
-| codex only | every agent on `codex` / `gpt-6-astra`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
-| both | `dev.reviewer` on `codex` / `gpt-6-astra` at effort `high` with `permissions.writablePaths: ['.git']`; every other agent on `claude` / `claude-fable-5-2`, no writable-path grant | the resolved path alone |
-| neither | every agent on `claude` / `claude-fable-5-2` | the resolved path, plus one line naming that no adapter probed ready |
+| claude only | every agent on `claude`, no writable-path grant | the resolved path alone |
+| codex only | every agent on `codex`, each carrying `permissions.writablePaths: ['.git']` | the resolved path alone |
+| both | `dev.reviewer` on `codex` at effort `high` with `permissions.writablePaths: ['.git']`; every other agent on `claude`, no writable-path grant | the resolved path alone |
+| neither | every agent on `claude` | the resolved path, plus one line naming that no adapter probed ready |
 
 - every agent takes effort `medium` in every row, except the both row's `dev.reviewer`;
-- every row carries its adapter's child pin when the installed Cligent reports request support and omits it otherwise, as [[playbook-cli-11](#playbook-cli-11)] requires;
+- every row carries the primary and child models from Cligent where offered, and neither model where that capability is unavailable; an explicit provider environment reaches model selection independently of credential selection [[playbook-cli-11](#playbook-cli-11)];
 - each row shall be driven by an injected home directory and an explicit environment, so no case depends on the machine running the suite;
 - seeding twice in one invocation shall write one file and select one lineup;
 - a session `playbook run` starts on the both row's seed shall continue through `run --session` on that seed, its turn count advancing and its provider resumed [[playbook-cli-11](#playbook-cli-11)].
@@ -1277,7 +1271,7 @@ Where the test suite exercises [[playbook-cli-85](#playbook-cli-85)] through bot
 
 #### playbook-cli-14
 
-When the test suite composes a top-level config enabling one or more playbooks, the test suite shall fail unless a dotted player id survives both interactive and headless projections byte-for-byte and an incapable host rejects it; the composed tmux-play config sets `captain.from` to `@sublang/playbook/playbook-captain`; carries exact `captain.options.sessionAgents` with one complete Captain block and exactly the referenced player blocks; carries one `captain.options.playbooks.<id>` entry per playbook with canonical prepared `from`, normalized effective `command`, exact closed role values `{ playerId, model, effort, fastMode?, ultracode?, subagentModel?, subagentEffort? }` using the tagged tuning selections and optional effective boolean or string only where a role override or player default supplies one, and an option slice containing no launcher key; resolves scalar Captain and player values as adapter shorthands; normalizes full agent blocks; resolves an unset subagent model to `inherit` for a Captain or player whose adapter cligent reports as serving one, and to absence for a block's `false` or an adapter serving none, without rewriting the config; generates one roster entry per referenced player id; shares an entry only when role bindings name the same id; sets `layout.initialVisible` from the first enabled playbook with any bound players while leaving an all-roleless host-neutral plan empty; sets `captain.options.captainAdapter`; and carries normalized presentation fields (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
+When the test suite composes a top-level config enabling one or more playbooks, the test suite shall fail unless a dotted player id survives both interactive and headless projections byte-for-byte and an incapable host rejects it; the composed tmux-play config sets `captain.from` to `@sublang/playbook/playbook-captain`; carries exact `captain.options.sessionAgents` with one complete Captain block and exactly the referenced player blocks; carries one `captain.options.playbooks.<id>` entry per playbook with canonical prepared `from`, normalized effective `command`, exact closed role values `{ playerId, model, effort, fastMode?, ultracode?, subagentModel?, subagentEffort? }` using the tagged tuning selections and optional effective boolean or string only where a role override or player default supplies one, and an option slice containing no launcher key; resolves scalar Captain and player values as adapter shorthands; normalizes full agent blocks; resolves an unset Claude child to `inherit`, preserves an unconfigured Codex child, and drops a disabled child, without rewriting the config; generates one roster entry per referenced player id; shares an entry only when role bindings name the same id; sets `layout.initialVisible` from the first enabled playbook with any bound players while leaving an all-roleless host-neutral plan empty; sets `captain.options.captainAdapter`; and carries normalized presentation fields (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
 
 The suite shall also fail unless shared skills reach both host projections, agent lists replace shared defaults including explicit empty lists, each primary or overlay relative locator retains its declaring-file origin, and selected data-only reopening retains current skill lists without inspecting unselected agents (verifying [[playbook-cli-4](#playbook-cli-4)] and [[playbook-cli-8](#playbook-cli-8)]).
 
@@ -1576,7 +1570,7 @@ When integration tests normalize, project, and reopen independent Ultracode tuni
 
 | Case | Required observation |
 | --- | --- |
-| Capable Claude with `high` effort and enabled Ultracode | Both selections survive normalization and host/session execution projection; ordinary reopening can disable Ultracode without changing structure or effort. |
+| Capable Claude with enabled Ultracode at `high` or disabled Ultracode beside the legacy shorthand | Both selections survive normalization and host/session execution projection; ordinary reopening can disable Ultracode without changing structure or effort. |
 | Published older Claude runtime, either explicit boolean | Rejection with update guidance before registry work, including disabled tuning beside legacy `effort: ultracode`. |
 | Other incapable adapter, disabled Ultracode | Execution and session-agent projections preserve false, while the host projection omits the unsupported field. |
 | Malformed boolean | Normalization and stored projection validation reject the value. |

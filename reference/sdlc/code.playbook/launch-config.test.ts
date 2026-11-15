@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { isUltracodeSupported } from './playbook-captain.js';
 import { readFileSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,14 +8,39 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { getSubagentModelSupport } from '@sublang/cligent';
 import * as launchConfig from './bin/launch-config.js';
 import * as launcher from './bin/playbook.js';
 import { executionConfigFromPlan } from './bin/run.js';
 
+// Exercise Playbook’s capable and legacy contracts on every install. In
+// capable cases the Cligent boundary accepts the provisional tmux config;
+// all other cases below continue through the real installed loader.
+const runtimeFixture = vi.hoisted(() => ({ capability: undefined as 'capable' | 'legacy' | undefined }));
+vi.mock('@sublang/cligent', async (load) => {
+  const actual = await load<typeof import('@sublang/cligent') & { isUltracodeSupported?: (adapter: string) => boolean }>();
+  return {
+    ...actual,
+    isUltracodeSupported: (adapter: string) => runtimeFixture.capability === undefined
+      ? actual.isUltracodeSupported?.(adapter) === true
+      : runtimeFixture.capability === 'capable' && adapter === 'claude',
+    isSubagentModelSupported: (adapter: string) => runtimeFixture.capability === 'capable' && adapter === 'codex'
+      || actual.isSubagentModelSupported(adapter as never),
+  };
+});
+vi.mock('@sublang/cligent/tmux-play', async (load) => {
+  const actual = await load<typeof import('@sublang/cligent/tmux-play')>();
+  return {
+    ...actual,
+    loadTmuxPlayConfig: (options: { configPath: string }) => runtimeFixture.capability === 'capable'
+      ? Promise.resolve({ config: { notifications: {}, ...parseYaml(readFileSync(options.configPath, 'utf8')) } })
+      : actual.loadTmuxPlayConfig(options),
+  };
+});
+
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  runtimeFixture.capability = undefined;
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -434,8 +458,6 @@ describe('shared launch-config plan (PBCLI-47)', () => {
         adapter: 'codex',
         model: 'coder-default',
         effort: 'high',
-        ...(getSubagentModelSupport('codex').requestSupported
-          ? { subagentModel: 'inherit' } : {}),
       },
       {
         id: 'dev.reviewer',
@@ -1801,8 +1823,6 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.dev.roles).toEqual({ analyst: 'dev.analyst' });
     expect(template.players['dev.analyst']).toEqual({
       adapter: 'claude',
-      model: 'claude-fable-5-2',
-      subagentModel: 'claude-opus-5-5',
       effort: 'medium',
       permissions: { mode: 'auto' },
     });
@@ -1812,7 +1832,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(template.playbooks.branch.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.pr.roles).toEqual({ coder: 'dev.coder' });
     expect(template.playbooks.inspect.roles).toEqual({ inspector: 'inspect.inspector' });
-    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', model: 'claude-fable-5-2', subagentModel: 'claude-opus-5-5', effort: 'medium', permissions: { mode: 'auto' } });
+    expect(template.players['inspect.inspector']).toEqual({ adapter: 'claude', effort: 'medium', permissions: { mode: 'auto' } });
     expect(Object.keys(template.playbooks)).toEqual([
       'code',
       'review',
@@ -2284,12 +2304,10 @@ describe('subagent effort and the delegation default (DR-076)', () => {
       plan.players.map((player: any) => [player.id, player.agent]),
     );
     expect(agents['dev.coder'].subagentModel).toBe('inherit');
-    const codexDefault = getSubagentModelSupport('codex').requestSupported
-      ? 'inherit' : undefined;
-    expect(agents['dev.reviewer'].subagentModel).toBe(codexDefault);
+    expect(agents['dev.reviewer'].subagentModel).toBeUndefined();
     expect(agents['dev.tester']).not.toHaveProperty('subagentModel');
     expect(plan.catalog.code.roles.coder.subagentModel).toBe('inherit');
-    expect(plan.catalog.code.roles.reviewer.subagentModel).toBe(codexDefault);
+    expect(plan.catalog.code.roles.reviewer.subagentModel).toBeUndefined();
     expect(plan.catalog.code.roles.tester).not.toHaveProperty('subagentModel');
 
     // Both front ends receive the resolved default.
@@ -2308,7 +2326,7 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     const execution: any = executionConfigFromPlan(plan);
     expect(execution.captain.subagentModel).toBe('inherit');
     expect(execution.catalog.code.roles.coder.subagentModel).toBe('inherit');
-    expect(execution.catalog.code.roles.reviewer.subagentModel).toBe(codexDefault);
+    expect(execution.catalog.code.roles.reviewer.subagentModel).toBeUndefined();
 
     // The config file is never rewritten, and structure carries no default.
     expect(await readFile(configPath, 'utf8')).toBe(source);
@@ -2317,9 +2335,8 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     );
   });
 
-  it.each(['claude', 'codex'].filter(
-    (adapter) => getSubagentModelSupport(adapter).requestSupported,
-  ))('carries %s subagent tuning through both front ends and role overrides', async (adapter) => {
+  it.each(['claude', 'codex'])('carries %s subagent tuning through both front ends and role overrides', async (adapter) => {
+    runtimeFixture.capability = 'capable';
     const plan: any = await launchConfig.normalizeLaunchPlan({
       captain: { adapter, subagentModel: 'inherit', subagentEffort: 'low' },
       players: {
@@ -2340,6 +2357,21 @@ describe('subagent effort and the delegation default (DR-076)', () => {
     expect(roles.tester).not.toHaveProperty('subagentModel');
     expect(roles.tester).not.toHaveProperty('subagentEffort');
     expect(JSON.stringify(structuralProjection(plan))).not.toContain('subagent');
+  });
+
+  it('keeps plain Codex untuned while explicit block and role efforts inherit the parent', async () => {
+    runtimeFixture.capability = 'capable';
+    const plan: any = await launchConfig.normalizeLaunchPlan({
+      captain: { adapter: 'codex', subagentEffort: 'low' },
+      players: { 'dev.coder': 'codex' },
+      playbooks: { code: { from: 'mod://code', roles: {
+        coder: { player: 'dev.coder', subagentEffort: 'high' }, reviewer: 'dev.coder', tester: 'dev.coder',
+      } } },
+    }, load);
+    expect(plan.captain).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'low' });
+    expect(plan.players[0].agent).not.toHaveProperty('subagentModel');
+    expect(plan.catalog.code.roles.coder).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'high' });
+    expect(plan.catalog.code.roles.reviewer).not.toHaveProperty('subagentModel');
   });
 
   it('accepts an explicit inherit on a block and a binding', async () => {
@@ -2966,7 +2998,8 @@ describe('independent Ultracode tuning', () => {
     expect(projected.captain.options.sessionAgents.captain.ultracode).toBe(false);
     await expect(launchConfig.normalizeHostConfig(projected)).resolves.toBeDefined();
   });
-  it.skipIf(!isUltracodeSupported('claude'))('preserves enabled tuning with independent effort and resets it on ordinary reopen', async () => {
+  it('preserves enabled tuning with independent effort and resets it on ordinary reopen', async () => {
+    runtimeFixture.capability = 'capable';
     const initial: any = await launchConfig.normalizeLaunchPlan(config(true, 'claude'), load);
     expect(initial.catalog.ultra.roles.coder).toMatchObject({ ultracode: true, effort: { kind: 'value', value: 'high' } });
     const projected: any = launchConfig.projectTmuxConfig(initial);
@@ -2977,14 +3010,25 @@ describe('independent Ultracode tuning', () => {
     expect(reopened.catalog.ultra.roles.coder.ultracode).toBe(false);
     expect(structuralProjection(reopened)).toEqual(structuralProjection(initial));
   });
-  it.skipIf(isUltracodeSupported('claude'))('rejects disabled Claude tuning an older runtime cannot enforce', async () => {
+  it('carries an explicit off beside the legacy effort through the role and host', async () => {
+    runtimeFixture.capability = 'capable';
+    const authored = config(false, 'claude');
+    authored.players['dev.coder'].effort = 'ultracode';
+    const plan: any = await launchConfig.normalizeLaunchPlan(authored, load);
+    const projected: any = launchConfig.projectTmuxConfig(plan);
+    expect(projected.players[0]).toMatchObject({ effort: 'ultracode', ultracode: false });
+    expect(executionConfigFromPlan(plan).catalog.ultra.roles.coder)
+      .toMatchObject({ effort: { kind: 'value', value: 'ultracode' }, ultracode: false });
+  });
+  it('rejects disabled Claude tuning an older runtime cannot enforce', async () => {
+    runtimeFixture.capability = 'legacy';
     await expect(launchConfig.normalizeLaunchPlan(config(false, 'claude'), load)).rejects.toThrow(/ultracode.*update Cligent/);
     const legacy = config(false, 'claude');
     legacy.captain = { adapter: 'claude', effort: 'ultracode', ultracode: false } as any;
     await expect(launchConfig.normalizeLaunchPlan(legacy, load)).rejects.toThrow(/ultracode.*update Cligent/);
   });
   it('rejects enabled Ultracode on an incapable adapter before registry work', async () => {
-    await expect(launchConfig.normalizeLaunchPlan(config(true), load)).rejects.toThrow(/ultracode.*not supported/);
+    await expect(launchConfig.normalizeLaunchPlan(config(true), load)).rejects.toThrow(/ultracode is not supported for codex$/);
   });
   it('rejects nonboolean Ultracode', async () => {
     await expect(launchConfig.normalizeLaunchPlan(config('yes'), load)).rejects.toThrow(/ultracode must be a boolean/);

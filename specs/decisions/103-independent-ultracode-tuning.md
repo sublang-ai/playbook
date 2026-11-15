@@ -6,7 +6,8 @@
 ## Status
 
 Accepted (2026-11-14).
-Amends [DR-021](021-inline-agent-settings.md) and [DR-032](032-explicit-roles-session-players.md) with an independent boolean tuning field, retaining [DR-027](027-runtime-compatibility-from-cligent.md)'s installed-runtime capability authority.
+Amends [DR-021](021-inline-agent-settings.md) and [DR-032](032-explicit-roles-session-players.md) with an independent boolean tuning field.
+Extends [DR-027](027-runtime-compatibility-from-cligent.md)'s installed-runtime capability rule to independent Ultracode.
 
 ## Context
 

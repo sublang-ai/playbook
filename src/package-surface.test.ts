@@ -217,8 +217,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         declaredFloor[0] > 0 ||
           (declaredFloor[0] === 0 &&
-            declaredFloor[1] >= 37),
-        `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+            declaredFloor[1] >= 38),
+        `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.38.0 compatibility floor and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
       ).toBe(true);
     }
     // A pnpm override rewrites the importer's recorded specifier as well as
@@ -243,8 +243,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            resolvedFloor[1] >= 37),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+            resolvedFloor[1] >= 38),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.38.0 compatibility floor and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
       ).toBe(true);
     }
   });
@@ -3001,6 +3001,8 @@ void inspectCapabilities;
       `${CODE_BASE}machine-identity.js`,
       `${CODE_BASE}machine-identity.d.ts`,
       `${CODE_BASE}bin/machine-identity.js`,
+      `${CODE_BASE}ultracode.js`,
+      `${CODE_BASE}ultracode.d.ts`,
       `${CODE_BASE}seed-config.js`,
       `${CODE_BASE}seed-config.d.ts`,
       `${CODE_BASE}bin/private-paths.js`,

@@ -17,6 +17,7 @@ export function seedConfigText(options = {}) {
   return seedText(
     TEMPLATE_PATH,
     env,
-    ...(options.homeDir !== undefined ? [options.homeDir] : []),
+    options.homeDir,
+    options.modelEnv,
   );
 }

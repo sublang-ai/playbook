@@ -307,7 +307,7 @@ present `from` — must equal the stored module; a present `from` beside a
 supplied module is checked for form only. A `--module` for a playbook your
 config enables but the session does not hold is ignored, while one naming no
 playbook of your config is refused. Compatible current `model`, `effort`, and
-optional `fastMode`, `subagentModel`, and `subagentEffort` settings apply to
+optional `fastMode`, `ultracode`, `subagentModel`, and `subagentEffort` settings apply to
 the next call. Boolean `false` explicitly
 resets model, effort, subagent model, or subagent effort to the provider
 default, but `fastMode: false` is a literal

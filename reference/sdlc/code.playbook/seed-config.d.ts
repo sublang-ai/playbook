@@ -4,6 +4,8 @@
 export interface SeedConfigOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly homeDir?: string;
+  /** Effective provider environment supplied by a host, independent of credential selection. */
+  readonly modelEnv?: NodeJS.ProcessEnv;
 }
 export interface SeedConfigText {
   readonly text: string;

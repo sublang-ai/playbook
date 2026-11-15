@@ -69,17 +69,19 @@ credentials (an API key in the environment, or `~/.claude` / `~/.codex`):
 
 | Credentials | Seeded agents |
 | --- | --- |
-| Claude only, or neither | every agent on Claude Opus 5.5 (with a notice when neither is configured) |
-| Codex only | every agent on GPT-6.1 Sol |
-| both | `dev.reviewer` on GPT-6.1 Sol, every other agent on Claude Opus 5.5 |
+| Claude only, or neither | every agent on Claude (with a notice when neither is configured) |
+| Codex only | every agent on Codex |
+| both | `dev.reviewer` on Codex, every other agent on Claude |
+
+On official services, Cligent’s model defaults select Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Custom providers and older Cligent installs without the model-defaults API supply their own models.
 
 Every agent runs at `medium` effort, except a `dev.reviewer` seeded on Codex
 beside Claude agents, which runs at `high`. Credentials do not prove SDK availability or remaining quota; launch
 still checks the configured adapter. Existing configs are left unchanged.
 Embedding hosts seed the same agent settings through
-`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`.
+`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`. A host that has already resolved the provider environment for its user can pass it as `modelEnv` independently of the credentials used to select adapters.
 
-The Claude default is shown below. Each Codex agent also carries
+The example below shows an official Claude setup with Cligent’s model defaults. Each Codex agent also carries
 `permissions.writablePaths: ['.git']`:
 
 ```yaml
@@ -217,10 +219,6 @@ is safe on other adapters; older Claude runtimes reject either explicit boolean
 with update guidance because they cannot enforce it. Legacy `effort: ultracode` remains
 supported.
 
-New starter configs use Claude Fable 5.2 with Opus 5.5 subagents, or GPT-6 Astra with GPT-6.1 Sol subagents.
-The Codex child pin is included only when installed Cligent supports it; older supported installs omit that pin.
-Seeding preserves existing files and all settings remain tunable.
-
 `subagentModel` selects the model for delegated work —
 `inherit` names the agent's own, a model name pins another, and `false` on a
 `captain` or `players.<player-id>` block switches delegation off — and tells
@@ -237,13 +235,9 @@ runs `general-purpose` at `medium`; `Explore` and `Plan` are never replaced and
 keep the agent's own effort
 ([Cligent DR-029](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/029-subagent-effort.md)).
 On Codex with Cligent 0.39 or later, these fields set native subagent defaults;
-`subagentEffort` accepts `minimal`, `low`, `medium`, `high`, and `xhigh`.
-Explicit spawn settings and custom role definitions can override these defaults;
-a full-history fork inherits the parent model and effort.
-An agent whose adapter serves a subagent model (Claude, and Codex with Cligent 0.39 or later) and whose block
-leaves `subagentModel` unset resolves to `inherit`: it delegates by default.
-The launcher resolves this on its own copy and never rewrites your config, and
-the starter config names neither field
+`subagentEffort` accepts `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+Explicit spawn settings and custom role definitions follow the model and history rules of the native spawn tool.
+When a user config omits the child model, Claude requests `inherit`. Codex leaves delegation to the runtime unless a child model or effort is explicitly selected. Tool-free Captain control calls carry neither child setting
 ([DR-076](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/076-subagents-delegate-by-default.md)).
 
 

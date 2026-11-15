@@ -6,12 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
-import * as cligent from '@sublang/cligent';
-/** Whether the installed runtime can honor independent Ultracode tuning. */
-export function isUltracodeSupported(adapter) {
-    const probe = cligent.isUltracodeSupported;
-    return typeof probe === 'function' && probe(adapter);
-}
+import { ultracodeForCall } from './ultracode.js';
+export { isUltracodeSupported } from './ultracode.js';
 import { assertPlaybookFailureCause } from '@sublang/playbook/runtime';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, emptyPlaybookEffectLedger, hiddenControlEnvelope, isPlaybookEffectLedgerMonotonicExtension, normalizeError, parseJudgeJson, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
@@ -2385,9 +2381,6 @@ function fixedAgent(agent) {
     };
 }
 function callSettings(agent, tuning = agent) {
-    if (tuning.ultracode !== undefined && !isUltracodeSupported(agent.adapter) && (tuning.ultracode || agent.adapter === 'claude')) {
-        throw new Error(`ultracode is not supported by the installed runtime for ${agent.adapter}; update Cligent to use independent Ultracode tuning`);
-    }
     // cligent treats supplied call settings as a complete replacement, so an
     // omitted fastMode or subagentModel here is a request for the provider
     // default, and an omitted subagentEffort leaves each subagent's effort to
@@ -2399,8 +2392,7 @@ function callSettings(agent, tuning = agent) {
         browser: agent.browser ?? false,
         skills: agent.skills === undefined ? [] : [...agent.skills],
         ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
-        ...(tuning.ultracode === undefined || !isUltracodeSupported(agent.adapter)
-            ? {} : { ultracode: tuning.ultracode }),
+        ...ultracodeForCall(agent.adapter, tuning.ultracode, 'agent'),
         ...(tuning.subagentModel === undefined
             ? {}
             : { subagentModel: tuning.subagentModel }),
@@ -2412,8 +2404,9 @@ function callSettings(agent, tuning = agent) {
     };
 }
 function controlCallSettings(agent) {
+    const { subagentModel, subagentEffort, ...control } = callSettings(agent);
     return {
-        ...callSettings(agent),
+        ...control,
         browser: false,
         skills: [],
         mcpServers: {},

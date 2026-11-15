@@ -17,13 +17,8 @@ import {
   type TuningSelection,
 } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
-import * as cligent from '@sublang/cligent';
-
-/** Whether the installed runtime can honor independent Ultracode tuning. */
-export function isUltracodeSupported(adapter: string): boolean {
-  const probe = (cligent as unknown as { isUltracodeSupported?: (adapter: string) => boolean }).isUltracodeSupported;
-  return typeof probe === 'function' && probe(adapter);
-}
+import { ultracodeForCall } from './ultracode.js';
+export { isUltracodeSupported } from './ultracode.js';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
@@ -4166,9 +4161,6 @@ function callSettings(
   agent: SessionAgent,
   tuning: Pick<SessionAgent, TuningKey> = agent,
 ): AgentCallSettings {
-  if (tuning.ultracode !== undefined && !isUltracodeSupported(agent.adapter) && (tuning.ultracode || agent.adapter === 'claude')) {
-    throw new Error(`ultracode is not supported by the installed runtime for ${agent.adapter}; update Cligent to use independent Ultracode tuning`);
-  }
   // cligent treats supplied call settings as a complete replacement, so an
   // omitted fastMode or subagentModel here is a request for the provider
   // default, and an omitted subagentEffort leaves each subagent's effort to
@@ -4180,8 +4172,7 @@ function callSettings(
     browser: agent.browser ?? false,
     skills: agent.skills === undefined ? [] : [...agent.skills],
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
-    ...(tuning.ultracode === undefined || !isUltracodeSupported(agent.adapter)
-      ? {} : { ultracode: tuning.ultracode }),
+    ...ultracodeForCall(agent.adapter, tuning.ultracode, 'agent'),
     ...(tuning.subagentModel === undefined
       ? {}
       : { subagentModel: tuning.subagentModel }),
@@ -4194,8 +4185,9 @@ function callSettings(
 }
 
 function controlCallSettings(agent: SessionAgent): AgentCallSettings {
+  const { subagentModel, subagentEffort, ...control } = callSettings(agent);
   return {
-    ...callSettings(agent),
+    ...control,
     browser: false,
     skills: [],
     mcpServers: {},
