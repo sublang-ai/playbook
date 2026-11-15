@@ -78,6 +78,34 @@ const acting =
 const result = "Results:\n- `done`: The inspection is complete.";
 const heading = "# Example\n\n### EXAMPLE-1\n\n";
 
+it("keeps separately stated behaviors apart, as the maintained PR GEARS keeps its two check waits", () => {
+  const definition = readFileSync(
+    new URL("../slc/text2gears.md", import.meta.url),
+    "utf8",
+  ).replace(/\s+/g, " ");
+  expect(definition).toContain(
+    "where two or more triggers lead to one behavior whose prompt Source authors once, with the same acting clause and result contract",
+  );
+  expect(definition).toContain(
+    "Two behaviors that Source states separately, each with its own trigger and its own authored prompt fragment, are two action items even where the fragments are the same text: every authored fragment is carried at least as many times as Source authors it, and each behavior keeps the outcomes Source gives it.",
+  );
+  const items = parseGearsContract(
+    readFileSync(
+      new URL("../reference/sdlc/pr.playbook/pr.gears.md", import.meta.url),
+      "utf8",
+    ),
+  );
+  const waits = items.filter((item) =>
+    item.prompt.some((line) => line.includes("gh pr checks --watch")),
+  );
+  expect(waits.map((item) => item.id)).toEqual(["pr-2", "pr-5"]);
+  expect(waits[0].prompt).toEqual(waits[1].prompt);
+  expect(waits.map((item) => item.results.map(({ guard }) => guard))).toEqual([
+    ["checksPassed", "checksFailed"],
+    ["checksPassed", "checksStillFailing"],
+  ]);
+});
+
 it("activates the measured guidance exactly once and preserves the nested-call exception", () => {
   expect(guidance).toContain(
     "after the label, emit only result bullets and blank lines",

@@ -549,8 +549,9 @@ Markdown escaping is Source syntax, not content: extraction shall resolve escape
 
 Partition action items by every variable that determines prompt content — including accumulated state when the trigger alone doesn't.
 
-Conversely, do not split by trigger alone: where two or more triggers lead to one behavior with the same acting clause, prompt, and result contract — a nested call Source says a later path makes "with the same input as" an earlier path's, for instance — text2gears shall emit one action item whose one `When` clause lists the entry paths and shall state each path's continuation as a requirement item citing it.
+Conversely, do not split by trigger alone: where two or more triggers lead to one behavior whose prompt Source authors once, with the same acting clause and result contract — a nested call Source says a later path makes "with the same input as" an earlier path's, for instance — text2gears shall emit one action item whose one `When` clause lists the entry paths and shall state each path's continuation as a requirement item citing it.
 An action item per trigger duplicates an identical prompt without a content difference.
+Two behaviors that Source states separately, each with its own trigger and its own authored prompt fragment, are two action items even where the fragments are the same text: every authored fragment is carried at least as many times as Source authors it, and each behavior keeps the outcomes Source gives it.
 
 ### Prune dead disjuncts
 

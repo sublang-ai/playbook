@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies the text-to-GEARS producer's acting-result boundary, preservation of source-authored terminal returns, and authored Boss-question field declarations without changing prompts or outcomes.
+This package specifies the text-to-GEARS producer's acting-result boundary, preservation of source-authored terminal returns, authored Boss-question field declarations, and the separation of separately stated behaviors into their own action items, without changing prompts or outcomes.
 The package also reserves output-clause backticks for unambiguous field declarations.
 The Results-boundary guidance is retained after a matched phase comparison; it does not guarantee a compilation-time reduction.
 
@@ -46,6 +46,10 @@ When gears2fsm compiles an accepted `onDone` arm of an artifact-schema-3 governe
 ### compiler-results-7
 
 When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
+
+### compiler-results-20
+
+Where Source states two acting behaviors separately, each with its own trigger and its own authored prompt fragment, when text2gears emits GEARS, it shall emit one action item for each, carrying every authored fragment at least as many times as Source authors it and each behavior's own outcomes even where the fragments are the same text, and shall share one action item among several paths [[compiler-nested-calls-4](compiler-nested-calls.md#compiler-nested-calls-4)] only where Source authors the prompt once ([DR-108](../decisions/108-compiled-gears-is-a-spec-package.md)).
 
 ### compiler-results-17
 
@@ -98,6 +102,10 @@ When the integration suite reads the shipped gears2fsm definition and each maint
 
 When the integration suite drives a question/reply workflow through the shared factory's closed acting-result contract, it shall verify that the semantic approval remains a guard-only result, a refusal remains distinct, and an added echo field is rejected rather than substituted for the canonical input [[compiler-results-17](#compiler-results-17)].
 The suite shall also verify that the shipped text2gears guidance preserves input-owned retention without an echo declaration [[compiler-results-17](#compiler-results-17)]; scripted judgments shall not claim model approval accuracy.
+
+### compiler-results-21
+
+When the integration suite reads the text2gears definition and the maintained PR GEARS, it shall verify that the definition limits a shared action item to a prompt Source authors once and keeps separately stated behaviors apart, and that the PR package carries its two check waits as two action items with the same command and differently named failing outcomes [[compiler-results-20](#compiler-results-20)].
 
 ### compiler-results-19
 

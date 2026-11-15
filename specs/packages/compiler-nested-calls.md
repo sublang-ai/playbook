@@ -16,7 +16,7 @@ When Source requires a literal or dynamic nested playbook call, text2gears shall
 
 ### compiler-nested-calls-4
 
-When Source routes more than one path into one nested playbook call with the same target and the same input template — a later path made "with the same input as" an earlier path's — text2gears shall emit one nested-call action item whose one `When` clause lists the entry paths and state each path's continuation as a requirement item citing it [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), not one action item per path, so the compiled FSM keeps one call state entered from each path [[playbook-39](playbook.md#playbook-39)].
+When Source routes more than one path into one nested playbook call whose input it authors once, with the same target and the same input template — a later path made "with the same input as" an earlier path's — text2gears shall emit one nested-call action item whose one `When` clause lists the entry paths and state each path's continuation as a requirement item citing it [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), not one action item per path, so the compiled FSM keeps one call state entered from each path [[playbook-39](playbook.md#playbook-39)].
 
 ### compiler-nested-calls-2
 

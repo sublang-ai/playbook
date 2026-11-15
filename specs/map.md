@@ -140,7 +140,7 @@ meta.md       The spec of specs
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |
 | [compiler-prompt-prefix.md](packages/compiler-prompt-prefix.md) | Prefix-first prompt layout: relayed values after instructions, the deterministic tool, legacy-section removal, and layout-based fidelity acceptance |
 | [compiler-prompt-relays.md](packages/compiler-prompt-relays.md) | Source-authored runtime relays through prompt placeholders and typed actor inputs, including placeholders derived from a labelled section of a relayed text |
-| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, terminal return obligations, authored Boss-question fields, and unambiguous output guidance |
+| [compiler-results.md](packages/compiler-results.md) | GEARS acting-result boundaries, terminal return obligations, authored Boss-question fields, unambiguous output guidance, and separately stated behaviors kept as separate action items |
 | [compiler-nested-tags.md](packages/compiler-nested-tags.md) | Nested-playbook call tagging aligned with runtime busy and suspended settlement |
 | [compiler-nested-calls.md](packages/compiler-nested-calls.md) | Nested-playbook call syntax and child-output routing duties |
 | [compiler-state-identity.md](packages/compiler-state-identity.md) | Public state metadata belongs to workflow nodes, never the machine root |
