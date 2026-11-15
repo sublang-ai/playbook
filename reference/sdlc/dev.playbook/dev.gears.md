@@ -199,7 +199,7 @@ When `branch` succeeds [[dev-5](#dev-5)] [[dev-35](#dev-35)], `dev` shall contin
 
 ### dev-35
 
-`dev` shall take the terminal result of a child call [[dev-2](#dev-2)] [[dev-3](#dev-3)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)] as proving the success its path requires only where the child itself declares that result successful and the result carries each value `dev` takes from it [[dev-26](#dev-26)].
+`dev` shall take the terminal result of a child call [[dev-2](#dev-2)] [[dev-3](#dev-3)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)] as proving the success its path requires only where that result is a success under the child's authored result contract and carries each value `dev` takes from it [[dev-26](#dev-26)].
 
 ## Verification
 

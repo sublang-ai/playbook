@@ -235,7 +235,7 @@ When the merge command of the merge step [[pr-6](#pr-6)] succeeds, `pr` shall co
 
 ### pr-39
 
-`pr` shall take the terminal result of the `code` call [[pr-3](#pr-3)] as proving its success only where `code` itself declares that result successful.
+`pr` shall take the terminal result of the `code` call [[pr-3](#pr-3)] as proving that `code` succeeded only where that result is a success under `code`'s authored result contract.
 
 ## Verification
 

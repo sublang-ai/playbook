@@ -14,7 +14,7 @@ The Results-boundary guidance is retained after a matched phase comparison; it d
 ### compiler-results-1
 
 When emitting an action item's `Results:` contract, text2gears shall place the label immediately after the complete acting blockquote and emit only result bullets and blank lines until the next item or section heading.
-An action item shall carry nothing but its statement, its prompt blockquote, and its `Results:` block: text2gears shall state the item's other conditions and invariants as requirement items, never as prose before the blockquote, between the blockquote and label, or after its result bullets [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md).
+An action item shall carry nothing but its statement, its prompt blockquote, and its `Results:` block, and its `Parallel group:` label where it has one: text2gears shall state the item's other conditions and invariants as requirement items, never as prose before the blockquote, between the blockquote and label, or after its result bullets [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md).
 Nested-playbook items shall remain without `Results:`, and what follows the child's return shall be stated by requirement items that cite the call item.
 
 ### compiler-results-3

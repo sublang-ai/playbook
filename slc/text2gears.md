@@ -40,7 +40,7 @@ Quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
 ## Target package
 
-Target is a spec package that a person reviews and confirms, in the form the GEARS definition [[1]] gives a spec package, with one departure: a peer playbook is bound by its id, not by a citation ([Citations](#citations)).
+Target is a spec package that a person reviews and confirms, in the form the GEARS definition [[1]] gives a spec package, departing from it in these: a peer playbook is bound by its id, not by a citation ([Citations](#citations)); an intent record that Source names is named as Source names it ([Requirement items](#requirement-items)); the package identifier follows the Source's basename while the file keeps its name, and an action item may carry a `Parallel group:` label before its statement ([Items](#items)).
 The state machine a later phase builds implements the package and cites its action items; the package never names a state, a transition, or any other part of that machine.
 
 ### Layout
@@ -96,7 +96,8 @@ Every requirement Source states that is not itself an action or the content of a
 A requirement item shall keep the Source's own wording where that wording is already a requirement, and shall add no obligation Source does not state: it adds a citation, never a scope, a qualifier, or an output field name that Source does not give.
 Where the Source's wording names a machine part, such as a transition, the item states the same rule as what follows in the run.
 What a workflow operates on is its behavior and keeps the Source's name for it: a coding workflow that creates and works through intent records names them as its Source does.
-That differs from a reference of the compiler's own: text2gears writes no reference to a particular intent record that Source does not supply, and it keeps every record identifier Source does supply — a decision an authored prompt names, for instance — exactly as Source writes it.
+That differs from a reference of the compiler's own: text2gears writes no reference to a particular intent record that Source does not supply, and it keeps every record identifier Source does supply — a decision an authored prompt names, for instance — exactly as Source writes it, in a prompt or a requirement alike.
+Where that identifier is an intent record's, Target departs from the GEARS definition's rule that no spec names one: the record is what the workflow acts on, and dropping it would change the workflow.
 
 ### Citations
 
@@ -105,7 +106,7 @@ The GEARS definition binds a peer package by a citation of its External Behavior
 Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package.
 The item that relies on another playbook shall state what it takes from that playbook's result, so that no reliance rests on the missing link.
 Where Source requires a called playbook's result to prove its success, states anything else the caller requires of that result, or has the caller take a value from it, one requirement item shall state what the caller requires of the result once, in Source's terms, citing the call — for several playbooks together where Source states it for them together — and every item that speaks of that playbook's success shall cite it.
-Where Source requires the result to prove success without saying what proves it, that item gives this definition's reading: the called playbook succeeds when it returns a result it declares successful itself, whichever playbook the call is bound to.
+Where Source requires the result to prove success without saying what proves it, that item gives this definition's reading: the called playbook succeeds when it returns a result that is a success under its authored result contract, whichever playbook the call is bound to.
 The item requires the result to carry each value the caller takes from it, adds what else Source says the caller requires, and restates nothing else of the called playbook's result contract.
 Where Source does none of these, the items say only that the playbook succeeds.
 

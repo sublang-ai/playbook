@@ -333,7 +333,8 @@ For an item in which Captain acts directly, the corresponding invocation uses
 
 Source is a spec package of three item kinds ([text2gears "Target package"](text2gears.md#target-package)); Target implements it and cites it, and Source never names a part of Target.
 Each Source action item — an item whose statement carries a `Captain shall` acting clause — shall map to exactly one state in Target.
-A state's `invoke.input.sourceItem` shall be that item's ID as Source writes it, and `invoke.input.prompt` shall carry the item's prompt verbatim.
+A state's `invoke.input` shall carry what its actor kind takes from the item: a `captain` or `player` state the item's prompt verbatim as `prompt` and a `script` state the item's command as `command` ([Setup](#setup)), and a `playbook` state the call's target as `playbookId` and its input as `text` ([Nested playbook calls](#nested-playbook-calls)).
+Every state that invokes an actor shall cite its item in `invoke.input.sourceItem`, with the ID as Source writes it; the `PlaybookInput` type alone leaves that field optional, so a `playbook` state without it stays valid.
 A requirement item shall map to no state: the compiler shall realize it in the transitions, guards, context, final states, and outputs of the states that implement the actions it cites or governs.
 A test item shall map to nothing and add no behavior: the compiler shall emit no state, transition, or guard for it, and shall treat a behavior that only a test item mentions as absent from Source.
 The `## Intent` sentences state no requirement.
