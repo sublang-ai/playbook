@@ -29,7 +29,7 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./pr.gears.md', import.meta.url)),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
@@ -62,7 +62,7 @@ const SCRIPT_CONDITIONS: Readonly<Record<ScriptItemId, string>> = {
   'PR-7': 'When the pull request is merged, Captain shall',
 };
 
-// DR-104: each script item's GEARS statement restates that condition in the
+// DR-108: each script item's GEARS statement restates that condition in the
 // package's form, citing the action whose outcome triggers it, and carries
 // the script acting clause.
 const SCRIPT_STATEMENTS: Readonly<Record<ScriptItemId, string>> = {
@@ -145,7 +145,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       ...enumerateNestedPlaybookStates(prMachine),
       ...enumerateScriptStates(prMachine),
     ].map(({ sourceItem }) => sourceItem);
-    // A state cites its item ignoring ASCII letter case (DR-104 §4).
+    // A state cites its item ignoring ASCII letter case (DR-108 §4).
     expect(
       stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
     ).toEqual(gears.map(({ id }) => id).sort());
@@ -197,7 +197,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // DR-104: each invariant of the publication is a requirement item of its
+    // DR-108: each invariant of the publication is a requirement item of its
     // own, citing the publication item.
     for (const [id, requirement] of [
       [
@@ -352,7 +352,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
   });
 
   it('carries the script acting clause on exactly the five mechanical items', () => {
-    // DR-104 §6: a script item is its own provenance; the package carries no
+    // DR-108 §6: a script item is its own provenance; the package carries no
     // `## Optimizations` section, only its four sections in order, with
     // `Roles:` under `## Intent`.
     expect(gearsText).not.toContain('## Optimizations');
@@ -419,7 +419,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // DR-104: each child outcome is a requirement item of its own, citing
+    // DR-108: each child outcome is a requirement item of its own, citing
     // the `code` call it governs.
     for (const [id, requirement] of [
       ['pr-21', '`pr` shall make no more than one fix attempt [[pr-3](#pr-3)].'],

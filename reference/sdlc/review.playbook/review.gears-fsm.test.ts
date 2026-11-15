@@ -55,11 +55,11 @@ const gearsText = readFileSync(
   new URL('./review.gears.md', import.meta.url),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gearsItems = gearsActionItems(gearsText);
 const gears = new Map(gearsItems.map((item) => [item.id, item]));
-// A state's `sourceItem` cites its item ignoring ASCII letter case (DR-104 §4).
+// A state's `sourceItem` cites its item ignoring ASCII letter case (DR-108 §4).
 const gearsItem = (sourceItem: string) => gearsItemFor(gearsItems, sourceItem);
 
 const machineConfig = (

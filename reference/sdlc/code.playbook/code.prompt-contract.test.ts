@@ -95,7 +95,7 @@ describe('CODE player prompt composition', () => {
       'CODE-2',
     ]);
     for (const state of states) {
-      // A state cites its item ignoring ASCII letter case (DR-104 §4).
+      // A state cites its item ignoring ASCII letter case (DR-108 §4).
       const body = gearsItemFor(gearsItems, state.sourceItem)?.prompt.join('\n');
       expect(body).toBeDefined();
       const prompt = composePlayerPrompt(state.getInput(context), promptIdentity);

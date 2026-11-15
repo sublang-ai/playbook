@@ -88,7 +88,7 @@ function gearsPrompt(itemId: 'captain-1' | 'captain-2' | 'captain-3'): string {
     fileURLToPath(new URL('./captain.gears.md', import.meta.url)),
     'utf8',
   );
-  // DR-104: the action item's own text runs to the next item or section
+  // DR-108: the action item's own text runs to the next item or section
   // heading, so a later item's text is never read as its prompt.
   const after = gears.split(`### ${itemId}\n`)[1];
   if (after === undefined) throw new Error(`gears item ${itemId} not found`);

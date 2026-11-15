@@ -30,7 +30,7 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./code.gears.md', import.meta.url)),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
@@ -49,7 +49,7 @@ interface RawReviewState {
   };
 }
 
-// DR-104: the authored outcomes of the one REVIEW call are requirement
+// DR-108: the authored outcomes of the one REVIEW call are requirement
 // items of their own, each stating its obligation once.
 const CODE_3_OUTCOMES = [
   [
@@ -70,7 +70,7 @@ const CODE_3_OUTCOMES = [
   ],
 ] as const;
 
-// DR-102: a new-IR or nonfinal phase continues without a review. DR-104: the
+// DR-102: a new-IR or nonfinal phase continues without a review. DR-108: the
 // continuation is the later phase's own trigger, and the absence of a review
 // a requirement item.
 const PHASE_CONTINUATION_OUTCOMES = [
@@ -148,7 +148,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       ...enumeratePlayerStates(codeMachine),
       ...enumerateNestedPlaybookStates(codeMachine),
     ].map(({ sourceItem }) => sourceItem);
-    // A state cites its item ignoring ASCII letter case (DR-104 §4).
+    // A state cites its item ignoring ASCII letter case (DR-108 §4).
     expect(
       stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
     ).toEqual(gears.map(({ id }) => id).sort());

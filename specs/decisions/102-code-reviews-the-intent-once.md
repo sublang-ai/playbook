@@ -10,7 +10,7 @@ Amends [DR-004](004-link-code-fsm-to-playbook-runtime.md) §3 in one scope: CODE
 Supersedes [DR-081](081-code-prior-review-relay.md): with no review between IR tasks there is no prior-phase review to relay, so the frozen record, its relay, and the Coder instructions that read it are retired.
 Amends [DR-088](088-a-commit-outcome-takes-every-new-commit.md)'s consequence that CODE's review request names one commit: it now names each phase's receipt-owned commit, oldest first.
 Extends [DR-035](035-truthful-terminal-meaning.md) and [DR-048](048-typed-terminal-outcomes.md) to REVIEW: its bounded rounds end at a distinct failure terminal.
-Amended by [DR-104](104-compiled-gears-is-a-spec-package.md) in its consequence that CODE's GEARS carry three items: they carry three action items.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in its consequence that CODE's GEARS carry three items: they carry three action items.
 
 ## Context
 

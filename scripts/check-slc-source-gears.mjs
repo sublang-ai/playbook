@@ -192,7 +192,7 @@ function asciiLowerCase(text) {
 
 /**
  * The parsed GEARS item a machine state cites by its `sourceItem`: the item
- * whose ID equals it ignoring ASCII letter case (DR-104 §4), so a machine
+ * whose ID equals it ignoring ASCII letter case (DR-108 §4), so a machine
  * compiled with uppercase citations still cites a lowercase item heading.
  */
 export function gearsItemFor(items, sourceItem) {
@@ -223,7 +223,7 @@ export function gearsItemBodies(gearsText) {
 }
 
 /**
- * Whether one item body is an action item (DR-104 §2): its statement is
+ * Whether one item body is an action item (DR-108 §2): its statement is
  * Captain's acting clause and a prompt blockquote follows it.
  */
 function isActionBody({ statement, body }) {

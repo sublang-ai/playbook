@@ -170,7 +170,7 @@ it.each([
 });
 
 it.each(['captain', 'code', 'review'])('copies only the action items of the maintained %s spec package', (name) => {
-  // DR-104: requirement and test items carry no blockquote and no
+  // DR-108: requirement and test items carry no blockquote and no
   // `Captain shall`, so they contribute no constant; the four section
   // headings close items and contribute nothing either.
   const gears = readFileSync(join(root, `reference/sdlc/${name}.playbook/${name}.gears.md`), 'utf8');

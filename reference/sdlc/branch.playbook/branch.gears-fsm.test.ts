@@ -31,7 +31,7 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./branch.gears.md', import.meta.url)),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
@@ -118,7 +118,7 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
       'createBranch',
     ]);
     for (const state of playerStates) {
-      // A state cites its item ignoring ASCII letter case (DR-104 §4).
+      // A state cites its item ignoring ASCII letter case (DR-108 §4).
       const item = gearsItemFor(gears, state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
@@ -145,7 +145,7 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // DR-104: each shared condition is a requirement item of its own.
+    // DR-108: each shared condition is a requirement item of its own.
     for (const [id, requirement] of [
       [
         'branch-5',

@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-09-25).
-Amended by [DR-104](104-compiled-gears-is-a-spec-package.md) in one scope: the derived placeholder's defining sentence is a requirement item keeping the Source's defining words, not package introduction or item prose.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: the derived placeholder's defining sentence is a requirement item keeping the Source's defining words, not package introduction or item prose.
 
 ## Context
 

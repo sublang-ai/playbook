@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-104](104-compiled-gears-is-a-spec-package.md) in one scope: the pass preserves every other item and every section heading, and no `## Optimizations` section exists to leave untouched.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: the pass preserves every other item and every section heading, and no `## Optimizations` section exists to leave untouched.
 
 ## Context
 

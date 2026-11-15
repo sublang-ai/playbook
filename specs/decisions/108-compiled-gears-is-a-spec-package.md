@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# DR-104: Compiled GEARS Is a Spec Package the Machine Cites
+# DR-108: Compiled GEARS Is a Spec Package the Machine Cites
 
 ## Status
 

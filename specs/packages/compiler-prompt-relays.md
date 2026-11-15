@@ -24,7 +24,7 @@ Where a direct-Captain or delegated-player prompt carries a Source-declared runt
 
 ### compiler-prompt-relays-7
 
-Where Source defines a placeholder as a labelled section of another relayed value, naming the label that opens the section and the labels that end it, text2gears shall state that definition in a requirement item that keeps the Source's defining words, name the placeholder as Source does, and declare no result property for it, because the value is derived from the relayed text rather than produced by any player ([DR-068](../decisions/068-labelled-section-placeholders.md), [DR-104](../decisions/104-compiled-gears-is-a-spec-package.md)).
+Where Source defines a placeholder as a labelled section of another relayed value, naming the label that opens the section and the labels that end it, text2gears shall state that definition in a requirement item that keeps the Source's defining words, name the placeholder as Source does, and declare no result property for it, because the value is derived from the relayed text rather than produced by any player ([DR-068](../decisions/068-labelled-section-placeholders.md), [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md)).
 
 ### compiler-prompt-relays-9
 

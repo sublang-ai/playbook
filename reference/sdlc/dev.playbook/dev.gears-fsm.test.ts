@@ -32,7 +32,7 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./dev.gears.md', import.meta.url)),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
@@ -91,7 +91,7 @@ function gearsSection(id: string): string {
   return item?.body ?? '';
 }
 
-// The inline citation of one item within the package (DR-104 §2).
+// The inline citation of one item within the package (DR-108 §2).
 const citation = (id: string): string => `[[${id}](#${id})]`;
 
 function arms(value: unknown): readonly RawTransition[] {
@@ -158,7 +158,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       ...enumeratePlayerStates(devMachine),
       ...enumerateNestedPlaybookStates(devMachine),
     ].map(({ sourceItem }) => sourceItem);
-    // A state cites its item ignoring ASCII letter case (DR-104 §4).
+    // A state cites its item ignoring ASCII letter case (DR-108 §4).
     expect(
       stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
     ).toEqual(gears.map(({ id }) => id).sort());
@@ -207,7 +207,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // DR-104: each planning rule is a requirement item of its own; the
+    // DR-108: each planning rule is a requirement item of its own; the
     // discussion-complete outcome stays attached to its own result.
     for (const [id, clause] of [
       [
@@ -387,7 +387,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // DR-104: the source's relay, park and identity rules are requirement
+    // DR-108: the source's relay, park and identity rules are requirement
     // items stated once, each citing every nested item it governs.
     expect(gearsSection('dev-9')).toContain(
       'returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path [[dev-35](#dev-35)], `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.',

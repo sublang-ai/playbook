@@ -57,7 +57,7 @@ const gearsText = readFileSync(
   new URL('./decide.gears.md', import.meta.url),
   'utf8',
 );
-// DR-104: the action items are the ones a machine state cites; the
+// DR-108: the action items are the ones a machine state cites; the
 // requirement and test items carry no prompt.
 const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
@@ -529,7 +529,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
 
   it('preserves each delegated role, prompt, and result contract exactly', () => {
     for (const expected of expectedPlayerStates) {
-      // A state cites its item ignoring ASCII letter case (DR-104 §4).
+      // A state cites its item ignoring ASCII letter case (DR-108 §4).
       const item = gearsItemFor(gears, expected.sourceItem);
       const state = stateAt(expected.path);
       const input = state?.invoke?.input?.({ context: CONTEXT });
@@ -596,7 +596,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
     ]) {
       expect(sourceText).toContain(clause);
     }
-    // DR-104: each post-REVIEW outcome is a requirement item of its own.
+    // DR-108: each post-REVIEW outcome is a requirement item of its own.
     const itemBody = (id: string) => {
       const item = itemBodies.find((candidate) => candidate.id === id);
       expect(item, id).toBeDefined();
