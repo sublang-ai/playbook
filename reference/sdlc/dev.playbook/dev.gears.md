@@ -233,7 +233,7 @@ While Analyst has chosen the code via pull request path or the decide then code 
 When a child returns a result other than the success its path requires, a `dev` run shall start no later child and end by relaying that canonical result [[dev-9](#dev-9)], in each case:
 
 - `branch`, `decide`, `code`, or `pr` returns an authored abort or failure;
-- `branch`, `decide`, or `code` returns a terminal result that does not prove the success the selected path requires.
+- `branch`, `decide`, `code`, or `pr` returns a terminal result that does not prove the success the selected path requires.
 
 ### dev-31
 

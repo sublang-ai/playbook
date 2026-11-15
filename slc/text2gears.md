@@ -40,7 +40,7 @@ Quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
 ## Target package
 
-Target is a spec package that a person reviews and confirms, in the form the GEARS definition [[1]] gives a spec package.
+Target is a spec package that a person reviews and confirms, in the form the GEARS definition [[1]] gives a spec package, with one departure: a peer playbook is bound by its id, not by a citation ([Citations](#citations)).
 The state machine a later phase builds implements the package and cites its action items; the package never names a state, a transition, or any other part of that machine.
 
 ### Layout
@@ -49,7 +49,7 @@ Target shall contain, in this order and with no other `##` section:
 
 | Part | Content |
 | --- | --- |
-| `# <pack>: <Title>` | `<pack>` is the Source's basename; `<Title>` is the Source's title |
+| `# <pack>: <Title>` | `<pack>` is the package identifier ([Items](#items)); `<Title>` is the Source's title |
 | `## Intent` | one to three sentences stating what the workflow is for and when it ends, then the `Roles:` list where Source declares roles; no requirement |
 | `## External Behavior` | requirement items a caller, Boss, or a calling playbook may rely on: the caller's input, each terminal return and failure report, and guarantees about commits, repository state, and Boss questions |
 | `## Internal Behavior` | the action items in workflow order, then the requirement items that govern them: routing, bounds, evidence rules, identity authority |
@@ -61,6 +61,9 @@ The four section headings follow the matching localization of [[1]]'s section li
 ### Items
 
 Every item shall use the exact Markdown heading form `### <pack>-<N>`, lowercase, with `<N>` a positive integer unique in the package.
+The package identifier `<pack>` is derived from the Source's basename without its extension: lowercase its ASCII letters, replace every run of characters other than ASCII letters and digits with one hyphen, and drop a leading or trailing hyphen; where the result is empty or begins with a digit, put `pack` before it, joined by a hyphen unless the result is empty.
+So `review` gives `review`, `my.flow` gives `my-flow`, `workflow.zh` gives `workflow-zh`, and a basename with no ASCII letter or digit gives `pack`.
+`<pack>` names the package's items and nothing else: every artifact name, playbook id, and registry entry keeps the Source's basename as it is.
 An item heading at `##`, `####`, or another level is not GEARS item syntax and will not be visible to downstream compilers or verification.
 Where the phase host supplies a prior Target, an item that keeps its concern shall keep its ID.
 
@@ -94,7 +97,9 @@ Where the Source's wording names a machine part, such as a transition, the item 
 ### Citations
 
 Every reliance of one item on another shall be an inline citation of the form `[[<pack>-<N>](#<pack>-<N>)]` at the phrase that relies on it: an action whose trigger is another action's outcome cites that action, and a requirement cites each action or requirement it governs.
-Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package, because a package compiles without its peers' packages.
+The GEARS definition binds a peer package by a citation of its External Behavior; Target departs from that rule, because a package compiles without its peers' packages and cannot know their item IDs.
+Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package.
+The item that relies on another playbook shall state in its own statement the behavior it relies on — what it requires of that playbook's result — so that no reliance rests on the missing link.
 
 ### Test items
 
