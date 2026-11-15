@@ -73,7 +73,8 @@ A compiled GEARS file shall be a spec package in the form of [[1]], with the one
 ### 5. Migration without recompiling
 
 The eight reference GEARS are rewritten in place: each action item keeps its number, acting clause, prompt and `Results:` byte for byte, and no machine file changes.
-Two defects of the 2026-11-08 edit are repaired on the way: CODE-3's acting clause returns to the exact nested-call form, and the sentence after the `Results:` of REVIEW-3 and REVIEW-4 becomes a requirement item.
+One defect of the 2026-11-08 edit is repaired on the way: the sentence after the `Results:` of REVIEW-3 and REVIEW-4 becomes a requirement item.
+Its other defect, CODE-3's acting clause, was returned to the exact nested-call form in release 18.3.1.
 
 ### 6. No `## Optimizations` section
 

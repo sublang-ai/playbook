@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { expect, it } from 'vitest';
 
 const text2gears = readFileSync(
@@ -113,4 +113,33 @@ it('joins the paths that share one nested call in one item, as the maintained DE
     const call = actions.find((item) => item.id === id)?.section ?? '';
     expect(call.trimEnd().split('\n').at(-1)).toMatch(/^> /);
   }
+});
+
+it('keeps every maintained nested-call target immediately before its colon', () => {
+  const root = new URL('../reference/sdlc/', import.meta.url);
+  const workflows = readdirSync(root)
+    .filter((name) => name.endsWith('.playbook'))
+    .sort();
+  for (const directory of workflows) {
+    const name = directory.slice(0, -'.playbook'.length);
+    const gears = readFileSync(
+      new URL(`${directory}/${name}.gears.md`, root),
+      'utf8',
+    );
+    const clauses = gears.split('\n').filter((line) =>
+      /Captain shall\b.*\bcall playbook\b/.test(line),
+    );
+    for (const line of clauses) {
+      expect(line, `${directory}: ${line}`).toMatch(
+        /Captain shall call playbook (?:`[^`\n]+`|selected by `[^`\n]+`):$/,
+      );
+    }
+  }
+  const code = readFileSync(
+    new URL('code.playbook/code.gears.md', root),
+    'utf8',
+  );
+  expect(code).toContain(
+    '`code` shall call `review` [[code-3](#code-3)] once over every `code`-owned commit of this run [[code-19](#code-19)], oldest first.',
+  );
 });

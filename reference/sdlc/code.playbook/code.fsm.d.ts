@@ -134,6 +134,8 @@ export interface CodeContext {
     readonly codeCommit?: string;
     /** `<code-commits>`: every phase's accepted commit of this run, oldest first. */
     readonly codeCommits: readonly string[];
+    /** Derived comma-separated review text; older retained contexts may omit it. */
+    readonly codeCommitsText?: string;
     /** `<coder-output>`: Coder's verbatim final text for the latest phase. */
     readonly coderOutput?: string;
     /** `<ir-number>`: the created or continued IR. */

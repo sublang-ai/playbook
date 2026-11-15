@@ -12,7 +12,7 @@ It changes no source interpretation, runtime engine behavior, frozen compiler in
 
 ### compiler-nested-calls-1
 
-When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:` with any required sequencing in the `When` or `While` clause or in a requirement item that cites the call [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), not as an inserted word between `shall` and `call` nor as any word between the target and the colon.
+When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:`, whose colon immediately follows the literal target or dynamic selection, placing required sequencing in the `When` or `While` clause or in a requirement item that cites the call [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md).
 
 ### compiler-nested-calls-4
 
@@ -26,4 +26,4 @@ When gears2fsm emits nested-call routing, after preserving Source-authored succe
 
 ### compiler-nested-calls-3
 
-When the integration suite inspects the text2gears and gears2fsm definitions, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words between `shall` and `call` and any word between the target and the colon, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six action items whose `code`, `decide`, and `branch` calls each list their paths in one `When` clause, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].
+When the integration suite inspects the text2gears and gears2fsm definitions and maintained workflow GEARS, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words within the verb phrase or between its target and colon, canonical nested-call clauses across every maintained workflow GEARS artifact, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six action items whose `code`, `decide`, and `branch` calls each list their paths in one `When` clause, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].

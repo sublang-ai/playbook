@@ -296,6 +296,7 @@ describe('model-free intent review through real CODE and REVIEW', () => {
       const context = (frame.runtime as any).machine.context;
       expect(context.previousPhaseReview).toBeUndefined();
       expect(context.codeCommits).toHaveLength(1);
+      expect(context.codeCommitsText).toBe(context.codeCommits.join(', '));
       expect(evidence.reviewers).toBe(0);
       const reopened = await reopen();
       await reopened.handleBossTurn('Use the explicit new synthetic owner-approved local target.');

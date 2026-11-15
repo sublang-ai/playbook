@@ -203,6 +203,8 @@ export interface CodeContext {
   readonly codeCommit?: string;
   /** `<code-commits>`: every phase's accepted commit of this run, oldest first. */
   readonly codeCommits: readonly string[];
+  /** Derived comma-separated review text; older retained contexts may omit it. */
+  readonly codeCommitsText?: string;
   /** `<coder-output>`: Coder's verbatim final text for the latest phase. */
   readonly coderOutput?: string;
   /** `<ir-number>`: the created or continued IR. */
@@ -832,6 +834,7 @@ export const codeMachine = setup({
             runResults: event.runResults ?? context.runResults,
             codeCommit: undefined,
             codeCommits: [],
+            codeCommitsText: '',
             coderOutput: undefined,
             irNumber: undefined,
             irTask: undefined,
@@ -857,9 +860,11 @@ export const codeMachine = setup({
     rememberPhaseCommit: assign(({ context, event }) => {
       const output = playerOutputOf(event);
       if (output === undefined || output.guard === 'needsBossReply') return {};
+      const codeCommits = [...(context.codeCommits ?? []), output.latestCommit];
       return {
         codeCommit: output.latestCommit,
-        codeCommits: [...(context.codeCommits ?? []), output.latestCommit],
+        codeCommits,
+        codeCommitsText: codeCommits.join(', '),
         coderOutput: output.coderOutput,
         phaseOutcome: output.guard,
         irNumber: output.guard === 'directCommit' ? undefined : output.irNumber,
@@ -955,6 +960,7 @@ export const codeMachine = setup({
   context: ({ input }): CodeContext => ({
     runResults: typeof input?.runResults === 'string' ? input.runResults : '',
     codeCommits: [],
+    codeCommitsText: '',
   }),
   output: ({ context }): CodeOutput => {
     if (!isNonEmptyString(context.codeCommit)) {
@@ -1100,7 +1106,7 @@ export const codeMachine = setup({
           playbookId: REVIEW_PLAYBOOK_ID,
           text: composeReviewText(REVIEW_INTENT_TEMPLATE, {
             '<caller-input>': context.callerInput,
-            '<code-commits>': (context.codeCommits ?? []).join(', '),
+            '<code-commits>': context.codeCommitsText ?? (context.codeCommits ?? []).join(', '),
             '<coder-output>': context.coderOutput,
             // An IR relays its number; a direct intent contributes no line.
             '<ir-number>': context.irNumber ?? '',
