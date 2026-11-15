@@ -24,7 +24,7 @@ A tool-free Captain call cannot perform delegated work.
 - Release Playbook after Cligent 0.39.0 and require `^0.39.0`. Use its `defaultAgentModels` and `isUltracodeSupported` exports directly.
 - Keep adapter order, credential selection, efforts and role placement in Playbook. For each selected adapter, seed the models returned by Cligent for the effective provider. An empty result leaves both model fields unset.
 - An embedding host may supply a separate provider environment for model selection, with a local user home or a seat’s approved Codex settings directory. The separate environment defaults to no filesystem scope.
-- A provider-default role selection removes the player’s primary pin for that call. For Claude, omission delegates selection to the native SDK; on resume, `ANTHROPIC_MODEL` from the process environment or native `settings.env` overrides the session selection, while `settings.model` alone does not. A named selection explicitly switches models.
+- A provider-default role selection removes the player’s primary pin for that call. For Claude, omission delegates selection to the native SDK; on resume, `ANTHROPIC_MODEL` from the process environment or native `settings.env` overrides the session selection, while the top-level `model` key in Claude Code’s own `settings.json` alone does not. A named selection explicitly switches models.
 - Keep the existing per-role and `--with` tuning surfaces; a future breaking player-only model rule is deferred.
 - Claude keeps its implicit inheritance. On Codex, an explicit child model or effort requests delegation.
 - Tool-free routing, Judge, existing-instruction question checks, reporting, and forwarded empty-allowlist calls omit child model and effort. Working calls keep their configured tuning.

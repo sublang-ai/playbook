@@ -204,10 +204,11 @@ roles:
 Omitting any override inherits that player's top-level default. For `model`,
 `effort`, `subagentModel`, and `subagentEffort`, boolean `false` selects the
 provider default for that field instead of inheriting the player's setting.
-For a Claude primary model, omission delegates selection to the native SDK.
+A role that sets `model` to `false`, or inherits from a player with no `model`,
+sends no model to Claude.
 On resume, `ANTHROPIC_MODEL` from the environment or native `settings.env`
-overrides the session model; changing only `settings.model` retains the session
-selection. A concrete model explicitly switches it.
+overrides the session model. Changing only the top-level `model` key in Claude Code’s own `settings.json`
+preserves the session selection. A concrete model explicitly switches it.
 Roles sharing a player share that conversation.
 For `fastMode`, `false` is a literal request to
 disable fast mode; omitting the top-level setting selects the provider default.

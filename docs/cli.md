@@ -312,7 +312,8 @@ the next call. Boolean `false` explicitly
 removes the role’s configured model, effort, subagent model, or subagent effort pin.
 An omitted Claude primary model delegates to the native SDK: on resume,
 `ANTHROPIC_MODEL` from the environment or native `settings.env` overrides the
-session model; `settings.model` alone retains the session selection.
+session model. Changing only the top-level `model` key in Claude Code’s own `settings.json`
+preserves the session selection.
 A concrete model switches it. `fastMode: false` is a literal
 disabled request; omission selects the provider default or inherits the player
 value at a role binding.
