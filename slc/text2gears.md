@@ -67,7 +67,7 @@ So `review` gives `review`, `my.flow` gives `my-flow`, `workflow.zh` gives `work
 An item heading at `##`, `####`, or another level is not GEARS item syntax and will not be visible to downstream compilers or verification.
 Where the phase host supplies a prior Target, an item that keeps its concern shall keep its number where its prior ID is `<pack>-<N>` in any letter case, and is written with the lowercase `<pack>`.
 An item whose prior ID has another prefix, or whose number another kept item already holds, takes the lowest unused number, in the prior Target's order; no prior ID is carried over in another form, so two items never share a heading.
-A machine built over the prior package still resolves an ID that changed only in letter case; any other change of ID leaves its citation unresolved, which conformance reports, so the machine is rebuilt from the recompiled package before the two are used together.
+A machine built over the prior package still resolves an ID that changed only in letter case; any other change to an ID a state cites leaves that citation unresolved, which conformance reports, so the machine is rebuilt from the recompiled package before the two are used together.
 
 Each item shall be exactly one GEARS statement, `[Where <static precondition>] [While <run state>] [When <one event>] <subject> shall <behavior>`, standing first in the item, followed only by the attachments its closing colon introduces.
 The one line that may precede the statement is an action item's `Parallel group:` label ([Parallel behaviors](#parallel-behaviors)).
@@ -104,8 +104,10 @@ Every reliance of one item on another shall be an inline citation of the form `[
 The GEARS definition binds a peer package by a citation of its External Behavior; Target departs from that rule, because a package compiles without its peers' packages and cannot know their item IDs.
 Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package.
 The item that relies on another playbook shall state what it takes from that playbook's result, so that no reliance rests on the missing link.
-Where what follows a nested call rests on that playbook's success, one requirement item shall state what the caller requires of a successful result — as Source states it, and otherwise, where the pipeline supplies the [workflow contracts](workflow-contracts.json) catalog, as the catalog declares that playbook's success result and its required values, put in words without the catalog's property names — and every item that speaks of that success shall cite it.
-With neither, the items say only that the playbook succeeds.
+Where Source requires a called playbook's result to prove its success, states anything else the caller requires of that result, or has the caller take a value from it, one requirement item shall state what the caller requires of the result once, in Source's terms, citing the call — for several playbooks together where Source states it for them together — and every item that speaks of that playbook's success shall cite it.
+Where Source requires the result to prove success without saying what proves it, that item gives this definition's reading: the called playbook succeeds when it returns a result it declares successful itself, whichever playbook the call is bound to.
+The item requires the result to carry each value the caller takes from it, adds what else Source says the caller requires, and restates nothing else of the called playbook's result contract.
+Where Source does none of these, the items say only that the playbook succeeds.
 
 ### Test items
 

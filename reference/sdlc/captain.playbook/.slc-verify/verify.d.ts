@@ -212,6 +212,13 @@ export declare function enumeratePlaybookStates(config: MachineConfigLike): Play
  * is not agent-invoking, so `needsBossReply` in its result map is malformed.
  */
 export declare function enumerateScriptStates(config: MachineConfigLike): ScriptInvocationState[];
+/**
+ * Package-form findings that need no consumer FSM: item IDs equal ignoring
+ * ASCII letter case and declarative items carrying action syntax. Run at the
+ * producer boundary so the phase that can still edit the GEARS repairs them
+ * (verification-68; DR-062).
+ */
+export declare function checkGearsPackageContract(gears: string): string[];
 /** Module-level schema-3 declarations needed beside the machine config. */
 export interface GearsFsmConformanceOptions {
     concurrentRoleSets?: unknown;

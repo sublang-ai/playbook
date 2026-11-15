@@ -21,7 +21,7 @@ When a caller starts `dev`, the caller shall supply a development request includ
 
 ### dev-8
 
-When the final child call of the selected path succeeds, `dev` shall complete with that call's successful result:
+When the final child call of the selected path succeeds [[dev-35](#dev-35)], `dev` shall complete with that call's successful result:
 
 - `code` on the code path [[dev-2](#dev-2)] and on the decide then code path [[dev-4](#dev-4)];
 - `pr` on the code via pull request path and on the decide then code via pull request path [[dev-6](#dev-6)].
@@ -95,7 +95,7 @@ Results:
 
 ### dev-2
 
-When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `code`:
+When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `code`:
 
 > > Original request: <development-request>
 > > Prior discussion: <discussion-context>
@@ -103,7 +103,7 @@ When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the
 
 ### dev-3
 
-When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `decide`:
+When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `decide`:
 
 > > Original request: <development-request>
 > > Prior discussion: <discussion-context>
@@ -111,7 +111,7 @@ When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` suc
 
 ### dev-4
 
-When `decide` succeeds [[dev-3](#dev-3)], Captain shall call playbook `code`:
+When `decide` succeeds [[dev-3](#dev-3)] [[dev-35](#dev-35)], Captain shall call playbook `code`:
 
 > > Original request: <development-request>
 > > Prior discussion: <discussion-context>
@@ -129,7 +129,7 @@ When Analyst chooses the code via pull request path or the decide then code via 
 
 ### dev-6
 
-While the selected path is code via pull request or decide then code via pull request, when `code` succeeds [[dev-2](#dev-2)] [[dev-4](#dev-4)], Captain shall call playbook `pr`:
+While the selected path is code via pull request or decide then code via pull request, when `code` succeeds [[dev-2](#dev-2)] [[dev-4](#dev-4)] [[dev-35](#dev-35)], Captain shall call playbook `pr`:
 
 > > Original request: <development-request>
 > > Issue summary: <issue-summary>
@@ -183,7 +183,7 @@ While the selected path is code or decide then code, `dev` shall call neither `b
 
 ### dev-34
 
-When `branch` succeeds [[dev-5](#dev-5)], `dev` shall continue with the `code` call for code via pull request [[dev-2](#dev-2)], or the `decide` call and then the `code` call for decide then code via pull request [[dev-3](#dev-3)] [[dev-4](#dev-4)], each with the same input as its plain path.
+When `branch` succeeds [[dev-5](#dev-5)] [[dev-35](#dev-35)], `dev` shall continue with the `code` call for code via pull request [[dev-2](#dev-2)], or the `decide` call and then the `code` call for decide then code via pull request [[dev-3](#dev-3)] [[dev-4](#dev-4)], each with the same input as its plain path.
 
 ### dev-25
 
@@ -195,22 +195,17 @@ When `branch` succeeds [[dev-5](#dev-5)], `dev` shall continue with the `code` c
 
 - the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];
 - the issue summary, branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];
-- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].
+- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of `code` [[dev-2](#dev-2)] [[dev-4](#dev-4)].
 
 ### dev-35
 
-`dev` shall take a child's terminal result as proving the success its path requires only where that result affirmatively carries:
-
-- from `branch` [[dev-5](#dev-5)], that the branch was created, with its branch name, base revision and issue summary;
-- from `decide` [[dev-3](#dev-3)], that no unsettled findings remain, with the `decide`-owned commit and the exact evaluated repository revision;
-- from `code` [[dev-2](#dev-2)] [[dev-4](#dev-4)], that it completed with every review passed, with its last `code`-owned commit and the exact final evaluated repository revision;
-- from `pr` [[dev-6](#dev-6)], that the pull request was merged.
+`dev` shall take the terminal result of a child call [[dev-2](#dev-2)] [[dev-3](#dev-3)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)] as proving the success its path requires only where the child itself declares that result successful and the result carries each value `dev` takes from it [[dev-26](#dev-26)].
 
 ## Verification
 
 ### dev-27
 
-While Analyst has chosen the code path, when `code` succeeds, a `dev` run shall:
+While Analyst has chosen the code path, when `code` succeeds [[dev-35](#dev-35)], a `dev` run shall:
 
 - prompt Analyst once [[dev-1](#dev-1)], relaying the caller's development request [[dev-7](#dev-7)];
 - receive from Analyst a short planning note that names the path and why [[dev-16](#dev-16)];
@@ -222,7 +217,7 @@ While Analyst has chosen the code path, when `code` succeeds, a `dev` run shall:
 
 ### dev-28
 
-While Analyst has chosen the decide then code path and `decide` has succeeded, when `code` succeeds, a `dev` run shall:
+While Analyst has chosen the decide then code path and `decide` has succeeded, when `code` succeeds [[dev-35](#dev-35)], a `dev` run shall:
 
 - call `decide` with the request, the discussion context, and the planning note [[dev-3](#dev-3)];
 - call `code` after `decide` succeeds [[dev-4](#dev-4)], adding the `decide`-owned commit and evaluated revision from the canonical structured result of `decide` [[dev-26](#dev-26)];
@@ -231,7 +226,7 @@ While Analyst has chosen the decide then code path and `decide` has succeeded, w
 
 ### dev-29
 
-While Analyst has chosen the code via pull request path or the decide then code via pull request path and every earlier child has succeeded, when `pr` succeeds, a `dev` run shall:
+While Analyst has chosen the code via pull request path or the decide then code via pull request path and every earlier child has succeeded, when `pr` succeeds [[dev-35](#dev-35)], a `dev` run shall:
 
 - call `branch` first [[dev-5](#dev-5)];
 - call `code` on the code via pull request path [[dev-2](#dev-2)], or `decide` and then `code` on the decide then code via pull request path [[dev-3](#dev-3)] [[dev-4](#dev-4)], each with the same input as on its plain path [[dev-34](#dev-34)];
@@ -243,7 +238,7 @@ While Analyst has chosen the code via pull request path or the decide then code 
 When a child returns a result other than the success its path requires, a `dev` run shall start no later child and end by relaying that canonical result [[dev-9](#dev-9)], in each case:
 
 - an authored abort or failure from `branch`, `decide`, `code`, or `pr`;
-- a terminal result from `branch`, `decide`, `code`, or `pr` that does not prove the success the selected path requires [[dev-35](#dev-35)], such as a `code` result that reports completion without its review passed or without its last commit and final evaluated revision.
+- a terminal result from `branch`, `decide`, `code`, or `pr` that does not prove the success the selected path requires [[dev-35](#dev-35)].
 
 ### dev-31
 

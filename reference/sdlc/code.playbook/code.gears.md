@@ -192,7 +192,7 @@ While the coding intent follows an IR [[code-13](#code-13)], `code` shall additi
 
 ### code-22
 
-While Coder has completed a new change intent in one direct phase, when `review` passes, a `code` run shall:
+While Coder has completed a new change intent in one direct phase, when `review` passes [[code-18](#code-18)], a `code` run shall:
 
 - prompt Coder once with the caller's request [[code-1](#code-1)] [[code-4](#code-4)];
 - identify the phase's one new commit from the repository-effect receipt [[code-8](#code-8)] [[code-20](#code-20)];
@@ -201,7 +201,7 @@ While Coder has completed a new change intent in one direct phase, when `review`
 
 ### code-23
 
-While Coder has decomposed a new change intent into an IR of two tasks and completed each task in its own phase, when `review` passes, a `code` run shall:
+While Coder has decomposed a new change intent into an IR of two tasks and completed each task in its own phase, when `review` passes [[code-18](#code-18)], a `code` run shall:
 
 - prompt Coder three times, for the new-IR phase [[code-1](#code-1)] and then for each IR task in turn [[code-2](#code-2)] [[code-13](#code-13)], with no review between the phases [[code-14](#code-14)];
 - call `review` once, after the final task, over the three phase commits oldest first [[code-15](#code-15)] [[code-19](#code-19)] and with the IR number [[code-17](#code-17)];
@@ -209,7 +209,7 @@ While Coder has decomposed a new change intent into an IR of two tasks and compl
 
 ### code-24
 
-While the request identifies an existing IR with one or two unfinished tasks, when `review` passes, a `code` run shall:
+While the request identifies an existing IR with one or two unfinished tasks, when `review` passes [[code-18](#code-18)], a `code` run shall:
 
 - prompt Coder once for each remaining task, starting with the IR's next unfinished task [[code-1](#code-1)] [[code-2](#code-2)] [[code-13](#code-13)];
 - call `review` once, after the final task, over every phase commit and with the IR number [[code-3](#code-3)] [[code-15](#code-15)] [[code-17](#code-17)] [[code-19](#code-19)].

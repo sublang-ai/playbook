@@ -412,7 +412,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     // Only after `decide` succeeds does `dev` call `code`, with the
     // `decide`-owned commit and evaluated revision from `decide`'s result.
     expect(gearsSection('dev-4')).toContain(
-      'When `decide` succeeds [[dev-3](#dev-3)], Captain shall call playbook `code`:',
+      'When `decide` succeeds [[dev-3](#dev-3)] [[dev-35](#dev-35)], Captain shall call playbook `code`:',
     );
     expect(gearsSection('dev-26')).toContain(
       '- the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];',
@@ -420,26 +420,26 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     // On the plain paths `code` success completes `dev`, which calls neither
     // `branch` nor `pr`; on the pull-request paths `pr` success does.
     expect(gearsSection('dev-8')).toContain(
-      "When the final child call of the selected path succeeds, `dev` shall complete with that call's successful result:\n\n- `code` on the code path [[dev-2](#dev-2)] and on the decide then code path [[dev-4](#dev-4)];\n- `pr` on the code via pull request path and on the decide then code via pull request path [[dev-6](#dev-6)].",
+      "When the final child call of the selected path succeeds [[dev-35](#dev-35)], `dev` shall complete with that call's successful result:\n\n- `code` on the code path [[dev-2](#dev-2)] and on the decide then code path [[dev-4](#dev-4)];\n- `pr` on the code via pull request path and on the decide then code via pull request path [[dev-6](#dev-6)].",
     );
     expect(gearsSection('dev-24')).toContain(
       'While the selected path is code or decide then code, `dev` shall call neither `branch` [[dev-5](#dev-5)] nor `pr` [[dev-6](#dev-6)].',
     );
     // On a pull-request path, only after `code` succeeds does `dev` call `pr`.
     expect(gearsSection('dev-6')).toContain(
-      'While the selected path is code via pull request or decide then code via pull request, when `code` succeeds [[dev-2](#dev-2)] [[dev-4](#dev-4)], Captain shall call playbook `pr`:',
+      'While the selected path is code via pull request or decide then code via pull request, when `code` succeeds [[dev-2](#dev-2)] [[dev-4](#dev-4)] [[dev-35](#dev-35)], Captain shall call playbook `pr`:',
     );
     // Only after `branch` succeeds does `dev` continue with `code`, or with
     // `decide` and then `code`, through the plain path's own call.
     expect(gearsSection('dev-2')).toContain(
-      'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `code`:',
+      'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `code`:',
     );
     expect(gearsSection('dev-3')).toContain(
-      'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `decide`:',
+      'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `decide`:',
     );
     // The `pr` call's identities come from the `branch` and `code` results.
     expect(gearsSection('dev-26')).toContain(
-      '- the issue summary, branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
+      '- the issue summary, branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of `code` [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
     );
 
     const states = (devMachine as unknown as {

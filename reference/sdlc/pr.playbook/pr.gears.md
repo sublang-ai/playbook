@@ -127,7 +127,7 @@ While no fix has been attempted, when the pull request's checks fail [[pr-2](#pr
 
 ### pr-4
 
-When `code` succeeds [[pr-3](#pr-3)], Captain shall run:
+When `code` succeeds [[pr-3](#pr-3)] [[pr-39](#pr-39)], Captain shall run:
 
 > [ "$(gh pr view --json url --jq .url)" = '<pull-request-url>' ] || exit 1
 > git push || exit 1
@@ -191,7 +191,7 @@ Results:
 
 ### pr-22
 
-`pr` shall publish the fix [[pr-4](#pr-4)] and wait for the checks again [[pr-5](#pr-5)] only after `code` succeeds [[pr-3](#pr-3)].
+`pr` shall publish the fix [[pr-4](#pr-4)] and wait for the checks again [[pr-5](#pr-5)] only after `code` succeeds [[pr-3](#pr-3)] [[pr-39](#pr-39)].
 
 ### pr-23
 
@@ -235,7 +235,7 @@ When the merge command of the merge step [[pr-6](#pr-6)] succeeds, `pr` shall co
 
 ### pr-39
 
-`pr` shall take a `code` result as proving its success only where that result affirmatively carries that `code` completed with every review passed, with its last `code`-owned commit and the exact final evaluated repository revision [[pr-3](#pr-3)].
+`pr` shall take the terminal result of the `code` call [[pr-3](#pr-3)] as proving its success only where `code` itself declares that result successful.
 
 ## Verification
 
@@ -269,7 +269,7 @@ When Coder's result does not affirmatively support that the pull request is open
 
 ### pr-35
 
-While the checks have failed on the first wait and `code` has succeeded, when the checks pass on the second wait, a `pr` run shall:
+While the checks have failed on the first wait and `code` has succeeded [[pr-39](#pr-39)], when the checks pass on the second wait, a `pr` run shall:
 
 - call `code` once, with the original request, the pull request and the coding request [[pr-3](#pr-3)] [[pr-21](#pr-21)];
 - publish the fix only after `code` succeeds [[pr-4](#pr-4)] [[pr-22](#pr-22)];
@@ -282,7 +282,7 @@ When the one fix attempt does not end in passing checks, a `pr` run shall call `
 
 | Case | Observable result |
 | --- | --- |
-| `code` returns an authored abort or failure, or a terminal result that does not prove its success [[pr-39](#pr-39)], such as completion reported without its review passed | `pr` fails relaying that result, the pull request left open and no fix published [[pr-11](#pr-11)] [[pr-22](#pr-22)] |
+| `code` returns an authored abort or failure, or a terminal result that does not prove its success [[pr-39](#pr-39)] | `pr` fails relaying that result, the pull request left open and no fix published [[pr-11](#pr-11)] [[pr-22](#pr-22)] |
 | The nested `code` call fails outside its authored result contract | `pr` parks as failed with the control-plane error retained and no authored outcome reported [[pr-12](#pr-12)] |
 | The push fails, or the pull request's head does not become the pushed commit | `pr` fails with the pull request left open and waits for no checks again [[pr-13](#pr-13)] [[pr-31](#pr-31)] |
 | The checks fail on the second wait | `pr` fails with the pull request left open [[pr-14](#pr-14)] |

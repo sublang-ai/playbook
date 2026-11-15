@@ -1055,9 +1055,11 @@ function gearsSourceItemResolver(items) {
     for (const item of items) {
         const key = foldAsciiCase(item.id);
         const spellings = folded.get(key);
+        // Count every heading: two items spelled alike collide as much as two
+        // that differ in case.
         if (spellings === undefined)
             folded.set(key, [item.id]);
-        else if (!spellings.includes(item.id))
+        else
             spellings.push(item.id);
     }
     const findings = [...folded.values()]
@@ -1069,6 +1071,33 @@ function gearsSourceItemResolver(items) {
             : (folded.get(foldAsciiCase(sourceItem))?.[0] ?? sourceItem),
         findings,
     };
+}
+/**
+ * Machine syntax a declarative item must not carry: an action that lost its
+ * acting clause is reported rather than read as a requirement (DR-062).
+ */
+function declarativeItemFindings(item) {
+    const findings = [];
+    if (item.prompt !== '') {
+        findings.push(`GEARS item ${item.id} has a prompt blockquote but no \`Captain shall\` acting clause`);
+    }
+    if (item.result !== undefined && item.resultFindings === undefined) {
+        findings.push(`GEARS item ${item.id} declares Results metadata but no \`Captain shall\` acting clause`);
+    }
+    return findings;
+}
+/**
+ * Package-form findings that need no consumer FSM: item IDs equal ignoring
+ * ASCII letter case and declarative items carrying action syntax. Run at the
+ * producer boundary so the phase that can still edit the GEARS repairs them
+ * (verification-68; DR-062).
+ */
+export function checkGearsPackageContract(gears) {
+    const items = parseGearsItems(gears);
+    return [
+        ...gearsSourceItemResolver(items).findings,
+        ...items.filter(isDeclarativeItem).flatMap(declarativeItemFindings),
+    ];
 }
 function gearsPlaybookSignature(item) {
     return item.playbookIdContext === undefined
@@ -1398,14 +1427,8 @@ function gearsFsmConformance(gears, config, options = {}, reached) {
     for (const item of items) {
         if (isDeclarativeItem(item)) {
             // A requirement or test item maps to no leaf; only machine syntax that
-            // belongs to an action is a finding, so an action that lost its acting
-            // clause is reported rather than read as a requirement (DR-062).
-            if (item.prompt !== '') {
-                findings.push(`GEARS item ${item.id} has a prompt blockquote but no \`Captain shall\` acting clause`);
-            }
-            if (item.result !== undefined && item.resultFindings === undefined) {
-                findings.push(`GEARS item ${item.id} declares Results metadata but no \`Captain shall\` acting clause`);
-            }
+            // belongs to an action is a finding (DR-062).
+            findings.push(...declarativeItemFindings(item));
             continue;
         }
         if (isPlaybookItem(item)) {

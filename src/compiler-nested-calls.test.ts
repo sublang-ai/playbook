@@ -92,10 +92,10 @@ it('joins the paths that share one nested call in one item, as the maintained DE
   // dev-2 (`code`), dev-3 (`decide`), and dev-5 (`branch`) each list both
   // paths that enter the call in one `When` clause.
   expect(statement('dev-2')).toBe(
-    'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `code`:',
+    'When Analyst chooses the code path [[dev-1](#dev-1)] or `branch` succeeds on the code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `code`:',
   );
   expect(statement('dev-3')).toBe(
-    'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)], Captain shall call playbook `decide`:',
+    'When Analyst chooses the decide then code path [[dev-1](#dev-1)] or `branch` succeeds on the decide then code via pull request path [[dev-5](#dev-5)] [[dev-35](#dev-35)], Captain shall call playbook `decide`:',
   );
   expect(statement('dev-5')).toBe(
     'When Analyst chooses the code via pull request path or the decide then code via pull request path [[dev-1](#dev-1)], Captain shall call playbook `branch`:',

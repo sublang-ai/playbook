@@ -67,7 +67,7 @@ const SCRIPT_CONDITIONS: Readonly<Record<ScriptItemId, string>> = {
 // the script acting clause.
 const SCRIPT_STATEMENTS: Readonly<Record<ScriptItemId, string>> = {
   'PR-2': 'While no fix has been attempted, when the pull request is open [[pr-1](#pr-1)], Captain shall run:',
-  'PR-4': 'When `code` succeeds [[pr-3](#pr-3)], Captain shall run:',
+  'PR-4': 'When `code` succeeds [[pr-3](#pr-3)] [[pr-39](#pr-39)], Captain shall run:',
   'PR-5': 'When the fix is published [[pr-4](#pr-4)], Captain shall run:',
   'PR-6': "When the pull request's checks pass, before any fix attempt [[pr-2](#pr-2)] or after the one published fix [[pr-5](#pr-5)], Captain shall run:",
   'PR-7': 'When the pull request is merged [[pr-6](#pr-6)], Captain shall run:',
@@ -425,7 +425,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       ['pr-21', '`pr` shall make no more than one fix attempt [[pr-3](#pr-3)].'],
       [
         'pr-22',
-        '`pr` shall publish the fix [[pr-4](#pr-4)] and wait for the checks again [[pr-5](#pr-5)] only after `code` succeeds [[pr-3](#pr-3)].',
+        '`pr` shall publish the fix [[pr-4](#pr-4)] and wait for the checks again [[pr-5](#pr-5)] only after `code` succeeds [[pr-3](#pr-3)] [[pr-39](#pr-39)].',
       ],
       [
         'pr-11',
