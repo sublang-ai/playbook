@@ -562,11 +562,12 @@ Where a factory-backed artifact supplies an artifact-specific status override, t
 
 #### playbook-runtime-108
 
-When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-106](../decisions/106-a-script-step-records-its-output.md)):
+When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-106](../decisions/106-a-script-step-records-its-output.md), [DR-107](../decisions/107-a-script-steps-command-is-on-record.md)):
 
 | Field | Value |
 | --- | --- |
 | `stateId`, `sourceItem` | the invocation's own |
+| `command` | the invocation's command as the shell ran it, every placeholder bound |
 | `exitStatus` | the shell's exit status, or `1` when it ended without one |
 | `durationMs` | the whole milliseconds from spawning the shell to its exit, never negative |
 | `output` | the last 16384 captured bytes of what the command wrote to stdout and stderr, as the one text of [[playbook-runtime-111](#playbook-runtime-111)] |
@@ -1192,7 +1193,7 @@ When the runtime suite runs real commands through a player-and-script machine, i
 
 | Command | Required record | Verifying |
 | --- | --- | --- |
-| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the six fields, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
+| Writes alternately to stdout and stderr, exiting zero or nonzero | One `playbook.script` event after the status line, with exactly the seven fields, the command as the machine's context bound it, the writes in order, `outputTruncated` false, that exit status, and a whole non-negative `durationMs` | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Writes to `/dev/stderr` and to `/dev/stdout` by path | Exit status zero and both texts in `output` | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Prints its parent, writes to both paths, and exits nonzero, under a host process of its own that can make the pipe and under one whose temporary directory does not exist | That exit status and both texts under either host; off native Windows, the host as the parent under the first alone | [[playbook-runtime-108](#playbook-runtime-108)] |
 | Is ended by a signal, on a host other than native Windows | `exitStatus` `1`, the earlier write recorded, and the nonzero guard | [[playbook-runtime-108](#playbook-runtime-108)] |

@@ -846,6 +846,19 @@ state meaning shall come from the runtime-published description and
 the `summaryPolicy` labels above.
 Before disposing a terminal root, the shell shall append exactly one settlement fact stating that the root command completed and carrying the escaped, bounded Boss-facing `stateDescription` from its terminal result under [[playbook-runtime-41](playbook-runtime.md#playbook-runtime-41)]; when an older runtime omits that optional field, the shell shall fall back to the still-live control view and then to an honest no-description statement, never to a state id or opaque `PlaybookRunResult.output`; this central fact shall apply whether completion follows start, delivery, a runtime action, or a nested return and shall survive in the durable outcome journal.
 
+#### playbook-captain-94
+
+While the last `playbook.script` event [[playbook-runtime-108](playbook-runtime.md#playbook-runtime-108)] the shell passed through in the current Boss turn [[playbook-captain-3](#playbook-captain-3)], from the root's runtime or a nested playbook's, carries a nonzero `exitStatus`, when the root playbook ends at a failure terminal [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)], the shell shall append this settlement fact directly after the completion fact [[playbook-captain-20](#playbook-captain-20)] ([DR-107](../decisions/107-a-script-steps-command-is-on-record.md)):
+
+```text
+A script step of /<command> exited with status <exitStatus> before the run ended; its command was <script>. The command's output is on the session's record for the host and was not given to Captain.
+```
+
+- `/<command>` is the command of the playbook whose runtime emitted the event.
+- `<script>` is the event's `command`, escaped and bounded as the completion fact's description is.
+- The fact shall carry no state id and none of the event's `output`.
+- An event whose `command` is not a string or whose `exitStatus` is not a number shall stand as the turn's last and yield no fact.
+
 ### Lifecycle
 
 #### playbook-captain-11
@@ -1562,7 +1575,7 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 
 #### playbook-captain-93
 
-When the integration suite runs a real linked runtime, whose script step prints a marker and exits nonzero into a failure terminal, under the real Captain shell, it shall fail unless the host receives one `playbook.script` event carrying that output unchanged, the closing-reply call carries the terminal's authored description, and no Captain or player call of that turn or of a later Boss question about the output, and no reply, status, or other telemetry, contains the marker (verifying [[playbook-captain-3](#playbook-captain-3)]).
+When the integration suite runs a real linked runtime, whose script step prints a marker and exits nonzero into a failure terminal, under the real Captain shell, it shall fail unless the host receives one `playbook.script` event carrying that output unchanged, the closing-reply call carries the terminal's authored description and then the script-step fact with that exit status and the command and no state id [[playbook-captain-94](#playbook-captain-94)], a later Boss question about the output resumes that call's conversation and, where the adapter refuses the resume, is asked again over a journal recap carrying that same fact [[playbook-captain-94](#playbook-captain-94)], and no Captain or player call of that turn or of that later question, and no reply, status, or other telemetry, contains the marker [[playbook-captain-3](#playbook-captain-3)]; and unless the same run closes with no script-step fact where its script exits zero into a failure terminal [[playbook-captain-94](#playbook-captain-94)].
 
 ### Registry and options
 

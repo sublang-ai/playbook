@@ -5789,7 +5789,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // `input.command` through `sh -c`, resolves the declared guard
         // mechanically from the exit status, and emits one status + one
         // `playbook.script` telemetry event, which alone carries the bounded
-        // record of what the command printed (DR-106). No agent call, no
+        // record of what the command printed (DR-106) beside the command as
+        // executed (DR-107). No agent call, no
         // adjudication, no `*.call.*` trace.
         function scriptActor() {
             return fromPromise(({ input, signal }) => runJournalledStep('script', input, signal, async () => {
@@ -6021,6 +6022,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         payload: {
                             stateId: input.stateId,
                             sourceItem: input.sourceItem,
+                            // DR-107: the command as it ran, placeholders bound.
+                            command: input.command,
                             exitStatus,
                             durationMs,
                             output,

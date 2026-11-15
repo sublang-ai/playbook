@@ -6,6 +6,8 @@
 // the session Captain included, when it reports the run the script failed and
 // when the Boss then asks what the command printed. The real factory runs a
 // real `sh` under the real Captain shell.
+// DR-107 across the same seam: the Captain closing that run is told the
+// command and its exit status, and a later Boss question still reads them.
 
 import { createMachine } from 'xstate';
 import { describe, expect, it } from 'vitest';
@@ -44,10 +46,22 @@ const FAILURE_DESCRIPTION =
   'gate ended in failure: the lint check reports problems';
 // What the session Captain says to close the failed run.
 const CLOSING_REPLY = 'The gate stopped at its lint check.';
+// DR-107: the settlement fact the shell adds for that script step, as the
+// closing call reads it and as the journal's recap — itself JSON — holds it.
+const SCRIPT_FACT =
+  `A script step of /gate exited with status 1 before the run ended; ` +
+  `its command was ${JSON.stringify(COMMAND)}. The command's output is on ` +
+  `the session's record for the host and was not given to Captain.`;
+const SCRIPT_FACT_RECAP = JSON.stringify(SCRIPT_FACT).slice(1, -1);
 
 // A gate: one script step whose nonzero exit ends the run at a failure
 // terminal with a description authored before the run.
-const gateMachine = (command: string) => createMachine({
+// `passedTarget` is where a zero exit goes: the success terminal, or — for a
+// run that fails although its script passed — the failure terminal.
+const gateMachine = (
+  command: string,
+  passedTarget: 'passed' | 'lintFailed' = 'passed',
+) => createMachine({
   id: 'gate',
   initial: 'ready',
   context: {},
@@ -75,7 +89,7 @@ const gateMachine = (command: string) => createMachine({
           {
             guard: ({ event }) =>
               (event.output as { guard: string }).guard === 'lintPassed',
-            target: 'passed',
+            target: passedTarget,
           },
           { target: 'lintFailed' },
         ],
@@ -105,8 +119,11 @@ const gateMachine = (command: string) => createMachine({
   },
 });
 
-const createGateRuntime = (command: string) =>
-  createXStatePlaybookRuntime(gateMachine(command), {
+const createGateRuntime = (
+  command: string,
+  passedTarget: 'passed' | 'lintFailed' = 'passed',
+) =>
+  createXStatePlaybookRuntime(gateMachine(command, passedTarget), {
     label: 'GATE',
     compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: () => ({}),
@@ -115,7 +132,10 @@ const createGateRuntime = (command: string) =>
     outcomeAuthority: { governedPlayerStates: {} },
   });
 
-function registryEntry(): PlaybookCaptainRegistryEntry {
+function registryEntry(
+  command: string,
+  passedTarget: 'passed' | 'lintFailed',
+): PlaybookCaptainRegistryEntry {
   return {
     id: 'gate',
     command: 'gate',
@@ -126,7 +146,10 @@ function registryEntry(): PlaybookCaptainRegistryEntry {
     concurrentRoleSets: [],
     validateOptions: (options) => options,
     createRuntime: (_options, hostCapabilities): PlaybookRuntime =>
-      createGateRuntime(COMMAND)({ configuredOptions: {}, hostCapabilities }),
+      createGateRuntime(command, passedTarget)({
+        configuredOptions: {},
+        hostCapabilities,
+      }),
   };
 }
 
@@ -173,8 +196,11 @@ function turn(prompt: string, id = 1): BossTurn {
   return { id, prompt, timestamp: id };
 }
 
-function createHarness() {
-  const entry = registryEntry();
+function createHarness(
+  command: string = COMMAND,
+  passedTarget: 'passed' | 'lintFailed' = 'passed',
+) {
+  const entry = registryEntry(command, passedTarget);
   let id = 0;
   let captainIdIssued = false;
   const shell = createPlaybookCaptainShell(
@@ -205,8 +231,14 @@ function createHarness() {
   const statuses: string[] = [];
   const telemetry: { topic: string; payload: unknown }[] = [];
   const agentPrompts: string[] = [];
-  // Each Captain call's prompt beside the text it returned.
-  const captainCalls: { prompt: string; text: string }[] = [];
+  // Each Captain call's prompt and the conversation it resumed, beside the
+  // text and the conversation token it returned.
+  const captainCalls: {
+    prompt: string;
+    resume: unknown;
+    text: string;
+    resumeToken?: string;
+  }[] = [];
   const replies: string[] = [];
   const captainReplies: CaptainRunResult[] = [];
   const controller = new AbortController();
@@ -228,15 +260,28 @@ function createHarness() {
       agentPrompts.push(prompt);
       return { status: 'ok', playerId, turnId: 1, finalText: 'unused' };
     },
-    callCaptain: async (prompt): Promise<CaptainRunResult> => {
+    callCaptain: async (prompt, options): Promise<CaptainRunResult> => {
       agentPrompts.push(prompt);
       const scripted = captainReplies.shift() ?? {
         status: 'ok' as const,
         turnId: 1,
         finalText: 'Acknowledged.',
       };
-      captainCalls.push({ prompt, text: scripted.finalText ?? '' });
-      return { ...scripted, resumeToken: `conversation-${captainCalls.length}` };
+      // A refused resume names no conversation; every other call names one.
+      const resumeToken =
+        scripted.status === 'ok'
+          ? `conversation-${captainCalls.length + 1}`
+          : undefined;
+      captainCalls.push({
+        prompt,
+        resume: (options as { resume?: unknown } | undefined)?.resume,
+        text: scripted.finalText ?? '',
+        ...(resumeToken === undefined ? {} : { resumeToken }),
+      });
+      return {
+        ...scripted,
+        ...(resumeToken === undefined ? {} : { resumeToken }),
+      };
     },
     emitReply: async (text) => {
       replies.push(text);
@@ -257,7 +302,7 @@ function createHarness() {
 }
 
 describe('script output under the Captain shell (DR-106)', () => {
-  it('passes a failed script step\'s output to the host and gives it to no agent call', async () => {
+  it('passes a failed script step\'s output to the host, tells the Captain its command and exit status, and gives the output to no agent call', async () => {
     const harness = createHarness();
     await harness.shell.init!(harness.session);
 
@@ -284,6 +329,7 @@ describe('script output under the Captain shell (DR-106)', () => {
       {
         stateId: 'checkLint',
         sourceItem: 'GATE-1',
+        command: COMMAND,
         exitStatus: 1,
         durationMs: expect.any(Number),
         output: `lint: ${MARKER}\nfatal: ${MARKER}\n`,
@@ -299,23 +345,54 @@ describe('script output under the Captain shell (DR-106)', () => {
       ({ text }) => text === CLOSING_REPLY,
     );
     expect(closingCall?.prompt).toContain(FAILURE_DESCRIPTION);
+    // …followed by what the script step ran and how it exited (DR-107): the
+    // command as executed and its exit status, with no state id.
+    const facts = closingCall!.prompt
+      .split('\n')
+      .filter((line) => line.startsWith('- '));
+    expect(facts.at(-1)).toBe(`- ${SCRIPT_FACT}`);
+    expect(facts.at(-2)).toContain(FAILURE_DESCRIPTION);
+    expect(closingCall!.prompt).not.toContain('checkLint');
 
-    // Turn 2: the Boss asks what the command printed. The decision call and
-    // the reply it leads to are grounded in what the shell retained.
-    const promptsBeforeQuestion = harness.agentPrompts.length;
+    // Turn 2: the Boss asks what the command printed. The decision call
+    // resumes the conversation the closing call left, which holds that fact.
+    const callsBeforeQuestion = harness.captainCalls.length;
     harness.captainReplies.push(
       captainJson({
         action: 'respond',
-        text: 'The report I was given does not hold the command output.',
+        text: 'The check exited with status 1; I was not given its output.',
       }),
     );
     await harness.shell.handleBossTurn(
       turn('Which command ran, and what did it print?', 2),
       harness.context,
     );
-    expect(harness.agentPrompts.length).toBeGreaterThan(promptsBeforeQuestion);
+    expect(harness.captainCalls.length).toBe(callsBeforeQuestion + 1);
+    expect(harness.captainCalls.at(-1)!.resume).toBe(closingCall!.resumeToken);
 
-    // …and no agent call, in either turn, was handed the output.
+    // Turn 3: the adapter refuses that conversation, so the question is asked
+    // again over the journal's recap, which carries the same fact.
+    harness.captainReplies.push(
+      {
+        status: 'error',
+        turnId: 3,
+        error: 'the conversation is gone',
+        errorCode: 'SESSION_RESUME_REJECTED',
+      },
+      captainJson({
+        action: 'respond',
+        text: 'It exited with status 1; its output is on the session record.',
+      }),
+    );
+    await harness.shell.handleBossTurn(
+      turn('And how did it exit?', 3),
+      harness.context,
+    );
+    const recapCall = harness.captainCalls.at(-1)!;
+    expect(recapCall.resume).toBe(false);
+    expect(recapCall.prompt).toContain(SCRIPT_FACT_RECAP);
+
+    // …and no agent call, in any turn, was handed the output.
     for (const prompt of harness.agentPrompts) {
       expect(prompt).not.toContain(MARKER);
     }
@@ -330,6 +407,33 @@ describe('script output under the Captain shell (DR-106)', () => {
         ),
       }),
     ).not.toContain(MARKER);
+
+    await harness.shell.dispose!();
+  });
+
+  it('states no script step where the failed run\'s script exited zero', async () => {
+    // The same gate, except that a passing check also ends at the failure
+    // terminal: the run failed, and no script step of it exited nonzero.
+    const harness = createHarness('echo fine', 'lintFailed');
+    await harness.shell.init!(harness.session);
+    harness.captainReplies.push({
+      status: 'ok',
+      turnId: 1,
+      finalText: CLOSING_REPLY,
+    });
+    await harness.shell.handleBossTurn(
+      turn('/gate run the gate'),
+      harness.context,
+    );
+
+    expect(harness.statuses).toContain(
+      'Executed script for checkLint (exit 0).',
+    );
+    const closingCall = harness.captainCalls.find(
+      ({ text }) => text === CLOSING_REPLY,
+    );
+    expect(closingCall?.prompt).toContain(FAILURE_DESCRIPTION);
+    expect(closingCall!.prompt).not.toContain('A script step of');
 
     await harness.shell.dispose!();
   });

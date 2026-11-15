@@ -221,6 +221,7 @@ the command exits, at a zero or nonzero status alike:
 | Field | Meaning |
 | --- | --- |
 | `stateId`, `sourceItem` | the step that ran |
+| `command` | the command as the shell ran it, every placeholder bound |
 | `exitStatus` | the shell's exit status |
 | `durationMs` | whole milliseconds from spawn to the shell's exit |
 | `output` | the last 16 KiB the command wrote to stdout and stderr, as one text in the order written |
@@ -233,6 +234,12 @@ in that code page instead, so a tool's localized messages stay readable. It
 is untrusted text for people: show it as inert text beside the
 exit status, and hand it to no agent on the run's behalf. The runtime and the
 Captain shell place it in no prompt, machine context, status line, or trace.
+`command` is the playbook's own text with the machine's values bound in:
+show it as inert text too. Where a run ends at a failure terminal and the
+last script step of that Boss turn exited nonzero, the Captain shell tells
+the session Captain that step's exit status and command, and that the output
+is on the session's record for the host — never the output itself — so the
+Captain's reply can point the Boss to where the host shows it.
 It is stored with the session's other telemetry and is not redacted; a host
 that must not retain it drops the two fields in its own `emitTelemetry` port.
 A process the command leaves running keeps a working stdout and stderr after
