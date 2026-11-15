@@ -390,7 +390,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     // DR-104: the source's relay, park and identity rules are requirement
     // items stated once, each citing every nested item it governs.
     expect(gearsSection('dev-9')).toContain(
-      'returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.',
+      'returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path [[dev-35](#dev-35)], `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.',
     );
     expect(gearsSection('dev-10')).toContain(
       'fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.',
@@ -439,7 +439,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     );
     // The `pr` call's identities come from the `branch` and `code` results.
     expect(gearsSection('dev-26')).toContain(
-      '- the branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
+      '- the issue summary, branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
     );
 
     const states = (devMachine as unknown as {

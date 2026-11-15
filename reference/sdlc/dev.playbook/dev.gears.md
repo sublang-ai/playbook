@@ -28,7 +28,7 @@ When the final child call of the selected path succeeds, `dev` shall complete wi
 
 ### dev-9
 
-When a child call [[dev-2](#dev-2)] [[dev-3](#dev-3)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)] returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.
+When a child call [[dev-2](#dev-2)] [[dev-3](#dev-3)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)] returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path [[dev-35](#dev-35)], `dev` shall start no later child and shall end by relaying that canonical result, a `branch` or `pr` failure included.
 
 ### dev-10
 
@@ -194,8 +194,17 @@ When `branch` succeeds [[dev-5](#dev-5)], `dev` shall continue with the `code` c
 `dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose:
 
 - the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];
-- the branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];
+- the issue summary, branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];
 - the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].
+
+### dev-35
+
+`dev` shall take a child's terminal result as proving the success its path requires only where that result affirmatively carries:
+
+- from `branch` [[dev-5](#dev-5)], that the branch was created, with its branch name, base revision and issue summary;
+- from `decide` [[dev-3](#dev-3)], that no unsettled findings remain, with the `decide`-owned commit and the exact evaluated repository revision;
+- from `code` [[dev-2](#dev-2)] [[dev-4](#dev-4)], that it completed with every review passed, with its last `code`-owned commit and the exact final evaluated repository revision;
+- from `pr` [[dev-6](#dev-6)], that the pull request was merged.
 
 ## Verification
 
@@ -226,15 +235,15 @@ While Analyst has chosen the code via pull request path or the decide then code 
 
 - call `branch` first [[dev-5](#dev-5)];
 - call `code` on the code via pull request path [[dev-2](#dev-2)], or `decide` and then `code` on the decide then code via pull request path [[dev-3](#dev-3)] [[dev-4](#dev-4)], each with the same input as on its plain path [[dev-34](#dev-34)];
-- call `pr` after `code` succeeds [[dev-6](#dev-6)], with the branch and base revision from the result of `branch` and the last `code`-owned commit and final evaluated revision from the result of `code` [[dev-26](#dev-26)];
+- call `pr` after `code` succeeds [[dev-6](#dev-6)], with the issue summary, branch and base revision from the result of `branch` and the last `code`-owned commit and final evaluated revision from the result of `code` [[dev-26](#dev-26)];
 - complete with the successful `pr` result [[dev-8](#dev-8)].
 
 ### dev-30
 
 When a child returns a result other than the success its path requires, a `dev` run shall start no later child and end by relaying that canonical result [[dev-9](#dev-9)], in each case:
 
-- `branch`, `decide`, `code`, or `pr` returns an authored abort or failure;
-- `branch`, `decide`, `code`, or `pr` returns a terminal result that does not prove the success the selected path requires.
+- an authored abort or failure from `branch`, `decide`, `code`, or `pr`;
+- a terminal result from `branch`, `decide`, `code`, or `pr` that does not prove the success the selected path requires [[dev-35](#dev-35)], such as a `code` result that reports completion without its review passed or without its last commit and final evaluated revision.
 
 ### dev-31
 

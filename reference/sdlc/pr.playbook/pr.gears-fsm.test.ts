@@ -429,7 +429,7 @@ describe('PR Source, GEARS, and FSM agreement', () => {
       ],
       [
         'pr-11',
-        'When `code` returns an authored abort or failure, or a terminal result that does not prove its success [[pr-3](#pr-3)], `pr` shall fail relaying that canonical result and leave the pull request open.',
+        'When `code` returns an authored abort or failure, or a terminal result that does not prove its success [[pr-3](#pr-3)] [[pr-39](#pr-39)], `pr` shall fail relaying that canonical result and leave the pull request open.',
       ],
       [
         'pr-12',
