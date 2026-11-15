@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.3.1] - 2026-11-15
+
+### Fixed
+
+- Keep CODE’s final nested REVIEW clause in canonical GEARS syntax so downstream verification recognizes its review participant. Adjacent prose preserves the single review over all phase commits in their original order. A derived text projection makes the unchanged comma-separated review input verifiable while retaining the authoritative commit array and compatibility with older saved contexts.
+
 ## [18.3.0] - 2026-11-15
 
 ### Added
@@ -1134,7 +1140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.3.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.3.1...HEAD
+[18.3.1]: https://github.com/sublang-ai/playbook/compare/v18.3.0...v18.3.1
 [18.3.0]: https://github.com/sublang-ai/playbook/compare/v18.2.0...v18.3.0
 [18.2.0]: https://github.com/sublang-ai/playbook/compare/v18.1.4...v18.2.0
 [18.1.4]: https://github.com/sublang-ai/playbook/compare/v18.1.3...v18.1.4

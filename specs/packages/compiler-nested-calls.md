@@ -12,7 +12,7 @@ It changes no source interpretation, runtime engine behavior, frozen compiler in
 
 ### compiler-nested-calls-1
 
-When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:` with any required sequencing in the `When` or `While` clause or continuation prose, not as an inserted word between `shall` and `call`.
+When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:`, whose colon immediately follows the literal target or dynamic selection, placing required sequencing in the `When` or `While` clause or continuation prose.
 
 ### compiler-nested-calls-4
 
@@ -26,4 +26,4 @@ When gears2fsm emits nested-call routing, after preserving Source-authored succe
 
 ### compiler-nested-calls-3
 
-When the integration suite inspects the text2gears and gears2fsm definitions, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words between `shall` and `call`, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six items whose `code`, `decide`, and `branch` calls each join their paths in one condition, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].
+When the integration suite inspects the text2gears and gears2fsm definitions and maintained workflow GEARS, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words within the verb phrase or between its target and colon, canonical nested-call clauses across every maintained workflow GEARS artifact, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six items whose `code`, `decide`, and `branch` calls each join their paths in one condition, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].
