@@ -320,10 +320,18 @@ describe('Captain preparation through a durable session', () => {
   // inside the adapter a failed assertion is only a provider error, which a
   // shell fallback such as the closing reply's would absorb.
   afterEach(() => {
-    for (const call of RecoveryAdapter.calls)
+    for (const call of RecoveryAdapter.calls) {
+      if (call.kind === 'question-check') {
+        expect(call.options?.subagentModel).toBeUndefined();
+        expect(call.options?.subagentEffort).toBeUndefined();
+      }
+      if (call.kind === 'prepare' && ['claude', 'codex'].includes(RecoveryAdapter.captainAdapter)) {
+        expect(call.options).toMatchObject({ subagentModel: 'inherit', subagentEffort: 'low' });
+      }
       expect(call.options?.nativeSkills, `${RecoveryAdapter.captainAdapter} ${call.kind}`).toBe(
         isControlCall(call) && RecoveryAdapter.captainAdapter !== 'kimi' ? false : undefined,
       );
+    }
   });
   for (const scenario of [
     { startWithQuestion: false, preparation: 'ready', automatic: true },
@@ -411,7 +419,7 @@ describe('Captain preparation through a durable session', () => {
         const configPath = join(dir, 'playbook.config.yaml');
         await writeFile(
           configPath,
-          `captain: { adapter: ${RecoveryAdapter.captainAdapter}, model: captain-model, skills: [${JSON.stringify(join(cwd, 'recovery-skill'))}] }\nplayers:\n  dev.coder: { adapter: claude, model: coder-model }\nplaybooks:\n  code:\n    from: mod://code\n    roles: { coder: dev.coder }\n  wrapper:\n    from: mod://wrapper\n    roles: {}\n`,
+          `captain: { adapter: ${RecoveryAdapter.captainAdapter}, model: captain-model, ${['claude', 'codex'].includes(RecoveryAdapter.captainAdapter) ? 'subagentModel: inherit, subagentEffort: low, ' : ''}skills: [${JSON.stringify(join(cwd, 'recovery-skill'))}] }\nplayers:\n  dev.coder: { adapter: claude, model: coder-model }\nplaybooks:\n  code:\n    from: mod://code\n    roles: { coder: dev.coder }\n  wrapper:\n    from: mod://wrapper\n    roles: {}\n`,
         );
         const loadModule = async (specifier: string) => ({
           default:

@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
+import { ultracodeForCall } from './ultracode.js';
+export { isUltracodeSupported } from './ultracode.js';
 import { assertPlaybookFailureCause } from '@sublang/playbook/runtime';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, emptyPlaybookEffectLedger, hiddenControlEnvelope, isPlaybookEffectLedgerMonotonicExtension, normalizeError, parseJudgeJson, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
@@ -2325,6 +2327,7 @@ function snapshotSessionAgent(value, path) {
         'model',
         'effort',
         'fastMode',
+        'ultracode',
         'subagentModel',
         'subagentEffort',
         'browser',
@@ -2335,6 +2338,7 @@ function snapshotSessionAgent(value, path) {
     const fixed = snapshotFixedAgent(Object.fromEntries(Object.entries(agent).filter(([key]) => key !== 'model' &&
         key !== 'effort' &&
         key !== 'fastMode' &&
+        key !== 'ultracode' &&
         key !== 'subagentModel' &&
         key !== 'subagentEffort' &&
         key !== 'browser' &&
@@ -2354,6 +2358,9 @@ function snapshotSessionAgent(value, path) {
         ...(agent.fastMode === undefined
             ? {}
             : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
+        ...(agent.ultracode === undefined
+            ? {}
+            : { ultracode: snapshotFastMode(agent.ultracode, `${path}.ultracode`) }),
         ...(agent.subagentModel === undefined
             ? {}
             : {
@@ -2385,6 +2392,7 @@ function callSettings(agent, tuning = agent) {
         browser: agent.browser ?? false,
         skills: agent.skills === undefined ? [] : [...agent.skills],
         ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
+        ...ultracodeForCall(agent.adapter, tuning.ultracode, 'agent'),
         ...(tuning.subagentModel === undefined
             ? {}
             : { subagentModel: tuning.subagentModel }),
@@ -2396,8 +2404,9 @@ function callSettings(agent, tuning = agent) {
     };
 }
 function controlCallSettings(agent) {
+    const { subagentModel, subagentEffort, ...control } = callSettings(agent);
     return {
-        ...callSettings(agent),
+        ...control,
         browser: false,
         skills: [],
         mcpServers: {},
@@ -2542,6 +2551,7 @@ async function buildEnablements(options, loadModule, hostCapabilities) {
                 'model',
                 'effort',
                 'fastMode',
+                'ultracode',
                 'subagentModel',
                 'subagentEffort',
             ], path);
@@ -2561,6 +2571,11 @@ async function buildEnablements(options, loadModule, hostCapabilities) {
                     ? {}
                     : {
                         fastMode: snapshotFastMode(rawBinding.fastMode, `${path}.fastMode`),
+                    }),
+                ...(rawBinding.ultracode === undefined
+                    ? {}
+                    : {
+                        ultracode: snapshotFastMode(rawBinding.ultracode, `${path}.ultracode`),
                     }),
                 ...(rawBinding.subagentModel === undefined
                     ? {}

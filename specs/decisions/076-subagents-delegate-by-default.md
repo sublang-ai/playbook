@@ -9,6 +9,8 @@ Accepted (2026-10-01).
 Amends [DR-075](075-subagent-model-is-tuning.md): the subagent model admits `inherit` and defaults to it where the adapter serves one, and a fifth tuning field, `subagentEffort`, joins the four.
 Amends [DR-074](074-seeds-name-the-latest-models.md) in its Cligent floor alone: `^0.30.0`, the first release whose Claude adapter serves the literal, the effort and the subagent definitions.
 
+Amended in seeded model pairs under [DR-104](104-parent-and-child-seed-models.md) and Codex implicit delegation under [DR-105](105-runtime-owned-seed-and-delegation.md).
+
 ## Context
 
 [DR-075](075-subagent-model-is-tuning.md) made the subagent model tuning, and Cligent 0.29 enforced it.

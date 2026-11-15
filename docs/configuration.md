@@ -48,7 +48,7 @@ names, nesting, and ancestry never infer a binding.
 
 Each `captain` or `players.<player-id>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`, `model`,
-`effort`, `fastMode`, `subagentModel`, `subagentEffort`, `instruction`, and
+`effort`, `fastMode`, `ultracode`, `subagentModel`, `subagentEffort`, `instruction`, and
 `permissions`. Settings are inline per stable agent
 ([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)).
 Dots in a player ID are literal characters, not YAML hierarchy. Other adapter
@@ -69,23 +69,26 @@ credentials (an API key in the environment, or `~/.claude` / `~/.codex`):
 
 | Credentials | Seeded agents |
 | --- | --- |
-| Claude only, or neither | every agent on Claude Opus 5.5 (with a notice when neither is configured) |
-| Codex only | every agent on GPT-6.1 Sol |
-| both | `dev.reviewer` on GPT-6.1 Sol, every other agent on Claude Opus 5.5 |
+| Claude only, or neither | every agent on Claude (with a notice when neither is configured) |
+| Codex only | every agent on Codex |
+| both | `dev.reviewer` on Codex, every other agent on Claude |
+
+On official services, Cligent’s model defaults select Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Cligent takes account of provider overrides in the supplied environment, local Claude user settings, and local Codex `config.toml`. A custom route keeps its provider’s models. For Claude project or managed settings, an embedding host can supply its resolved environment.
 
 Every agent runs at `medium` effort, except a `dev.reviewer` seeded on Codex
 beside Claude agents, which runs at `high`. Credentials do not prove SDK availability or remaining quota; launch
 still checks the configured adapter. Existing configs are left unchanged.
 Embedding hosts seed the same agent settings through
-`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`.
+`seedConfigText({ env, homeDir })` from `@sublang/playbook/seed-config`. A host that has already resolved the provider environment for its user can pass it as `modelEnv` independently of the credentials used to select adapters. With that option, pass `modelHome` to consult the local user home or `{ codexHome }` to consult a server seat’s approved Codex settings directory.
 
-The Claude default is shown below. Each Codex agent also carries
+The example below shows an official Claude setup with Cligent’s model defaults. Each Codex agent also carries
 `permissions.writablePaths: ['.git']`:
 
 ```yaml
 captain:
   adapter: claude
-  model: claude-opus-5-5
+  model: claude-fable-5-2
+  subagentModel: claude-opus-5-5
   effort: medium
   permissions:
     mode: auto # protected auto mode for the Claude Captain
@@ -93,28 +96,32 @@ captain:
 players:
   dev.coder:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Coder
 
   dev.reviewer:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Reviewer
 
   dev.analyst:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto # protected auto mode for the Claude Analyst
 
   inspect.inspector:
     adapter: claude
-    model: claude-opus-5-5
+    model: claude-fable-5-2
+    subagentModel: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -196,15 +203,27 @@ roles:
 
 Omitting any override inherits that player's top-level default. For `model`,
 `effort`, `subagentModel`, and `subagentEffort`, boolean `false` selects the
-provider default explicitly, so a resumed conversation cannot accidentally
-retain an earlier selection. For `fastMode`, `false` is a literal request to
+provider default for that field instead of inheriting the player's setting.
+A role that sets `model` to `false`, or inherits from a player with no `model`,
+sends no model to Claude.
+On resume, `ANTHROPIC_MODEL` from the environment or native `settings.env`
+overrides the session model. Changing only the top-level `model` key in Claude Code’s own `settings.json`
+preserves the session selection. A concrete model explicitly switches it.
+Roles sharing a player share that conversation.
+For `fastMode`, `false` is a literal request to
 disable fast mode; omitting the top-level setting selects the provider default.
 A present fast-mode boolean, subagent model, or subagent effort is accepted
 only for adapters Cligent reports as supporting it. A role binding cannot override adapter, instruction,
 permissions, workspace, or tool posture; those define the stable player
 envelope, so an overriding model must be one that player's adapter serves.
 
-`subagentModel` makes every subagent the agent starts run on one model —
+`ultracode: true` independently enables Claude Ultracode while retaining the
+chosen `effort`. Captain, player, and role blocks accept it; a role inherits
+its player's setting unless it supplies `true` or `false`. Enabling it requires
+an adapter for which Cligent reports Ultracode support. Other adapters accept explicit `false` and reject `true`. Legacy `effort: ultracode` remains
+supported.
+
+`subagentModel` selects the model for delegated work —
 `inherit` names the agent's own, a model name pins another, and `false` on a
 `captain` or `players.<player-id>` block switches delegation off — and tells
 the agent to hand well-defined, fine-grained tasks to its subagents while
@@ -219,10 +238,10 @@ choice runs through `delegate-<effort>` subagents and a call naming no type
 runs `general-purpose` at `medium`; `Explore` and `Plan` are never replaced and
 keep the agent's own effort
 ([Cligent DR-029](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/029-subagent-effort.md)).
-An agent whose adapter serves a subagent model (Claude today) and whose block
-leaves `subagentModel` unset resolves to `inherit`: it delegates by default.
-The launcher resolves this on its own copy and never rewrites your config, and
-the starter config names neither field
+On Codex with Cligent 0.39 or later, these fields set native subagent defaults;
+`subagentEffort` accepts `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+Explicit spawn settings and custom role definitions follow the model and history rules of the native spawn tool.
+When a user config omits the child model, Claude requests `inherit`. Codex leaves delegation to the runtime unless a child model or effort is explicitly selected. Tool-free Captain control calls carry neither child setting
 ([DR-076](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/076-subagents-delegate-by-default.md)).
 
 
@@ -247,7 +266,7 @@ second top-level player and change only its binding:
 players:
   review.coder:
     adapter: codex
-    model: gpt-6.1-sol
+    model: gpt-6-astra
     effort: ultra
     permissions:
       mode: auto
@@ -399,6 +418,9 @@ directory; only model, effort, fast mode, subagent model, and subagent effort
 may change. The next call reapplies both complete model and effort selections,
 the optional effective fast-mode boolean, and the optional effective subagent
 model and subagent effort. An uncertain retry accepts no tuning overlay and only restores and reports the recorded attempt. Later turns use the current compatible settings.
+A Claude player whose primary selection is provider default delegates the resumed
+selection to the native SDK, including the `ANTHROPIC_MODEL` override described
+above. Set a named model to switch that conversation explicitly.
 
 ## Session storage
 
@@ -516,12 +538,12 @@ playbooks:
   code:
     from: '@sublang/playbook/code/registry'
     players:
-      coder: { adapter: claude, model: claude-opus-5-5 }
+      coder: { adapter: claude, model: claude-fable-5-2 }
   review:
     from: '@sublang/playbook/review/registry'
     players:
-      coder: { adapter: claude, model: claude-opus-5-5 }
-      reviewer: { adapter: codex, model: gpt-6.1-sol }
+      coder: { adapter: claude, model: claude-fable-5-2 }
+      reviewer: { adapter: codex, model: gpt-6-astra }
 ```
 
 Move each provider agent into the flat top-level map, choose stable IDs, and
@@ -529,8 +551,8 @@ bind the local roles explicitly:
 
 ```yaml
 players:
-  dev.coder: { adapter: claude, model: claude-opus-5-5 }
-  dev.reviewer: { adapter: codex, model: gpt-6.1-sol }
+  dev.coder: { adapter: claude, model: claude-fable-5-2 }
+  dev.reviewer: { adapter: codex, model: gpt-6-astra }
 
 playbooks:
   code:

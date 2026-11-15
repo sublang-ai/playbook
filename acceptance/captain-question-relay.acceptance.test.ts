@@ -36,6 +36,7 @@ it.each(['SDK', 'CLI'])('Boss clarifies, reopens, and answers using only Captain
   await writeFile(configPath, `captain:
   adapter: claude
   model: ${JSON.stringify(claude)}
+  subagentModel: claude-opus-5-5
   effort: low
   permissions: { mode: auto }
 notifications: { player_finished: off, turn_finished: off, turn_aborted: off }
@@ -43,6 +44,7 @@ players:
   worker:
     adapter: codex
     model: ${JSON.stringify(codex)}
+    subagentModel: gpt-6.1-sol
     effort: low
     permissions: { mode: auto }
 playbooks:

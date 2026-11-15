@@ -17,6 +17,7 @@ import {
   assertFastModeSupported,
   assertSubagentModelSupported,
 } from "@sublang/cligent";
+import { ultracodeForCall } from "../ultracode.js";
 import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
@@ -1453,6 +1454,7 @@ const FROZEN_ADAPTER_SCOPED_TUNING = [
 
 function assertFrozenTuningSupported(config) {
   const assertSupported = (record, adapter, path) => {
+    ultracodeForCall(adapter, record.ultracode, path);
     for (const [field, assertFieldSupported] of FROZEN_ADAPTER_SCOPED_TUNING) {
       if (record[field] !== undefined) {
         assertFieldSupported(adapter, `${path} ${field}`);
@@ -1474,7 +1476,7 @@ function assertFrozenTuningSupported(config) {
   for (const [playbookId, item] of Object.entries(config.catalog)) {
     for (const [roleId, binding] of Object.entries(item.roles)) {
       if (
-        FROZEN_ADAPTER_SCOPED_TUNING.every(
+        binding.ultracode === undefined && FROZEN_ADAPTER_SCOPED_TUNING.every(
           ([field]) => binding[field] === undefined,
         )
       ) {

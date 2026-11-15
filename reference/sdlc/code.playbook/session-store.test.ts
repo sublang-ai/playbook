@@ -2392,6 +2392,21 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       'fastMode',
     );
 
+    const ultracodeExecution: any = structuredClone(execution);
+    ultracodeExecution.captain.ultracode = true;
+    ultracodeExecution.players[0].ultracode = false;
+    ultracodeExecution.catalog.code.roles.coder.ultracode = true;
+    const validatedUltracode = validateCaptainSessionExecutionProjection(ultracodeExecution);
+    expect(validatedUltracode).toMatchObject({
+      captain: { ultracode: true }, players: [{ ultracode: false }],
+      catalog: { code: { roles: { coder: { ultracode: true } } } },
+    });
+    const ultracodeStructure = projectCaptainSessionStructure(validatedUltracode);
+    expect(JSON.stringify(ultracodeStructure)).not.toContain('ultracode');
+    expect(assertCaptainSessionExecutionCompatible(ultracodeStructure, execution)).toEqual(execution);
+    ultracodeExecution.captain.ultracode = 'yes';
+    expect(() => validateCaptainSessionExecutionProjection(ultracodeExecution)).toThrow(/ultracode must be a boolean/);
+
     // The subagent model is tuning too (DR-075): optional in the execution
     // projection, erased from the structure, and free to change on reopen.
     const subagentExecution: any = structuredClone(execution);

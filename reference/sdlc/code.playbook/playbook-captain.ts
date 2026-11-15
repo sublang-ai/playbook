@@ -17,6 +17,8 @@ import {
   type TuningSelection,
 } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
+import { ultracodeForCall } from './ultracode.js';
+export { isUltracodeSupported } from './ultracode.js';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
@@ -78,6 +80,7 @@ interface SessionAgent {
   /** Adapter-scoped fast mode. Absence is the provider default; `false` is a
    * literal request, so this carries no provider-default sentinel. */
   readonly fastMode?: boolean;
+  readonly ultracode?: boolean;
   /** The model every subagent of this agent runs on (DR-075), or `inherit`
    * for the agent's own model (DR-076). Absence is the provider default. */
   readonly subagentModel?: string;
@@ -93,6 +96,7 @@ type TuningKey =
   | 'model'
   | 'effort'
   | 'fastMode'
+  | 'ultracode'
   | 'subagentModel'
   | 'subagentEffort';
 
@@ -491,6 +495,7 @@ interface EffectivePlayerBinding {
   readonly model: TuningSelection;
   readonly effort: TuningSelection<Effort>;
   readonly fastMode?: boolean;
+  readonly ultracode?: boolean;
   readonly subagentModel?: string;
   readonly subagentEffort?: string;
   readonly agent: SessionAgent;
@@ -4081,6 +4086,7 @@ function snapshotSessionAgent(
       'model',
       'effort',
       'fastMode',
+      'ultracode',
       'subagentModel',
       'subagentEffort',
       'browser',
@@ -4097,6 +4103,7 @@ function snapshotSessionAgent(
           key !== 'model' &&
           key !== 'effort' &&
           key !== 'fastMode' &&
+          key !== 'ultracode' &&
           key !== 'subagentModel' &&
           key !== 'subagentEffort' &&
           key !== 'browser' &&
@@ -4120,6 +4127,9 @@ function snapshotSessionAgent(
     ...(agent.fastMode === undefined
       ? {}
       : { fastMode: snapshotFastMode(agent.fastMode, `${path}.fastMode`) }),
+    ...(agent.ultracode === undefined
+      ? {}
+      : { ultracode: snapshotFastMode(agent.ultracode, `${path}.ultracode`) }),
     ...(agent.subagentModel === undefined
       ? {}
       : {
@@ -4162,6 +4172,7 @@ function callSettings(
     browser: agent.browser ?? false,
     skills: agent.skills === undefined ? [] : [...agent.skills],
     ...(tuning.fastMode === undefined ? {} : { fastMode: tuning.fastMode }),
+    ...ultracodeForCall(agent.adapter, tuning.ultracode, 'agent'),
     ...(tuning.subagentModel === undefined
       ? {}
       : { subagentModel: tuning.subagentModel }),
@@ -4174,8 +4185,9 @@ function callSettings(
 }
 
 function controlCallSettings(agent: SessionAgent): AgentCallSettings {
+  const { subagentModel, subagentEffort, ...control } = callSettings(agent);
   return {
-    ...callSettings(agent),
+    ...control,
     browser: false,
     skills: [],
     mcpServers: {},
@@ -4421,6 +4433,7 @@ async function buildEnablements(
           'model',
           'effort',
           'fastMode',
+          'ultracode',
           'subagentModel',
           'subagentEffort',
         ],
@@ -4446,6 +4459,14 @@ async function buildEnablements(
               fastMode: snapshotFastMode(
                 rawBinding.fastMode,
                 `${path}.fastMode`,
+              ),
+            }),
+        ...(rawBinding.ultracode === undefined
+          ? {}
+          : {
+              ultracode: snapshotFastMode(
+                rawBinding.ultracode,
+                `${path}.ultracode`,
               ),
             }),
         ...(rawBinding.subagentModel === undefined

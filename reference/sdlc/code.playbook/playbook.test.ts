@@ -136,7 +136,7 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
           playerId: 'dev.reviewer',
           model: { kind: 'provider-default' },
           effort: { kind: 'provider-default' },
-          // DR-076: a Claude agent delegates by default; codex serves none.
+          // DR-076: delegation defaults follow the installed adapter capability.
           subagentModel: 'inherit',
         },
       },
@@ -144,7 +144,8 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
     });
     // Exact stable player ids survive the host roster.
     expect(config.players).toEqual([
-      { id: 'dev.coder', adapter: 'codex', model: 'm-agent' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-agent',
+      },
       { id: 'dev.reviewer', adapter: 'claude', subagentModel: 'inherit' },
     ]);
     // Launcher owns initialVisible (first playbook's generated players);
@@ -826,6 +827,9 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
   });
 });
 
+const claudePins = { model: 'claude-fable-5-2', subagentModel: 'claude-opus-5-5' };
+const codexPins = { model: 'gpt-6-astra', subagentModel: 'gpt-6.1-sol' };
+
 describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
   // PBCLI-11 / DR-053: the seeded lineup follows the credentials the seed can
   // see. Every row states its own environment, so none of these depends on the
@@ -859,7 +863,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(onlyClaude.seeded.captain.adapter).toBe('claude');
     expect(onlyClaude.seeded.players['dev.coder']).toEqual({
       adapter: 'claude',
-      model: 'claude-opus-5-5',
+      ...claudePins,
       effort: 'medium',
       permissions: { mode: 'auto' },
     });
@@ -871,7 +875,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(onlyCodex.seeded.captain.adapter).toBe('codex');
     expect(onlyCodex.seeded.players['dev.coder']).toEqual({
       adapter: 'codex',
-      model: 'gpt-6.1-sol',
+      ...codexPins,
       effort: 'medium',
       permissions: { mode: 'auto', writablePaths: ['.git'] },
     });
@@ -886,13 +890,13 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     const both = await seedUnder({ ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' });
     expect(both.seeded.captain).toEqual({
       adapter: 'claude',
-      model: 'claude-opus-5-5',
+      ...claudePins,
       effort: 'medium',
       permissions: { mode: 'auto' },
     });
     expect(both.seeded.players['dev.reviewer']).toEqual({
       adapter: 'codex',
-      model: 'gpt-6.1-sol',
+      ...codexPins,
       effort: 'high',
       permissions: { mode: 'auto', writablePaths: ['.git'] },
     });
@@ -949,6 +953,12 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       const written = await readFile(configPath, 'utf8');
       const seeded = seedConfigText({ env, homeDir: home });
       expect(seeded.text).toBe(written);
+      const parsed = parseYaml(seeded.text);
+      for (const agent of [parsed.captain, ...Object.values(parsed.players)] as { adapter: string; model: string; subagentModel?: string }[]) {
+        const expected = agent.adapter === 'claude' ? claudePins : codexPins;
+        expect(agent.model).toBe(expected.model);
+        expect(agent.subagentModel).toBe(expected.subagentModel);
+      }
       expect(seeded.anyReady).toBe(Object.keys(env).length > 0);
     }
   });
@@ -991,7 +1001,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('@sublang/playbook/dev/registry');
     expect(seeded).toContain('@sublang/playbook/branch/registry');
     expect(seeded).toContain('@sublang/playbook/pr/registry');
-    expect(seeded).toContain('claude-opus-5-5');
+    expect(seeded).toContain('claude-fable-5-2');
     expect(seeded).not.toContain('committer:');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
@@ -1000,30 +1010,30 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seededParsed.profiles).toBeUndefined();
     expect(seededParsed.captain).toMatchObject({
       adapter: 'claude',
-      model: 'claude-opus-5-5',
+      ...claudePins,
       effort: 'medium',
       permissions: { mode: 'auto' },
     });
     expect(seededParsed.players).toEqual({
       'dev.coder': {
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
         permissions: { mode: 'auto' },
       },
       'dev.reviewer': {
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
         permissions: { mode: 'auto' },
       },
       'dev.analyst': {
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
         permissions: { mode: 'auto' },
       },
-      'inspect.inspector': { adapter: 'claude', model: 'claude-opus-5-5', effort: 'medium', permissions: { mode: 'auto' } },
+      'inspect.inspector': { adapter: 'claude', ...claudePins, effort: 'medium', permissions: { mode: 'auto' } },
     });
     // The comments still document codex as an option; no seeded value names it.
     expect(JSON.stringify(seededParsed)).not.toContain('codex');
@@ -1048,42 +1058,38 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(composed.captain).toMatchObject({
       adapter: 'claude',
-      model: 'claude-opus-5-5',
+      ...claudePins,
       effort: 'medium',
       // PBCLI-11: every seeded agent, including the claude Captain, runs in
       // cligent's protected auto mode.
       permissions: { mode: 'auto' },
     });
-    // DR-076: the seed names no subagent field, yet every seeded Claude
-    // agent delegates by default.
-    expect(composed.captain.subagentModel).toBe('inherit');
+    // The seeded child pin survives composition and role inheritance.
+    expect(composed.captain.subagentModel).toBe(claudePins.subagentModel);
     expect(composed.players).toEqual([
       {
         id: 'dev.coder',
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
-        subagentModel: 'inherit',
         permissions: { mode: 'auto' },
       },
       {
         id: 'dev.reviewer',
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
-        subagentModel: 'inherit',
         // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
         permissions: { mode: 'auto' },
       },
       {
         id: 'dev.analyst',
         adapter: 'claude',
-        model: 'claude-opus-5-5',
+        ...claudePins,
         effort: 'medium',
-        subagentModel: 'inherit',
         permissions: { mode: 'auto' },
       },
-      { id: 'inspect.inspector', adapter: 'claude', model: 'claude-opus-5-5', effort: 'medium', subagentModel: 'inherit', permissions: { mode: 'auto' } },
+      { id: 'inspect.inspector', adapter: 'claude', ...claudePins, effort: 'medium', permissions: { mode: 'auto' } },
     ]);
     expect(composed.layout.initialVisible).toEqual(['dev.coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
@@ -1095,12 +1101,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
           // PBCLI-11: the role names no model or effort of its own, so
           // both inherit the seeded player default rather than falling
           // back to the provider's.
-          model: {
-            kind: 'value',
-            value: 'claude-opus-5-5',
-          },
+          model: { kind: 'value', value: claudePins.model },
           effort: { kind: 'value', value: 'medium' },
-          subagentModel: 'inherit',
+          subagentModel: claudePins.subagentModel,
         },
       },
       options: {},
@@ -2179,7 +2182,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('stable players.<id>');
     expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
     expect(stdout.text()).toContain(
-      'fastMode?,\n    subagentModel?, subagentEffort? }',
+      'fastMode?, ultracode?,\n    subagentModel?, subagentEffort? }',
     );
     expect(stdout.text()).toContain(
       'false selects provider-default model/effort/subagentModel/\n' +
@@ -3681,8 +3684,10 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(out.code).toBe(0);
     const composed = parseYaml(spawn.configs[0].content);
     expect(composed.players).toEqual([
-      { id: 'dev.coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh' },
-      { id: 'dev.reviewer', adapter: 'codex' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh',
+      },
+      { id: 'dev.reviewer', adapter: 'codex',
+      },
     ]);
     expect(
       composed.captain.options.playbooks.code.roles.coder.model,

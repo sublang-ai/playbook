@@ -28,7 +28,8 @@ import {
   parseDocument as parseYamlDocument,
   stringify as stringifyYaml,
 } from "yaml";
-import { isSubagentModelSupported } from "@sublang/cligent";
+import { ultracodeForCall } from "../ultracode.js";
+import { defaultAgentModels } from "@sublang/cligent";
 import { loadTmuxPlayConfig } from "@sublang/cligent/tmux-play";
 import {
   defaultCaptainSessionsDir,
@@ -543,9 +544,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
   const configuredAgents = new Map();
   for (const playerId of expectedMembers.playerIds) {
     assertPlayerId(playerId, `players.${playerId}`);
-    const agent = resolveDelegationDefault(
-      resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]),
-    );
+    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]);
     configuredAgents.set(playerId, agent);
   }
   let captain = resolveDelegationDefault(
@@ -624,6 +623,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
+        binding.ultracode !== undefined ||
         binding.subagentModel !== undefined ||
         binding.subagentEffort !== undefined
       ) {
@@ -675,7 +675,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     players: [
       ...expectedMembers.playerIds.map((id) => ({
         id,
-        ...configuredAgents.get(id),
+        ...resolveDelegationDefault(configuredAgents.get(id)),
       })),
       ...tuningChecks.map(({ id, agent }) => ({ id, ...agent })),
     ],
@@ -742,8 +742,12 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
                       ? {}
                       : { fastMode: agent.fastMode }
                     : { fastMode: binding.fastMode }),
-                  ...effectiveOptionalTuning(binding, agent, "subagentModel"),
-                  ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
+                  ...(binding.ultracode === undefined
+                    ? agent.ultracode === undefined
+                      ? {}
+                      : { ultracode: agent.ultracode }
+                    : { ultracode: binding.ultracode }),
+                  ...delegationFields(configuredAgents.get(binding.playerId), binding),
                 },
               ];
             }),
@@ -890,9 +894,7 @@ async function normalizeLaunchPlanWith(
   const configuredAgents = new Map();
   for (const playerId of allPlayerIds) {
     assertPlayerId(playerId, `players.${playerId}`);
-    const agent = resolveDelegationDefault(
-      resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]),
-    );
+    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]);
     if (
       typeof agent.adapter !== "string" ||
       agent.adapter.trim().length === 0
@@ -1012,6 +1014,7 @@ async function normalizeLaunchPlanWith(
         binding.model !== undefined ||
         binding.effort !== undefined ||
         binding.fastMode !== undefined ||
+        binding.ultracode !== undefined ||
         binding.subagentModel !== undefined ||
         binding.subagentEffort !== undefined
       ) {
@@ -1077,7 +1080,7 @@ async function normalizeLaunchPlanWith(
     players: [
       ...allPlayerIds.map((id) => ({
         id,
-        ...configuredAgents.get(id),
+        ...resolveDelegationDefault(configuredAgents.get(id)),
       })),
       ...tuningChecks.map(({ id, agent }) => ({ id, ...agent })),
     ],
@@ -1229,8 +1232,12 @@ async function normalizeLaunchPlanWith(
                 ? {}
                 : { fastMode: agent.fastMode }
               : { fastMode: binding.fastMode }),
-            ...effectiveOptionalTuning(binding, agent, "subagentModel"),
-            ...effectiveOptionalTuning(binding, agent, "subagentEffort"),
+            ...(binding.ultracode === undefined
+              ? agent.ultracode === undefined
+                ? {}
+                : { ultracode: agent.ultracode }
+              : { ultracode: binding.ultracode }),
+            ...delegationFields(configuredAgents.get(binding.playerId), binding),
           },
         ];
       }),
@@ -1654,15 +1661,8 @@ function assertLegacyRelocationLocatorsSafe(
   );
 }
 
-// PBCLI-11 / DR-053: the adapters a seeded lineup may take, highest
-// precedence first. A fixed order — not whichever the probe answers
-// first — is what makes one machine seed one file twice. DR-074: each
-// row names the latest model of its adapter's line; the template names
-// the first row's model, because the default seed is its byte copy.
-const SEED_LINEUP = Object.freeze([
-  Object.freeze({ adapter: "claude", model: "claude-opus-5-5" }),
-  Object.freeze({ adapter: "codex", model: "gpt-6.1-sol" }),
-]);
+// Credential order is launcher policy. Each runtime owns its model choices.
+const SEED_ADAPTERS = ["claude", "codex"];
 
 // DR-096: where both adapters are ready, this player alone takes the
 // second row, so review comes from a different provider than the work.
@@ -1682,24 +1682,25 @@ const SECOND_ADAPTER_EFFORT = "high";
  * consulting it would differ between a developer's machine and a clean
  * one, and would make creating a file asynchronous.
  */
-export function selectSeedLineup(env = process.env, home = homedir()) {
-  const ready = SEED_LINEUP.filter(
-    (entry) =>
-      checkReadiness([entry.adapter], env, home).failingAdapters.length === 0,
+export function selectSeedLineup(env = process.env, home = homedir(), modelEnv, modelHome) {
+  const ready = SEED_ADAPTERS.filter(
+    adapter => checkReadiness([adapter], env, home).failingAdapters.length === 0,
   );
-  const lineup = ready[0] ?? SEED_LINEUP[0];
+  const models = (adapter) => ({
+    adapter,
+    ...defaultAgentModels(adapter, modelEnv ?? env, modelHome ?? (modelEnv === undefined ? home : undefined)),
+  });
+  const lineup = models(ready[0] ?? SEED_ADAPTERS[0]);
   return {
     lineup,
-    reviewer: ready.length > 1 ? ready[1] : lineup,
+    reviewer: ready.length > 1 ? models(ready[1]) : lineup,
     anyReady: ready.length > 0,
   };
 }
 
 /**
- * The template is the documented default and the only source of the
- * starter's structure and comments, so the default choice is still the
- * byte copy it always was. A different adapter rewrites the agent
- * scalars in place, which the Document API carries comments through.
+ * The template supplies structure and comments. Only rewrite it where
+ * the selected adapters and their runtime model fields differ.
  */
 function seedTextForLineup(template, { lineup, reviewer }) {
   const doc = parseYamlDocument(template);
@@ -1715,14 +1716,18 @@ function seedTextForLineup(template, { lineup, reviewer }) {
   for (const path of agentPaths) {
     const second = path[1] === SECOND_ADAPTER_PLAYER && reviewer !== lineup;
     const entry = second ? reviewer : lineup;
-    if (entry.adapter === SEED_LINEUP[0].adapter) continue;
-    changed = true;
-    doc.setIn([...path, "adapter"], entry.adapter);
-    doc.setIn([...path, "model"], entry.model);
+    for (const field of ["adapter", "model", "subagentModel"]) {
+      const key = [...path, field];
+      if (doc.getIn(key) === entry[field]) continue;
+      changed = true;
+      if (entry[field] === undefined) doc.deleteIn(key);
+      else doc.setIn(key, entry[field]);
+    }
     if (second) doc.setIn([...path, "effort"], SECOND_ADAPTER_EFFORT);
-    // A codex agent writes git metadata under its sandbox; claude's
-    // auto mode needs no grant, so the key exists for one adapter only.
-    doc.setIn([...path, "permissions", "writablePaths"], [".git"]);
+    if (entry.adapter === "codex") {
+      doc.setIn([...path, "permissions", "writablePaths"], [".git"]);
+      changed = true;
+    }
   }
   return changed ? String(doc) : template;
 }
@@ -1736,8 +1741,10 @@ export function seedConfigText(
   templatePath,
   env = process.env,
   homeDir = env.HOME ?? homedir(),
+  modelEnv,
+  modelHome,
 ) {
-  const selection = selectSeedLineup(env, homeDir);
+  const selection = selectSeedLineup(env, homeDir, modelEnv, modelHome);
   return {
     text: seedTextForLineup(readFileSync(templatePath, "utf8"), selection),
     anyReady: selection.anyReady,
@@ -1759,7 +1766,7 @@ function seedUserConfigIfMissing(
   onNotice(`playbook: created config at ${userConfigPath}\n`);
   if (!anyReady) {
     onNotice(
-      `playbook: no adapter probed ready; seeded ${SEED_LINEUP[0].adapter}\n`,
+      `playbook: no adapter probed ready; seeded ${SEED_ADAPTERS[0]}\n`,
     );
   }
 }
@@ -2341,6 +2348,7 @@ function resolveRoleBinding(value, path) {
         "model",
         "effort",
         "fastMode",
+        "ultracode",
         "subagentModel",
         "subagentEffort",
       ].includes(key),
@@ -2366,11 +2374,15 @@ function resolveRoleBinding(value, path) {
   if (block.fastMode !== undefined && typeof block.fastMode !== "boolean") {
     throw new Error(`${path}.fastMode must be a boolean`);
   }
+  if (block.ultracode !== undefined && typeof block.ultracode !== "boolean") {
+    throw new Error(`${path}.ultracode must be a boolean`);
+  }
   return {
     playerId: block.player,
     ...(block.model === undefined ? {} : { model: block.model }),
     ...(block.effort === undefined ? {} : { effort: block.effort }),
     ...(block.fastMode === undefined ? {} : { fastMode: block.fastMode }),
+    ...(block.ultracode === undefined ? {} : { ultracode: block.ultracode }),
     ...(block.subagentModel === undefined
       ? {}
       : { subagentModel: block.subagentModel }),
@@ -2380,35 +2392,26 @@ function resolveRoleBinding(value, path) {
   };
 }
 
-// A binding's subagent model or subagent effort overrides the player's;
-// `false` selects the provider default, which a complete call expresses by
-// omission (for the effort: the agent chooses per task).
-function effectiveOptionalTuning(binding, agent, field) {
-  if (binding[field] === false) return {};
-  if (binding[field] !== undefined) return { [field]: binding[field] };
-  return agent[field] === undefined ? {} : { [field]: agent[field] };
+// Resolve both fields together so an explicit Codex effort can request
+// inheritance, while a block or binding's explicit Off is never re-enabled.
+function delegationFields(agent, binding = {}) {
+  if (agent.subagentEffort === false) throw new Error("subagentEffort must be an effort string; false is allowed only on role bindings");
+  const model = binding.subagentModel === undefined ? agent.subagentModel : binding.subagentModel;
+  // Only role bindings accept false as a reset. Pass the block value through
+  // to Cligent so its agent schema can reject a malformed effort.
+  const effort = binding.subagentEffort === false ? undefined : (binding.subagentEffort ?? agent.subagentEffort);
+  const effortOnly = agent.adapter === "codex" && effort !== undefined && effort !== false;
+  const inherit = model === undefined && (agent.adapter === "claude" || effortOnly);
+  const effectiveModel = inherit ? "inherit" : model;
+  return {
+    ...(effectiveModel !== false && effectiveModel !== undefined ? { subagentModel: effectiveModel } : {}),
+    ...(effort !== undefined ? { subagentEffort: effort } : {}),
+  };
 }
 
-// DR-076: an agent whose adapter serves a subagent model delegates by
-// default. Resolved on the launcher's detached copy of a Captain or player
-// block — never the user's file — before cligent normalization, so cligent
-// validates a subagent effort against the resolved model, and both front
-// ends and the headless run share the result. A block's `false` opts out:
-// nothing is sent and no delegation directive is composed.
-function resolveDelegationDefault(agent) {
-  if (!isObject(agent)) return agent;
-  if (agent.subagentModel === false) {
-    const { subagentModel: _off, ...rest } = agent;
-    return rest;
-  }
-  if (
-    agent.subagentModel === undefined &&
-    typeof agent.adapter === "string" &&
-    isSubagentModelSupported(agent.adapter)
-  ) {
-    return { ...agent, subagentModel: "inherit" };
-  }
-  return agent;
+function resolveDelegationDefault(agent, binding) {
+  const { subagentModel, subagentEffort, ...rest } = agent;
+  return { ...rest, ...delegationFields(agent, binding) };
 }
 
 function applyTuningOverrides(agent, binding) {
@@ -2421,11 +2424,8 @@ function applyTuningOverrides(agent, binding) {
     else effective.effort = binding.effort;
   }
   if (binding.fastMode !== undefined) effective.fastMode = binding.fastMode;
-  for (const field of ["subagentModel", "subagentEffort"]) {
-    if (binding[field] === false) delete effective[field];
-    else if (binding[field] !== undefined) effective[field] = binding[field];
-  }
-  return effective;
+  if (binding.ultracode !== undefined) effective.ultracode = binding.ultracode;
+  return resolveDelegationDefault(effective, binding);
 }
 
 function sessionAgentFromHostAgent(agent, path, defaultSkills) {
@@ -2441,6 +2441,9 @@ function sessionAgentFromHostAgent(agent, path, defaultSkills) {
     ...(agent.fastMode === undefined
       ? {}
       : { fastMode: fastModeSelection(agent.fastMode, `${path}.fastMode`) }),
+    ...(agent.ultracode === undefined
+      ? {}
+      : { ultracode: fastModeSelection(agent.ultracode, `${path}.ultracode`) }),
     ...(agent.subagentModel === undefined
       ? {}
       : {
@@ -2484,6 +2487,7 @@ export function projectHostAgent(agent, path = "agent") {
     ...(normalized.fastMode === undefined
       ? {}
       : { fastMode: normalized.fastMode }),
+    ...ultracodeForCall(normalized.adapter, normalized.ultracode, path),
     ...(normalized.subagentModel === undefined
       ? {}
       : { subagentModel: normalized.subagentModel }),

@@ -50,6 +50,7 @@ interface FixtureShape {
   readonly settingsModel?: string;
   readonly settingsEffort?: string;
   readonly settingsFastMode?: string;
+  readonly settingsUltracode?: string;
   readonly settingsSubagentModel?: string;
   readonly settingsSubagentEffort?: string;
   readonly rootEffort?: string;
@@ -93,6 +94,9 @@ interface FixtureShape {
   readonly segmentedPlayerIds?: boolean;
   readonly emptyRosterConfig?: boolean;
   readonly emptyRosterRuntime?: boolean;
+  readonly defaultModelsRuntime?: string;
+  readonly ultracodeSupportRuntime?: string;
+  readonly ultracodeConfigRuntime?: 'preserve' | 'drop-true' | 'drop-false';
 }
 
 // A minimal stand-in for the published package: the same `exports` map entry
@@ -129,6 +133,7 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     settingsModel = 'readonly model: TuningSelection;',
     settingsEffort = 'readonly effort: TuningSelection<Effort>;',
     settingsFastMode = 'readonly fastMode?: boolean;',
+    settingsUltracode = 'readonly ultracode?: boolean;',
     settingsSubagentModel = 'readonly subagentModel?: string;',
     settingsSubagentEffort = 'readonly subagentEffort?: Effort;',
     rootEffort = `export type Effort =
@@ -206,6 +211,9 @@ export declare function getNativeSkillSupport(agent: string): NativeSkillSupport
     segmentedPlayerIds = true,
     emptyRosterConfig = true,
     emptyRosterRuntime = true,
+    defaultModelsRuntime = "export function defaultAgentModels() { return { model: 'primary', subagentModel: 'child' }; }",
+    ultracodeSupportRuntime = "export function isUltracodeSupported(adapter) { return adapter === 'claude' || adapter === 'claude-code'; }",
+    ultracodeConfigRuntime = 'preserve',
   } = shape;
   const packageRoot = join(root, 'cligent');
   write(
@@ -256,7 +264,8 @@ export function assertFastModeSupported(agent, path = 'fastMode') {
       subagentModelAssertionRuntime
         ? `export const SUBAGENT_MODEL_SUPPORT = Object.freeze({
   'claude-code': Object.freeze({ requestSupported: true }),
-  codex: Object.freeze({ requestSupported: false }),
+  codex: Object.freeze({ requestSupported: true }),
+  gemini: Object.freeze({ requestSupported: false }),
 });
 export function assertSubagentModelSupported(agent, path = 'subagentModel') {
   ${
@@ -287,7 +296,9 @@ export function getNativeSkillSupport(agent) {
 }
 `
         : ''
-    }export {};
+    }${defaultModelsRuntime}
+${ultracodeSupportRuntime}
+export {};
 `,
   );
   write(
@@ -330,7 +341,7 @@ export async function loadTmuxPlayConfig({ configPath }) {
         adapter: 'claude',
         options: {},
       },
-      players: [{ id }],
+      players: [{ id, ...(${ultracodeConfigRuntime !== 'drop-true'} && /ultracode: true/.test(text) ? { ultracode: true } : ${ultracodeConfigRuntime !== 'drop-false'} && /ultracode: false/.test(text) ? { ultracode: false } : {}) }],
       layout: { initialVisible: [id], columnWeights: [1, 1] },
     },
   };
@@ -390,6 +401,7 @@ export interface AgentCallSettings {
   ${settingsModel}
   ${settingsEffort}
   ${settingsFastMode}
+  ${settingsUltracode}
   ${settingsSubagentModel}
   ${settingsSubagentEffort}
   ${settingsInstruction}
@@ -622,6 +634,7 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.model',
       'AgentCallSettings.effort',
       'AgentCallSettings.fastMode',
+      'AgentCallSettings.ultracode',
       'AgentCallSettings.subagentModel',
       'AgentCallSettings.subagentEffort',
       'AgentCallSettings.instruction',
@@ -650,6 +663,7 @@ describe('the cligent release-capability guard', () => {
       'launchManagedTmuxPlay runtime export',
       'runManagedTmuxPlaySession runtime export',
       'getNativeSkillSupport runtime semantics',
+      'provider defaults and independent Ultracode runtime semantics',
     ]);
     expect(result.ok).toBe(true);
     expect(result.specifier).toBe('@sublang/cligent/tmux-play');
@@ -661,6 +675,22 @@ describe('the cligent release-capability guard', () => {
 
     expect(result.unproven).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ['missing model resolver', { defaultModelsRuntime: '' }],
+    ['empty model pair', { defaultModelsRuntime: 'export function defaultAgentModels() { return {}; }' }],
+    ['missing child model', { defaultModelsRuntime: "export function defaultAgentModels() { return { model: 'primary' }; }" }],
+    ['missing Ultracode capability', { ultracodeSupportRuntime: '' }],
+    ['Claude incorrectly unsupported', { ultracodeSupportRuntime: 'export function isUltracodeSupported() { return false; }' }],
+    ['Codex incorrectly supported', { ultracodeSupportRuntime: 'export function isUltracodeSupported() { return true; }' }],
+    ['lost enabled Ultracode', { ultracodeConfigRuntime: 'drop-true' }],
+    ['lost disabled Ultracode', { ultracodeConfigRuntime: 'drop-false' }],
+  ] as const)('rejects provider model and Ultracode runtime regression: %s', (_name, shape) => {
+    const root = scratch();
+    const result = check(fixtureCligent(root, shape), root);
+    expect(result.ok).toBe(false);
+    expect(result.unproven.map(member => member.id)).toContain('provider defaults and independent Ultracode runtime semantics');
   });
 
   it.each([
@@ -942,6 +972,16 @@ describe('the cligent release-capability guard', () => {
       'narrowed root effort value domain',
       { rootEffort: "export type Effort = 'low' | 'high';" },
       'AgentCallSettings.effort',
+    ],
+    [
+      'independent Ultracode setting',
+      { settingsUltracode: '' },
+      'AgentCallSettings.ultracode',
+    ],
+    [
+      'independent Ultracode boolean domain',
+      { settingsUltracode: 'readonly ultracode?: true;' },
+      'AgentCallSettings.ultracode',
     ],
     [
       'fast-mode setting',
