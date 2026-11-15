@@ -512,7 +512,14 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       model: { kind: 'provider-default' },
       effort: { kind: 'provider-default' },
       fastMode: true,
+      subagentModel: 'gpt-6.1-sol',
     });
+    for (const playbook of ['decide', 'review']) {
+      expect(config.captain.options.playbooks[playbook].roles.coder)
+        .toMatchObject({ subagentModel: 'claude-opus-5-5' });
+      expect(config.captain.options.playbooks[playbook].roles.reviewer)
+        .toMatchObject({ subagentModel: 'gpt-6.1-sol' });
+    }
   });
 
   it('composes the conversational config with its real fixture modules', async () => {

@@ -873,13 +873,14 @@ describe.sequential('installed playbook live acceptance', () => {
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
             fastMode: true,
-            subagentModel: 'inherit',
+            subagentModel: 'claude-opus-5-5',
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
             model: { kind: 'provider-default' },
             effort: { kind: 'provider-default' },
             fastMode: true,
+            subagentModel: 'gpt-6.1-sol',
           },
         });
         expect(
@@ -891,13 +892,14 @@ describe.sequential('installed playbook live acceptance', () => {
             model: { kind: 'value', value: claude },
             effort: { kind: 'value', value: 'high' },
             fastMode: true,
-            subagentModel: 'inherit',
+            subagentModel: 'claude-opus-5-5',
           },
           reviewer: {
             playerId: 'acceptance.dev.reviewer',
             model: { kind: 'value', value: codex },
             effort: { kind: 'value', value: 'high' },
             fastMode: false,
+            subagentModel: 'gpt-6.1-sol',
           },
         });
       } catch (error) {
