@@ -95,9 +95,9 @@ Results:
 
 ### CODE-3
 
-Captain waits until `review` passes with no unsettled findings; playbook `review` owns every review round and every review-fix commit, and no existing commit is rewritten.
+Captain calls `review` once over every `code`-owned commit of this run, oldest first, and waits until it passes with no unsettled findings; playbook `review` owns every review round and every review-fix commit, and no existing commit is rewritten.
 
-When the direct phase or the final IR-task phase ends with its one new `code`-owned commit, Captain shall call playbook `review` once over every `code`-owned commit of this run, oldest first:
+When the direct phase or the final IR-task phase ends with its one new `code`-owned commit, Captain shall call playbook `review`:
 
 > > Original intent: <caller-input>
 > > Review scope: every commit of this coding intent, namely <code-commits>, and its resulting repository state.
