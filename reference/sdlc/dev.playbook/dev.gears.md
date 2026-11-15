@@ -193,9 +193,8 @@ When `branch` succeeds [[dev-5](#dev-5)], `dev` shall continue with the `code` c
 
 `dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose:
 
-- the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];
-- the branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];
-- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].
+- the identities passed to `code` after `decide` succeeds [[dev-3](#dev-3)] [[dev-4](#dev-4)];
+- the identities passed to `pr` after `branch` and `code` succeed [[dev-2](#dev-2)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)].
 
 ## Verification
 
@@ -226,7 +225,7 @@ While Analyst has chosen the code via pull request path or the decide then code 
 
 - call `branch` first [[dev-5](#dev-5)];
 - call `code` on the code via pull request path [[dev-2](#dev-2)], or `decide` and then `code` on the decide then code via pull request path [[dev-3](#dev-3)] [[dev-4](#dev-4)], each with the same input as on its plain path [[dev-34](#dev-34)];
-- call `pr` after `code` succeeds [[dev-6](#dev-6)], with the branch and base revision from the result of `branch` and the last `code`-owned commit and final evaluated revision from the result of `code` [[dev-26](#dev-26)];
+- call `pr` after `code` succeeds [[dev-6](#dev-6)], with every identity taken from a child's canonical structured result [[dev-26](#dev-26)];
 - complete with the successful `pr` result [[dev-8](#dev-8)].
 
 ### dev-30

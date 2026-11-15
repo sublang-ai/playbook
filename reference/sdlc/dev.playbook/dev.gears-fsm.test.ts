@@ -415,7 +415,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
       'When `decide` succeeds [[dev-3](#dev-3)], Captain shall call playbook `code`:',
     );
     expect(gearsSection('dev-26')).toContain(
-      '- the `decide`-owned commit and exact evaluated repository revision passed to `code` [[dev-4](#dev-4)], from the result of `decide` [[dev-3](#dev-3)];',
+      '- the identities passed to `code` after `decide` succeeds [[dev-3](#dev-3)] [[dev-4](#dev-4)];',
     );
     // On the plain paths `code` success completes `dev`, which calls neither
     // `branch` nor `pr`; on the pull-request paths `pr` success does.
@@ -439,7 +439,7 @@ describe('DEV Source, GEARS, and FSM agreement', () => {
     );
     // The `pr` call's identities come from the `branch` and `code` results.
     expect(gearsSection('dev-26')).toContain(
-      '- the branch and base revision passed to `pr` [[dev-6](#dev-6)], from the result of `branch` [[dev-5](#dev-5)];\n- the last `code`-owned commit and exact final evaluated repository revision passed to `pr` [[dev-6](#dev-6)], from the result of the successful `code` call [[dev-2](#dev-2)] [[dev-4](#dev-4)].',
+      '- the identities passed to `pr` after `branch` and `code` succeed [[dev-2](#dev-2)] [[dev-4](#dev-4)] [[dev-5](#dev-5)] [[dev-6](#dev-6)].',
     );
 
     const states = (devMachine as unknown as {
