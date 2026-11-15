@@ -198,6 +198,23 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     expect(enumerateNestedPlaybookStates(codeMachine)).toHaveLength(1);
   });
 
+  it('preserves exact multi-commit review text for current and legacy contexts', () => {
+    const [review] = enumerateNestedPlaybookStates(codeMachine);
+    const commits = ['first-receipt-oid', 'second-receipt-oid'];
+    const legacy = JSON.parse(JSON.stringify({ ...CONTEXT, codeCommits: commits })) as CodeContext;
+    const current = { ...legacy, codeCommitsText: commits.join(', ') };
+    const expected = [
+      '> Original intent: Implement the request.',
+      '> Review scope: every commit of this coding intent, namely first-receipt-oid, second-receipt-oid, and its resulting repository state.',
+      '> Coder output: Committed the requested change.',
+      '',
+      '> IR number: 040',
+    ].join('\n');
+    expect(review.getInput(legacy).text).toBe(expected);
+    expect(review.getInput(current).text).toBe(expected);
+    expect(legacy).not.toHaveProperty('codeCommitsText');
+  });
+
   it('pins every authored post-REVIEW outcome to its compiled route', () => {
     for (const clause of [
       'When a new-IR or a nonfinal IR-task phase completes, Captain shall continue with the next unfinished IR-task phase without a review.',

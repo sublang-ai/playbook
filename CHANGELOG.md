@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Keep CODE’s final nested REVIEW clause in canonical GEARS syntax so downstream verification recognizes its review participant. Adjacent prose preserves the single review over all phase commits in their original order.
+- Keep CODE’s final nested REVIEW clause in canonical GEARS syntax so downstream verification recognizes its review participant. Adjacent prose preserves the single review over all phase commits in their original order. A derived text projection makes the unchanged comma-separated review input verifiable while retaining the authoritative commit array and compatibility with older saved contexts.
 
 ## [18.3.0] - 2026-11-15
 
