@@ -11,6 +11,8 @@ Amends [DR-074](074-seeds-name-the-latest-models.md) in its Cligent floor alone:
 Cites [DR-027](027-runtime-compatibility-from-cligent.md): capability validation of the field is delegated to the installed Cligent, and Playbook keeps no adapter support list of its own.
 Amended by [DR-076](076-subagents-delegate-by-default.md): the field admits `inherit` and defaults to it where the adapter serves one, and `subagentEffort` joins it as a fifth tuning field.
 
+Amended by [DR-104](104-parent-and-child-seed-models.md) in its seed policy: supported adapters receive explicit child model pins.
+
 ## Context
 
 Cligent 0.29 adds an adapter-scoped option `subagentModel`: on Claude it makes every subagent of a run use the named model and tells the agent, through the run's system prompt, to hand well-defined, fine-grained tasks to subagents while keeping the deep thinking, reasoning, and design work itself, without lowering delivered quality.

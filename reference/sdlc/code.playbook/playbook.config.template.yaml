@@ -8,13 +8,14 @@
 
 # The Captain and each stable session player carries its own defaults inline:
 # an adapter shorthand (claude, codex) or a block with
-# adapter/model/effort/fastMode/subagentModel/subagentEffort/browser/permissions. A
-# role may override only model, effort, fastMode, subagentModel, or
+# adapter/model/effort/fastMode/ultracode/subagentModel/subagentEffort/browser/permissions. A
+# role may override only model, effort, fastMode, ultracode, subagentModel, or
 # subagentEffort.
 # Omit an override to inherit the player default. For model, effort,
 # subagentModel, and subagentEffort, false selects the provider default;
-# fastMode false is a literal disabled request.
-# A Claude agent delegates by default: its subagents run on its own model
+# fastMode and ultracode are literal boolean requests.
+# The launcher fills primary and child models from Cligent defaults where available.
+# A Claude agent without a child pin delegates by default: its subagents run on its own model
 # (subagentModel: inherit), its delegates at efforts it chooses per task;
 # subagentModel: false on its block switches delegation off.
 
@@ -36,7 +37,6 @@
 # list, so those captains degrade to a prompt-level restriction (DR-013 A1).
 captain:
   adapter: claude
-  model: claude-opus-5-5
   effort: medium
   permissions:
     mode: auto
@@ -53,7 +53,6 @@ notifications:
 players:
   dev.coder:
     adapter: claude
-    model: claude-opus-5-5
     effort: medium
     # Adapter-scoped fast mode is validated by the installed Cligent contract;
     # omitting it takes the provider default.
@@ -62,7 +61,6 @@ players:
 
   dev.reviewer:
     adapter: claude
-    model: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -72,7 +70,6 @@ players:
   # conversations (DR-044).
   dev.analyst:
     adapter: claude
-    model: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto
@@ -80,7 +77,6 @@ players:
   # Inspection has its own conversation. Browser tools stay off until enabled.
   inspect.inspector:
     adapter: claude
-    model: claude-opus-5-5
     effort: medium
     permissions:
       mode: auto

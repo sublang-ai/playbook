@@ -13,8 +13,8 @@ import { pathToFileURL } from 'node:url';
 export function liveModels(): { claude: string; codex: string } {
   return {
     claude:
-      process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-5-5',
-    codex: process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6.1-sol',
+      process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-fable-5-2',
+    codex: process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-6-astra',
   };
 }
 
@@ -28,6 +28,7 @@ export function liveConfig(
     'captain:',
     '  adapter: claude',
     `  model: ${JSON.stringify(claudeModel)}`,
+    '  subagentModel: claude-opus-5-5',
     '  effort: high',
     '  permissions:',
     '    mode: auto',
@@ -39,12 +40,14 @@ export function liveConfig(
     '  acceptance.dev.coder:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
+    '    subagentModel: claude-opus-5-5',
     '    effort: xhigh',
     '    permissions:',
     '      mode: auto',
     '  acceptance.dev.reviewer:',
     '    adapter: codex',
     `    model: ${JSON.stringify(codexModel)}`,
+    '    subagentModel: gpt-6.1-sol',
     '    effort: xhigh',
     ...(options.reviewerInstruction === undefined
       ? []
@@ -60,6 +63,7 @@ export function liveConfig(
     '  acceptance.dev.analyst:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
+    '    subagentModel: claude-opus-5-5',
     '    effort: high',
     '    permissions:',
     '      mode: auto',
@@ -125,6 +129,7 @@ export function hermeticConfig(repo: string): string {
     '  release.worker:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
+    '    subagentModel: claude-opus-5-5',
     '    effort: low',
     '    permissions:',
     '      mode: auto',
@@ -154,6 +159,7 @@ export function conversationConfig(repo: string): string {
     'captain:',
     '  adapter: claude',
     `  model: ${JSON.stringify(claudeModel)}`,
+    '  subagentModel: claude-opus-5-5',
     '  effort: high',
     '  permissions:',
     '    mode: auto',
@@ -165,6 +171,7 @@ export function conversationConfig(repo: string): string {
     '  release.worker:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
+    '    subagentModel: claude-opus-5-5',
     '    effort: low',
     '    permissions:',
     '      mode: auto',
@@ -183,6 +190,7 @@ export function skillsConfig(repo: string): string {
     'captain:',
     '  adapter: claude',
     `  model: ${JSON.stringify(claudeModel)}`,
+    '  subagentModel: claude-opus-5-5',
     '  effort: low',
     '  skills: []',
     '  permissions: { mode: auto }',
@@ -194,12 +202,14 @@ export function skillsConfig(repo: string): string {
     '  release.skills.claude:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
+    '    subagentModel: claude-opus-5-5',
     '    effort: low',
     '    permissions: { mode: auto }',
     '  release.skills.codex:',
     '    adapter: codex',
     '    skills: ["../../native-skills/codex/release-acceptance-token"]',
     `    model: ${JSON.stringify(codexModel)}`,
+    '    subagentModel: gpt-6.1-sol',
     '    effort: low',
     '    permissions: { mode: auto }',
     'playbooks:',

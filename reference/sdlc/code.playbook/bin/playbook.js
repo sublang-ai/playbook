@@ -1003,7 +1003,7 @@ function helpText({
     "  - set the top-level captain and each stable players.<id> to an",
     "    adapter shorthand (claude, codex) or an inline agent block",
     "  - bind every playbooks.<id>.roles.<role> explicitly to a player id;",
-    "    a scalar names the id, while { player, model?, effort?, fastMode?,",
+    "    a scalar names the id, while { player, model?, effort?, fastMode?, ultracode?,",
     "    subagentModel?, subagentEffort? } may retune one role;",
     "    false selects provider-default model/effort/subagentModel/",
     "    subagentEffort, while fastMode false is a literal disabled request",

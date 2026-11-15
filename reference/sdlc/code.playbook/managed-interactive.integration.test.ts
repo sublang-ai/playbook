@@ -146,14 +146,16 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
         subagentModel: 'player-subagents-b',
         subagentEffort: 'medium',
       });
-    expect(FixtureAdapter.effects.find((item) => item.kind === 'captain'))
-      .toMatchObject({
-        resume: 'captain-token:interactive-a:1',
-        model: 'captain-model-b',
-        effort: 'max',
-        subagentModel: 'captain-subagents-b',
-        subagentEffort: 'low',
-      });
+    const captainEffect = FixtureAdapter.effects.find(
+      (item) => item.kind === 'captain',
+    );
+    expect(captainEffect).toMatchObject({
+      resume: 'captain-token:interactive-a:1',
+      model: 'captain-model-b',
+      effort: 'max',
+    });
+    expect(captainEffect?.subagentModel).toBeUndefined();
+    expect(captainEffect?.subagentEffort).toBeUndefined();
     const settled = await fixture.store.read(fixture.sessionId);
     expect(settled.state).toBe('settled');
     expect(settled.cwd).toBe(fixture.cwd);
@@ -252,9 +254,9 @@ describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
       resume: 'captain-token:headless-a:1',
       model: 'captain-model-b',
       effort: 'max',
-      subagentModel: 'captain-subagents-b',
-      subagentEffort: 'low',
     });
+    expect(captainEffect.subagentModel).toBeUndefined();
+    expect(captainEffect.subagentEffort).toBeUndefined();
     const visible = await selected.waitFor('reply-visible');
     expect(visible.durableState).toBe('settled');
     expect(visible.durableSnapshot.playerSessions['dev.coder']).not.toHaveProperty('resumeToken');

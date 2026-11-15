@@ -78,7 +78,7 @@ declare const playerAdapter: {
 const roleBindings = {
   coder: {
     playerId: 'team.coder',
-    promptIdentity: 'claude-opus-5-5',
+    promptIdentity: 'claude-fable-5-2',
   },
   reviewer: {
     playerId: 'team.reviewer',

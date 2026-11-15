@@ -7,6 +7,8 @@
 
 Accepted (2026-10-20).
 
+Amended in tool-free delegation under [DR-105](105-runtime-owned-seed-and-delegation.md).
+
 ## Context
 
 [DR-092](092-skills-follow-working-agents.md) gives routing, Judge and reporting calls an empty skill list, but each runtime still discovers skills by itself in its project and user skill folders and offers them to every run [[1]].

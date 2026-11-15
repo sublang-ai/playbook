@@ -208,13 +208,13 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     );
     const recordsLocalLink = lockEntry.version.startsWith('link:');
 
-    expect(packageSpecifier).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(packageSpecifier).toMatch(CARET_RANGE);
     const declaredFloor = packageSpecifier.slice(1).split('.').map(Number);
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          declaredFloor[1] >= 37),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+          declaredFloor[1] >= 39),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.39.0 model-default and Ultracode floor (RELEASE-14)`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -230,6 +230,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         : recordsConcreteVersion,
     ).toBe(true);
     if (!recordsLocalLink) {
+      expect(satisfiesCaret(lockEntry.version, packageSpecifier)).toBe(true);
       const resolvedFloor = lockEntry.version
         .split('(')[0]
         .split('.')
@@ -237,8 +238,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            resolvedFloor[1] >= 37),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.37.0 floor serving gpt-6.1-sol and carrying native-skill call settings, cross-agent skills, live host approvals, native attachments and complete settings (RELEASE-14)`,
+            resolvedFloor[1] >= 39),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.39.0 model-default and Ultracode floor (RELEASE-14)`,
       ).toBe(true);
     }
   });
@@ -460,6 +461,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.model',
         'AgentCallSettings.effort',
         'AgentCallSettings.fastMode',
+        'AgentCallSettings.ultracode',
         'AgentCallSettings.subagentModel',
         'AgentCallSettings.subagentEffort',
         'AgentCallSettings.instruction',
@@ -488,6 +490,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'launchManagedTmuxPlay runtime export',
         'runManagedTmuxPlaySession runtime export',
         'getNativeSkillSupport runtime semantics',
+        'provider defaults and independent Ultracode runtime semantics',
       ]);
       expect(result.ok).toBe(true);
     } finally {
@@ -1321,6 +1324,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertPlaybookCaptainShellSnapshot',
       'projectUnresolvedEffects',
       'createPlaybookCaptainShell',
+      'isUltracodeSupported',
       'default',
     ],
     './session-store': [
@@ -1696,6 +1700,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'assertPlaybookCaptainShellSnapshot',
       'projectUnresolvedEffects',
       'createPlaybookCaptainShell',
+      'isUltracodeSupported',
       'default',
     ],
     './session-store': [
@@ -2552,6 +2557,8 @@ if (snapshot.mode === 'engaged.parked') {
   type XStatePlaybookRuntimeSpecV3,
   type XStateRepositoryCapability,
 } from '@sublang/playbook/xstate-runtime';
+import { isUltracodeSupported } from '@sublang/playbook/playbook-captain';
+const supportsUltracode: boolean = isUltracodeSupported('claude');
 import type {
   PlaybookCaptainRegistryEntryV3,
   PlaybookCaptainRuntimeProfile,
@@ -2993,6 +3000,8 @@ void inspectCapabilities;
       `${CODE_BASE}machine-identity.js`,
       `${CODE_BASE}machine-identity.d.ts`,
       `${CODE_BASE}bin/machine-identity.js`,
+      `${CODE_BASE}ultracode.js`,
+      `${CODE_BASE}ultracode.d.ts`,
       `${CODE_BASE}seed-config.js`,
       `${CODE_BASE}seed-config.d.ts`,
       `${CODE_BASE}bin/private-paths.js`,

@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Compiled GEARS is a spec package the machine cites** ([DR-108](specs/decisions/108-compiled-gears-is-a-spec-package.md)): `text2gears` emits `## Intent`, `## External Behavior`, `## Internal Behavior` and `## Verification` with lowercase item IDs and three item kinds — action items carrying only their statement, prompt and `Results:`, requirement items stating each invariant, terminal return, bound and continuation once, and test items citing them — and a machine state cites its action item through `sourceItem` without regard to letter case. The eight reference GEARS are rewritten in this form with every action item's prompt and `Results:` byte for byte and no machine recompiled; CODE-3's acting clause is again exactly ``Captain shall call playbook `review`:``. The optimize pass appends no `## Optimizations` section, and the prefix tool prints and accepts item IDs as the package writes them.
 
+## [18.3.0] - 2026-11-15
+
+### Added
+
+- Set `ultracode` independently of effort on Claude Captain, player, and role configurations. An explicit boolean takes precedence over legacy `effort: ultracode`.
+- Embedding hosts can pass `modelEnv` to `seedConfigText` separately from the credentials used to choose adapters. The optional `modelHome` selects the local user home or a host-approved Codex settings directory for that user's model selection.
+
+### Changed
+
+- Require Cligent `^0.39.0`. Fresh direct-service configurations use Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Custom routes keep their provider's models. Existing configurations keep their selections.
+- An unpinned Claude primary model is selected by the native SDK. On resume, `ANTHROPIC_MODEL` from the environment or native `settings.env` overrides the session model; changing only the top-level `model` key in Claude Code’s own `settings.json` retains the session selection. This corrects 18.1.3’s description of omission as always selecting the current default.
+- Codex working calls request delegation when a child model or effort is selected. Tool-free Captain calls omit both settings.
+
 ## [18.2.0] - 2026-11-08
 
 ### Changed
@@ -1125,7 +1138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.2.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.3.0...HEAD
+[18.3.0]: https://github.com/sublang-ai/playbook/compare/v18.2.0...v18.3.0
 [18.2.0]: https://github.com/sublang-ai/playbook/compare/v18.1.4...v18.2.0
 [18.1.4]: https://github.com/sublang-ai/playbook/compare/v18.1.3...v18.1.4
 [18.1.3]: https://github.com/sublang-ai/playbook/compare/v18.1.2...v18.1.3
