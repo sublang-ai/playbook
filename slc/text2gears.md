@@ -104,7 +104,7 @@ Every reliance of one item on another shall be an inline citation of the form `[
 The GEARS definition binds a peer package by a citation of its External Behavior; Target departs from that rule, because a package compiles without its peers' packages and cannot know their item IDs.
 Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package.
 The item that relies on another playbook shall state what it takes from that playbook's result, so that no reliance rests on the missing link.
-Where what follows a nested call rests on that playbook's success, one requirement item shall state what the caller requires of a successful result — as Source states it, and otherwise, where the pipeline supplies the [workflow contracts](workflow-contracts.json) catalog, as the catalog declares that playbook's success result and its required values, put in words — and every item that speaks of that success shall cite it.
+Where what follows a nested call rests on that playbook's success, one requirement item shall state what the caller requires of a successful result — as Source states it, and otherwise, where the pipeline supplies the [workflow contracts](workflow-contracts.json) catalog, as the catalog declares that playbook's success result and its required values, put in words without the catalog's property names — and every item that speaks of that success shall cite it.
 With neither, the items say only that the playbook succeeds.
 
 ### Test items
