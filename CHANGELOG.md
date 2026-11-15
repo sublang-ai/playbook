@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Require Cligent `^0.39.0`. Fresh direct-service configurations use Claude Fable 5.2 with Opus 5.5 children or GPT-6 Astra with GPT-6.1 Sol children. Custom routes keep their provider's models. Existing configurations keep their selections.
+- An unpinned Claude primary model is selected by the native SDK. On resume, `ANTHROPIC_MODEL` from the environment or native `settings.env` overrides the session model; changing only `settings.model` retains the session selection. This corrects 18.1.3’s description of omission as always selecting the current default.
 - Codex working calls request delegation when a child model or effort is selected. Tool-free Captain calls omit both settings.
 
 ## [18.2.0] - 2026-11-08

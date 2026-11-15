@@ -552,7 +552,7 @@ packages:
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
   '@sublang/cligent@0.39.0':
-    resolution: {integrity: sha512-Ga+dY7qUKUjVUkQb0lQMAM7k6zGX056frdD6XO5/UvTviigOUtlHey8KfdcQvK6QB9mffrklaOxL6bLYISYxeA==, tarball: https://registry.npmjs.org/@sublang/cligent/-/cligent-0.39.0.tgz}
+    resolution: {integrity: sha512-NYjiZQDr6JJtPyAxLFVob7MChbFAvuPPei0jV37nMWqdhdIlldHojf0sXd2bHY2Ug4a7I/p0+u64COCCztd4gA==, tarball: https://registry.npmjs.org/@sublang/cligent/-/cligent-0.39.0.tgz}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:

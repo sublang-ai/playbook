@@ -204,9 +204,11 @@ roles:
 Omitting any override inherits that player's top-level default. For `model`,
 `effort`, `subagentModel`, and `subagentEffort`, boolean `false` selects the
 provider default for that field instead of inheriting the player's setting.
-For a Claude primary model this starts a fresh conversation on its current
-default. A resumed conversation keeps its last recorded primary model unless
-a call names a replacement. Roles sharing a player share that conversation.
+For a Claude primary model, omission delegates selection to the native SDK.
+On resume, `ANTHROPIC_MODEL` from the environment or native `settings.env`
+overrides the session model; changing only `settings.model` retains the session
+selection. A concrete model explicitly switches it.
+Roles sharing a player share that conversation.
 For `fastMode`, `false` is a literal request to
 disable fast mode; omitting the top-level setting selects the provider default.
 A present fast-mode boolean, subagent model, or subagent effort is accepted
@@ -415,8 +417,9 @@ directory; only model, effort, fast mode, subagent model, and subagent effort
 may change. The next call reapplies both complete model and effort selections,
 the optional effective fast-mode boolean, and the optional effective subagent
 model and subagent effort. An uncertain retry accepts no tuning overlay and only restores and reports the recorded attempt. Later turns use the current compatible settings.
-A Claude player whose primary selection is provider default resumes on its last
-recorded primary model. Set a named model to switch that conversation.
+A Claude player whose primary selection is provider default delegates the resumed
+selection to the native SDK, including the `ANTHROPIC_MODEL` override described
+above. Set a named model to switch that conversation explicitly.
 
 ## Session storage
 

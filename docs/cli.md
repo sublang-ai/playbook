@@ -309,8 +309,11 @@ config enables but the session does not hold is ignored, while one naming no
 playbook of your config is refused. Compatible current `model`, `effort`, and
 optional `fastMode`, `ultracode`, `subagentModel`, and `subagentEffort` settings apply to
 the next call. Boolean `false` explicitly
-resets model, effort, subagent model, or subagent effort to the provider
-default, but `fastMode: false` is a literal
+removes the role’s configured model, effort, subagent model, or subagent effort pin.
+An omitted Claude primary model delegates to the native SDK: on resume,
+`ANTHROPIC_MODEL` from the environment or native `settings.env` overrides the
+session model; `settings.model` alone retains the session selection.
+A concrete model switches it. `fastMode: false` is a literal
 disabled request; omission selects the provider default or inherits the player
 value at a role binding.
 Provider conversations are local hints. Missing hints start fresh from stored
