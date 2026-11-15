@@ -98,3 +98,4 @@ A plain request calls neither `branch` nor `pr`.
 If a child returns an authored abort or failure, or a terminal result that does not prove the success required for the selected path, `dev` shall start no later child and shall relay that canonical result; a `branch` or `pr` failure ends `dev` under this same rule.
 If a child call fails outside its authored result contract, `dev` shall park as failed and retain the control-plane error.
 `dev` shall consume commit, revision, branch, and pull-request identities only from each child's canonical structured result, never from player prose.
+The issue summary, branch, and base revision passed to `pr` come only from the result of `branch`, the `decide`-owned commit and evaluated repository revision passed to `code` only from the result of `decide`, and the last `code`-owned commit and final evaluated repository revision passed to `pr` only from the result of `code`.
