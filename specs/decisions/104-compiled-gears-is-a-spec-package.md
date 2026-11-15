@@ -37,6 +37,7 @@ A compiled GEARS file shall be a spec package in the form of [[1]], with the one
 
 - Sections `Intent`, `External Behavior`, `Internal Behavior`, `Verification`, in that order and no other; `Roles:` stands under `Intent`.
 - Item headings are lowercase `<pack>-<N>`; `<pack>` is derived from the Source's basename — ASCII letters lowercased, every other run of characters but digits made one hyphen, `pack` put first where nothing or a digit would lead — so a dotted or non-ASCII Source name such as `workflow.zh` yields a valid identifier, and no artifact name, playbook id or registry entry changes.
+- Recompiling over a prior package keeps an item's number where its prior ID is `<pack>-<N>` in any letter case; an item with another prior prefix, or a number already held, takes the lowest unused number, so no legacy ID survives in another form and no two items share a heading.
 - Every item is exactly one GEARS statement followed only by the attachments its colon introduces.
 - Three item kinds:
 
@@ -49,8 +50,8 @@ A compiled GEARS file shall be a spec package in the form of [[1]], with the one
 - `Captain shall` appears only in an action item's statement, so an item's kind is read from its statement, and an action that lost its prompt is not mistaken for a requirement.
 - Every invariant, terminal return, bound, child-return rule and Boss-answer resumption is a requirement item, stated once; an action item carries nothing but its statement, its prompt and its result contract.
 - Reliance of one item on another is an inline citation within the package.
-- Departure from [[1]]: a peer playbook is named by its backticked id, not bound by a citation of its External Behavior, because a package compiles without its peers' packages and cannot know their item IDs; the relying item states in its own statement the behavior it relies on.
-- A package names what its workflow operates on as its Source does — the `code` package names the intent records Coder creates and works through — because that is the workflow's behavior; it cites or names no particular record of any specs tree.
+- Departure from [[1]]: a peer playbook is named by its backticked id, not bound by a citation of its External Behavior, because a package compiles without its peers' packages and cannot know their item IDs; the relying item states, as far as the Source states it, what it takes from that playbook's result, and where the Source says only that the playbook succeeds it does not restate that playbook's contract.
+- A package names what its workflow operates on as its Source does — the `code` package names the intent records Coder creates and works through — because that is the workflow's behavior; the compiler adds no reference to a particular intent record of its own, and keeps a record identifier the Source supplies, such as a decision an authored prompt names, as written.
 - Test items cite every action and requirement item and describe flows a run shows from outside.
 - A test item maps its scenario as Given-When-Then — what has already happened is `While` or `Where`, the one event under test is `When` — and its assertions cite the action that delivers a prompt instead of restating the prompt.
 

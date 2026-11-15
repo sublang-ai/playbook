@@ -65,7 +65,8 @@ The package identifier `<pack>` is derived from the Source's basename without it
 So `review` gives `review`, `my.flow` gives `my-flow`, `workflow.zh` gives `workflow-zh`, and a basename with no ASCII letter or digit gives `pack`.
 `<pack>` names the package's items and nothing else: every artifact name, playbook id, and registry entry keeps the Source's basename as it is.
 An item heading at `##`, `####`, or another level is not GEARS item syntax and will not be visible to downstream compilers or verification.
-Where the phase host supplies a prior Target, an item that keeps its concern shall keep its ID.
+Where the phase host supplies a prior Target, an item that keeps its concern shall keep its number where its prior ID is `<pack>-<N>` in any letter case, and is written with the lowercase `<pack>`.
+An item whose prior ID has another prefix, or whose number another kept item already holds, takes the lowest unused number, in the prior Target's order; no prior ID is carried over in another form, so two items never share a heading.
 
 Each item shall be exactly one GEARS statement, `[Where <static precondition>] [While <run state>] [When <one event>] <subject> shall <behavior>`, standing first in the item, followed only by the attachments its closing colon introduces.
 The one line that may precede the statement is an action item's `Parallel group:` label ([Parallel behaviors](#parallel-behaviors)).
@@ -94,14 +95,15 @@ Every requirement Source states that is not itself an action or the content of a
 A requirement item shall keep the Source's own wording where that wording is already a requirement, and shall add no obligation Source does not state: it adds a citation, never a scope, a qualifier, or an output field name that Source does not give.
 Where the Source's wording names a machine part, such as a transition, the item states the same rule as what follows in the run.
 What a workflow operates on is its behavior and keeps the Source's name for it: a coding workflow that creates and works through intent records names them as its Source does.
-That differs from citing a record: Target cites or names no particular decision or intent record of any specs tree.
+That differs from a reference of the compiler's own: text2gears writes no reference to a particular intent record that Source does not supply, and it keeps every record identifier Source does supply — a decision an authored prompt names, for instance — exactly as Source writes it.
 
 ### Citations
 
 Every reliance of one item on another shall be an inline citation of the form `[[<pack>-<N>](#<pack>-<N>)]` at the phrase that relies on it: an action whose trigger is another action's outcome cites that action, and a requirement cites each action or requirement it governs.
 The GEARS definition binds a peer package by a citation of its External Behavior; Target departs from that rule, because a package compiles without its peers' packages and cannot know their item IDs.
 Another playbook shall be named by its backticked id, the machine syntax of [Nested playbook calls](#nested-playbook-calls), and not by a link into that playbook's package.
-The item that relies on another playbook shall state in its own statement the behavior it relies on — what it requires of that playbook's result — so that no reliance rests on the missing link.
+The item that relies on another playbook shall state, as far as Source states it, what it takes from that playbook's result, so that no reliance rests on the missing link.
+Where Source says only that the playbook succeeds, the item says so and does not restate that playbook's own contract, which the workflow-contracts catalog binds by its id.
 
 ### Test items
 
