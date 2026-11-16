@@ -1882,6 +1882,7 @@ describe('player + script workflow over the shared factory', () => {
         payload: {
           stateId: 'verify',
           sourceItem: 'WF-2',
+          command: 'true',
           exitStatus: 0,
           durationMs: expect.any(Number),
           output: '',
@@ -2019,17 +2020,20 @@ describe('player + script workflow over the shared factory', () => {
   ] as const)(
     'records what a script wrote to stdout and stderr in write order at a %s exit',
     async (_label, exitStatus, stateId) => {
+      // The machine binds the command from its context (DR-107): the record
+      // carries what the shell ran.
+      const command =
+        'echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2; ' +
+        `exit ${exitStatus}`;
       const { runtime, result, emissions, scriptEvents } =
-        await runScriptStep(
-          'echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2; ' +
-            `exit ${exitStatus}`,
-        );
+        await runScriptStep(command);
 
       expect(result.state.stateId).toBe(stateId);
       expect(scriptEvents).toEqual([
         {
           stateId: 'verify',
           sourceItem: 'WF-2',
+          command,
           exitStatus,
           durationMs: expect.any(Number),
           output: 'out-1\nerr-1\nout-2\nerr-2\n',
