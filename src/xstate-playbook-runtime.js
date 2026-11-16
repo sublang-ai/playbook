@@ -1827,7 +1827,7 @@ const SUPPRESSED_ENTRY_STATES = new Set(['ready', 'done']);
 // SIGKILL after this grace, so settlement (gated on the shell's own exit)
 // stays bounded even for TERM-immune commands.
 const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
-// DR-103: the command's stdout and stderr go to one pipe, so a script's
+// DR-106: the command's stdout and stderr go to one pipe, so a script's
 // output is read in the order written, and a relay reads that pipe. The
 // relay copies to this process until this process closes its end or exits,
 // then reads on and discards, so a descendant that outlives the shell — or
@@ -5789,7 +5789,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // `input.command` through `sh -c`, resolves the declared guard
         // mechanically from the exit status, and emits one status + one
         // `playbook.script` telemetry event, which alone carries the bounded
-        // record of what the command printed (DR-103). No agent call, no
+        // record of what the command printed (DR-106). No agent call, no
         // adjudication, no `*.call.*` trace.
         function scriptActor() {
             return fromPromise(({ input, signal }) => runJournalledStep('script', input, signal, async () => {
@@ -5804,10 +5804,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // nothing, and the thrown signal reason keeps the rejection
                 // causally classified as the abort it is.
                 active.throwIfAborted();
-                // DR-103: the code page a non-UTF-8 line is read in is settled
+                // DR-106: the code page a non-UTF-8 line is read in is settled
                 // before the command runs, because the capture follows it.
                 const codePage = await readSystemCodePage();
-                // DR-103: the command writes to a pipe it can open again by path,
+                // DR-106: the command writes to a pipe it can open again by path,
                 // as through `/dev/stderr`. This process makes it where it can;
                 // elsewhere the step's shell does.
                 const outputPipe = await openScriptOutputPipe();
@@ -5899,7 +5899,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 let capturing = true;
                 // Stops recording and closes this process's end of the relay's
                 // pipe. The relay reads on and discards, so a descendant that
-                // outlived the shell keeps a working stdout and stderr (DR-103)
+                // outlived the shell keeps a working stdout and stderr (DR-106)
                 // and this process holds nothing of the step once it settles.
                 const releaseOutputPipe = () => {
                     capturing = false;
@@ -5914,7 +5914,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // so an abort can terminate the command's whole group — a
                             // lone SIGTERM to the wrapper never reaches backgrounded
                             // members.
-                            // DR-103: with a pipe of this process's making, the
+                            // DR-106: with a pipe of this process's making, the
                             // wrapper only joins stderr to stdout and execs, so
                             // `input.command` still runs verbatim through `sh -c` in
                             // the same process, as the same group leader. With none,

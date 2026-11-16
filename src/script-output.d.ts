@@ -5,7 +5,7 @@ export interface ScriptOutputPipe {
     readonly write: number;
 }
 /**
- * A pipe of the kernel's own for a command's stdout and stderr (DR-103).
+ * A pipe of the kernel's own for a command's stdout and stderr (DR-106).
  * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
  * again by path, so a command that writes to `/dev/stderr` fails on one. A
  * FIFO opened at both ends is a pipe, and stays one once its name is gone.
@@ -18,7 +18,7 @@ export declare function openScriptOutputPipe(): Promise<ScriptOutputPipe | undef
 export declare function closeScriptOutputPipe(pipe: ScriptOutputPipe | undefined): void;
 /**
  * A Windows code page that serves a system as both its ANSI and its OEM
- * code page (DR-103): the label of the decoder that reads it and, where
+ * code page (DR-106): the label of the decoder that reads it and, where
  * its characters take one or two bytes, the bytes that open a two-byte one.
  */
 export interface ScriptOutputCodePage {
@@ -36,7 +36,7 @@ export declare const SCRIPT_OUTPUT_CODE_PAGES: Readonly<Record<string, ScriptOut
  */
 export declare function readSystemCodePage(): Promise<ScriptOutputCodePage | undefined>;
 /**
- * The bounded record of what a script wrote (DR-103): the last
+ * The bounded record of what a script wrote (DR-106): the last
  * `SCRIPT_OUTPUT_TAIL_BYTES` captured bytes in arrival order, read as text
  * once. NUL goes last, so a UTF-16 line of ASCII text reads as its text and
  * no record holds U+0000.

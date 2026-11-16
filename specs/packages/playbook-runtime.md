@@ -562,7 +562,7 @@ Where a factory-backed artifact supplies an artifact-specific status override, t
 
 #### playbook-runtime-108
 
-When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-103](../decisions/103-a-script-step-records-its-output.md)):
+When a script actor's shell exits with no abort observed, the runtime shall emit through the ordered emission queue [[playbook-runtime-14](#playbook-runtime-14)], before resolving the guard, the status `Executed script for <stateId> (exit <status>).` and then one `playbook.script` telemetry event with exactly this payload ([DR-106](../decisions/106-a-script-step-records-its-output.md)):
 
 | Field | Value |
 | --- | --- |
@@ -582,7 +582,7 @@ When a script actor's shell exits with no abort observed, the runtime shall emit
 
 #### playbook-runtime-111
 
-The runtime shall read the bytes of a `playbook.script` event's `output` [[playbook-runtime-108](#playbook-runtime-108)] as text line by line, each line in one encoding, and remove every NUL from that text ([DR-103](../decisions/103-a-script-step-records-its-output.md) §2):
+The runtime shall read the bytes of a `playbook.script` event's `output` [[playbook-runtime-108](#playbook-runtime-108)] as text line by line, each line in one encoding, and remove every NUL from that text ([DR-106](../decisions/106-a-script-step-records-its-output.md) §2):
 
 | Line | Read as |
 | --- | --- |

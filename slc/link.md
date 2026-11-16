@@ -1637,7 +1637,7 @@ The provided actor shall:
   event under topic `playbook.script` with payload
   `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`,
   through the ordinary serialized emission channel
-  ([DR-103](../specs/decisions/103-a-script-step-records-its-output.md)):
+  ([DR-106](../specs/decisions/106-a-script-step-records-its-output.md)):
   - `durationMs` is the whole milliseconds from spawning the shell to its
     exit, never negative.
   - `output` is the last 16384 bytes the command wrote to stdout and stderr,

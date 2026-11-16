@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// Test-only: the Windows code pages script output is read in (DR-103). Each
+// Test-only: the Windows code pages script output is read in (DR-106). Each
 // sample is a text and one character with their bytes in that code page, as
 // octal escapes, so a command's own text never spells them. Every byte of
 // every `char` lies in 0x80–0xBF, which UTF-8 reads as the continuation of a

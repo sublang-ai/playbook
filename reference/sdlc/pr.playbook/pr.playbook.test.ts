@@ -464,7 +464,7 @@ function acceptedOutcomes(host: PrHarness): unknown[] {
 }
 
 // Which script ran and how it exited. The duration and output each event also
-// records (DR-103) are the shared factory's concern, verified there.
+// records (DR-106) are the shared factory's concern, verified there.
 function scriptEvents(host: PrHarness): unknown[] {
   return host.telemetry
     .filter(({ topic }) => topic === 'playbook.script')

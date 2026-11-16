@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// The script-output tail read directly (DR-103), so its decoding and its
+// The script-output tail read directly (DR-106), so its decoding and its
 // cut tracking run on every platform and in every code page. The real pipe
 // and a real Windows code page are `script-output.integration.test.ts`'s.
 
@@ -54,7 +54,7 @@ function expectRecord(
   }
 }
 
-describe('script output with no code page (DR-103)', () => {
+describe('script output with no code page (DR-106)', () => {
   it('reads lenient UTF-8 and removes NUL', () => {
     expectRecord(
       undefined,
@@ -98,7 +98,7 @@ describe('script output with no code page (DR-103)', () => {
 });
 
 describe.each(Object.keys(SCRIPT_OUTPUT_CODE_PAGES))(
-  'script output read in code page %s (DR-103)',
+  'script output read in code page %s (DR-106)',
   (page) => {
     const codePage = SCRIPT_OUTPUT_CODE_PAGES[page]!;
     const sample = CODE_PAGE_SAMPLES[page]!;

@@ -9,7 +9,7 @@ Implemented (2026-11-12).
 
 ## Intent
 
-Record what a script step printed on its `playbook.script` telemetry event, for hosts and people only, per [DR-103](../decisions/103-a-script-step-records-its-output.md).
+Record what a script step printed on its `playbook.script` telemetry event, for hosts and people only, per [DR-106](../decisions/106-a-script-step-records-its-output.md).
 
 ## Deliverables
 

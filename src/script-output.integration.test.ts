@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// DR-103 §4 across the runtime/shell seam: what a script step printed reaches
+// DR-106 §4 across the runtime/shell seam: what a script step printed reaches
 // the host on its `playbook.script` telemetry event and reaches no agent —
 // the session Captain included, when it reports the run the script failed and
 // when the Boss then asks what the command printed. The real factory runs a
@@ -256,7 +256,7 @@ function createHarness() {
   };
 }
 
-describe('script output under the Captain shell (DR-103)', () => {
+describe('script output under the Captain shell (DR-106)', () => {
   it('passes a failed script step\'s output to the host and gives it to no agent call', async () => {
     const harness = createHarness();
     await harness.shell.init!(harness.session);
@@ -335,7 +335,7 @@ describe('script output under the Captain shell (DR-103)', () => {
   });
 });
 
-// DR-103 §2 on native Windows: a line that is not UTF-8 is read in the
+// DR-106 §2 on native Windows: a line that is not UTF-8 is read in the
 // system code page, where the system has one for both its ANSI and OEM
 // forms.
 const codePageSample: CodePageSample | undefined =
@@ -384,7 +384,7 @@ async function runGate(
 }
 
 describe.skipIf(codePageSample === undefined)(
-  'script output on native Windows (DR-103)',
+  'script output on native Windows (DR-106)',
   () => {
     it('reads a line that is not UTF-8 in the system code page, beside UTF-8 lines', async () => {
       const { text, bytes } = codePageSample!;

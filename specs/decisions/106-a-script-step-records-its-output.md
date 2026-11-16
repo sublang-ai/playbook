@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# DR-103: A Script Step Records Its Output
+# DR-106: A Script Step Records Its Output
 
 ## Status
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 // What a script step's command wrote, as the text its `playbook.script`
-// record carries (DR-103): the bounded tail of the captured bytes, read
+// record carries (DR-106): the bounded tail of the captured bytes, read
 // once. Internal to the shared factory's script actor.
 
 import { isUtf8 } from 'node:buffer';
@@ -22,7 +22,7 @@ export interface ScriptOutputPipe {
 }
 
 /**
- * A pipe of the kernel's own for a command's stdout and stderr (DR-103).
+ * A pipe of the kernel's own for a command's stdout and stderr (DR-106).
  * Node's `pipe` stdio is a socket pair, and Linux refuses to open a socket
  * again by path, so a command that writes to `/dev/stderr` fails on one. A
  * FIFO opened at both ends is a pipe, and stays one once its name is gone.
@@ -71,7 +71,7 @@ export function closeScriptOutputPipe(pipe: ScriptOutputPipe | undefined): void 
 
 /**
  * A Windows code page that serves a system as both its ANSI and its OEM
- * code page (DR-103): the label of the decoder that reads it and, where
+ * code page (DR-106): the label of the decoder that reads it and, where
  * its characters take one or two bytes, the bytes that open a two-byte one.
  */
 export interface ScriptOutputCodePage {
@@ -159,7 +159,7 @@ function afterNewlineNul(bytes: Buffer, start: number): number {
 }
 
 /**
- * Whether a line is read in the system code page (DR-103 §2): it is not
+ * Whether a line is read in the system code page (DR-106 §2): it is not
  * UTF-8, and it holds no NUL, which marks UTF-16 and never code-page text.
  * The one rule for a whole line and for the line a cut fell in.
  */
@@ -219,7 +219,7 @@ function createCodePageReader(
 }
 
 /**
- * The line a cut falls in (DR-103). Its dropped bytes are followed as they
+ * The line a cut falls in (DR-106). Its dropped bytes are followed as they
  * are dropped, in UTF-8 and in the system code page, so the kept rest of
  * the line is read from a character boundary that is known — a two-byte
  * code page marks none in the bytes themselves — and the line is judged as
@@ -316,7 +316,7 @@ function createCutLine(codePage: CodePageReader | undefined): {
 }
 
 /**
- * Whole lines of script output as text (DR-103). UTF-8 throughout, each
+ * Whole lines of script output as text (DR-106). UTF-8 throughout, each
  * invalid sequence becoming U+FFFD, except that a line the system code
  * page reads is read in it, where the system has one.
  */
@@ -339,7 +339,7 @@ function readWholeLines(
 }
 
 /**
- * The bounded record of what a script wrote (DR-103): the last
+ * The bounded record of what a script wrote (DR-106): the last
  * `SCRIPT_OUTPUT_TAIL_BYTES` captured bytes in arrival order, read as text
  * once. NUL goes last, so a UTF-16 line of ASCII text reads as its text and
  * no record holds U+0000.

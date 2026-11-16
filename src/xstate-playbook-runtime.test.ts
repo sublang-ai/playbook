@@ -1980,7 +1980,7 @@ describe('player + script workflow over the shared factory', () => {
     }
   });
 
-  // DR-103 / slc/link.md §Script execution: what a script step printed is
+  // DR-106 / slc/link.md §Script execution: what a script step printed is
   // recorded on its `playbook.script` telemetry event, and nowhere else.
   const runScriptStep = async (
     command: string,
