@@ -167,13 +167,13 @@ fragment.
 The adjacent `prefix-prompts.mjs` tool performs this rewrite exactly:
 
 ```sh
-node "<definition-directory>/prefix-prompts.mjs" --source "<source.gears.md>" --target "<target.gears.md>" [--keep <ITEM-ID>]...
+node "<definition-directory>/prefix-prompts.mjs" --source "<source.gears.md>" --target "<target.gears.md>" [--keep <item-id>]...
 ```
 
 It reads the source, rewrites every item eligible by the mechanical rules
 above, removes a legacy `## Prefixed prompts` section, writes the target, and
 prints the rewritten item IDs — or reports that no item was eligible.
-`--keep` excludes an item the tool would otherwise rewrite.
+`--keep` names the item ID as the package writes it and excludes that item from rewriting.
 
 The pass shall use the tool rather than rewrite by hand:
 

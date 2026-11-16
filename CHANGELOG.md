@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [19.0.0] - 2026-11-15
+
 ### Added
 
 - **A script step records its output** ([DR-106](specs/decisions/106-a-script-step-records-its-output.md)): the `playbook.script` telemetry event carries `durationMs`, `output` — the last 16 KiB the command wrote to stdout and stderr, as one text in the order written, decoded as UTF-8 or, for a line that is not UTF-8 on a Windows with one system code page, in that code page — and `outputTruncated`, at a zero or nonzero exit alike, so a host can show why a gate failed instead of only its exit status. The output enters no prompt, machine context, status line, or trace, and the exit status alone still selects the guard. A consumer that compares the `playbook.script` payload exactly must accept the three new fields. A script step now needs `cat` beside `sh`.
@@ -17,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Compiled GEARS is a spec package the machine cites** ([DR-108](specs/decisions/108-compiled-gears-is-a-spec-package.md)): `text2gears` emits `## Intent`, `## External Behavior`, `## Internal Behavior` and `## Verification` with lowercase item IDs and three item kinds — action items carrying only their statement, prompt and `Results:`, requirement items stating each invariant, terminal return, bound and continuation once, and test items citing them — and a machine state cites its action item through `sourceItem` without regard to letter case. The eight reference GEARS are rewritten in this form with every action item's prompt and `Results:` byte for byte and no machine recompiled. Paths share one action item only where the Source authors the prompt once: two behaviors it states separately stay two action items even where their text is the same. The optimize pass appends no `## Optimizations` section, and the prefix tool prints and accepts item IDs as the package writes them.
+- **Breaking: compiled GEARS is a spec package the machine cites** ([DR-108](specs/decisions/108-compiled-gears-is-a-spec-package.md)): `text2gears` emits `## Intent`, `## External Behavior`, `## Internal Behavior` and `## Verification` with lowercase item IDs and three item kinds — action items carrying only their statement, prompt and `Results:`, with a `Parallel group:` label where they have one, requirement items stating each invariant, terminal return, bound and continuation once, and test items citing them — and a machine state cites its action item through `sourceItem` without regard to letter case. The optimize pass appends no `## Optimizations` section.
+- **Breaking for a compiler: adopt this release with a checker that reads the package form.** A checker or parser written for the earlier form, one item per state with uppercase IDs, rejects these packages; SLC reads them from the release that carries its DR-065. The GEARS migration preserves the machines and session formats.
+- **Item IDs change once.** Recompiling over an earlier package writes every ID in lowercase, keeping its number and its anchor; where the Source's basename is not its own identifier the prefix changes too — `WORKFLOW-1` of `workflow.zh` becomes `workflow-zh-1` — and a link to the earlier anchor breaks. A machine built earlier keeps resolving an ID that changed only in case and is rebuilt when a cited ID changes otherwise.
+- **The eight reference GEARS are rewritten in this form** with every action item's prompt and `Results:` byte for byte and no machine recompiled. `dev.md` now states which child's result supplies each value DEV passes on.
+- **Separately stated behaviors stay separate action items.** Paths share one action item only where the Source authors the prompt once: two behaviors it states separately stay two action items with their own outcomes even where their text is the same, so a compile of `pr` keeps its two check waits apart.
 
 ## [18.3.1] - 2026-11-15
 
@@ -1149,7 +1155,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v18.3.1...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.0.0...HEAD
+[19.0.0]: https://github.com/sublang-ai/playbook/compare/v18.3.1...v19.0.0
 [18.3.1]: https://github.com/sublang-ai/playbook/compare/v18.3.0...v18.3.1
 [18.3.0]: https://github.com/sublang-ai/playbook/compare/v18.2.0...v18.3.0
 [18.2.0]: https://github.com/sublang-ai/playbook/compare/v18.1.4...v18.2.0
