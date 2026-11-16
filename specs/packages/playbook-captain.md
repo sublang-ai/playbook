@@ -1575,7 +1575,20 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 
 #### playbook-captain-93
 
-When the integration suite runs a real linked runtime, whose script step prints a marker and exits nonzero into a failure terminal, under the real Captain shell, it shall fail unless the host receives one `playbook.script` event carrying that output unchanged, the closing-reply call carries the terminal's authored description and then the script-step fact with that exit status and the command and no state id [[playbook-captain-94](#playbook-captain-94)], a later Boss question about the output resumes that call's conversation and, where the adapter refuses the resume, is asked again over a journal recap carrying that same fact [[playbook-captain-94](#playbook-captain-94)], and no Captain or player call of that turn or of that later question, and no reply, status, or other telemetry, contains the marker [[playbook-captain-3](#playbook-captain-3)]; and unless the same run closes with no script-step fact where its script exits zero into a failure terminal [[playbook-captain-94](#playbook-captain-94)].
+When the integration suite runs a real linked runtime, whose script step prints a marker and exits nonzero into a failure terminal, under the real Captain shell, it shall fail unless the host receives one `playbook.script` event carrying that output unchanged, the closing-reply call carries the terminal's authored description and then the script-step fact with that exit status and the command and no state id [[playbook-captain-94](#playbook-captain-94)], a later Boss question about the output resumes that call's conversation and, where the adapter refuses the resume, is asked again over a journal recap carrying that same fact [[playbook-captain-94](#playbook-captain-94)], and no Captain or player call of that turn or of that later question, and no reply, status, or other telemetry, contains the marker [[playbook-captain-3](#playbook-captain-3)].
+
+#### playbook-captain-95
+
+When the integration suite runs a real linked runtime under the real Captain shell to a failure terminal past a script step, it shall fail unless the closing-reply call carries the script-step fact [[playbook-captain-94](#playbook-captain-94)] as each case states:
+
+| Case | Script-step fact |
+| --- | --- |
+| A nested playbook's script step exits nonzero, and the root then ends at its own failure terminal | Directly after the root's completion fact, naming the nested playbook's command |
+| The command spans several lines and exceeds the bound | One line cut at the bound and marked as cut, while the host's event carries the command whole |
+| The script step exits zero | None |
+| A later script step of the same Boss turn exits zero | None |
+| The event reaches the shell with no `command` | None |
+| The run parks for the Boss after the nonzero exit, and a later Boss turn ends it at the failure terminal | None, in any Captain call of either turn |
 
 ### Registry and options
 
