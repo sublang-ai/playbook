@@ -215,6 +215,29 @@ capability functions never enter Boss-visible status text or configured
 options. Because trace observers do receive opaque resume tokens, persisted
 traces should be protected as sensitive data.
 
+A script step leaves its record on `playbook.script` telemetry, emitted once
+the command exits, at a zero or nonzero status alike:
+
+| Field | Meaning |
+| --- | --- |
+| `stateId`, `sourceItem` | the step that ran |
+| `exitStatus` | the shell's exit status |
+| `durationMs` | whole milliseconds from spawn to the shell's exit |
+| `output` | the last 16 KiB the command wrote to stdout and stderr, as one text in the order written |
+| `outputTruncated` | whether earlier output was dropped |
+
+`output` is decoded as UTF-8, with U+FFFD for each invalid sequence and NUL
+removed. On a Windows system that has one code page for both its ANSI and OEM
+forms — 874, 932, 936, 949, 950, or 1258 — a line that is not UTF-8 is decoded
+in that code page instead, so a tool's localized messages stay readable. It
+is untrusted text for people: show it as inert text beside the
+exit status, and hand it to no agent on the run's behalf. The runtime and the
+Captain shell place it in no prompt, machine context, status line, or trace.
+It is stored with the session's other telemetry and is not redacted; a host
+that must not retain it drops the two fields in its own `emitTelemetry` port.
+A process the command leaves running keeps a working stdout and stderr after
+the step, and after the host process exits; what it writes then is discarded.
+
 ## Constructing worktree host capabilities
 
 A schema-3 artifact takes live `{ repository, effectLedger }` capabilities

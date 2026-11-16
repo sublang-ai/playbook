@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A script step records its output** ([DR-106](specs/decisions/106-a-script-step-records-its-output.md)): the `playbook.script` telemetry event carries `durationMs`, `output` — the last 16 KiB the command wrote to stdout and stderr, as one text in the order written, decoded as UTF-8 or, for a line that is not UTF-8 on a Windows with one system code page, in that code page — and `outputTruncated`, at a zero or nonzero exit alike, so a host can show why a gate failed instead of only its exit status. The output enters no prompt, machine context, status line, or trace, and the exit status alone still selects the guard. A consumer that compares the `playbook.script` payload exactly must accept the three new fields. A script step now needs `cat` beside `sh`.
+
 ### Changed
 
 - **Compiled GEARS is a spec package the machine cites** ([DR-108](specs/decisions/108-compiled-gears-is-a-spec-package.md)): `text2gears` emits `## Intent`, `## External Behavior`, `## Internal Behavior` and `## Verification` with lowercase item IDs and three item kinds — action items carrying only their statement, prompt and `Results:`, requirement items stating each invariant, terminal return, bound and continuation once, and test items citing them — and a machine state cites its action item through `sourceItem` without regard to letter case. The eight reference GEARS are rewritten in this form with every action item's prompt and `Results:` byte for byte and no machine recompiled. Paths share one action item only where the Source authors the prompt once: two behaviors it states separately stay two action items even where their text is the same. The optimize pass appends no `## Optimizations` section, and the prefix tool prints and accepts item IDs as the package writes them.
