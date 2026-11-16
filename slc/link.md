@@ -1635,9 +1635,12 @@ The provided actor shall:
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
-  `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`,
+  `{ stateId, sourceItem, command, exitStatus, durationMs, output, outputTruncated }`,
   through the ordinary serialized emission channel
-  ([DR-106](../specs/decisions/106-a-script-step-records-its-output.md)):
+  ([DR-106](../specs/decisions/106-a-script-step-records-its-output.md),
+  [DR-107](../specs/decisions/107-a-script-steps-command-is-on-record.md)):
+  - `command` is the invocation's `command` as the shell ran it, every
+    placeholder bound.
   - `durationMs` is the whole milliseconds from spawning the shell to its
     exit, never negative.
   - `output` is the last 16384 bytes the command wrote to stdout and stderr,

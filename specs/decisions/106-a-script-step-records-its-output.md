@@ -8,6 +8,7 @@
 Accepted (2026-11-11), after one check step's nonzero exit ended three runs for two different reasons that no record could tell apart [[1]].
 Amends [DR-016](016-script-actors-and-optimize-pass.md) §2 in one scope: the `playbook.script` telemetry event additionally carries the step's duration and a bounded tail of what the command printed.
 Script output stays out of machine context, guards, prompts, status lines, and `playbook.trace` payloads, and every other DR-016 decision stands.
+Amended by [DR-107](107-a-script-steps-command-is-on-record.md): §3's event additionally carries the command as executed, and §4's Captain is told the exit status and command of the last script step of a failed run and that its output is on record — the output still reaches no agent call.
 
 ## Context
 

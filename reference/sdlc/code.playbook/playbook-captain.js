@@ -4038,6 +4038,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 if (event.topic === 'playbook.trace') {
                     observeSummaryTrace(frame, event.payload);
                 }
+                if (event.topic === 'playbook.script') {
+                    noteScriptStep(frame, event.payload);
+                }
             })();
             return trackHostCall(frame, emission);
         },
@@ -4800,6 +4803,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 // evidence (CAPPLAY-10).
                 const description = result.stateDescription ?? result.terminal?.description ?? leafStateDescription(frame);
                 activeTurn?.settlementFacts.push(rootCompletionFact(frame, { ...result, ...(description === undefined ? {} : { stateDescription: description }) }));
+                // DR-107: beside the failure terminal's authored meaning, what the
+                // turn's last script step ran and how it exited — never what it printed.
+                const scriptFact = result.terminal?.kind === 'failure' ? failedScriptStepFact(frame, activeTurn?.lastScriptStep) : undefined;
+                if (scriptFact !== undefined)
+                    activeTurn?.settlementFacts.push(scriptFact);
                 recordTerminalRetention(frame, result);
                 const retention = pendingRetentionUpdates.get(frame.entry.id)?.kind === 'clear' ? 'clear' : 'keep';
                 await runEffect(() => disposeStack('final'));
@@ -6079,6 +6087,37 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             ? `${frameLabel(frame)} completed; its runtime published no result description.`
             : `${frameLabel(frame)} completed; its runtime-published result meaning was ${quoteEvidence(description)}.`;
     };
+    // DR-107: the one thing the shell reads from a passed-through
+    // `playbook.script` event. The event's `output` is untrusted text for the
+    // host and people (DR-106 §4) and is never read here, so it can reach no
+    // fact, prompt, or reply.
+    const noteScriptStep = (frame, payload) => {
+        const turn = activeTurn;
+        if (!turn)
+            return;
+        const record = payloadRecord(payload);
+        const command = record?.command;
+        const exitStatus = record?.exitStatus;
+        turn.lastScriptStep =
+            typeof command === 'string' && typeof exitStatus === 'number'
+                ? {
+                    rootSessionId: frame.rootSessionId,
+                    label: frameLabel(frame),
+                    command,
+                    exitStatus,
+                }
+                : undefined;
+    };
+    // DR-107: the settlement fact for a failed run whose last script step this
+    // turn exited nonzero. The command is the playbook's text with reported
+    // values bound in, so it is quoted and bounded like any text the shell did
+    // not author; the step is named by its playbook and command, never by a
+    // state id (CAPTAIN-9).
+    const failedScriptStepFact = (root, step) => step === undefined ||
+        step.exitStatus === 0 ||
+        step.rootSessionId !== root.rootSessionId
+        ? undefined
+        : `A script step of ${step.label} exited with status ${step.exitStatus} before the run ended; its command was ${quoteEvidence(compactEvidence(step.command))}. The command's output is on the session's record for the host and was not given to Captain.`;
     const leafStateSummary = () => {
         const leaf = leafFrame();
         if (!leaf)
