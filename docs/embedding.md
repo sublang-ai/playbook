@@ -240,8 +240,12 @@ last script step of that Boss turn exited nonzero, the Captain shell tells
 the session Captain that step's exit status and command, and that the output
 is on the session's record for the host — never the output itself — so the
 Captain's reply can point the Boss to where the host shows it.
-It is stored with the session's other telemetry and is not redacted; a host
-that must not retain it drops the two fields in its own `emitTelemetry` port.
+The event is stored with the session's other telemetry and is not redacted:
+`output` holds whatever the command printed, and `command` holds the values
+bound at run time. A host that must not retain them drops `command`, `output`,
+and `outputTruncated` in its own `emitTelemetry` port. That keeps them out of
+the host's own store only: the Captain shell reads `command` from the event
+itself, so the Captain is still told it.
 A process the command leaves running keeps a working stdout and stderr after
 the step, and after the host process exits; what it writes then is discarded.
 
