@@ -23,7 +23,9 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { types as nodeTypes } from 'node:util';
 import { hashFile } from './hash.js';
+import { resolveCoverageBudget, } from './verify-coverage.js';
 /**
  * The Boss-reply result key `gears2fsm` adds to every captain-invoking state's
  * `result` map, and the load-bearing substring its adjudicator-facing
@@ -134,7 +136,13 @@ const CAPTAIN_ACTS = /\bCaptain shall\b/;
 const BLOCKQUOTE = /^>\s?(.*)$/;
 const SECTION_HEADING = /^##\s/;
 const RESULTS_LABEL = /^Results:\s*$/;
-const RESULTS_LABEL_NEAR_MISS = /^Results\s*:?[ \t]*$/;
+// A label missing its colon or written with a full-width one, as a non-English
+// input method types it, is malformed rather than prose (DR-057).
+const RESULTS_LABEL_NEAR_MISS = /^Results\s*[:：]?[ \t]*$/;
+// Each malformed-label or malformed-entry finding names the canonical form to
+// write, so a person reading it in any language can act on it (DR-057).
+const RESULTS_LABEL_REPAIR = 'write the label as `Results:`';
+const RESULT_ENTRY_REPAIR = 'write each entry as - `<guardName>`: <description>, its guard name an ASCII identifier followed by an ASCII colon';
 const RESULT_BULLET = /^-\s+`([A-Za-z_$][A-Za-z0-9_$]*)`:\s+(\S(?:.*\S)?)\s*$/;
 const PLAYBOOK_CALL_SEQUENCING_NEAR_MISS = /\bCaptain shall (first|then|next|finally) call playbook\b/u;
 /**
@@ -250,7 +258,7 @@ export function parseGearsItems(gears) {
             continue;
         }
         if (current.resultsEligible && RESULTS_LABEL_NEAR_MISS.test(line)) {
-            current.resultFindings.push(`malformed Results label ${JSON.stringify(line)}`);
+            current.resultFindings.push(`malformed Results label ${JSON.stringify(line)}; ${RESULTS_LABEL_REPAIR}`);
             current.resultDeclared = true;
             current.inResults = true;
             continue;
@@ -260,7 +268,7 @@ export function parseGearsItems(gears) {
                 continue;
             const result = RESULT_BULLET.exec(line);
             if (result === null) {
-                current.resultFindings.push(`malformed Results entry ${JSON.stringify(line)}`);
+                current.resultFindings.push(`malformed Results entry ${JSON.stringify(line)}; ${RESULT_ENTRY_REPAIR}`);
                 continue;
             }
             const [, guard, description] = result;
@@ -1024,6 +1032,73 @@ function resultMap(value) {
 function isPlaybookItem(item) {
     return item.playbookId !== undefined || item.playbookIdContext !== undefined;
 }
+/**
+ * A declarative item — a requirement or a test — has no unquoted `Captain
+ * shall` line, so the parser assigns it no actor and no nested call; it maps to
+ * no leaf (verification-65; DR-062).
+ */
+function isDeclarativeItem(item) {
+    return item.actor === undefined && !isPlaybookItem(item);
+}
+function foldAsciiCase(id) {
+    return id.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+/**
+ * Resolves a leaf's `sourceItem` to the spelling of the GEARS item it cites:
+ * an exact ID first, else the item whose ID equals it ignoring ASCII letter
+ * case, so a machine compiled before lowercase package IDs keeps citing them
+ * (verification-66; DR-062). Also reports IDs that differ only in case.
+ */
+function gearsSourceItemResolver(items) {
+    const exact = new Set(items.map((item) => item.id));
+    const folded = new Map();
+    for (const item of items) {
+        const key = foldAsciiCase(item.id);
+        const spellings = folded.get(key);
+        // Count every heading: two items spelled alike collide as much as two
+        // that differ in case.
+        if (spellings === undefined)
+            folded.set(key, [item.id]);
+        else
+            spellings.push(item.id);
+    }
+    const findings = [...folded.values()]
+        .filter((spellings) => spellings.length > 1)
+        .map((spellings) => `GEARS items ${spellings.join(', ')} have IDs equal ignoring ASCII letter case`);
+    return {
+        resolve: (sourceItem) => exact.has(sourceItem)
+            ? sourceItem
+            : (folded.get(foldAsciiCase(sourceItem))?.[0] ?? sourceItem),
+        findings,
+    };
+}
+/**
+ * Machine syntax a declarative item must not carry: an action that lost its
+ * acting clause is reported rather than read as a requirement (DR-062).
+ */
+function declarativeItemFindings(item) {
+    const findings = [];
+    if (item.prompt !== '') {
+        findings.push(`GEARS item ${item.id} has a prompt blockquote but no \`Captain shall\` acting clause`);
+    }
+    if (item.result !== undefined && item.resultFindings === undefined) {
+        findings.push(`GEARS item ${item.id} declares Results metadata but no \`Captain shall\` acting clause`);
+    }
+    return findings;
+}
+/**
+ * Package-form findings that need no consumer FSM: item IDs equal ignoring
+ * ASCII letter case and declarative items carrying action syntax. Run at the
+ * producer boundary so the phase that can still edit the GEARS repairs them
+ * (verification-68; DR-062).
+ */
+export function checkGearsPackageContract(gears) {
+    const items = parseGearsItems(gears);
+    return [
+        ...gearsSourceItemResolver(items).findings,
+        ...items.filter(isDeclarativeItem).flatMap(declarativeItemFindings),
+    ];
+}
 function gearsPlaybookSignature(item) {
     return item.playbookIdContext === undefined
         ? JSON.stringify(['static', item.playbookId, item.prompt])
@@ -1041,6 +1116,18 @@ function statePlaybookSignature(state) {
             state.playbookIdContext,
             state.textContext ?? null,
         ]);
+}
+/** Conservative synchronous check; no reached-context evidence is assumed. */
+export function checkGearsFsmConformance(gears, config, options = {}) {
+    return gearsFsmConformance(gears, config, options);
+}
+/** Structural findings plus binding-local work for the shared bounded replay. */
+export function prepareGearsFsmConformance(gears, config, options = {}) {
+    const literalChecks = new ReachedLiteralChildChecks();
+    return {
+        findings: gearsFsmConformance(gears, config, options, literalChecks),
+        literalChecks,
+    };
 }
 /** Exact action guards of Playbook 10's controller decision result. */
 export const CONTROLLER_ACTION_GUARDS = [
@@ -1137,16 +1224,28 @@ export function checkFsmChildSuspension(config) {
 }
 /**
  * Checks GEARS↔FSM conformance and returns human-readable findings (empty when
- * conformant): every GEARS item maps to one state with the same player and the
- * prompt verbatim, every captain state references a known item, and every
+ * conformant): every GEARS action item maps to one state with the same player
+ * and the prompt verbatim, a declarative item maps to none, every captain state
+ * cites a known action item ignoring ASCII letter case, and every
  * captain state's `result` map declares the Boss-reply suspension key with its
- * adjudicator contract (verification-1, verification-3; DR-009).
+ * adjudicator contract (verification-1, verification-3, verification-65,
+ * verification-66; DR-009, DR-062).
  */
-export function checkGearsFsmConformance(gears, config, options = {}) {
+function gearsFsmConformance(gears, config, options = {}, reached) {
     const items = parseGearsItems(gears);
+    // Every comparison below reads a state's sourceItem in its GEARS item's own
+    // spelling; the original playbook bindings stay for reached-input replay,
+    // which compares the FSM's own spelling with the runtime input.
+    const citation = gearsSourceItemResolver(items);
     const roleContract = inspectGearsRoleContract(gears);
     const controller = isControllerMachine(config);
-    const captainBindings = enumerateCaptainBindings(config);
+    const captainBindings = enumerateCaptainBindings(config).map((binding) => ({
+        ...binding,
+        state: {
+            ...binding.state,
+            sourceItem: citation.resolve(binding.state.sourceItem),
+        },
+    }));
     const states = captainBindings.map(({ state }) => state);
     const controllerNearMisses = captainBindings.flatMap(({ state, pinActor }) => {
         if (!pinActor ||
@@ -1162,7 +1261,10 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
         .filter(({ pinActor }) => pinActor)
         .map(({ state }) => state));
     const playbookBindings = enumeratePlaybookBindings(config);
-    const playbookStates = playbookBindings.map(({ state }) => state);
+    const playbookStates = playbookBindings.map(({ state }) => state.sourceItem === undefined
+        ? state
+        : { ...state, sourceItem: citation.resolve(state.sourceItem) });
+    const playbookBindingOf = new Map(playbookStates.map((state, index) => [state, playbookBindings[index]]));
     const initialContext = initialMachineContext(config);
     const literalChecks = new Map();
     const literalFinding = (item, state) => {
@@ -1170,15 +1272,20 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
         if (checked === undefined)
             literalChecks.set(state, (checked = new Map()));
         if (!checked.has(item.prompt)) {
-            const binding = playbookBindings.find((candidate) => candidate.state === state);
+            const binding = playbookBindingOf.get(state);
             checked.set(item.prompt, binding === undefined
                 ? 'has no inspectable invocation'
-                : literalPlaybookTextFinding(item.prompt, binding, initialContext));
+                : reached === undefined
+                    ? literalPlaybookTextFinding(item.prompt, binding, initialContext)
+                    : reached.check(item, binding, initialContext));
         }
         return checked.get(item.prompt);
     };
-    const scriptStates = enumerateScriptStates(config);
-    const findings = [];
+    const scriptStates = enumerateScriptStates(config).map((state) => ({
+        ...state,
+        sourceItem: citation.resolve(state.sourceItem),
+    }));
+    const findings = [...citation.findings];
     if (typeof config.meta === 'object' &&
         config.meta !== null &&
         Object.hasOwn(config.meta, 'playbook')) {
@@ -1312,11 +1419,18 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
             !matchedPlaybookStates.has(candidate) &&
             candidate.playbookIdContext === undefined &&
             candidate.playbookId === item.playbookId &&
-            literalFinding(item, candidate) === undefined);
+            // Unproved pairs cannot establish sourceItem-less one-to-one binding.
+            literalPlaybookTextFinding(item.prompt, playbookBindingOf.get(candidate), initialContext) === undefined);
         if (state !== undefined)
             addPlaybookMatch(item, state);
     }
     for (const item of items) {
+        if (isDeclarativeItem(item)) {
+            // A requirement or test item maps to no leaf; only machine syntax that
+            // belongs to an action is a finding (DR-062).
+            findings.push(...declarativeItemFindings(item));
+            continue;
+        }
         if (isPlaybookItem(item)) {
             const matched = playbookMatchesByItem.get(item) ?? [];
             if (matched.length === 0) {
@@ -1419,6 +1533,8 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
         }
     }
     const itemIds = new Set(items.map((item) => item.id));
+    const declarativeItemIds = new Set(items.filter(isDeclarativeItem).map((item) => item.id));
+    const declarativeCitation = (kind, state, id) => `${kind} ${state.stateId} cites declarative GEARS item ${id}, which has no \`Captain shall\` acting clause`;
     const playbookItemIds = new Set(playbookItems.map((item) => item.id));
     const scriptItemIds = new Set(items.filter((item) => item.actor === 'script').map((item) => item.id));
     for (const state of scriptStates) {
@@ -1427,6 +1543,9 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
         if (!itemIds.has(state.sourceItem)) {
             findings.push(`FSM script state ${state.stateId} references unknown GEARS item ${state.sourceItem}`);
         }
+        else if (declarativeItemIds.has(state.sourceItem)) {
+            findings.push(declarativeCitation('FSM script state', state, state.sourceItem));
+        }
         else if (!scriptItemIds.has(state.sourceItem)) {
             findings.push(`FSM script state ${state.stateId} realizes non-script GEARS item ${state.sourceItem}`);
         }
@@ -1434,6 +1553,9 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
     for (const state of states) {
         if (state.sourceItem !== '' && !itemIds.has(state.sourceItem)) {
             findings.push(`FSM state ${state.stateId} references unknown GEARS item ${state.sourceItem}`);
+        }
+        else if (declarativeItemIds.has(state.sourceItem)) {
+            findings.push(declarativeCitation('FSM state', state, state.sourceItem));
         }
         const bossReply = state.result[NEEDS_BOSS_REPLY];
         if (controller) {
@@ -1460,6 +1582,10 @@ export function checkGearsFsmConformance(gears, config, options = {}) {
             findings.push(`FSM playbook state ${state.stateId} maps to ${matchedItems.length} GEARS playbook-call items (expected exactly one: ${matchedItems.join(', ')})`);
         }
         if (state.sourceItem !== undefined &&
+            declarativeItemIds.has(state.sourceItem)) {
+            findings.push(declarativeCitation('FSM playbook state', state, state.sourceItem));
+        }
+        else if (state.sourceItem !== undefined &&
             !playbookItemIds.has(state.sourceItem)) {
             findings.push(`FSM playbook state ${state.stateId} references unknown GEARS playbook item ${state.sourceItem}`);
         }
@@ -1667,19 +1793,45 @@ export function placeholdersIn(prompt) {
     return seen;
 }
 const sentinelFor = (field) => `«${field}»`;
+// Accessor presence is retained as unavailable data, never promoted to a probe.
+const unavailablePromptFields = new WeakMap();
+function promptDataRecord(value) {
+    if (typeof value !== 'object' || value === null || nodeTypes.isProxy(value))
+        return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const copied = {};
+    const unavailable = new Set(unavailablePromptFields.get(value));
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (!descriptor.enumerable)
+            continue;
+        if (!('value' in descriptor))
+            unavailable.add(key);
+        Object.defineProperty(copied, key, {
+            value: 'value' in descriptor ? descriptor.value : undefined,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+        });
+    }
+    unavailablePromptFields.set(copied, unavailable);
+    return copied;
+}
 /**
  * Traces which context fields an `invoke.input` thunk reads, via a recording
  * proxy context; reads collected up to a throw are kept.
  */
-export function probeContextReads(inputFn,
+export function probeContextReads(inputFn, 
 /** The machine's initial context, so a typed field does not truncate the trace. */
 initial = {}) {
     const reads = new Set();
-    const context = new Proxy({ ...initial }, {
+    const context = new Proxy(promptDataRecord(initial) ?? {}, {
         get(target, prop) {
             if (typeof prop === 'string')
                 reads.add(prop);
-            return Reflect.get(target, prop);
+            const descriptor = Object.getOwnPropertyDescriptor(target, prop);
+            return descriptor && 'value' in descriptor
+                ? descriptor.value
+                : undefined;
         },
         has() {
             return true;
@@ -1731,7 +1883,7 @@ function initialMachineContext(config) {
     if (declared === undefined)
         return {};
     if (typeof declared === 'object' && declared !== null) {
-        return { ...declared };
+        return promptDataRecord(declared);
     }
     if (typeof declared !== 'function')
         return undefined;
@@ -1743,7 +1895,7 @@ function initialMachineContext(config) {
             event: { type: 'xstate.init' },
         });
         return typeof resolved === 'object' && resolved !== null
-            ? { ...resolved }
+            ? promptDataRecord(resolved)
             : undefined;
     }
     catch {
@@ -1757,13 +1909,13 @@ function initialMachineContext(config) {
  * field at its initial shape — absent, or an empty keyed record
  * (verification-5).
  */
-function ordinaryTurnContext(reads, initial,
+function ordinaryTurnContext(reads, initial, 
 /** Traces the Boss-reply fields too, for wiring capture rather than a turn. */
 includeBossFields = false) {
     if (initial === undefined) {
         return includeBossFields ? sentinelContext(reads) : ordinaryContext(reads);
     }
-    const context = { ...initial };
+    const context = promptDataRecord(initial) ?? {};
     if (!includeBossFields) {
         for (const field of BOSS_CONTEXT_FIELDS) {
             if (isKeyedBossRecord(context[field]))
@@ -1774,6 +1926,8 @@ includeBossFields = false) {
     }
     for (const field of reads) {
         if (!includeBossFields && BOSS_CONTEXT_FIELDS.includes(field))
+            continue;
+        if (unavailablePromptFields.get(context)?.has(field))
             continue;
         const current = context[field];
         if (current === undefined || typeof current === 'string') {
@@ -1803,22 +1957,21 @@ function placeholderField(token) {
         .join('');
 }
 /**
- * Overlays one string sentinel on every placeholder-derived input field the
- * prompt relays, so a field the machine's initial context leaves empty or
- * derives through a typed value still evidences substitution (verification-5).
+ * Overlays string-valued placeholder inputs only; typed values keep their
+ * original shapes and accessor-derived values provide no evidence.
  * Returns the probed input and the sentinel field names it carries.
  */
 function withPlaceholderValues(state, input) {
-    if (typeof input !== 'object' || input === null)
-        return { input, fields: [] };
-    const record = input;
-    const probed = { ...record };
+    const probed = promptDataRecord(input);
+    if (probed === undefined)
+        return { input: undefined, fields: [] };
     const fields = [];
     for (const token of placeholdersIn(state.prompt)) {
         const field = placeholderField(token);
         if (field === '' || CONTRACT_INPUT_FIELDS.includes(field))
             continue;
-        if (typeof record[field] !== 'string')
+        if (unavailablePromptFields.get(probed)?.has(field) ||
+            typeof probed[field] !== 'string')
             continue;
         probed[field] = sentinelFor(field);
         if (!fields.includes(field))
@@ -1836,12 +1989,29 @@ function declaredLocalRoles(config) {
     return [...roles].sort();
 }
 function carriesSentinel(value, sentinel) {
-    try {
-        return (JSON.stringify(value) ?? '').includes(sentinel);
-    }
-    catch {
-        return false;
-    }
+    let visits = 0;
+    const seen = new Set();
+    const visit = (current, depth) => {
+        if (++visits > 128 || depth > 32)
+            return false;
+        if (typeof current === 'string')
+            return current.includes(sentinel);
+        if (typeof current !== 'object' ||
+            current === null ||
+            nodeTypes.isProxy(current) ||
+            seen.has(current))
+            return false;
+        const prototype = Object.getPrototypeOf(current);
+        if (Array.isArray(current)
+            ? prototype !== Array.prototype
+            : prototype !== Object.prototype && prototype !== null)
+            return false;
+        seen.add(current);
+        return Object.entries(Object.getOwnPropertyDescriptors(current)).some(([key, descriptor]) => descriptor.enumerable &&
+            'value' in descriptor &&
+            (key.includes(sentinel) || visit(descriptor.value, depth + 1)));
+    };
+    return visit(value, 0);
 }
 /**
  * Derives every captain state's prompt contract from the machine config
@@ -1858,9 +2028,9 @@ export function capturePromptContract(config) {
         const reads = probeContextReads(inputFn, initial);
         const wires = {};
         try {
-            const input = inputFn({
+            const input = promptDataRecord(inputFn({
                 context: ordinaryTurnContext(reads, initial, true),
-            });
+            }));
             if (typeof input === 'object' && input !== null) {
                 for (const [key, value] of Object.entries(input)) {
                     const carried = reads.filter((field) => carriesSentinel(value, sentinelFor(field)));
@@ -1884,6 +2054,63 @@ export function capturePromptContract(config) {
     }
     return rows;
 }
+/** Finite JSON evidence from real input values, never from coerced sentinels. */
+function promptJsonEvidence(input) {
+    const empty = { input, forms: [], unchanged: () => true };
+    if (typeof input !== 'object' || input === null || nodeTypes.isProxy(input))
+        return empty;
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const records = new Map([
+        [input, descriptors],
+    ]);
+    const fields = new Set();
+    const forms = new Set();
+    for (const [key, descriptor] of Object.entries(descriptors)
+        .filter(([key]) => !CONTRACT_INPUT_FIELDS.includes(key))
+        .slice(0, 128)) {
+        if (!descriptor.enumerable || !('value' in descriptor))
+            continue;
+        const value = descriptor.value;
+        if (value === null ||
+            typeof value === 'boolean' ||
+            (typeof value === 'number' && Number.isFinite(value))) {
+            forms.add(JSON.stringify(value));
+        }
+        else if (typeof value === 'object') {
+            const field = JSON.stringify([key]);
+            // An unsupported unused field supplies no evidence; it cannot prevent
+            // a different, supported value from being checked.
+            if (literalJsonGraph(input, new Set([field]), new Map([[input, descriptors]])) !== undefined)
+                fields.add(field);
+        }
+    }
+    const graph = literalJsonGraph(input, fields, records);
+    const copied = Object.create(Object.getPrototypeOf(input));
+    const copiedDescriptors = { ...descriptors };
+    if (graph !== undefined) {
+        for (const [field, value] of graph.values) {
+            const key = JSON.parse(field)[0];
+            forms.add(value.text);
+            copiedDescriptors[key] = { ...descriptors[key], value: value.value };
+        }
+    }
+    Object.defineProperties(copied, copiedDescriptors);
+    // Watch the detached values passed to the composer as well as their source.
+    const copiedRecords = new Map([
+        [copied, Object.getOwnPropertyDescriptors(copied)],
+    ]);
+    const copiedGraph = graph === undefined
+        ? undefined
+        : literalJsonGraph(copied, fields, copiedRecords);
+    return {
+        input: copied,
+        forms: [...forms],
+        unchanged: () => literalRecordsUnchanged(records) &&
+            (graph === undefined || literalJsonUnchanged(graph.facts)) &&
+            literalRecordsUnchanged(copiedRecords) &&
+            (copiedGraph === undefined || literalJsonUnchanged(copiedGraph.facts)),
+    };
+}
 /**
  * Derives, per captain state, which of its prompt's placeholder tokens the
  * linked composer substitutes when the wired context is present — pinned into
@@ -1903,21 +2130,25 @@ export function deriveSubstitutions(config, compose, actor) {
         try {
             const reads = probeContextReads(inputFn, initial);
             const probed = withPlaceholderValues(state, inputFn({ context: ordinaryTurnContext(reads, initial) }));
-            const composed = composeForState(compose, state, probed.input, roles);
-            if (typeof composed !== 'string') {
+            const evidence = promptJsonEvidence(probed.input);
+            const composed = composeForState(compose, state, evidence.input, roles);
+            if (typeof composed !== 'string' || !evidence.unchanged()) {
                 out[state.stateId] = [];
                 continue;
             }
-            // A placeholder counts as substituted only when the exact body survives
-            // on its source line and that token's position carries one of the context
-            // sentinels. Derive line-by-line so an unrelated mutated line does not
-            // hide valid evidence, while merely deleting a token still cannot
-            // masquerade as substitution.
-            const evidenced = new Set();
             const promptReads = promptSentinelFields(state, reads, probed.fields, roles);
+            // The whole body fixes each token's position. A separate quoted line
+            // with the same literal shape cannot supply evidence for an absent value.
+            const body = matchPromptBody(state.prompt, composed, promptReads, undefined, evidence.forms);
+            if (body !== null) {
+                out[state.stateId] = body.substitutions;
+                continue;
+            }
+            // Preserve partial evidence for a malformed body so an unrelated changed
+            // line does not hide valid substitutions. Body validation still fails it.
+            const evidenced = new Set();
             for (const line of state.prompt.split('\n')) {
-                for (const token of matchPromptBody(line, composed, promptReads)
-                    ?.substitutions ?? []) {
+                for (const token of matchPromptBody(line, composed, promptReads, undefined, evidence.forms)?.substitutions ?? []) {
                     evidenced.add(token);
                 }
             }
@@ -1929,8 +2160,15 @@ export function deriveSubstitutions(config, compose, actor) {
     }
     return out;
 }
+/** The shared runtime selects its keyed profile from direct root children. */
+export function usesKeyedBossQuestionContext(config) {
+    return Object.values(config.states ?? {}).some((state) => typeof state === 'object' &&
+        state !== null &&
+        !Array.isArray(state) &&
+        state.type === 'parallel');
+}
 /** The shared input-only portion of the canonical continuation probe. */
-function probeContinuationInput(state, inputFn, initial, artifactSchema) {
+function probeContinuationInput(state, inputFn, initial, artifactSchema, keyed) {
     const question = sentinelFor('question');
     const reply = sentinelFor('bossReply');
     const pendingBossQuestion = {
@@ -1948,10 +2186,21 @@ function probeContinuationInput(state, inputFn, initial, artifactSchema) {
         ...withPlaceholderValues(state, inputFn({
             context: {
                 ...ordinaryTurnContext(probeContextReads(inputFn, initial), initial),
-                pendingBossQuestion,
-                bossReply: reply,
-                pendingBossQuestions: { [state.stateId]: pendingBossQuestion },
-                bossReplies: { [state.stateId]: reply },
+                ...(artifactSchema === 1
+                    ? {
+                        pendingBossQuestion,
+                        bossReply: reply,
+                        pendingBossQuestions: { [state.stateId]: pendingBossQuestion },
+                        bossReplies: { [state.stateId]: reply },
+                    }
+                    : keyed
+                        ? {
+                            pendingBossQuestions: {
+                                [state.stateId]: pendingBossQuestion,
+                            },
+                            bossReplies: { [state.stateId]: reply },
+                        }
+                        : { pendingBossQuestion, bossReply: reply }),
             },
         })),
         question,
@@ -1974,7 +2223,7 @@ export function checkFsmContinuationInputs(config, artifactSchema) {
             !Object.hasOwn(state.result, NEEDS_BOSS_REPLY))
             continue;
         try {
-            const { input, question, reply } = probeContinuationInput(state, inputFn, initial, artifactSchema);
+            const { input, question, reply } = probeContinuationInput(state, inputFn, initial, artifactSchema, usesKeyedBossQuestionContext(config));
             const finding = continuationInputFinding(state.stateId, input, question, reply);
             if (finding !== undefined)
                 findings.push(finding);
@@ -2032,20 +2281,24 @@ export function checkPromptComposition(opts) {
         for (const resuming of modes) {
             let ordinary;
             let input;
+            let evidence;
             try {
                 const probed = withPlaceholderValues(state, inputFn({ context: ordinaryTurnContext(reads, initial) }));
-                input = probed.input;
+                evidence = promptJsonEvidence(probed.input);
+                input = evidence.input;
                 promptReads = promptSentinelFields(state, reads, probed.fields, roles);
-                ordinary = composeForState(opts.compose, state, probed.input, roles, resuming);
+                ordinary = composeForState(opts.compose, state, input, roles, resuming);
                 if (typeof ordinary !== 'string') {
                     throw new Error(`${composerName} returned a non-string value`);
                 }
+                if (!evidence.unchanged())
+                    throw new Error(`${composerName} changed observed input data`);
             }
             catch (error) {
                 pushUnique(findings, `${state.stateId}: ${composerName} threw on an ordinary turn: ${messageOf(error)}`);
                 continue;
             }
-            pushUnique(findings, ...bodyFindings(state, ordinary, substituted, promptReads, 'ordinary'), ...literalPromptRelayFindings(state, ordinary, input, substituted, promptReads, opts.compose, roles, relayFindingKeys, resuming));
+            pushUnique(findings, ...bodyFindings(state, ordinary, substituted, promptReads, 'ordinary', evidence.forms), ...literalPromptRelayFindings(state, ordinary, input, substituted, promptReads, opts.compose, roles, relayFindingKeys, resuming, evidence.forms));
             pushUnique(findings, ...promptControlFindings(state, ordinary));
             // A self-hosted playbook's domain body may legitimately quote the
             // adjudicator contract or the continuation texts (it instructs a compiler
@@ -2081,14 +2334,18 @@ export function checkPromptComposition(opts) {
             const reply = sentinelFor('bossReply');
             let continuation;
             let input;
+            let evidence;
             try {
-                const probed = probeContinuationInput(state, inputFn, initial, artifactSchema);
-                input = probed.input;
+                const probed = probeContinuationInput(state, inputFn, initial, artifactSchema, usesKeyedBossQuestionContext(opts.config));
+                evidence = promptJsonEvidence(probed.input);
+                input = evidence.input;
                 promptReads = promptSentinelFields(state, reads, probed.fields, roles);
                 continuation = composeForState(opts.compose, state, input, roles, resuming);
                 if (typeof continuation !== 'string') {
                     throw new Error(`${composerName} returned a non-string value`);
                 }
+                if (!evidence.unchanged())
+                    throw new Error(`${composerName} changed observed input data`);
             }
             catch (error) {
                 pushUnique(findings, `${state.stateId}: ${composerName} threw on a continuation turn: ${messageOf(error)}`);
@@ -2099,7 +2356,7 @@ export function checkPromptComposition(opts) {
                 pushUnique(findings, inputFinding);
                 continue;
             }
-            pushUnique(findings, ...continuationPrefixFindings(state, continuation, substituted, promptReads, artifactSchema, resuming, question, reply), ...bodyFindings(state, continuation, substituted, promptReads, 'continuation'), ...promptControlFindings(state, continuation), ...literalPromptRelayFindings(state, continuation, input, substituted, promptReads, opts.compose, roles, relayFindingKeys, resuming));
+            pushUnique(findings, ...continuationPrefixFindings(state, continuation, substituted, promptReads, artifactSchema, resuming, question, reply, evidence.forms), ...bodyFindings(state, continuation, substituted, promptReads, 'continuation', evidence.forms), ...promptControlFindings(state, continuation), ...literalPromptRelayFindings(state, continuation, input, substituted, promptReads, opts.compose, roles, relayFindingKeys, resuming, evidence.forms));
         }
     }
     return findings;
@@ -2140,7 +2397,7 @@ function composeForState(compose, state, input, declaredRoles, resuming) {
             : compose(input, promptIdentity, resuming)
         : compose(input);
 }
-function continuationPrefixFindings(state, composed, substituted, reads, artifactSchema, resuming, question, reply) {
+function continuationPrefixFindings(state, composed, substituted, reads, artifactSchema, resuming, question, reply, jsonForms = []) {
     const fullProfiles = [
         { preamble: CONTINUATION_PREAMBLE, questionLabel: BOSS_QUESTION_LABEL },
         ...(artifactSchema === 3
@@ -2177,7 +2434,7 @@ function continuationPrefixFindings(state, composed, substituted, reads, artifac
             : []),
         [BOSS_REPLY_LABEL, replyBlock],
     ];
-    const bodyStart = bodyIndex(state, composed, substituted, reads);
+    const bodyStart = bodyIndex(state, composed, substituted, reads, jsonForms);
     for (const [label, value] of blocks) {
         // Authored domain text can itself quote the framework contract; a real
         // continuation must add its own sentinel-bearing blocks before that body.
@@ -2231,17 +2488,16 @@ function occurrences(hay, needle) {
 /**
  * Finds the prompt body as one exact, line-bounded block inside a composed
  * prompt. In derivation mode, a placeholder may remain literal or be replaced
- * by one exact non-empty context sentinel; mixed replacement of repeated
- * tokens is rejected. With `expectedSubstitutions`, substituted positions must
- * carry a sentinel and every other placeholder must remain literal.
+ * by an exact scalar probe form or captured typed JSON value. Repeated tokens
+ * share one value. All line starts share one finite candidate-visit budget;
+ * exhausted search remains unproved, never wildcard acceptance.
  */
-function matchPromptBody(prompt, composed, reads, expectedSubstitutions) {
+function matchPromptBody(prompt, composed, reads, expectedSubstitutions, jsonForms = []) {
     const placeholderMatches = [...prompt.matchAll(PLACEHOLDER)];
     const sentinels = reads.map(sentinelFor);
-    const sentinelForms = sentinels.flatMap((sentinel) => [
-        sentinel,
-        JSON.stringify(sentinel),
-    ]);
+    const sentinelForms = sentinels
+        .flatMap((sentinel) => [sentinel, JSON.stringify(sentinel)])
+        .concat(jsonForms);
     // Decompose the prompt into literal segments separated by placeholders, then
     // scan the composed text segment by segment. A monolithic escaped regex over
     // a meta-scale prompt exceeds the engine's pattern-size limit, so matching
@@ -2255,31 +2511,71 @@ function matchPromptBody(prompt, composed, reads, expectedSubstitutions) {
         offset = match.index + match[0].length;
     }
     segments.push(prompt.slice(offset));
+    let visits = 0;
     const tryFrom = (start) => {
-        if (!composed.startsWith(segments[0], start))
+        if (++visits > 30_000 || !composed.startsWith(segments[0], start))
             return null;
-        let pos = start + segments[0].length;
+        const beginning = start + segments[0].length;
+        if (tokens.length === 0)
+            return beginning === composed.length || composed[beginning] === '\n'
+                ? { end: beginning, values: [] }
+                : null;
+        const assigned = new Map();
         const values = [];
-        for (let gap = 0; gap < tokens.length; gap++) {
+        const frame = (gap, pos) => {
             const token = tokens[gap];
-            const candidates = expectedSubstitutions === undefined
+            const forms = expectedSubstitutions === undefined
                 ? [token, ...sentinelForms]
                 : expectedSubstitutions.includes(token)
                     ? sentinelForms
                     : [token];
-            const next = segments[gap + 1];
-            const chosen = candidates.find((candidate) => composed.startsWith(candidate, pos) &&
-                composed.startsWith(next, pos + candidate.length));
-            if (chosen === undefined)
-                return null;
-            values.push(chosen);
-            pos += chosen.length + next.length;
+            return {
+                gap,
+                pos,
+                next: 0,
+                candidates: [
+                    ...new Set(assigned.has(token) ? [assigned.get(token)] : forms),
+                ],
+                chosen: false,
+                assignedHere: false,
+            };
+        };
+        const stack = [frame(0, beginning)];
+        while (stack.length > 0 && visits < 30_000) {
+            const current = stack.at(-1);
+            const token = tokens[current.gap];
+            if (current.chosen) {
+                if (current.assignedHere)
+                    assigned.delete(token);
+                values.length = current.gap;
+                current.chosen = false;
+            }
+            if (current.next === current.candidates.length) {
+                stack.pop();
+                continue;
+            }
+            visits++;
+            const candidate = current.candidates[current.next++];
+            const next = segments[current.gap + 1];
+            if (!composed.startsWith(candidate, current.pos) ||
+                !composed.startsWith(next, current.pos + candidate.length))
+                continue;
+            current.assignedHere = !assigned.has(token);
+            if (current.assignedHere)
+                assigned.set(token, candidate);
+            current.chosen = true;
+            values[current.gap] = candidate;
+            const pos = current.pos + candidate.length + next.length;
+            if (current.gap + 1 === tokens.length) {
+                if (pos === composed.length || composed[pos] === '\n')
+                    return { end: pos, values: [...values] };
+            }
+            else
+                stack.push(frame(current.gap + 1, pos));
         }
-        if (pos !== composed.length && composed[pos] !== '\n')
-            return null;
-        return { end: pos, values };
+        return null;
     };
-    for (let start = 0; start <= composed.length; start++) {
+    for (let start = 0; start <= composed.length && visits < 30_000; start++) {
         if (start !== 0 && composed[start - 1] !== '\n')
             continue;
         const attempt = tryFrom(start);
@@ -2314,10 +2610,10 @@ function matchPromptBody(prompt, composed, reads, expectedSubstitutions) {
     return null;
 }
 /** Probe observed string relays without inventing context fields or input shapes. */
-function literalPromptRelayFindings(state, composed, input, substituted, reads, compose, roles, findingKeys, resuming) {
+function literalPromptRelayFindings(state, composed, input, substituted, reads, compose, roles, findingKeys, resuming, jsonForms = []) {
     if (typeof input !== 'object' || input === null)
         return [];
-    const match = matchPromptBody(state.prompt, composed, reads, substituted);
+    const match = matchPromptBody(state.prompt, composed, reads, substituted, jsonForms);
     if (match === null)
         return []; // Existing body diagnostics own this case.
     const tokens = [...state.prompt.matchAll(PLACEHOLDER)];
@@ -2381,8 +2677,9 @@ function literalPromptRelayFindings(state, composed, input, substituted, reads, 
         const key = `${state.stateId}:${label}`;
         const prefix = `${state.stateId}: prompt composition does not preserve ${label} text`;
         try {
-            const actual = composeForState(compose, state, probed, roles, resuming);
-            if (actual === expected)
+            const evidence = promptJsonEvidence(probed);
+            const actual = composeForState(compose, state, evidence.input, roles, resuming);
+            if (actual === expected && evidence.unchanged())
                 continue;
             pushRelayFinding(findings, findingKeys, key, `${prefix}; probe preserves literal text and LF/CRLF separators/quote markers; ${firstDifferenceDiagnostic(expected, actual)}`);
         }
@@ -2411,8 +2708,78 @@ function boundedJsonSnippet(value, offset) {
         return '<end>';
     return JSON.stringify(value.slice(offset, offset + 24));
 }
+/** Literal-child probes keep record containers and observe scalar paths only.
+ * Virtual absent leaves do not add keys to unrelated typed records. */
+function literalScalarContext(base, values, reads, virtualPresence = true, capture, structures, aliases, captureStructure) {
+    let failure;
+    const wrapped = new Map();
+    const isRecord = (value) => typeof value === 'object' &&
+        value !== null &&
+        !nodeTypes.isProxy(value) &&
+        (Object.getPrototypeOf(value) === Object.prototype ||
+            Object.getPrototypeOf(value) === null);
+    const wrap = (record, path, ancestors) => {
+        if (nodeTypes.isProxy(record)) {
+            failure ??= 'proxy record';
+            return {};
+        }
+        if (path.length > 32 || ancestors.has(record)) {
+            failure ??=
+                path.length > 32
+                    ? 'record reads exceed 32 levels'
+                    : 'cyclic record reads';
+            return record;
+        }
+        const prior = wrapped.get(record);
+        if (prior !== undefined)
+            return prior;
+        capture?.(record);
+        const seen = new Set([...ancestors, record]);
+        const copy = Object.create(Object.getPrototypeOf(record));
+        for (const key of Reflect.ownKeys(record)) {
+            const descriptor = Object.getOwnPropertyDescriptor(record, key);
+            // Keep own keys/prototypes, without a __proto__ assignment or a frozen
+            // source descriptor preventing a nested observational proxy.
+            Object.defineProperty(copy, key, { ...descriptor, configurable: true });
+        }
+        const proxy = new Proxy(copy, {
+            get(target, property) {
+                const value = Reflect.get(target, property);
+                if (typeof property !== 'string')
+                    return value;
+                const nested = [...path, property];
+                // A path is an opaque observation identity, never a placeholder name.
+                const field = JSON.stringify(nested);
+                if (value === undefined || typeof value === 'string')
+                    reads?.add(field);
+                if (Object.hasOwn(values, field))
+                    return values[field];
+                if (value !== null && typeof value === 'object') {
+                    if (nodeTypes.isProxy(value)) {
+                        failure ??= 'proxy record';
+                        return value;
+                    }
+                    if (Array.isArray(value) || isRecord(value)) {
+                        if (structures !== undefined && !structures.has(field)) {
+                            structures.add(field);
+                            captureStructure?.(field);
+                        }
+                    }
+                    const alias = aliases?.get(value);
+                    if (alias !== undefined)
+                        return alias;
+                }
+                return isRecord(value) ? wrap(value, nested, seen) : value;
+            },
+            has: (target, property) => virtualPresence || Reflect.has(target, property),
+        });
+        wrapped.set(record, proxy);
+        return proxy;
+    };
+    return { context: wrap(base, [], new Set()), failure: () => failure };
+}
 /** Verify the FSM-owned composer; child inputs reach the bridge already rendered. */
-function literalPlaybookTextFinding(prompt, binding, initial) {
+function literalPlaybookTextFinding(prompt, binding, initial, unproved) {
     const input = binding.invoke.input;
     // Only explicit quoted relay notation establishes required runtime slots.
     // Domain metavariables and inline-code examples remain literal template text.
@@ -2420,7 +2787,11 @@ function literalPlaybookTextFinding(prompt, binding, initial) {
         const token = /^> (?:[^<>\r\n]+: )?(<[^\s<>`]{1,60}>)$/.exec(line)?.[1];
         return token === undefined ? [] : [token];
     }));
-    const unresolvedRelay = (token) => `leaves quoted child-input relay ${token} unresolved`;
+    const unresolvedRelay = (token) => {
+        if (typeof input === 'function')
+            unproved?.();
+        return `leaves quoted child-input relay ${token} unresolved`;
+    };
     if (typeof input !== 'function') {
         if (binding.state.text !== prompt)
             return 'does not preserve the complete GEARS child-input template';
@@ -2429,41 +2800,49 @@ function literalPlaybookTextFinding(prompt, binding, initial) {
     }
     const base = initial ?? {};
     const fields = new Set();
-    let context = { ...base };
+    let values = {};
     // Later reads can be behind a string-valued branch. Discover them without
     // overwriting an initialized object, array, boolean, or numeric context field.
     for (let pass = 0; pass < 4; pass++) {
         const before = fields.size;
-        for (const field of probeContextReads(input, context)) {
-            if (base[field] === undefined || typeof base[field] === 'string')
-                fields.add(field);
+        const observed = literalScalarContext(base, values, fields);
+        try {
+            input({ context: observed.context });
         }
+        catch {
+            /* Keep reads before a throw. */
+        }
+        const failure = observed.failure();
+        if (failure !== undefined)
+            return `has unsupported composition (${failure})`;
         if (fields.size > 128)
             return 'has unsupported composition (too many scalar reads)';
-        context = {
-            ...base,
-            ...Object.fromEntries([...fields].map((field) => [field, sentinelFor(field)])),
-        };
+        values = Object.fromEntries([...fields].map((field) => [field, sentinelFor(field)]));
         if (fields.size === before)
             break;
         if (pass === 3)
             return 'has unsupported composition (context reads did not stabilize)';
     }
     const probe = (values) => {
-        const result = invocationInput(binding.invoke, values);
-        return 'value' in result &&
+        const candidate = literalScalarContext(base, values);
+        const result = invocationInput(binding.invoke, candidate.context);
+        return candidate.failure() === undefined &&
+            'value' in result &&
             result.value.playbookId === binding.state.playbookId &&
             result.value.stateId === binding.state.stateId &&
             typeof result.value.text === 'string'
             ? result.value.text
             : undefined;
     };
-    const text = probe(context);
-    if (text === undefined)
+    const text = probe(values);
+    if (text === undefined) {
+        unproved?.();
         return 'has unsupported composition (input evaluation or literal identity changed)';
+    }
     const matched = matchPromptBody(prompt, text, [...fields]);
     if (matched === null || matched.index !== 0 || matched.end !== text.length) {
-        return 'does not preserve the complete GEARS child-input template';
+        unproved?.();
+        return 'could not prove the complete expanded GEARS child-input composition; check literal text, relay substitution/quoting/omission, and canonical compact JSON for structured relays';
     }
     const tokens = [...prompt.matchAll(PLACEHOLDER)].map((match) => match[0]);
     const mapping = new Map();
@@ -2500,30 +2879,14 @@ function literalPlaybookTextFinding(prompt, binding, initial) {
         `«${field}:literal» $& $$ $\x60 $' ${[...new Set(tokens)].join(' ')}` +
             (multilineFields.has(field) ? `\n\n«${field}:second»` : ''),
     ]));
-    const render = (values) => {
-        // Only the source-defined standalone relay form owns empty-line removal.
-        const template = prompt
-            .split(/(?<=\n)/)
-            .filter((line) => {
-            const token = /^> (<[^\s<>`]{1,60}>)(?:\r?\n)?$/.exec(line)?.[1];
-            const mapped = token === undefined ? undefined : mapping.get(token);
-            return mapped === undefined || values[mapped.field] !== '';
-        })
-            .join('');
-        return template.replace(PLACEHOLDER, (token, offset) => {
-            const mapped = mapping.get(token);
-            if (mapped === undefined)
-                return token;
-            const value = values[mapped.field];
-            const lineStart = template.lastIndexOf('\n', offset - 1) + 1;
-            return template.startsWith('> ', lineStart)
-                ? value.replace(/\r?\n/g, (separator) => `${separator}> `)
-                : value;
-        });
-    };
-    const composed = probe({ ...base, ...payloads });
+    const fieldMapping = new Map([...mapping].map(([token, { field }]) => [token, field]));
+    const render = (values) => renderLiteralChildTemplate(prompt, fieldMapping, (field) => values[field]);
+    const composed = probe(payloads);
     if (composed === undefined || composed !== render(payloads)) {
-        return 'does not preserve literal substitutions and quoted continuation lines';
+        return ('does not preserve literal substitutions and quoted continuation lines' +
+            (composed === undefined
+                ? ''
+                : ` (${firstDifferenceDiagnostic(render(payloads), composed)})`));
     }
     const emptyFields = new Set();
     for (const line of prompt.split(/\r?\n/)) {
@@ -2537,16 +2900,647 @@ function literalPlaybookTextFinding(prompt, binding, initial) {
             ...payloads,
             ...Object.fromEntries([...emptyFields].map((field) => [field, ''])),
         };
-        const emptyText = probe({ ...base, ...values });
+        const emptyText = probe(values);
         if (emptyText === undefined || emptyText !== render(values)) {
-            return 'does not preserve source-defined empty standalone relay omission';
+            return ('does not preserve source-defined empty standalone relay omission' +
+                (emptyText === undefined
+                    ? ''
+                    : ` (${firstDifferenceDiagnostic(render(values), emptyText)})`));
         }
     }
     return undefined;
 }
+/** Exact whole-template renderer shared by initial and reached-case proofs. */
+function renderLiteralChildTemplate(prompt, mapping, valueOf) {
+    if ([...mapping.values()].some((field) => {
+        const value = valueOf(field);
+        return value !== undefined && typeof value !== 'string';
+    }))
+        return undefined;
+    const template = prompt
+        .split(/(?<=\n)/)
+        .filter((line) => {
+        const token = /^> (<[^\s<>`]{1,60}>)(?:\r?\n)?$/.exec(line)?.[1];
+        const field = token === undefined ? undefined : mapping.get(token);
+        return (field === undefined ||
+            (valueOf(field) !== undefined && valueOf(field) !== ''));
+    })
+        .join('');
+    return template.replace(PLACEHOLDER, (token, offset) => {
+        const field = mapping.get(token);
+        if (field === undefined)
+            return token;
+        const value = (valueOf(field) ?? '');
+        return template.startsWith('> ', template.lastIndexOf('\n', offset - 1) + 1)
+            ? value.replace(/\r?\n/g, (separator) => `${separator}> `)
+            : value;
+    });
+}
+/** A finite provisional match. Omitted lines never constitute mapping evidence. */
+function reachedTemplateMatch(prompt, text, payloads, fixed) {
+    const parts = [];
+    for (const line of prompt.split(/(?<=\n)/)) {
+        const chunk = [];
+        let offset = 0;
+        for (const match of line.matchAll(PLACEHOLDER)) {
+            chunk.push({ literal: line.slice(offset, match.index) });
+            chunk.push({ token: match[0], quoted: line.startsWith('> ') });
+            offset = match.index + match[0].length;
+        }
+        chunk.push({ literal: line.slice(offset) });
+        if (/^> <[^\s<>`]{1,60}>(?:\r?\n)?$/.test(line))
+            parts.push({ optional: chunk });
+        else
+            parts.push(...chunk);
+    }
+    let attempts = 0;
+    const walk = (remaining, offset, values) => {
+        if (++attempts > 4096)
+            return undefined;
+        if (remaining.length === 0)
+            return offset === text.length ? values : undefined;
+        const [part, ...rest] = remaining;
+        if ('literal' in part)
+            return text.startsWith(part.literal, offset)
+                ? walk(rest, offset + part.literal.length, values)
+                : undefined;
+        if ('optional' in part)
+            return (walk([...part.optional, ...rest], offset, values) ??
+                walk(rest, offset, values));
+        const candidates = values.has(part.token)
+            ? [values.get(part.token)]
+            : fixed.has(part.token)
+                ? [fixed.get(part.token)]
+                : [part.token, ...payloads];
+        for (const value of new Set(candidates)) {
+            const rendered = part.quoted
+                ? value.replace(/\r?\n/g, (separator) => `${separator}> `)
+                : value;
+            if (text.startsWith(rendered, offset)) {
+                const found = walk(rest, offset + rendered.length, new Map([...values, [part.token, value]]));
+                if (found !== undefined)
+                    return found;
+            }
+        }
+        return undefined;
+    };
+    return walk(parts, 0, new Map());
+}
+function literalPathValue(context, field, records) {
+    let value = context;
+    for (const key of JSON.parse(field)) {
+        if (value !== null && typeof value === 'object' && nodeTypes.isProxy(value))
+            return null;
+        if (typeof value !== 'object' || value === null || Array.isArray(value))
+            return undefined;
+        const captured = records?.get(value);
+        if (records !== undefined && captured === undefined)
+            return null;
+        const descriptor = captured === undefined
+            ? Object.getOwnPropertyDescriptor(value, key)
+            : Object.hasOwn(captured, key)
+                ? captured[key]
+                : undefined;
+        if (descriptor === undefined)
+            return undefined;
+        if (!('value' in descriptor))
+            return null; // An accessor is not absent evidence.
+        value = descriptor.value;
+    }
+    return value;
+}
+/** Compare observed descriptor facts, without serializing arbitrary context. */
+function literalRecordsUnchanged(records) {
+    return [...records].every(([record, before]) => {
+        const keys = Reflect.ownKeys(record);
+        const oldKeys = Reflect.ownKeys(before);
+        return (keys.length === oldKeys.length &&
+            keys.every((key, index) => {
+                if (key !== oldKeys[index])
+                    return false;
+                const old = Reflect.get(before, key);
+                const current = Object.getOwnPropertyDescriptor(record, key);
+                return [
+                    'configurable',
+                    'enumerable',
+                    'writable',
+                    'get',
+                    'set',
+                    'value',
+                ].every((field) => Object.is(Reflect.get(old, field), Reflect.get(current, field)));
+            }));
+    });
+}
+/** Inspect only observed structured reads. No input accessor or JSON hook is run. */
+function literalJsonGraph(context, fields, records, mutation) {
+    let nodes = 0;
+    const aliases = new Map();
+    const memo = new Map();
+    const captured = new Map();
+    const facts = new Map();
+    const encodedLengths = new Map();
+    const primitiveText = (value) => {
+        if (typeof value === 'string' && Buffer.byteLength(value, 'utf8') > 65536)
+            throw Error('structured encoding bound');
+        return JSON.stringify(value);
+    };
+    const boundedText = (value) => {
+        // Values here are detached JSON data only. Preflight repeated alias output
+        // before stringify, so a small shared graph cannot expand beyond the cap.
+        let bytes;
+        if (value !== null && typeof value === 'object') {
+            const keys = Object.keys(value);
+            const array = Array.isArray(value);
+            bytes = 2 + Math.max(0, keys.length - 1);
+            for (const key of keys) {
+                const child = Object.getOwnPropertyDescriptor(value, key).value;
+                const size = child !== null && typeof child === 'object'
+                    ? encodedLengths.get(child)
+                    : Buffer.byteLength(primitiveText(child), 'utf8');
+                if (size === undefined)
+                    throw Error('unproved structured encoding');
+                bytes +=
+                    size +
+                        (array ? 0 : Buffer.byteLength(primitiveText(key), 'utf8') + 1);
+                if (bytes > 65536)
+                    throw Error('structured encoding bound');
+            }
+            encodedLengths.set(value, bytes);
+        }
+        else
+            bytes = Buffer.byteLength(primitiveText(value), 'utf8');
+        if (bytes > 65536)
+            throw Error('structured encoding bound');
+        return JSON.stringify(value);
+    };
+    const visit = (value, ancestors, depth) => {
+        if (depth > 32)
+            throw Error('structured depth bound');
+        if (++nodes > 128)
+            throw Error('structured node bound');
+        if (value !== null && typeof value === 'object') {
+            if (nodeTypes.isProxy(value))
+                throw Error('structured proxy');
+            if (ancestors.has(value))
+                throw Error('structured cycle');
+            const prior = memo.get(value);
+            if (prior !== undefined)
+                return prior;
+        }
+        if (value === null ||
+            typeof value === 'boolean' ||
+            typeof value === 'string' ||
+            (typeof value === 'number' && Number.isFinite(value))) {
+            boundedText(value);
+            return { value, encoded: value, leaves: [] };
+        }
+        if (typeof value !== 'object')
+            throw Error('non-JSON structured value');
+        const array = Array.isArray(value);
+        const prototype = Object.getPrototypeOf(value);
+        if (array
+            ? prototype !== Array.prototype
+            : prototype !== Object.prototype && prototype !== null)
+            throw Error('structured prototype');
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        facts.set(value, { prototype, extensible: Object.isExtensible(value) });
+        const keys = Reflect.ownKeys(descriptors);
+        if (keys.some((key) => typeof key !== 'string'))
+            throw Error('structured symbol key');
+        if (keys.length > 129)
+            throw Error('structured node bound');
+        let dataKeys = keys;
+        if (array) {
+            const length = descriptors.length;
+            if (!length ||
+                !('value' in length) ||
+                !Number.isInteger(length.value) ||
+                length.value < 0 ||
+                length.value > 128)
+                throw Error('structured array length');
+            dataKeys = Array.from({ length: length.value }, (_, index) => String(index));
+            if (keys.length !== dataKeys.length + 1 ||
+                dataKeys.some((key) => !Object.hasOwn(descriptors, key)))
+                throw Error('structured array shape');
+        }
+        if (dataKeys.some((key) => !('value' in descriptors[key]) || !descriptors[key].enumerable))
+            throw Error('structured descriptor');
+        const clone = array ? [] : Object.create(prototype);
+        // The encoding copy has no inherited hooks, including Array.prototype.toJSON.
+        const encoded = array
+            ? Object.setPrototypeOf([], null)
+            : Object.create(null);
+        const result = { value: clone, encoded, leaves: [] };
+        memo.set(value, result);
+        aliases.set(value, clone);
+        captured.set(value, descriptors);
+        const seen = new Set([...ancestors, value]);
+        const encodedValues = new Map();
+        for (const key of dataKeys) {
+            const descriptor = descriptors[key];
+            const item = mutation?.owner === value && mutation.key === key
+                ? mutation.value
+                : descriptor.value;
+            const child = visit(item, seen, depth + 1);
+            Object.defineProperty(clone, key, { ...descriptor, value: child.value });
+            encodedValues.set(key, child.encoded);
+            if (typeof descriptor.value === 'string')
+                result.leaves.push({ owner: value, key });
+            result.leaves.push(...child.leaves);
+        }
+        // Preserve control enumeration; sorting belongs only to the JSON copy.
+        for (const key of [...dataKeys].sort())
+            Object.defineProperty(encoded, key, {
+                value: encodedValues.get(key),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+            });
+        if (array)
+            Object.defineProperty(clone, 'length', descriptors.length);
+        if (!Object.isExtensible(value))
+            Object.preventExtensions(clone);
+        boundedText(encoded);
+        return result;
+    };
+    try {
+        const values = new Map();
+        for (const field of fields) {
+            const original = literalPathValue(context, field, records);
+            if (original === null || typeof original !== 'object')
+                continue;
+            const copied = visit(original, new Set(), 0);
+            const leaves = copied.leaves.filter((leaf, index, all) => all.findIndex((other) => other.owner === leaf.owner && other.key === leaf.key) === index);
+            values.set(field, {
+                value: copied.value,
+                text: boundedText(copied.encoded),
+                leaves,
+            });
+        }
+        for (const [record, descriptors] of captured)
+            if (!records.has(record))
+                records.set(record, descriptors);
+        return { values, aliases, facts };
+    }
+    catch {
+        return undefined;
+    }
+}
+function literalJsonUnchanged(facts) {
+    return [...facts].every(([value, before]) => Object.getPrototypeOf(value) === before.prototype &&
+        Object.isExtensible(value) === before.extensible);
+}
+/** Invocation object identity prevents evidence sharing between sibling calls. */
+export class ReachedLiteralChildChecks {
+    work = new Map();
+    check(item, binding, initial) {
+        let unproved = false;
+        const finding = literalPlaybookTextFinding(item.prompt, binding, initial, () => {
+            unproved = true;
+        });
+        if (!unproved || finding === undefined)
+            return finding;
+        if (!this.work.has(binding.invoke))
+            this.work.set(binding.invoke, {
+                item,
+                binding,
+                original: finding,
+                mapping: new Map(),
+                structured: new Set(),
+                validated: false,
+                cases: [],
+            });
+        return undefined;
+    }
+    pending() {
+        return [...this.work.values()].some((work) => work.failure === undefined && !this.proved(work));
+    }
+    needs(invoke) {
+        const work = this.work.get(invoke);
+        return (work !== undefined && work.failure === undefined && !this.proved(work));
+    }
+    proved(work) {
+        return work.validated;
+    }
+    mapped(work) {
+        const required = work.item.prompt
+            .split(/\r?\n/)
+            .flatMap((line) => /^> (?:[^<>\r\n]+: )?(<[^\s<>`]{1,60}>)$/.exec(line)?.[1] ?? []);
+        return (work.cases.length > 0 &&
+            required.every((token) => work.mapping.has(token)));
+    }
+    observe(invoke, context, actual) {
+        const work = this.work.get(invoke);
+        if (work === undefined || work.failure !== undefined)
+            return;
+        const { binding, item } = work;
+        const fields = new Set();
+        const structures = new Set();
+        const records = new Map();
+        const jsonFacts = new Map();
+        const observed = literalScalarContext(context, {}, fields, false, (record) => {
+            if (!records.has(record))
+                records.set(record, Object.getOwnPropertyDescriptors(record));
+        }, structures, undefined, (field) => {
+            const snapshot = literalJsonGraph(context, new Set([field]), records);
+            for (const [value, facts] of snapshot?.facts ?? [])
+                if (!jsonFacts.has(value))
+                    jsonFacts.set(value, facts);
+        });
+        const input = invocationInput(binding.invoke, observed.context);
+        if (observed.failure() !== undefined ||
+            new Set([...fields, ...structures]).size > 128) {
+            work.failure =
+                'has unsupported composition (bounded scalar observation failed)';
+            return;
+        }
+        if (!('value' in input) ||
+            input.value.text !== actual.text ||
+            input.value.stateId !== actual.stateId ||
+            input.value.playbookId !== actual.playbookId ||
+            typeof actual.text !== 'string' ||
+            actual.stateId !== binding.state.stateId ||
+            actual.playbookId !== binding.state.playbookId ||
+            (binding.state.sourceItem !== undefined &&
+                actual.sourceItem !== binding.state.sourceItem)) {
+            work.failure =
+                'has unsupported composition (reached input or literal identity changed)';
+            return;
+        }
+        if (!literalRecordsUnchanged(records) || !literalJsonUnchanged(jsonFacts)) {
+            work.failure =
+                'has unsupported composition (observed structured context changed during input)';
+            return;
+        }
+        const structured = literalJsonGraph(context, structures, records);
+        const fieldText = (field, graph = structured) => work.structured.has(field)
+            ? literalPathValue(context, field, records) === undefined
+                ? undefined
+                : (graph?.values.get(field)?.text ?? null)
+            : literalPathValue(context, field, records);
+        const payloads = [...fields].flatMap((field) => {
+            const value = literalPathValue(context, field, records);
+            return value === undefined
+                ? ['']
+                : typeof value === 'string'
+                    ? [value]
+                    : [];
+        });
+        payloads.push(...[...(structured?.values.values() ?? [])].map((value) => value.text));
+        const influences = new Set();
+        const acceptMapping = (token, field, json) => {
+            const previous = work.mapping.get(token);
+            if (previous === undefined && work.validated) {
+                work.failure = `has an unproved late context substitution for ${token}`;
+                return false;
+            }
+            if (previous !== undefined &&
+                (previous !== field || work.structured.has(field) !== json)) {
+                work.failure = `uses inconsistent context substitutions for ${token}`;
+                return false;
+            }
+            work.mapping.set(token, field);
+            if (json)
+                work.structured.add(field);
+            influences.add(field);
+            return true;
+        };
+        const quotedRelays = new Set(item.prompt
+            .split(/\r?\n/)
+            .flatMap((line) => /^> (?:[^<>\r\n]+: )?(<[^\s<>`]{1,60}>)$/.exec(line)?.[1] ?? []));
+        const probedStructures = new Set();
+        for (const [field, value] of structured?.values ?? []) {
+            if (probedStructures.has(value.value))
+                continue;
+            probedStructures.add(value.value);
+            const leaf = value.leaves[0];
+            if (leaf === undefined)
+                continue;
+            const variant = literalJsonGraph(context, structures, records, {
+                ...leaf,
+                value: sentinelFor(field),
+            });
+            const encoded = variant?.values.get(field)?.text;
+            if (variant === undefined || encoded === undefined)
+                continue;
+            const result = invocationInput(binding.invoke, literalScalarContext(context, {}, undefined, false, undefined, undefined, variant.aliases).context);
+            if (!('value' in result) ||
+                typeof result.value.text !== 'string' ||
+                result.value.text === actual.text ||
+                !result.value.text.includes(encoded))
+                continue;
+            if (result.value.stateId !== binding.state.stateId ||
+                result.value.playbookId !== binding.state.playbookId ||
+                result.value.sourceItem !== actual.sourceItem) {
+                work.failure = 'has unsupported composition (literal identity changed)';
+                return;
+            }
+            const fixed = new Map([...work.mapping].map(([token, mapped]) => [
+                token,
+                String(fieldText(mapped, variant) ?? ''),
+            ]));
+            const matched = reachedTemplateMatch(item.prompt, result.value.text, [
+                encoded,
+                ...payloads,
+                ...[...variant.values.values()].map((value) => value.text),
+            ], fixed);
+            if (matched === undefined) {
+                work.failure =
+                    'could not prove the complete expanded GEARS child-input composition; check literal text, relay substitution/quoting/omission, and canonical compact JSON for structured relays';
+                return;
+            }
+            for (const [token, text] of matched) {
+                if (text !== encoded)
+                    continue;
+                if (!quotedRelays.has(token)) {
+                    work.failure = `has unsupported structured inline substitution for ${token}`;
+                    return;
+                }
+                if (!acceptMapping(token, field, true))
+                    return;
+            }
+        }
+        for (const field of fields) {
+            const marker = sentinelFor(field);
+            const candidate = literalScalarContext(context, { [field]: marker }, undefined, false, undefined, undefined, work.structured.size > 0 ? structured?.aliases : undefined);
+            const result = invocationInput(binding.invoke, candidate.context);
+            if (candidate.failure() !== undefined ||
+                !('value' in result) ||
+                typeof result.value.text !== 'string')
+                continue;
+            const text = result.value.text;
+            if (text === actual.text || !text.includes(marker))
+                continue;
+            if (result.value.stateId !== binding.state.stateId ||
+                result.value.playbookId !== binding.state.playbookId ||
+                result.value.sourceItem !== actual.sourceItem) {
+                work.failure = 'has unsupported composition (literal identity changed)';
+                return;
+            } // A control-only read is not a relay.
+            const fixed = new Map([...work.mapping].map(([token, mapped]) => [
+                token,
+                mapped === field ? marker : String(fieldText(mapped) ?? ''),
+            ]));
+            const matched = reachedTemplateMatch(item.prompt, text, [marker, ...payloads], fixed);
+            if (matched === undefined) {
+                work.failure =
+                    'could not prove the complete expanded GEARS child-input composition; check literal text, relay substitution/quoting/omission, and canonical compact JSON for structured relays';
+                return;
+            }
+            for (const [token, value] of matched) {
+                if (value !== marker)
+                    continue;
+                if (!acceptMapping(token, field, false))
+                    return;
+            }
+        }
+        // Do not merge cases by read paths: a later mapping may reveal an unread
+        // nonempty payload in an earlier context. Every actual case is validated.
+        if (work.cases.length >= 64) {
+            work.failure =
+                'has unsupported composition (too many pending reached cases)';
+            return;
+        }
+        work.cases.push({
+            context,
+            text: actual.text,
+            influences,
+            structures,
+            jsonFacts,
+            records,
+        });
+        if (!this.mapped(work))
+            return;
+        for (const reached of work.cases) {
+            if (!literalRecordsUnchanged(reached.records) ||
+                !literalJsonUnchanged(reached.jsonFacts)) {
+                work.failure =
+                    'has unsupported composition (observed context changed before proof)';
+                return;
+            }
+            const baseline = invocationInput(binding.invoke, literalScalarContext(reached.context, {}, undefined, false).context);
+            if (!('value' in baseline) ||
+                baseline.value.text !== reached.text ||
+                baseline.value.stateId !== binding.state.stateId ||
+                baseline.value.playbookId !== binding.state.playbookId ||
+                baseline.value.sourceItem !== actual.sourceItem) {
+                work.failure =
+                    'has unsupported composition (reached input changed before proof)';
+                return;
+            }
+            const graph = literalJsonGraph(reached.context, reached.structures, reached.records);
+            const render = (values, json = graph) => renderLiteralChildTemplate(item.prompt, work.mapping, (field) => Object.hasOwn(values, field)
+                ? values[field]
+                : work.structured.has(field)
+                    ? literalPathValue(reached.context, field, reached.records) ===
+                        undefined
+                        ? undefined
+                        : (json?.values.get(field)?.text ?? null)
+                    : literalPathValue(reached.context, field, reached.records));
+            const expected = render({});
+            if (expected === undefined || reached.text !== expected) {
+                work.failure =
+                    'could not prove the complete expanded GEARS child-input composition; check literal text, relay substitution/quoting/omission, and canonical compact JSON for structured relays';
+                return;
+            }
+            const verifyPayload = (values, empty) => {
+                const candidate = literalScalarContext(reached.context, values, undefined, false, undefined, undefined, work.structured.size > 0 ? graph?.aliases : undefined);
+                const result = invocationInput(binding.invoke, candidate.context);
+                const expected = render(values);
+                if (candidate.failure() === undefined &&
+                    'value' in result &&
+                    result.value.stateId === binding.state.stateId &&
+                    result.value.playbookId === binding.state.playbookId &&
+                    result.value.sourceItem === actual.sourceItem &&
+                    result.value.text === expected)
+                    return true;
+                const label = empty
+                    ? 'does not preserve source-defined empty standalone relay omission'
+                    : 'does not preserve literal substitutions and quoted continuation lines';
+                work.failure =
+                    label +
+                        (expected !== undefined &&
+                            'value' in result &&
+                            typeof result.value.text === 'string'
+                            ? ` (${firstDifferenceDiagnostic(expected, result.value.text)})`
+                            : '');
+                return false;
+            };
+            const activeFields = [...new Set(work.mapping.values())].filter((field) => reached.influences.has(field));
+            for (const field of new Set(work.mapping.values())) {
+                if (!work.structured.has(field))
+                    continue;
+                const value = graph?.values.get(field);
+                if (value === undefined &&
+                    literalPathValue(reached.context, field, reached.records) !==
+                        undefined) {
+                    work.failure =
+                        'has unsupported composition (structured JSON inspection failed)';
+                    return;
+                }
+                for (const leaf of value?.leaves ?? [])
+                    for (const literal of [
+                        '«structured» $& <payload>\nsecond',
+                        '«distinct» " \\ \r\nlast',
+                    ]) {
+                        const variant = literalJsonGraph(reached.context, reached.structures, reached.records, { ...leaf, value: literal });
+                        if (variant === undefined) {
+                            work.failure =
+                                'has unsupported composition (structured JSON inspection failed)';
+                            return;
+                        }
+                        const result = invocationInput(binding.invoke, literalScalarContext(reached.context, {}, undefined, false, undefined, undefined, variant.aliases).context);
+                        if (!('value' in result) ||
+                            result.value.stateId !== binding.state.stateId ||
+                            result.value.playbookId !== binding.state.playbookId ||
+                            result.value.sourceItem !== actual.sourceItem ||
+                            result.value.text !== render({}, variant)) {
+                            work.failure =
+                                'does not preserve canonical structured JSON substitutions';
+                            return;
+                        }
+                    }
+            }
+            const scalarFields = activeFields.filter((field) => !work.structured.has(field));
+            // Perturb one mapped payload only: no other reached control/payload changes.
+            for (const field of scalarFields) {
+                const multiline = item.prompt.split(/\r?\n/).some((line) => {
+                    const token = /^> [^<>\r\n]*(<[^\s<>`]{1,60}>)$/.exec(line)?.[1];
+                    return token !== undefined && work.mapping.get(token) === field;
+                });
+                for (const value of [
+                    `«literal» $& $$ $\x60 $' ${[...work.mapping.keys()].join(' ')}${multiline ? '\n\nsecond\r\n\r\nlast' : ''}`,
+                    '',
+                ]) {
+                    if (!verifyPayload({ [field]: value }, value === ''))
+                        return;
+                }
+            }
+            if (!literalRecordsUnchanged(reached.records) ||
+                !literalJsonUnchanged(reached.jsonFacts)) {
+                work.failure =
+                    'has unsupported composition (observed context changed during proof)';
+                return;
+            }
+            // Removing several standalone relays must preserve authored separators too.
+            if (!verifyPayload(Object.fromEntries(scalarFields.map((field) => [field, ''])), true))
+                return;
+        }
+        work.validated = true;
+        work.cases = []; // Descriptor facts have passed; release stopped actor contexts.
+    }
+    findings() {
+        return [...this.work.values()].flatMap((work) => work.failure !== undefined || !this.proved(work)
+            ? [
+                `${work.item.id}: FSM playbook text ${work.failure ?? work.original}`,
+            ]
+            : []);
+    }
+}
 /** Findings when a composed prompt does not preserve the domain body (verification-5). */
-function bodyFindings(state, composed, substituted, reads, turn) {
-    if (matchPromptBody(state.prompt, composed, reads, substituted) !== null) {
+function bodyFindings(state, composed, substituted, reads, turn, jsonForms = []) {
+    if (matchPromptBody(state.prompt, composed, reads, substituted, jsonForms) !==
+        null) {
         return [];
     }
     // Preserve the established line-specific diagnostic where possible, while
@@ -2555,7 +3549,7 @@ function bodyFindings(state, composed, substituted, reads, turn) {
     for (const line of state.prompt.split('\n')) {
         if (line.trim() === '')
             continue;
-        if (matchPromptBody(line, composed, reads, substituted) === null) {
+        if (matchPromptBody(line, composed, reads, substituted, jsonForms) === null) {
             return [
                 `${state.stateId}: a ${turn} turn does not preserve the body line "${line}"`,
             ];
@@ -2566,8 +3560,9 @@ function bodyFindings(state, composed, substituted, reads, turn) {
     ];
 }
 /** The index of the body's first preserved line in a composed prompt, or -1. */
-function bodyIndex(state, composed, substituted, reads) {
-    return (matchPromptBody(state.prompt, composed, reads, substituted)?.index ?? -1);
+function bodyIndex(state, composed, substituted, reads, jsonForms = []) {
+    return (matchPromptBody(state.prompt, composed, reads, substituted, jsonForms)
+        ?.index ?? -1);
 }
 // Local copy: this module is copied verbatim beside the artifact (verification-12),
 // so it may not import a sibling module.
@@ -2620,6 +3615,7 @@ export function findConcurrentRoleSets(fsmModule) {
  * needed), then asserts {@link checkGearsFsmConformance} finds nothing.
  */
 export function generateGearsFsmConformanceTest(opts) {
+    const coverage = resolveCoverageBudget(opts.coverage);
     return `// SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
@@ -2629,8 +3625,10 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { checkGearsFsmConformance, findConcurrentRoleSets, findMachineConfig } from ${sourceString(opts.verifyModule)};
+import { checkGearsFsmConformanceAsync, fsmCoverageTestTimeout } from ${sourceString(opts.verifyModule)};
 import * as fsm from ${sourceString(opts.fsmModule)};
+
+const coverage = ${JSON.stringify(coverage)};
 
 const SCHEMA_FINDINGS: readonly string[] = ${JSON.stringify(opts.schemaFindings ?? [], null, 2)};
 
@@ -2639,20 +3637,21 @@ describe(${sourceString(`${opts.basename}: GEARS↔FSM conformance`)}, () => {
     expect(SCHEMA_FINDINGS).toEqual([]);
   });
 
-  it('maps every GEARS item to a state with its player and verbatim prompt', () => {
+  it('maps every GEARS item to a state with its player and verbatim prompt', async () => {
     const gears = readFileSync(
       fileURLToPath(new URL(${sourceString(opts.gearsFile)}, import.meta.url)),
       'utf8',
     );
     expect(
-      checkGearsFsmConformance(gears, findMachineConfig(fsm), {
-        concurrentRoleSets: findConcurrentRoleSets(fsm),
+      await checkGearsFsmConformanceAsync(gears, fsm, {
+        coverage,
+        sourceText: readFileSync(fileURLToPath(new URL(${sourceString(opts.fsmSourceFile ?? opts.fsmModule.replace(/\.js$/, '.ts'))}, import.meta.url)), 'utf8'),
         ${opts.artifactSchema === undefined
         ? ''
         : `artifactSchema: ${opts.artifactSchema},`}
       }),
     ).toEqual([]);
-  });
+  }, fsmCoverageTestTimeout(fsm, coverage));
 });
 `;
 }
@@ -2665,6 +3664,7 @@ describe(${sourceString(`${opts.basename}: GEARS↔FSM conformance`)}, () => {
  */
 export async function emitGearsFsmConformanceTest(opts) {
     const content = generateGearsFsmConformanceTest({
+        coverage: opts.coverage,
         basename: opts.basename,
         // NodeNext source imports the TypeScript artifact through its runtime
         // `.js` specifier; Vitest resolves that edge to the sibling source.
@@ -2676,9 +3676,10 @@ export async function emitGearsFsmConformanceTest(opts) {
             : { artifactSchema: opts.artifactSchema }),
         schemaFindings: opts.schemaFindings,
     });
-    await mkdir(opts.artifactDir, { recursive: true });
+    if (opts.write === undefined)
+        await mkdir(opts.artifactDir, { recursive: true });
     const path = join(opts.artifactDir, `${opts.basename}.gears-fsm.test.ts`);
-    await writeFile(path, content);
+    await (opts.write ?? writeFile)(path, content);
     return path;
 }
 /**
@@ -3120,6 +4121,7 @@ export async function checkLinkedModuleContract(opts) {
  */
 export async function emitPromptContractTest(opts) {
     const diagnostics = [];
+    const advisories = [];
     const fsmPath = join(opts.artifactDir, `${opts.basename}.fsm.ts`);
     const config = findMachineConfig(await loadFsmModule(fsmPath));
     const rows = capturePromptContract(config);
@@ -3149,7 +4151,9 @@ export async function emitPromptContractTest(opts) {
             continue;
         }
         substitutions[inspected.actor] = inspected.substitutions;
-        diagnostics.push(...inspected.diagnostics.map((diagnostic) => `prompt contract: ${diagnostic}`), ...inspected.findings.map((finding) => `prompt contract: ${finding}`));
+        const notes = inspected.diagnostics.map((diagnostic) => `prompt contract: ${diagnostic}`);
+        advisories.push(...notes);
+        diagnostics.push(...notes, ...inspected.findings.map((finding) => `prompt contract: ${finding}`));
     }
     const composer = substitutions.captain !== undefined || substitutions.player !== undefined
         ? {
@@ -3167,10 +4171,11 @@ export async function emitPromptContractTest(opts) {
         schemaFindings: contract.schemaFindings,
         composer,
     });
-    await mkdir(opts.artifactDir, { recursive: true });
+    if (opts.write === undefined)
+        await mkdir(opts.artifactDir, { recursive: true });
     const path = join(opts.artifactDir, `${opts.basename}.prompt-contract.test.ts`);
-    await writeFile(path, content);
-    return { path, diagnostics };
+    await (opts.write ?? writeFile)(path, content);
+    return { path, diagnostics, advisories };
 }
 /**
  * Emits the introspection test beside a compiled `playbook` artifact
@@ -3189,9 +4194,10 @@ export async function emitFsmIntrospectionTest(opts) {
         verifyModule: opts.verifyModule ?? VERIFY_MODULE,
         pins,
     });
-    await mkdir(opts.artifactDir, { recursive: true });
+    if (opts.write === undefined)
+        await mkdir(opts.artifactDir, { recursive: true });
     const path = join(opts.artifactDir, `${opts.basename}.fsm.introspect.test.ts`);
-    await writeFile(path, content);
+    await (opts.write ?? writeFile)(path, content);
     return path;
 }
 // Transition-coverage verification (verification-6) lives in its own module — it

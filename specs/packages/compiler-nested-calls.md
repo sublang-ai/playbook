@@ -12,11 +12,11 @@ It changes no source interpretation, runtime engine behavior, frozen compiler in
 
 ### compiler-nested-calls-1
 
-When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:`, whose colon immediately follows the literal target or dynamic selection, placing required sequencing in the `When` or `While` clause or continuation prose.
+When Source requires a literal or dynamic nested playbook call, text2gears shall emit the exact behavior verb phrase `Captain shall call playbook ...:`, whose colon immediately follows the literal target or dynamic selection, placing required sequencing in the `When` or `While` clause or in a requirement item that cites the call [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md).
 
 ### compiler-nested-calls-4
 
-When Source routes more than one path into one nested playbook call with the same target and the same input template — a later path made "with the same input as" an earlier path's — text2gears shall emit one nested-call item whose condition joins the paths and whose continuation prose carries each path's outcome, not one item per path, so the compiled FSM keeps one call state entered from each path [[playbook-39](playbook.md#playbook-39)].
+When Source routes more than one path into one nested playbook call whose input it authors once, with the same target and the same input template — a later path made "with the same input as" an earlier path's — text2gears shall emit one nested-call action item whose one `When` clause lists the entry paths and state each path's continuation as a requirement item citing it [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), not one action item per path, so the compiled FSM keeps one call state entered from each path [[playbook-39](playbook.md#playbook-39)].
 
 ### compiler-nested-calls-2
 
@@ -26,4 +26,4 @@ When gears2fsm emits nested-call routing, after preserving Source-authored succe
 
 ### compiler-nested-calls-3
 
-When the integration suite inspects the text2gears and gears2fsm definitions and maintained workflow GEARS, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words within the verb phrase or between its target and colon, canonical nested-call clauses across every maintained workflow GEARS artifact, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six items whose `code`, `decide`, and `branch` calls each join their paths in one condition, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].
+When the integration suite inspects the text2gears and gears2fsm definitions and maintained workflow GEARS, it shall verify exact nested-call verb syntax for literal and dynamic forms, forbidden sequencing words within the verb phrase or between its target and colon, canonical nested-call clauses across every maintained workflow GEARS artifact, the one-item-per-shared-call rule with the maintained DEV GEARS carrying exactly six action items whose `code`, `decide`, and `branch` calls each list their paths in one `When` clause, and unreachable nested-call `onDone` omission after authored routes and the control-error fallback are preserved [[compiler-nested-calls-1](#compiler-nested-calls-1)], [[compiler-nested-calls-4](#compiler-nested-calls-4)], [[compiler-nested-calls-2](#compiler-nested-calls-2)].

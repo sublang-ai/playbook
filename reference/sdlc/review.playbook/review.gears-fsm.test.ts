@@ -5,7 +5,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createActor, fromPromise, waitFor } from 'xstate';
 
-import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
+import {
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
+} from '../../../scripts/check-slc-source-gears.mjs';
 import { ACCEPTED_OUTCOME_ACTION_TYPE } from '../../../src/accepted-outcome.js';
 import {
   concurrentRoleSets,
@@ -47,11 +51,16 @@ interface TransitionFixture {
   event: unknown;
 }
 
-const gears = new Map(
-  parseGearsContract(
-    readFileSync(new URL('./review.gears.md', import.meta.url), 'utf8'),
-  ).map((item) => [item.id, item]),
+const gearsText = readFileSync(
+  new URL('./review.gears.md', import.meta.url),
+  'utf8',
 );
+// DR-108: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gearsItems = gearsActionItems(gearsText);
+const gears = new Map(gearsItems.map((item) => [item.id, item]));
+// A state's `sourceItem` cites its item ignoring ASCII letter case (DR-108 §4).
+const gearsItem = (sourceItem: string) => gearsItemFor(gearsItems, sourceItem);
 
 const machineConfig = (
   reviewMachine as unknown as { config: RawMachineConfig }
@@ -406,7 +415,19 @@ function acceptedOutcomeMarkers(
 
 describe('REVIEW GEARS to FSM compilation', () => {
   it('maps every REVIEW item once with its canonical role and exact prompt', () => {
-    expect([...gears.keys()]).toEqual(expected.map(([, item]) => item));
+    expect([...gears.keys()]).toEqual([
+      'review-1',
+      'review-2',
+      'review-3',
+      'review-4',
+    ]);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of gearsItemBodies(gearsText)) {
+      if (gears.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
     // playbook-1: the FSM export and the registry manifest agree on the
     // (empty) ordered concurrent role sets.
     expect(concurrentRoleSets).toEqual([]);
@@ -414,7 +435,7 @@ describe('REVIEW GEARS to FSM compilation', () => {
       reviewPlaybookRegistryEntry.concurrentRoleSets,
     );
     for (const [stateId, sourceItem] of expected) {
-      const item = gears.get(sourceItem);
+      const item = gearsItem(sourceItem);
       const input = states[stateId]?.invoke?.input?.({ context });
       expect(input).toBeDefined();
       expect(input?.stateId).toBe(stateId);
@@ -438,7 +459,7 @@ describe('REVIEW GEARS to FSM compilation', () => {
       const input = states[stateId]?.invoke?.input?.({ context });
       const entries = Object.entries(input?.result ?? {});
       expect(entries.slice(0, -1)).toEqual(
-        (gears.get(sourceItem)?.results ?? []).map(
+        (gearsItem(sourceItem)?.results ?? []).map(
           ({ guard, description }) => [guard, description],
         ),
       );
@@ -466,7 +487,7 @@ describe('REVIEW GEARS to FSM compilation', () => {
           qualification,
         );
       }
-      for (const { guard, description } of gears.get(sourceItem)?.results ??
+      for (const { guard, description } of gearsItem(sourceItem)?.results ??
         []) {
         expect(description, `${sourceItem}.${guard}`).toContain(qualification);
       }
@@ -625,21 +646,21 @@ describe('REVIEW GEARS to FSM compilation', () => {
       expect(item.prompt, id).toContain('> Original request: <caller-input>');
       expect(item.prompt.join('\n'), id).not.toContain('<original-intent>');
     }
-    expect(gears.get('REVIEW-2')?.prompt).toContain('> Reviewer findings: <reviewer-output>');
-    expect(gears.get('REVIEW-3')?.prompt).toEqual(
+    expect(gears.get('review-2')?.prompt).toContain('> Reviewer findings: <reviewer-output>');
+    expect(gears.get('review-3')?.prompt).toEqual(
       expect.arrayContaining([
         '> Latest commit: <latest-commit>',
         '> Coder output: <coder-output>',
       ]),
     );
-    expect(gears.get('REVIEW-4')?.prompt).toContain('> Coder output: <coder-output>');
+    expect(gears.get('review-4')?.prompt).toContain('> Coder output: <coder-output>');
     // The evaluated revision relays only where a receipt-derived review-fix
     // commit exists; no other round leaves a placeholder without a producer.
     for (const [id, item] of gears) {
-      if (id === 'REVIEW-3') continue;
+      if (id === 'review-3') continue;
       expect(item.prompt, id).not.toContain('> Latest commit: <latest-commit>');
     }
-    const review3 = gears.get('REVIEW-3')?.prompt ?? [];
+    const review3 = gears.get('review-3')?.prompt ?? [];
     expect(review3.indexOf('> Original request: <caller-input>')).toBeLessThan(
       review3.indexOf('> Latest commit: <latest-commit>'),
     );
@@ -658,10 +679,7 @@ describe('REVIEW GEARS to FSM compilation', () => {
       ).toBe(true);
     }
 
-    const text = readFileSync(
-      new URL('./review.gears.md', import.meta.url),
-      'utf8',
-    );
+    const text = gearsText;
     expect(text).toContain(
       '`reviewerOutput: <verbatim final text>`',
     );

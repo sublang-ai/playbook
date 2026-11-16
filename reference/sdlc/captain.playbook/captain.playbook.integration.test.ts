@@ -83,13 +83,16 @@ const ENABLED_PLAYBOOKS = [
 // outcome report itself (the CAPTAIN-9 seam).
 // ---------------------------------------------------------------------------
 
-function gearsPrompt(itemId: 'CAPTAIN-1' | 'CAPTAIN-2' | 'CAPTAIN-3'): string {
+function gearsPrompt(itemId: 'captain-1' | 'captain-2' | 'captain-3'): string {
   const gears = readFileSync(
     fileURLToPath(new URL('./captain.gears.md', import.meta.url)),
     'utf8',
   );
-  const section = gears.split(`### ${itemId}\n`)[1];
-  if (!section) throw new Error(`gears item ${itemId} not found`);
+  // DR-108: the action item's own text runs to the next item or section
+  // heading, so a later item's text is never read as its prompt.
+  const after = gears.split(`### ${itemId}\n`)[1];
+  if (after === undefined) throw new Error(`gears item ${itemId} not found`);
+  const section = after.split(/^#{2,3} /m)[0]!;
   const lines: string[] = [];
   for (const line of section.split('\n')) {
     if (line.startsWith('> ')) lines.push(line.slice(2));
@@ -100,9 +103,9 @@ function gearsPrompt(itemId: 'CAPTAIN-1' | 'CAPTAIN-2' | 'CAPTAIN-3'): string {
   return lines.join('\n');
 }
 
-const DECISION_PROMPT = gearsPrompt('CAPTAIN-1');
-const COMMAND_RESPOND_PROMPT = gearsPrompt('CAPTAIN-2');
-const CLOSING_REPLY_PROMPT = gearsPrompt('CAPTAIN-3');
+const DECISION_PROMPT = gearsPrompt('captain-1');
+const COMMAND_RESPOND_PROMPT = gearsPrompt('captain-2');
+const CLOSING_REPLY_PROMPT = gearsPrompt('captain-3');
 
 // ---------------------------------------------------------------------------
 // Harness: scripted Captain port + scripted controller port. The judge,

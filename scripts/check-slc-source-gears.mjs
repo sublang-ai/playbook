@@ -185,6 +185,64 @@ export function parseGearsContract(gearsText) {
   });
 }
 
+/** ASCII-only lowercase, so a non-ASCII letter never folds. */
+function asciiLowerCase(text) {
+  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/**
+ * The parsed GEARS item a machine state cites by its `sourceItem`: the item
+ * whose ID equals it ignoring ASCII letter case (DR-108 §4), so a machine
+ * compiled with uppercase citations still cites a lowercase item heading.
+ */
+export function gearsItemFor(items, sourceItem) {
+  const key = asciiLowerCase(sourceItem);
+  return items.find((item) => asciiLowerCase(item.id) === key);
+}
+
+/**
+ * Each GEARS item's own text: its heading's ID, its statement (the first
+ * nonblank line, past an action item's `Parallel group:` label), and its body,
+ * every line after the heading up to the next `##` or `###` heading.
+ */
+export function gearsItemBodies(gearsText) {
+  const lines = gearsText.split('\n');
+  const items = [];
+  for (let index = 0; index < lines.length; index++) {
+    const heading = ITEM_HEADING.exec(lines[index]);
+    if (heading === null) continue;
+    let end = index + 1;
+    while (end < lines.length && !/^#{2,3}\s/.test(lines[end])) end++;
+    const bodyLines = lines.slice(index + 1, end);
+    const statement = bodyLines.find(
+      (line) => line.trim() !== '' && !/^Parallel group:/.test(line),
+    ) ?? '';
+    items.push({ id: heading[1], statement, body: bodyLines.join('\n') });
+  }
+  return items;
+}
+
+/**
+ * Whether one item body is an action item (DR-108 §2): its statement is
+ * Captain's acting clause and a prompt blockquote follows it.
+ */
+function isActionBody({ statement, body }) {
+  return /\bCaptain shall\b/.test(statement) &&
+    body.split('\n').some((line) => BLOCKQUOTE.test(line));
+}
+
+/**
+ * The action items of a GEARS package, parsed as `parseGearsContract` parses
+ * them, in file order: the items a machine state cites, leaving out the
+ * requirement and test items.
+ */
+export function gearsActionItems(gearsText) {
+  const actionIds = new Set(
+    gearsItemBodies(gearsText).filter(isActionBody).map(({ id }) => id),
+  );
+  return parseGearsContract(gearsText).filter(({ id }) => actionIds.has(id));
+}
+
 /** Canonical kebab-token to camel-field mapping from slc/link.md. */
 function placeholderField(token) {
   if (token === '#') return 'irNumber';

@@ -24,7 +24,7 @@ Where a direct-Captain or delegated-player prompt carries a Source-declared runt
 
 ### compiler-prompt-relays-7
 
-Where Source defines a placeholder as a labelled section of another relayed value, naming the label that opens the section and the labels that end it, text2gears shall keep that defining sentence verbatim in the package introduction, or in the item's prose where Source states it there, name the placeholder as Source does, and declare no result property for it, because the value is derived from the relayed text rather than produced by any player ([DR-068](../decisions/068-labelled-section-placeholders.md)).
+Where Source defines a placeholder as a labelled section of another relayed value, naming the label that opens the section and the labels that end it, text2gears shall state that definition in a requirement item that keeps the Source's defining words, name the placeholder as Source does, and declare no result property for it, because the value is derived from the relayed text rather than produced by any player ([DR-068](../decisions/068-labelled-section-placeholders.md), [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md)).
 
 ### compiler-prompt-relays-9
 
@@ -51,4 +51,4 @@ When the [task-input integration suite](../../src/compiler-task-input.test.ts) i
 
 ### compiler-prompt-relays-8
 
-When the integration suite reads the shipped text2gears and gears2fsm definitions, it shall verify that text2gears keeps the defining sentence and declares no result for the derived placeholder [[compiler-prompt-relays-7](#compiler-prompt-relays-7)], that gears2fsm states the derivation [[compiler-prompt-relays-9](#compiler-prompt-relays-9)], and that the derivation as stated yields the defined section for a caller's quoted labelled request, a multi-line quoted section whose look-alike labelled lines stay in it, an unquoted request whose section runs to the end of the text and keeps its quoted lines as content, an empty section, and unlabelled plain and quoted requests [[compiler-prompt-relays-9](#compiler-prompt-relays-9)].
+When the integration suite reads the shipped text2gears and gears2fsm definitions, it shall verify that text2gears states the definition in a requirement item and declares no result for the derived placeholder [[compiler-prompt-relays-7](#compiler-prompt-relays-7)], that gears2fsm states the derivation [[compiler-prompt-relays-9](#compiler-prompt-relays-9)], and that the derivation as stated yields the defined section for a caller's quoted labelled request, a multi-line quoted section whose look-alike labelled lines stay in it, an unquoted request whose section runs to the end of the text and keeps its quoted lines as content, an empty section, and unlabelled plain and quoted requests [[compiler-prompt-relays-9](#compiler-prompt-relays-9)].

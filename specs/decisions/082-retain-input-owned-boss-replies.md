@@ -7,6 +7,7 @@
 
 Accepted (2026-10-03).
 Clarifies the input-owned retention boundary under [DR-005](005-boss-reply-suspension-path.md) and [DR-066](066-compiled-builtins-keep-their-public-interface.md), without changing the runtime contract.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: GEARS states the input-owned retention and its acceptance condition as a requirement item, not in non-acting prose.
 
 ## Context
 

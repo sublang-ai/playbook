@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   checkSourceGearsContract,
-  parseGearsContract,
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
 } from '../../../scripts/check-slc-source-gears.mjs';
 import {
   codeMachine,
@@ -28,8 +30,11 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./code.gears.md', import.meta.url)),
   'utf8',
 );
-const gears = parseGearsContract(gearsText);
+// DR-108: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
+const itemBodies = gearsItemBodies(gearsText);
 
 interface RawTransition {
   guard?: string;
@@ -44,28 +49,46 @@ interface RawReviewState {
   };
 }
 
-// The one REVIEW item carries its authored workflow outcomes as its own
-// sentences (playbook-1 lets an outcome attach to its corresponding item).
+// DR-108: the authored outcomes of the one REVIEW call are requirement
+// items of their own, each stating its obligation once.
 const CODE_3_OUTCOMES = [
-  'A nested `review` passes only when its result applies to that supplied review scope, returns the exact evaluated repository revision, and affirmatively establishes that no unsettled findings remain.',
-  'When `review` passes, `code` is complete and returns to its caller the exact last `code`-owned commit, the exact final evaluated repository revision, and the fact that the intent\'s review passed with no unsettled findings.',
-  'When `review` returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings, `code` starts no further phase and reports the failure and the last `code`-owned commit to its caller.',
-  'When the nested `review` call fails outside that authored result contract, `code` parks as failed and retains the control-plane error instead of reporting an authored review outcome.',
-];
+  [
+    'code-18',
+    '`code` shall treat the `review` call [[code-3](#code-3)] as passed only on a result that:\n\n- applies to the supplied review scope;\n- returns the exact evaluated repository revision;\n- affirmatively establishes that no unsettled findings remain.',
+  ],
+  [
+    'code-5',
+    'When the `review` call [[code-3](#code-3)] passes [[code-18](#code-18)], `code` shall be complete and return to its caller:\n\n- the exact last `code`-owned commit [[code-19](#code-19)];\n- the exact final evaluated repository revision;\n- the fact that the intent\'s review passed with no unsettled findings.',
+  ],
+  [
+    'code-6',
+    'When `review` [[code-3](#code-3)] returns an authored abort or failure, or a terminal result that does not establish that the supplied scope was evaluated with no unsettled findings [[code-18](#code-18)], `code` shall start no further phase and report the failure and the last `code`-owned commit [[code-19](#code-19)] to its caller.',
+  ],
+  [
+    'code-7',
+    'When the `review` call [[code-3](#code-3)] fails outside the authored result contract [[code-5](#code-5)] [[code-6](#code-6)], `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
+  ],
+] as const;
 
-// DR-102: a nonfinal phase continues without a review; the Coder items carry
-// that continuation as their own sentences.
-const PHASE_CONTINUATION_OUTCOMES = {
-  'CODE-1':
-    'When a new-IR or a nonfinal IR-task phase completes, Captain continues with the next unfinished IR-task phase without a review.',
-  'CODE-2':
-    'When a nonfinal IR-task phase completes, Captain continues with the next unfinished IR-task phase without a review.',
-} as const;
+// DR-102: a new-IR or nonfinal phase continues without a review. DR-108: the
+// continuation is the later phase's own trigger, and the absence of a review
+// a requirement item.
+const PHASE_CONTINUATION_OUTCOMES = [
+  [
+    'code-2',
+    'When the first phase completes as a new-IR phase or a nonfinal IR-task phase [[code-1](#code-1)], or a later IR-task phase completes as nonfinal, Captain shall prompt Coder:',
+  ],
+  [
+    'code-14',
+    '`code` shall start no review after a new-IR or a nonfinal IR-task phase [[code-1](#code-1)] [[code-2](#code-2)].',
+  ],
+] as const;
 
-function gearsSection(id: 'CODE-1' | 'CODE-2' | 'CODE-3'): string {
-  const start = gearsText.indexOf(`### ${id}`);
-  const next = gearsText.indexOf('\n### ', start + 1);
-  return gearsText.slice(start, next === -1 ? gearsText.length : next);
+// One GEARS item's own text, up to the next item or section heading.
+function gearsSection(id: string): string {
+  const item = itemBodies.find((candidate) => candidate.id === id);
+  expect(item, id).toBeDefined();
+  return item?.body ?? '';
 }
 
 // Arms name their target either bare or by `#id`; both mean the same state.
@@ -110,15 +133,25 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
 
   it('maps exactly CODE-1 through CODE-3 once', () => {
     expect(gears.map(({ id }) => id)).toEqual([
-      'CODE-1',
-      'CODE-2',
-      'CODE-3',
+      'code-1',
+      'code-2',
+      'code-3',
     ]);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of itemBodies) {
+      if (byId.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
     const stateItems = [
       ...enumeratePlayerStates(codeMachine),
       ...enumerateNestedPlaybookStates(codeMachine),
     ].map(({ sourceItem }) => sourceItem);
-    expect(stateItems.sort()).toEqual(gears.map(({ id }) => id).sort());
+    // A state cites its item ignoring ASCII letter case (DR-108 §4).
+    expect(
+      stateItems.map((sourceItem) => gearsItemFor(gears, sourceItem)?.id).sort(),
+    ).toEqual(gears.map(({ id }) => id).sort());
     // playbook-1: the FSM export and the registry manifest agree on the
     // (empty) ordered concurrent role sets.
     expect(concurrentRoleSets).toEqual([]);
@@ -129,7 +162,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
 
   it('keeps each delegated prompt and result contract verbatim', () => {
     for (const state of enumeratePlayerStates(codeMachine)) {
-      const item = byId.get(state.sourceItem);
+      const item = gearsItemFor(gears, state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
       expect(item?.player).toBeDefined();
@@ -146,22 +179,22 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     }
     // DR-065: the prefix pass moved each Coder item's relays after its last
     // instruction line; the layout itself records that rewrite.
-    expect(byId.get('CODE-1')?.prompt[0]).toBe(
+    expect(byId.get('code-1')?.prompt[0]).toBe(
       'First determine whether the request starts a new change intent or continues an existing IR with unfinished work.',
     );
-    expect(byId.get('CODE-1')?.prompt.slice(-2)).toEqual([
+    expect(byId.get('code-1')?.prompt.slice(-2)).toEqual([
       '> Original request: <caller-input>',
       '> Run results: <run-results>',
     ]);
-    expect(byId.get('CODE-2')?.prompt[0]).toBe(
+    expect(byId.get('code-2')?.prompt[0]).toBe(
       'Read the identified IR and implement exactly its next unfinished task, including corresponding tests or specs if any.',
     );
-    expect(byId.get('CODE-2')?.prompt.slice(-3)).toEqual([
+    expect(byId.get('code-2')?.prompt.slice(-3)).toEqual([
       '> Original request: <caller-input>',
       '> IR number: <ir-number>',
       '> Run results: <run-results>',
     ]);
-    for (const [id, relays] of [['CODE-1', 2], ['CODE-2', 3]] as const) {
+    for (const [id, relays] of [['code-1', 2], ['code-2', 3]] as const) {
       const prompt = byId.get(id)?.prompt ?? [];
       expect(prompt.at(-relays - 1), id).toBe('');
       expect(
@@ -187,8 +220,10 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       const input = state.getInput(CONTEXT);
       expect(input.playbookId).toBe('review');
       expect(input.sourceItem).toBe(state.sourceItem);
-      expect(byId.get(state.sourceItem)?.delegated).toBe(false);
-      expect(byId.get(state.sourceItem)?.player).toBeUndefined();
+      const item = gearsItemFor(gears, state.sourceItem);
+      expect(item, state.sourceItem).toBeDefined();
+      expect(item?.delegated).toBe(false);
+      expect(item?.player).toBeUndefined();
     }
     expect(
       enumeratePlayerStates(codeMachine).some(
@@ -227,11 +262,11 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    for (const outcome of CODE_3_OUTCOMES) {
-      expect(gearsSection('CODE-3')).toContain(outcome);
+    for (const [id, outcome] of CODE_3_OUTCOMES) {
+      expect(gearsSection(id), id).toContain(outcome);
     }
-    for (const [id, outcome] of Object.entries(PHASE_CONTINUATION_OUTCOMES)) {
-      expect(gearsSection(id as 'CODE-1' | 'CODE-2')).toContain(outcome);
+    for (const [id, outcome] of PHASE_CONTINUATION_OUTCOMES) {
+      expect(gearsSection(id), id).toContain(outcome);
     }
 
     const states = (codeMachine as unknown as {
@@ -382,7 +417,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     const declaredRoles = new Map(
       enumeratePlayerStates(codeMachine).map(({ stateId, sourceItem }) => [
         stateId,
-        byId.get(sourceItem)?.player?.toLowerCase(),
+        gearsItemFor(gears, sourceItem)?.player?.toLowerCase(),
       ]),
     );
     for (const [id, state] of Object.entries(states)) {

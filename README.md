@@ -109,8 +109,8 @@ Enable that entry and bind each role it declares under `playbooks.my-workflow` i
 
 SLC's `playbook` pipeline has three phases:
 
-1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — makes each behavior explicit with its trigger, actor, prompt, and outcomes.
-2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — maps each item to an XState state that invokes the Captain, a player, another playbook, or a local script.
+1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — writes a spec package you review: each action with its trigger, actor, prompt, and outcomes, and every other requirement and its tests as items of their own.
+2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — maps each action item to an XState state that cites it and invokes the Captain, a player, another playbook, or a local script, and realizes the other requirements in its transitions.
 3. **FSM → runtime** ([slc/link.md](slc/link.md)) — links the machine to a host-independent interface for user input, agent calls, status, and telemetry.
 
 The default passes run between the first two phases: the [optimization pass](slc/optimize.md) replaces eligible mechanical steps with local shell scripts, and the [prompt-prefix pass](slc/prefix.md) moves each prompt's relayed runtime values after its instructions so repeated runs share a cacheable prompt prefix; `--no-optimize` skips both.

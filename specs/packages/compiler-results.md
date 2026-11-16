@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies the text-to-GEARS producer's existing acting-result boundary, preservation of source-authored terminal returns, and authored Boss-question field declarations without changing prompts, outcomes, or nested-call continuation.
+This package specifies the text-to-GEARS producer's acting-result boundary, preservation of source-authored terminal returns, authored Boss-question field declarations, and the separation of separately stated behaviors into their own action items, without changing prompts or outcomes.
 The package also reserves output-clause backticks for unambiguous field declarations.
 The Results-boundary guidance is retained after a matched phase comparison; it does not guarantee a compilation-time reduction.
 
@@ -13,17 +13,18 @@ The Results-boundary guidance is retained after a matched phase comparison; it d
 
 ### compiler-results-1
 
-When emitting an acting item's `Results:` contract, text2gears shall place the label immediately after the complete acting blockquote, emit only result bullets and blank lines until the next item or section heading, and place other item conditions or invariants before that blockquote rather than between the blockquote and label or after its result bullets.
-Nested-playbook items shall remain without `Results:` and retain their child-continuation prose after the blockquote.
+When emitting an action item's `Results:` contract, text2gears shall place the label immediately after the complete acting blockquote and emit only result bullets and blank lines until the next item or section heading.
+An action item shall carry nothing but its statement, its prompt blockquote, and its `Results:` block, and its `Parallel group:` label where it has one: text2gears shall state the item's other conditions and invariants as requirement items, never as prose before the blockquote, between the blockquote and label, or after its result bullets [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md).
+Nested-playbook items shall remain without `Results:`, and what follows the child's return shall be stated by requirement items that cite the call item.
 
 ### compiler-results-3
 
 When Source requires a terminal return to its caller, text2gears shall preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS; merely naming a value in a completion predicate or acting result shall not substitute for that obligation.
-The terminal-return requirement shall remain non-acting semantics outside prompt blockquotes, before the acting blockquote, in an explicit terminal-return clause of the relevant Results description, or in existing nested-call continuation, without a new Captain action solely to restate it.
+The terminal-return requirement shall be one requirement item under `## External Behavior`, outside prompt blockquotes and result descriptions [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), without a new Captain action solely to restate it.
 
 ### compiler-results-5
 
-When Source gives a direct-Captain or delegated-player behavior a Boss question that waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt, the wait, and the answer-dependent continuation on the originating item [[playbook-runtime-11](playbook-runtime.md#playbook-runtime-11)] and shall declare no result for that question outside the decide-call-observe routing contract: the question is the framework-owned `needsBossReply` outcome that [gears2fsm's Boss-reply suspension](../../slc/gears2fsm.md#boss-reply-suspension) adds to every such state with its standard description [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], interpreted under the runtime's current-call adjudication rule [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], and a second guard for the same wait would give the adjudicator two equivalent outcomes.
+When Source gives a direct-Captain or delegated-player behavior a Boss question that waits for the answer before the same behavior resumes, text2gears shall preserve the authored prompt and the wait on the originating action item and state the answer-dependent continuation as one requirement item citing that action [[playbook-runtime-11](playbook-runtime.md#playbook-runtime-11)] [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), and shall declare no result for that question outside the decide-call-observe routing contract: the question is the framework-owned `needsBossReply` outcome that [gears2fsm's Boss-reply suspension](../../slc/gears2fsm.md#boss-reply-suspension) adds to every such state with its standard description [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], interpreted under the runtime's current-call adjudication rule [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], and a second guard for the same wait would give the adjudicator two equivalent outcomes.
 Where the behavior is Captain's routing decision under that contract, whose `question` and `followUpQuestion` results are fixed compiler vocabulary, text2gears shall declare the routing question's `question` output property in the annotated `question: <verbatim final text>` form [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], and the result name or prose alone shall not satisfy that declaration.
 
 ### compiler-results-9
@@ -36,7 +37,7 @@ Where a later prompt reads the commit an earlier call itself created through a S
 
 ### compiler-results-13
 
-When Source qualifies an authored domain outcome's evidence — what affirmatively supports it, or what supports no outcome — text2gears shall carry that qualification in the outcome's result description, which the hidden adjudicator reads when it selects the guard [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], rather than in the item's prose, which reaches no judge; a behavior with one qualified outcome therefore carries exactly one `Results:` bullet naming it, with an output property only where a consumer requires one.
+When Source qualifies an authored domain outcome's evidence — what affirmatively supports it, or what supports no outcome — text2gears shall carry that qualification in the outcome's result description, which the hidden adjudicator reads when it selects the guard [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)], rather than only in a requirement item, which reaches no judge, and shall also state it once as a requirement item citing the actions it governs [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md); a behavior with one qualified outcome therefore carries exactly one `Results:` bullet naming it, with an output property only where a consumer requires one.
 
 ### compiler-results-15
 
@@ -46,9 +47,13 @@ When gears2fsm compiles an accepted `onDone` arm of an artifact-schema-3 governe
 
 When emitting a result description with an `Output shall include` clause, text2gears shall reserve complete backticked spans after that marker for output-field declarations [[playbook-runtime-10](playbook-runtime.md#playbook-runtime-10)] outside plain-text parentheses, placing explanatory symbols in plain guidance text or inside the declaration's complete annotation rather than in separate backticks within parenthetical guidance, while retaining bare declarations with plain parenthetical guidance and parentheses inside a complete backticked annotation.
 
+### compiler-results-20
+
+Where Source states two acting behaviors separately, each with its own trigger and its own authored prompt fragment, when text2gears emits GEARS, it shall emit one action item for each, carrying every authored fragment at least as many times as Source authors it and each behavior's own outcomes even where the fragments are the same text, and shall share one action item among several paths [[compiler-nested-calls-4](compiler-nested-calls.md#compiler-nested-calls-4)] only where Source authors the prompt once ([DR-108](../decisions/108-compiled-gears-is-a-spec-package.md)).
+
 ### compiler-results-17
 
-Where Source requires the complete received Boss input or reply retained for a later call, when text2gears emits GEARS, it shall preserve that input-owned retention and its Source-authored acceptance condition in non-acting prose, without declaring a Judge-extracted echo property; the acting result contract retains the semantic approval or refusal ([DR-082](../decisions/082-retain-input-owned-boss-replies.md)).
+Where Source requires the complete received Boss input or reply retained for a later call, when text2gears emits GEARS, it shall state that input-owned retention and its Source-authored acceptance condition in a requirement item, without declaring a Judge-extracted echo property; the acting result contract retains the semantic approval or refusal ([DR-082](../decisions/082-retain-input-owned-boss-replies.md), [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md)).
 
 ## Verification
 
@@ -62,15 +67,14 @@ When the integration suite checks candidate GEARS through the supplied SLC insta
 
 | Prose placement | Expected result |
 | --- | --- |
-| Item invariant before the acting blockquote | Accepted. |
+| Item invariant as a requirement item after the action item's result bullets | Accepted. |
 | Item invariant between the acting blockquote and `Results:` | Rejected as misplaced results. |
 | Item invariant after the result bullets, before the next heading | Rejected as a malformed result entry. |
-| Child-continuation prose after a nested-call blockquote without `Results:` | Accepted. |
+| Child continuation as a requirement item after a nested-call item without `Results:` | Accepted. |
 
 ### compiler-results-4
 
-When the integration suite parses terminal-return fixtures through the supplied SLC installation, it shall verify that explicit return prose before a delegated prompt or in nested-call continuation leaves the authored prompt, acting-item count, and acting result contract unchanged [[compiler-results-3](#compiler-results-3)].
-It shall also verify that an explicit return clause in a complete Results description preserves the existing prompt, actor count and guard while retaining the clause [[compiler-results-3](#compiler-results-3)].
+When the integration suite parses terminal-return fixtures through the supplied SLC installation, it shall verify that a terminal-return requirement item beside a delegated action item or a nested-call item leaves the authored prompt, action-item count, and acting result contract unchanged [[compiler-results-3](#compiler-results-3)].
 This representation check shall not claim to detect a model's omission of a terminal-return requirement.
 
 ### compiler-results-6
@@ -88,7 +92,7 @@ When the integration suite reads the shipped definitions and the maintained CODE
 
 ### compiler-results-14
 
-When the integration suite reads the shipped text2gears definition, it shall verify that it directs an authored domain outcome's evidence qualification into the result description, keeps the framework-owned Boss question under the compiler and runtime's shared rule [[compiler-results-5](#compiler-results-5)], and names item prose as text the adjudicator never reads [[compiler-results-13](#compiler-results-13)].
+When the integration suite reads the shipped text2gears definition, it shall verify that it directs an authored domain outcome's evidence qualification into the result description, keeps the framework-owned Boss question under the compiler and runtime's shared rule [[compiler-results-5](#compiler-results-5)], and names a requirement item as text the adjudicator never reads while stating the qualification once as one [[compiler-results-13](#compiler-results-13)].
 
 ### compiler-results-16
 
@@ -98,6 +102,10 @@ When the integration suite reads the shipped gears2fsm definition and each maint
 
 When the integration suite drives a question/reply workflow through the shared factory's closed acting-result contract, it shall verify that the semantic approval remains a guard-only result, a refusal remains distinct, and an added echo field is rejected rather than substituted for the canonical input [[compiler-results-17](#compiler-results-17)].
 The suite shall also verify that the shipped text2gears guidance preserves input-owned retention without an echo declaration [[compiler-results-17](#compiler-results-17)]; scripted judgments shall not claim model approval accuracy.
+
+### compiler-results-21
+
+When the integration suite reads the text2gears definition and the maintained PR GEARS, it shall verify that the definition limits a shared action item to a prompt Source authors once and keeps separately stated behaviors apart, and that the PR package carries its two check waits as two action items with the same command and differently named failing outcomes [[compiler-results-20](#compiler-results-20)].
 
 ### compiler-results-19
 

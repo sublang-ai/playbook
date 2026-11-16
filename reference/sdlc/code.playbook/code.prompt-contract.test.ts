@@ -5,7 +5,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
+import {
+  gearsItemFor,
+  parseGearsContract,
+} from '../../../scripts/check-slc-source-gears.mjs';
 import {
   codeMachine,
   type CodeContext,
@@ -92,9 +95,8 @@ describe('CODE player prompt composition', () => {
       'CODE-2',
     ]);
     for (const state of states) {
-      const body = gearsItems
-        .find(({ id }) => id === state.sourceItem)
-        ?.prompt.join('\n');
+      // A state cites its item ignoring ASCII letter case (DR-108 §4).
+      const body = gearsItemFor(gearsItems, state.sourceItem)?.prompt.join('\n');
       expect(body).toBeDefined();
       const prompt = composePlayerPrompt(state.getInput(context), promptIdentity);
       expect(prompt).toBe(

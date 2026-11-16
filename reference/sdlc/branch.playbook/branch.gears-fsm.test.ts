@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   checkSourceGearsContract,
-  parseGearsContract,
+  gearsActionItems,
+  gearsItemBodies,
+  gearsItemFor,
   verbatimFieldsFromGears,
 } from '../../../scripts/check-slc-source-gears.mjs';
 import {
@@ -29,8 +31,15 @@ const gearsText = readFileSync(
   fileURLToPath(new URL('./branch.gears.md', import.meta.url)),
   'utf8',
 );
-const gears = parseGearsContract(gearsText);
+// DR-108: the action items are the ones a machine state cites; the
+// requirement and test items carry no prompt.
+const gears = gearsActionItems(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
+const itemBodies = gearsItemBodies(gearsText);
+// The text of one requirement item, which carries an obligation as its own
+// GEARS statement.
+const itemBody = (id: string) =>
+  itemBodies.find((item) => item.id === id)?.body ?? '';
 
 interface RawTransition {
   guard?: string;
@@ -76,7 +85,14 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
   });
 
   it('maps exactly BRANCH-1 once', () => {
-    expect(gears.map(({ id }) => id)).toEqual(['BRANCH-1']);
+    expect(gears.map(({ id }) => id)).toEqual(['branch-1']);
+    // Every other item is a requirement or test item: no prompt, no result
+    // contract.
+    for (const { id, body } of itemBodies) {
+      if (byId.has(id)) continue;
+      expect(body, id).not.toMatch(/^>/m);
+      expect(body, id).not.toMatch(/^Results:/m);
+    }
     expect(
       enumeratePlayerStates(branchMachine).map(({ sourceItem }) => sourceItem),
     ).toEqual(['BRANCH-1']);
@@ -102,7 +118,8 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
       'createBranch',
     ]);
     for (const state of playerStates) {
-      const item = byId.get(state.sourceItem);
+      // A state cites its item ignoring ASCII letter case (DR-108 §4).
+      const item = gearsItemFor(gears, state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
       expect(item?.delegated).toBe(true);
@@ -128,20 +145,38 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
     ]) {
       expect(source).toContain(clause);
     }
-    // Each authored outcome is carried by BRANCH-1: the shared conditions in
-    // its Where clause and each semantic outcome's return in its result.
+    // DR-108: each shared condition is a requirement item of its own.
+    for (const [id, requirement] of [
+      [
+        'branch-5',
+        "`branch` shall keep the repository exact in every outcome: a new branch at the current commit changes neither HEAD's commit nor the working tree.",
+      ],
+      [
+        'branch-7',
+        "`branch` shall take the base revision from repository authority, not from Coder's prose.",
+      ],
+      [
+        'branch-8',
+        "`branch` shall select an outcome [[branch-3](#branch-3)] [[branch-4](#branch-4)] only on affirmative support in Coder's result [[branch-1](#branch-1)]:",
+      ],
+      ['branch-8', '- the absence of a reported obstacle is not support for a created branch;'],
+      ['branch-8', "- no outcome depends on a fixed presentation format of Coder's reply."],
+      [
+        'branch-6',
+        "When Boss answers Coder's question about which issue or work the request means, `branch` shall resume the behavior that raised the question [[branch-1](#branch-1)] with that answer.",
+      ],
+    ] as const) {
+      expect(itemBody(id), id).toContain(requirement);
+    }
+    // Each semantic outcome's return stays in its result.
     for (const carried of [
-      "Where every outcome keeps the repository exact, so that a new branch at the current commit changes neither HEAD's commit nor the working tree",
-      "where Captain takes the base revision from repository authority rather than from Coder's prose",
-      "where each outcome requires affirmative support in Coder's result and depends on no fixed presentation format of Coder's reply",
-      "where Boss's answer to Coder's question about which issue or work the request means resumes this same behavior with that answer as continuation context",
       'the absence of a reported obstacle is not support.',
       'The branch workflow is then complete and returns the exact branch name, the exact base revision taken from repository authority, and the issue summary to its caller.',
       "The branch workflow then fails and reports Coder's complete result with its reason to its caller; no branch was created.",
     ]) {
       expect(gearsText).toContain(carried);
     }
-    const item = byId.get('BRANCH-1');
+    const item = byId.get('branch-1');
     expect(item?.results.map(({ guard }) => guard)).toEqual([
       'branched',
       'refused',
@@ -308,7 +343,7 @@ describe('BRANCH Source, GEARS, and FSM agreement', () => {
     const declaredRoles = new Map(
       enumeratePlayerStates(branchMachine).map(({ stateId, sourceItem }) => [
         stateId,
-        byId.get(sourceItem)?.player?.toLowerCase(),
+        gearsItemFor(gears, sourceItem)?.player?.toLowerCase(),
       ]),
     );
     for (const [id, state] of Object.entries(states)) {
