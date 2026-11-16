@@ -848,7 +848,7 @@ Before disposing a terminal root, the shell shall append exactly one settlement 
 
 #### playbook-captain-94
 
-While the last `playbook.script` event [[playbook-runtime-108](playbook-runtime.md#playbook-runtime-108)] the shell passed through in the current Boss turn [[playbook-captain-3](#playbook-captain-3)], from the root's runtime or a nested playbook's, carries a nonzero `exitStatus`, when the root playbook ends at a failure terminal [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)], the shell shall append this settlement fact directly after the completion fact [[playbook-captain-20](#playbook-captain-20)] ([DR-107](../decisions/107-a-script-steps-command-is-on-record.md)):
+While the last `playbook.script` event [[playbook-runtime-108](playbook-runtime.md#playbook-runtime-108)] that the shell passed through in the current Boss turn [[playbook-captain-3](#playbook-captain-3)] from a root playbook's runtime or from the runtime of a playbook nested under it carries a nonzero `exitStatus`, when that root playbook ends at a failure terminal [[playbook-runtime-83](playbook-runtime.md#playbook-runtime-83)], the shell shall append this settlement fact directly after the completion fact [[playbook-captain-20](#playbook-captain-20)] ([DR-107](../decisions/107-a-script-steps-command-is-on-record.md)):
 
 ```text
 A script step of /<command> exited with status <exitStatus> before the run ended; its command was <script>. The command's output is on the session's record for the host and was not given to Captain.
