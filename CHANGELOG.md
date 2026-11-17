@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A writer checkpoints from what it verified** ([DR-109](specs/decisions/109-a-writer-checkpoints-from-what-it-verified.md)): a chunked session's manifest write no longer reads and verifies the whole replay chain twice. The lease's replay writer keeps the running digest of the exact replay bytes it verified at acquisition and appended since, with the session's context records, so a step boundary, turn or effect-ledger write costs time independent of the session's length rather than about 1.7 s per write at 3,400 records on macOS. A writer that latched incomplete, failed to initialize or holds a monolithic session still reads the complete chain, and reopening, validation, export and migration still verify it. A chunk altered outside the storage protocol during a lease is no longer caught when the manifest is written; the next open still refuses to continue it.
+
 ## [19.0.0] - 2026-11-15
 
 ### Added

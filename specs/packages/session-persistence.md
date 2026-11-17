@@ -87,8 +87,9 @@ The bounded replay representation shall encode each nonempty append as one logic
 - a zero-byte append creates no node, and publication changes only the replay root after its new node and content dependencies have been synced [[session-persistence-4](#session-persistence-4)];
 - a nonempty append persists its byte content and synchronously constructed JSON chain node in one serial chunk operation, retaining each new file sync and completing one dependency-directory sync before returning the head for replay-root publication;
 - internal checkpoint synchronization by the owning lifecycle may reuse a proof of its fully verified predecessor and successfully synced append publication while the directory identity and root's identity, metadata and exact bytes remain unchanged; this proof stays within one lease and assumes that lease's immutable chunks are not modified outside the storage protocol;
+- under that same assumption, the lease writer keeps a verified prefix: a running SHA-256 of the exact envelope bytes it verified at initialization [[playbook-cli-83](playbook-cli.md#playbook-cli-83)] and appended since, the digest at its latest successful content checkpoint, and the context records among those envelopes [[session-storage-5](session-storage.md#session-storage-5)]; recovery publication and context recording take the applicable context and the durable prefix's digest [[session-storage-4](session-storage.md#session-storage-4)] from that prefix and read no replay chunk; where the writer holds no such prefix because its initialization failed, its replay latched incomplete [[playbook-cli-76](playbook-cli.md#playbook-cli-76)], or its lease acquired a monolithic session [[session-persistence-5](#session-persistence-5)] whose history this chain does not hold, they derive both from a complete verified read instead;
 - once a writer has verified or published a root, an externally changed root or containing directory blocks that writer's later append and checkpoint operations, including replacement with identical root bytes;
-- reopening, export, recovery publication before relying on its checkpoint, and a public read with no boundary the reading store verified earlier verify the complete chain, while a public read from such a boundary verifies only the nodes after it [[playbook-cli-82](playbook-cli.md#playbook-cli-82)] and establishes no publication proof; a failed chain verification invalidates the local publication proof.
+- reopening, export and a public read with no boundary the reading store verified earlier verify the complete chain, while a public read from such a boundary verifies only the nodes after it [[playbook-cli-82](playbook-cli.md#playbook-cli-82)] and establishes no publication proof; a failed chain verification invalidates the local publication proof.
 
 ## Verification
 
@@ -98,8 +99,16 @@ When integration tests save, reopen and export real sessions containing repeated
 
 ### session-persistence-9
 
-When integration tests interrupt writes and inspect malformed, missing or unsafe chunk paths, they shall verify preserved prior checkpoints, explicit incompleteness or refusal without repeated effects, refusal by a new store's first read of a chunk corrupted after another store verified it, dependency-before-root publication and unchanged private ownership guarantees [[session-persistence-2](#session-persistence-2)] [[session-persistence-3](#session-persistence-3)] [[session-persistence-4](#session-persistence-4)] [[session-persistence-12](#session-persistence-12)] [[session-persistence-11](#session-persistence-11)].
+When integration tests interrupt writes and inspect malformed, missing or unsafe chunk paths, they shall verify preserved prior checkpoints, explicit incompleteness or refusal without repeated effects, refusal by a new store's first read of a chunk corrupted after another store verified it, a checkpoint's unchanged digest and the next open's refusal after a chunk is corrupted during the writer's lease, dependency-before-root publication and unchanged private ownership guarantees [[session-persistence-2](#session-persistence-2)] [[session-persistence-3](#session-persistence-3)] [[session-persistence-4](#session-persistence-4)] [[session-persistence-12](#session-persistence-12)] [[session-persistence-11](#session-persistence-11)].
 
 ### session-persistence-10
 
 When integration tests migrate an existing real bundle, read it concurrently, export it and delete it, they shall verify retained source bytes, unchanged recovery semantics and replay checkpoints, exact root-bound hints, complete portable closure and session-scoped manifest-last deletion [[session-persistence-5](#session-persistence-5)] [[session-persistence-6](#session-persistence-6)] [[session-persistence-7](#session-persistence-7)].
+
+### session-persistence-13
+
+When integration tests make consecutive progress writes on real chunked sessions of 1,000 and 3,000 records, they shall verify that each write stats and opens no replay chunk, as counted through injected filesystem operations on the chain's chunk paths, and makes the same number of filesystem operations at both lengths [[session-persistence-12](#session-persistence-12)].
+
+### session-persistence-14
+
+When integration tests save a real chunked session through context recording, a changed execution configuration, an imported asset and an injected append failure, they shall verify that every published manifest's replay sequence, digest and incompleteness and its context sequence equal those an independent store derives from a complete read, and that a progress write on a monolithic session refuses and leaves its record unchanged [[session-persistence-12](#session-persistence-12)].

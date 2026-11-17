@@ -312,6 +312,11 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
   const sessionId = basename(path, '.records.jsonl');
   const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, assertOwner, chunks });
   let lastReadableSeq = null, lastDurableSeq = null, incomplete = true, closed = false;
+  // DR-109: the verified prefix is what this writer verified at initialization
+  // and appended since: a running SHA-256 of the exact envelope bytes, the
+  // digest at the durable sequence, and the context records. It answers a
+  // checkpoint without rereading the chain; a latch discards it for the lease.
+  let prefix = null;
   let tail = Promise.resolve();
   const enqueue = (operation) => { const result = tail.then(operation); tail = result.catch(() => {}); return result; };
   const status = () => Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
@@ -319,13 +324,32 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
     const snapshot = await backend.readSnapshot();
     const history = parseSessionHistory(snapshot.bytes);
     if (history.incomplete || history.pendingTail) throw new Error('bounded replay is incomplete');
-    return history.lastReadableSeq;
+    return { bytes: snapshot.bytes, history };
   };
-  try { await assertOwner(); lastReadableSeq = lastDurableSeq = await refresh(); incomplete = false; }
-  catch { /* Read failures cannot authorize new calls or overwrite evidence. */ }
+  try {
+    await assertOwner();
+    const { bytes, history } = await refresh();
+    lastReadableSeq = lastDurableSeq = history.lastReadableSeq;
+    const hash = createHash('sha256').update(bytes);
+    prefix = {
+      hash, durable: { seq: lastDurableSeq, sha256: hash.copy().digest('hex') },
+      contexts: history.entries.filter(({ record }) => record.type === 'session_context'),
+    };
+    incomplete = false;
+  } catch { /* Read failures cannot authorize new calls or overwrite evidence. */ }
   const latch = async () => {
     incomplete = true;
-    try { lastReadableSeq = await refresh(); } catch { /* Keep the proven prefix. */ }
+    prefix = null;
+    try { lastReadableSeq = (await refresh()).history.lastReadableSeq; } catch { /* Keep the proven prefix. */ }
+  };
+  const extendPrefix = (line, record, seq) => {
+    if (prefix === null) return;
+    // Parsing exactly the written line keeps an indexed context identical to
+    // the entry a complete read returns; any doubt falls back to that read.
+    try {
+      if (record.type === 'session_context') prefix.contexts.push(parseReplayEnvelope(line.subarray(0, -1), seq));
+      prefix.hash.update(line);
+    } catch { prefix = null; }
   };
   const append = (record, role) => {
     if (closed) return Promise.reject(new Error('replay append admission is closed for release'));
@@ -342,15 +366,20 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
         if (sanitizationFailed) throw sanitizationFailure;
         if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) throw new Error('replay stream sequence exhausted its safe integer range');
         const seq = lastReadableSeq + 1;
-        await backend.appendBytes(Buffer.from(`${JSON.stringify({v: RECORDS_STREAM_VERSION, seq, ...(role === undefined ? {} : {role}), record: sanitized})}\n`));
+        const line = Buffer.from(`${JSON.stringify({v: RECORDS_STREAM_VERSION, seq, ...(role === undefined ? {} : {role}), record: sanitized})}\n`);
+        await backend.appendBytes(line);
         lastReadableSeq = seq;
+        extendPrefix(line, sanitized, seq);
       } catch (cause) { await latch(); throw cause; }
     });
   };
   const checkpointNow = async () => {
     if (incomplete || lastReadableSeq === null) return;
-    try { await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner(); lastDurableSeq = lastReadableSeq; }
-    catch { await latch(); }
+    try {
+      await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner();
+      lastDurableSeq = lastReadableSeq;
+      if (prefix !== null) prefix.durable = { seq: lastDurableSeq, sha256: prefix.hash.copy().digest('hex') };
+    } catch { await latch(); }
   };
   return Object.freeze({
     append,
@@ -365,6 +394,9 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
       });
     },
     status,
+    // The verified prefix's facts, or null where this writer holds none.
+    verifiedPrefix: () => (incomplete || prefix === null ? null
+      : Object.freeze({ durable: Object.freeze({ ...prefix.durable }), contexts: Object.freeze([...prefix.contexts]) })),
     checkpoint: () => enqueue(checkpointNow),
     closeAppendAdmission: () => { closed = true; },
     prepareRelease: () => enqueue(checkpointNow),
@@ -1267,8 +1299,8 @@ export function createCaptainSessionStore(options = {}) {
     await assetStoreFor(sessionId).prepare();
     try { await fs.lstat(join(sessionsDir, `${sessionId}.chunks`)); await chunksFor(sessionId).prepare(); }
     catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+    let stored;
     if (!management) {
-      let stored;
       try { stored = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record')); }
       catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
       if (stored?.schemaVersion === 7) throw new Error(`session ${sessionId} requires bounded storage migration; run playbook migrate-session ${sessionId}`);
@@ -1336,6 +1368,9 @@ export function createCaptainSessionStore(options = {}) {
         sessionId,
         owner: stage.owner,
         sessionsDir,
+        // Mirrors the reader's choice: a monolithic manifest's history is not
+        // the bounded chain this lease's writer verifies and extends.
+        boundedHistory: ![2, 3, 4, 5, 6, 7].includes(stored?.schemaVersion),
         replayPath: recordsPathFor(sessionId),
         replayFs: fs,
         readReplayStream: (options) => readStream(sessionId, options),
@@ -2408,6 +2443,7 @@ async function createLease({
   sessionId,
   owner,
   sessionsDir,
+  boundedHistory,
   replayPath,
   replayFs,
   readReplayStream,
@@ -2479,10 +2515,16 @@ async function createLease({
   try { previousManifest = await readManifest(sessionId); contextSeq = previousManifest.contextSeq; }
   catch { /* Unsupported recovery still permits leased migration/deletion. */ }
 
+  // DR-109: the writer's verified prefix answers both history questions a
+  // checkpoint asks, the applicable context and the durable prefix's digest,
+  // without reading the chain; without one, the complete chain is read.
+  const verifiedPrefix = () => (boundedHistory ? replayWriter.verifiedPrefix() : null);
+  const contextEntries = async () => verifiedPrefix()?.contexts ?? (await readHistory(sessionId)).entries;
+
   const recordContext = async (value) => {
     const context = validateSessionContext(value);
     if (contextSeq !== undefined && contextSeq !== null) {
-      const previous = (await readHistory(sessionId)).entries.find((entry) => entry.seq === contextSeq)?.record;
+      const previous = (await contextEntries()).find((entry) => entry.seq === contextSeq)?.record;
       if (previous) {
         const { timestamp: _previousTimestamp, ...oldContext } = previous;
         const { timestamp: _newTimestamp, ...newContext } = context;
@@ -2499,17 +2541,18 @@ async function createLease({
   const checkpoint = async (value) => {
     const recovery = validateCaptainSessionRecord(value);
     const required = contextFromRecovery(recovery);
-    let contextHistory;
-    try { contextHistory = await readHistory(sessionId); } catch { /* Preserve the last proven context on replay failure. */ }
-    const applicable = contextHistory?.entries.findLast(({ record }) =>
+    let contexts;
+    try { contexts = await contextEntries(); } catch { /* Preserve the last proven context on replay failure. */ }
+    const applicable = contexts?.findLast(({ record }) =>
       record.type === 'session_context' && record.contextVersion === 1 &&
       record.captainId === required.captainId && isDeepStrictEqual(record.configuration, required.configuration));
     if (applicable) contextSeq = applicable.seq;
     else if (contextSeq === undefined || contextSeq === null || !replayWriter.status().incomplete) await recordContext(required);
     await replayWriter.checkpoint();
     const status = replayWriter.status();
+    const durable = verifiedPrefix()?.durable;
     let history;
-    try { history = await readHistory(sessionId); }
+    try { history = durable === undefined ? await readHistory(sessionId) : { digests: { [durable.seq]: durable.sha256 }, incomplete: false }; }
     catch { history = { digests: [], incomplete: true }; }
     const durableSeq = status.lastDurableSeq ?? previousManifest?.replay?.seq ?? 0;
     const seq = history.digests[durableSeq] === undefined ? previousManifest?.replay?.seq ?? 0 : durableSeq;
