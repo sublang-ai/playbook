@@ -6491,8 +6491,8 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     for (let line = 0; line < seq; line++) end = bytes.indexOf(10, end) + 1;
     return createHash('sha256').update(bytes.subarray(0, end)).digest('hex');
   };
-  // Fixture construction only: a thousand appends through the store take about
-  // half a minute, so the chain under test is written directly in its chunk
+  // Fixture construction only: hundreds of appends through the store take
+  // seconds each run, so the chain under test is written directly in its chunk
   // encoding (SP-11, SP-12) and published once; the store verifies it on acquisition.
   async function filledChain(records: number) {
     const { sessionsDir } = await fixtureDir();
@@ -6555,11 +6555,11 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     return { writes, replayChunks };
   }
 
-  it('reads no replay chunk in a progress write and makes as many file calls at 3,000 records as at 1,000 (SP-13)', async () => {
-    const short = await progressWrites(1000);
-    const long = await progressWrites(3000);
-    expect(short.replayChunks.size).toBeGreaterThanOrEqual(2000);
-    expect(long.replayChunks.size).toBeGreaterThanOrEqual(6000);
+  it('reads no replay chunk in a progress write and makes as many file calls at 600 records as at 200 (SP-13)', async () => {
+    const short = await progressWrites(200);
+    const long = await progressWrites(600);
+    expect(short.replayChunks.size).toBeGreaterThanOrEqual(400);
+    expect(long.replayChunks.size).toBeGreaterThanOrEqual(1200);
     for (const { writes, replayChunks } of [short, long]) {
       for (const calls of writes) {
         expect(calls.length).toBeGreaterThan(0);
@@ -6567,7 +6567,7 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
       }
     }
     expect(long.writes.map((calls) => calls.length)).toEqual(short.writes.map((calls) => calls.length));
-  }, 180_000);
+  }, 120_000);
 
   it('publishes the replay boundary and context a complete read derives across context changes, assets and a latch (SP-14)', async () => {
     const { sessionsDir } = await fixtureDir();

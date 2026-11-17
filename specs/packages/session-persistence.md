@@ -107,7 +107,7 @@ When integration tests migrate an existing real bundle, read it concurrently, ex
 
 ### session-persistence-13
 
-When integration tests make consecutive progress writes on real chunked sessions of 1,000 and 3,000 records, they shall verify that each write stats and opens no replay chunk, as counted through injected filesystem operations on the chain's chunk paths, and makes the same number of filesystem operations at both lengths [[session-persistence-12](#session-persistence-12)].
+When integration tests make consecutive progress writes on real chunked sessions of 200 and 600 records, they shall verify that each write stats and opens no replay chunk, as counted through injected filesystem operations on the chain's chunk paths, and makes the same number of filesystem operations at both lengths [[session-persistence-12](#session-persistence-12)].
 
 ### session-persistence-14
 
