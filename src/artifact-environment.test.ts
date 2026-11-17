@@ -3,7 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile, lstat, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, lstat, unlink, readlink, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -92,6 +92,27 @@ describe('workflow-owned artifact environment integration', () => {
     await writeFile(join(dir, 'package.json'), '{"type":"module","private":true}');
     await expect(prepareArtifactEnvironment({ artifactDir: dir, authority: 'compiler' })).rejects.toThrow('foreign package metadata');
     expect(await readFile(join(dir, 'package.json'), 'utf8')).toBe('{"type":"module","private":true}');
+  }, 30_000);
+
+  it('refuses a foreign live runtime link without changing managed metadata or either target', async () => {
+    const root = await directory();
+    const dir = join(root, 'flow.playbook');
+    await prepareArtifactEnvironment({ artifactDir: dir, authority: 'compiler' });
+    const foreign = join(root, 'foreign-runtime');
+    await mkdir(foreign);
+    const foreignFile = join(foreign, 'user-data');
+    await writeFile(foreignFile, 'preserve foreign runtime');
+    const link = join(dir, 'node_modules', 'xstate');
+    const other = join(dir, 'node_modules', '@sublang', 'playbook');
+    await unlink(link);
+    await symlink(foreign, link, process.platform === 'win32' ? 'junction' : 'dir');
+    const metadata = await readFile(join(dir, 'package.json'));
+    const before = { link: await readlink(link), other: await readlink(other), foreign: await readFile(foreignFile) };
+    await expect(prepareArtifactEnvironment({ artifactDir: dir, authority: 'compiler' })).rejects.toMatchObject({ category: 'environment', message: expect.stringContaining(`foreign runtime link: ${link}; restore the selected installation or recompile this workflow`) });
+    expect(await readFile(join(dir, 'package.json'))).toEqual(metadata);
+    expect(await readlink(link)).toBe(before.link);
+    expect(await readlink(other)).toBe(before.other);
+    expect(await readFile(foreignFile)).toEqual(before.foreign);
   }, 30_000);
 
   it.each([false, true])('validates actual entry layout (inside=%s) without compiler archives', async (inside) => {

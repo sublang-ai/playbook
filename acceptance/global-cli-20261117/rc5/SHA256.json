@@ -38,5 +38,17 @@
   "native-cjs-review.tar.gz": {
     "archiveSHA256": "f40cc6b80e75f1e9084b1fe040496707437d4042c29d37e07738aae81130b822",
     "productionHelperSHA256": "84cc23504566bcaad7152e57b6f744b806beea921e39539e68adbb22cae16384"
+  },
+  "playbook-managed-foreign-live-link.stdout.gz": {
+    "rawSHA256": "bb9f792fd4758007435016b58ab52189301517a6a4c62b2778a5bd879bcf6356",
+    "gzipSHA256": "3f835668b0fdb3089ba8e3cfca874297c7ff8416b81918115fa3b026b79894b2"
+  },
+  "playbook-managed-foreign-live-link.stderr.gz": {
+    "rawSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gzipSHA256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+  },
+  "playbook-managed-foreign-live-link.json.gz": {
+    "rawSHA256": "6b51da04420c0ed818ac2e6559fe2848265d50d7145dee7a27cc3fe049bb0d9c",
+    "gzipSHA256": "750d6f895ca37c2aa777f238f1b7c536f56663583409d5ace59e000d7570a503"
   }
 }
