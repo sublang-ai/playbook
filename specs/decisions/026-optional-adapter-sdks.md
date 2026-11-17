@@ -13,6 +13,8 @@ the bundled production config must actually load.
 Breaking: an install that previously acquired both SDKs transitively no
 longer does.
 
+Amended by [DR-110](110-managed-artifact-environments.md): both default SDKs are acquired through Cligent ordinary dependencies, superseding optional acquisition and lean-install assertions while preserving pre-Agent readiness.
+
 ## Context
 
 - `@sublang/playbook` declares `@anthropic-ai/claude-agent-sdk` and

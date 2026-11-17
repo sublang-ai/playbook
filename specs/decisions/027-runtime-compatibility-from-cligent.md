@@ -9,6 +9,8 @@ Accepted
 
 Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
 
+Amended by [DR-110](110-managed-artifact-environments.md) only for installation: Cligent supplies both default SDKs as ordinary dependencies; Cligent-owned versions, verdicts and adapter capabilities remain unchanged.
+
 ## Context
 
 [DR-026](026-optional-adapter-sdks.md) made the agent SDKs optional peers and added a gate that probes each adapter before launch.
