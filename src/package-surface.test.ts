@@ -367,18 +367,21 @@ describe("runtime dependency specifiers (RELEASE-19)", () => {
       // — the frozen install succeeds, prints the linked package at `0.0.0`,
       // and leaves a dangling symlink, while `npm pack` carries `link:` into
       // the published manifest, where consumers hit EUNSUPPORTEDPROTOCOL.
-      // The caret range and the concrete resolution are therefore required of
+      // The stable range or coordinated candidate and concrete resolution are required of
       // HEAD directly, with no local-override exemption — that exemption
       // exists for a working copy mid-development, and RELEASE-11 forbids the
       // state it exempts from ever reaching a commit.
+      const committedCandidate =
+        /^\d+\.\d+\.\d+-rc\.(?:0|[1-9]\d*)$/.test(committedPkg.version) &&
+        /^\d+\.\d+\.\d+-rc\.(?:0|[1-9]\d*)$/.test(committedPkg.dependencies?.[CLIGENT_DEP] ?? '');
       expect(
         committedPkg.dependencies?.[CLIGENT_DEP],
         `committed ${CLIGENT_DEP} range`,
-      ).toMatch(CARET_RANGE);
+      ).toMatch(committedCandidate ? /^\d+\.\d+\.\d+-rc\.(?:0|[1-9]\d*)$/ : CARET_RANGE);
       expect(
         committed.importers?.["."]?.dependencies?.[CLIGENT_DEP]?.version ?? "",
         `committed ${CLIGENT_DEP} resolution`,
-      ).toMatch(/^\d+\.\d+\.\d+(?:\(|$)/);
+      ).toMatch(committedCandidate ? /^\d+\.\d+\.\d+-rc\.(?:0|[1-9]\d*)(?:\(|$)/ : /^\d+\.\d+\.\d+(?:\(|$)/);
 
       // The importer must agree with the manifest exactly, which is what
       // rejects the link by its effect rather than by its spelling: the

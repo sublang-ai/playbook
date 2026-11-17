@@ -69,6 +69,8 @@ When a host resolves a configured filesystem registry, it shall classify and loa
 4. Validate runtime-required identity [[artifact-environment-5](#artifact-environment-5)] before registry import, recognize the new `.mjs` entry, and load changed revisions with fresh transitive module state rather than query-string-only CommonJS cache invalidation.
 5. Retain the existing provisioning behavior only for genuinely historical modules with no managed-workflow marker or footprint [[playbook-cli-36](playbook-cli.md#playbook-cli-36)], including historical `.ts` entries, without offering another compilation environment mode.
 
+Loader-internal module URLs may identify a virtual revision rather than a physical self-file; relative directory resolution and CommonJS lexical file names shall remain anchored to the original artifact, while configured registry locators retain their canonical declared paths.
+
 ### artifact-environment-8
 
 When environment preparation completes or fails, the service shall return structured created-link notices, selected environment facts, or a failure naming category, path or package, actual and required compatibility where known, and restore, project-install, or rebuild remedy, with no successful mutation notice on a no-op and no requirement to expose provider credentials.

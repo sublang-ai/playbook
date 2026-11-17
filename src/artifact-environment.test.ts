@@ -6,6 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile, lstat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { loadLaunchPlan } from '../reference/sdlc/code.playbook/bin/launch-config.js';
+import { prepareConfiguredRegistries } from '../reference/sdlc/code.playbook/bin/provision.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BUILD_MANIFEST_MARKER, BUILD_MANIFEST_SCHEMA,
@@ -123,6 +126,51 @@ describe('workflow-owned artifact environment integration', () => {
     await expect(validateArtifactManifest(b.entry)).rejects.toThrow(/runtime dependency missing from accepted manifest/);
   }, 30_000);
 
+  it.each(['require', 'module.require'])('loads the accepted fresh two-hop %s revision after a manifest update', async (loader) => {
+    const b = await bundle();
+    const entryText = `${BUILD_MANIFEST_MARKER}${JSON.stringify('./flow.playbook/build-manifest.json')}\nexport {default} from './flow.playbook/flow.playbook.mjs';\n`;
+    await writeFile(b.entry, entryText);
+    await writeFile(join(b.dir, 'flow.playbook.mjs'), "import value from './value.cjs'; export default value;\n");
+    await writeFile(join(b.dir, 'value.cjs'), `module.exports = ${loader}('./helper.cjs');\n`);
+    await writeFile(join(b.dir, 'helper.cjs'), 'module.exports = {value:1};\n');
+    const record = async () => {
+      b.manifest.files = await inspectArtifactFiles({artifactDir:b.dir,entry:b.entry,fsm:join(b.dir,'flow.fsm.mjs'),linked:join(b.dir,'flow.playbook.mjs')});
+      await writeFile(b.manifestPath, JSON.stringify(b.manifest));
+    };
+    await record();
+    const script = `
+      import assert from 'node:assert/strict';
+      import { readFile, writeFile } from 'node:fs/promises';
+      import * as nodeModule from 'node:module';
+      import { importFreshArtifact } from ${JSON.stringify(new URL('./fresh-artifact.js', import.meta.url).href)};
+      import { validateArtifactManifest, inspectArtifactFiles, inspectArtifactEnvironment } from ${JSON.stringify(new URL('./artifact-environment.js', import.meta.url).href)};
+      const b = ${JSON.stringify({entry:b.entry, dir:b.dir, manifestPath:b.manifestPath})};
+      // Bind the synthetic fixture to this native process's conditional exports,
+      // rather than the Vitest development resolver that created the files.
+      const selected = await inspectArtifactEnvironment();
+      const initialManifest = JSON.parse(await readFile(b.manifestPath, 'utf8'));
+      assert.equal(initialManifest.runtime.xstate.root, selected.xstate.root);
+      initialManifest.runtime = {playbook:selected.playbook,xstate:selected.xstate,runtimeAbi:selected.runtimeAbi,artifactSchema:3};
+      await writeFile(b.manifestPath, JSON.stringify(initialManifest));
+      if (typeof nodeModule.registerHooks !== 'function') {
+        await assert.rejects(importFreshArtifact(b.entry), /fresh artifact loading requires/);
+        console.log('two-hop native fresh: unsupported host refused');
+      } else {
+        await validateArtifactManifest(b.entry);
+        assert.equal((await importFreshArtifact(b.entry)).default.value, 1);
+        await writeFile(b.dir + '/helper.cjs', 'module.exports = {value:999};');
+        await assert.rejects(validateArtifactManifest(b.entry), /runtime file missing or changed/);
+        const manifest = JSON.parse(await readFile(b.manifestPath, 'utf8'));
+        manifest.files = await inspectArtifactFiles({artifactDir:b.dir, entry:b.entry, fsm:b.dir+'/flow.fsm.mjs', linked:b.dir+'/flow.playbook.mjs'});
+        await writeFile(b.manifestPath, JSON.stringify(manifest));
+        await validateArtifactManifest(b.entry);
+        assert.equal((await importFreshArtifact(b.entry)).default.value, 999);
+        console.log('two-hop native fresh: 1 -> stale refused -> 999');
+      }
+    `;
+    expect(execFileSync(process.execPath, ['--input-type=module', '-e', script], {encoding:'utf8'})).toContain('two-hop native fresh:');
+  });
+
   it('refuses a runtime package shadowed at the actual nested importer', async () => {
     const b = await bundle();
     await mkdir(join(b.dir, 'sub', 'node_modules', 'xstate'), { recursive: true });
@@ -186,5 +234,45 @@ describe('workflow-owned artifact environment integration', () => {
     `;
     expect(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })).toContain('fresh native revisions verified');
   });
+
+  it.each([true, false])('checks every managed marker before public host import (provision=%s)', async (enabled) => {
+    for (const variant of ['valid', 'missing-header', 'malformed-header', 'duplicate-header', 'missing-manifest', 'malformed-manifest', 'legacy-ts']) {
+      const b = await bundle();
+      let entry = b.entry;
+      const moduleText = "export default {id:'workflow',command:'workflow',intent:'marker acceptance',artifactSchema:3,runtimeProfile:{kind:'bespoke',artifactSchema:3},requiredRoleIds:['coder'],concurrentRoleSets:[],validateOptions:()=>({}),createRuntime:()=>({})};\n";
+      const marker = BUILD_MANIFEST_MARKER + JSON.stringify('./flow.playbook/build-manifest.json') + '\n';
+      let entryText = marker + moduleText;
+      if (variant === 'missing-header') entryText = moduleText;
+      if (variant === 'malformed-header') entryText = BUILD_MANIFEST_MARKER + '{bad json}\n' + moduleText;
+      if (variant === 'duplicate-header') entryText = marker + marker + moduleText;
+      if (variant === 'legacy-ts') {
+        const dir = await directory();
+        entry = join(dir, 'historical.ts');
+        entryText = moduleText;
+      }
+      await writeFile(entry, entryText);
+      b.manifest.files[0].sha256 = sha(entryText);
+      await writeFile(b.manifestPath, JSON.stringify(b.manifest));
+      if (variant === 'missing-manifest') await unlink(b.manifestPath);
+      if (variant === 'malformed-manifest') await writeFile(b.manifestPath, '{bad json}');
+      const config = join(b.root, 'host.yaml');
+      await writeFile(config, JSON.stringify({captain:'claude',players:{coder:'claude'},playbooks:{workflow:{from:pathToFileURL(entry).href,roles:{coder:'coder'}}}}));
+      let imported = false;
+      const load = () => loadLaunchPlan({userConfigPath:config, prepareRegistryModule:prepareConfiguredRegistries({enabled,stderr:{write:()=>true}}), loadModule:async (specifier:string) => { imported = true; return import(specifier); }});
+      if (variant === 'valid' && typeof (await import('node:module')).registerHooks !== 'function') {
+        await expect(load()).rejects.toThrow(/fresh artifact loading requires/);
+        expect(imported).toBe(false);
+      } else if (variant === 'valid' || variant === 'legacy-ts') {
+        const plan = await load();
+        expect(imported, variant).toBe(true);
+        expect(Object.keys(plan.catalog), variant).toContain('workflow');
+      } else {
+        const before = await readFile(entry, 'utf8');
+        await expect(load(), variant).rejects.toThrow(/failed to prepare/);
+        expect(imported, variant).toBe(false);
+        expect(await readFile(entry, 'utf8'), variant).toBe(before);
+      }
+    }
+  }, 30_000);
 
 });
