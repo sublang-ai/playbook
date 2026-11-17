@@ -24,8 +24,10 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import * as nodeFs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertCaptainSessionExecutionCompatible,
@@ -6477,6 +6479,197 @@ describe('bounded follower cursor (PBCLI-80, SP-9)', () => {
     bytes[0] ^= 1;
     await writeFile(path, bytes);
     await expect(fixedStore(sessionsDir, tokenN).readStream(sessionId)).rejects.toThrow();
+  });
+});
+
+describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
+  const rootPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay.json`);
+  const chunksDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.chunks`);
+  const recordPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.json`);
+  const digestThrough = (bytes: Buffer, seq: number) => {
+    let end = 0;
+    for (let line = 0; line < seq; line++) end = bytes.indexOf(10, end) + 1;
+    return createHash('sha256').update(bytes.subarray(0, end)).digest('hex');
+  };
+  // Fixture construction only: hundreds of appends through the store take
+  // seconds each run, so the chain under test is written directly in its chunk
+  // encoding (SP-11, SP-12) and published once; the store verifies it on acquisition.
+  async function filledChain(records: number) {
+    const { sessionsDir } = await fixtureDir();
+    await mkdir(chunksDirOf(sessionsDir), { recursive: true, mode: 0o700 });
+    await chmod(sessionsDir, 0o700);
+    await chmod(chunksDirOf(sessionsDir), 0o700);
+    const replayChunks = new Set<string>();
+    const writeChunk = async (bytes: Buffer) => {
+      const ref = { sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.length };
+      const path = join(chunksDirOf(sessionsDir), ref.sha256);
+      await writeFile(path, bytes, { mode: 0o600 });
+      replayChunks.add(path);
+      return ref;
+    };
+    const tagged = (value: unknown): unknown => value === null || typeof value !== 'object'
+      ? ['v', value]
+      : ['o', Object.entries(value as Record<string, unknown>).map(([key, child]) => [key, tagged(child)])];
+    let head: unknown = null, totalBytes = 0;
+    for (let seq = 1; seq <= records; seq++) {
+      const bytes = Buffer.from(replayLine(replayEnvelope(seq, { type: 'player_event', timestamp: seq }, 'coder')));
+      const content = await writeChunk(Buffer.concat([Buffer.from([0]), bytes]));
+      totalBytes += bytes.length;
+      const node = { previous: head, content, byteLength: bytes.length, totalBytes };
+      head = await writeChunk(Buffer.concat([Buffer.from([2]), Buffer.from(JSON.stringify(tagged(node)))]));
+    }
+    await writeFile(rootPathOf(sessionsDir), `${JSON.stringify({ kind: 'captain-session-replay', schemaVersion: 1, sessionId, head, byteLength: totalBytes })}\n`, { mode: 0o600 });
+    return { sessionsDir, replayChunks };
+  }
+  // Every filesystem call the store makes, by operation and path.
+  function recordingFs() {
+    const calls: Array<{ op: string; path: string }> = [];
+    const fsOps: Record<string, unknown> = {};
+    for (const op of ['access', 'chmod', 'link', 'lstat', 'mkdir', 'open', 'readdir', 'readFile', 'rename', 'rmdir', 'stat', 'unlink', 'writeFile'] as const) {
+      fsOps[op] = (path: unknown, ...rest: unknown[]) => {
+        calls.push({ op, path: String(path) });
+        return (nodeFs[op] as (...args: unknown[]) => unknown)(path, ...rest);
+      };
+    }
+    return { calls, fsOps };
+  }
+  async function progressWrites(records: number) {
+    const { sessionsDir, replayChunks } = await filledChain(records);
+    const { calls, fsOps } = recordingFs();
+    const lease = await fixedStore(sessionsDir, tokenO, { fsOps }).acquire(sessionId);
+    expect(lease.streamStatus()).toEqual({ lastReadableSeq: records, lastDurableSeq: records, incomplete: false });
+    const execution = executionProjection();
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    await lease.beginTurn({ input: 'long run', attemptId: attempt1, attemptedExecutionProjection: execution });
+    const writes: Array<Array<{ op: string; path: string }>> = [];
+    const chunkNames = async () => new Set((await readdir(chunksDirOf(sessionsDir))).filter((name) => /^[0-9a-f]{64}$/.test(name)));
+    for (let write = 1; write <= 4; write++) {
+      const before = await chunkNames();
+      await lease.append({ type: 'player_event', timestamp: records + write }, 'coder');
+      for (const name of await chunkNames()) if (!before.has(name)) replayChunks.add(join(chunksDirOf(sessionsDir), name));
+      calls.length = 0;
+      await lease.recordProgress({ snapshot: null });
+      writes.push([...calls]);
+    }
+    await lease.release();
+    return { writes, replayChunks };
+  }
+
+  it('reads no replay chunk in a progress write and makes as many file calls at 600 records as at 200 (SP-13)', async () => {
+    const short = await progressWrites(200);
+    const long = await progressWrites(600);
+    expect(short.replayChunks.size).toBeGreaterThanOrEqual(400);
+    expect(long.replayChunks.size).toBeGreaterThanOrEqual(1200);
+    for (const { writes, replayChunks } of [short, long]) {
+      for (const calls of writes) {
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.filter(({ path }) => replayChunks.has(path))).toEqual([]);
+      }
+    }
+    expect(long.writes.map((calls) => calls.length)).toEqual(short.writes.map((calls) => calls.length));
+  }, 120_000);
+
+  it('publishes the replay boundary and context a complete read derives across context changes, assets and a latch (SP-14)', async () => {
+    const { sessionsDir } = await fixtureDir();
+    let failRootPublication = false;
+    const lease = await fixedStore(sessionsDir, tokenO, {
+      fsOps: {
+        async rename(from: string, to: string) {
+          if (failRootPublication && to === rootPathOf(sessionsDir)) {
+            failRootPublication = false;
+            throw Object.assign(new Error('injected replay root publication failure'), { code: 'EIO' });
+          }
+          return rename(from, to);
+        },
+      },
+    }).acquire(sessionId);
+    const first = executionProjection();
+    const second = executionProjection({ playerModel: 'second-model' });
+    // An independent store reads and verifies the complete chain.
+    const expectDerived = async (configuration: unknown, incomplete = false) => {
+      const reader = fixedStore(sessionsDir, tokenN);
+      const manifest = await reader.readManifest(sessionId);
+      const history = await reader.readHistory(sessionId);
+      const bytes = await readFixtureReplay(rootPathOf(sessionsDir));
+      const seq = lease.streamStatus().lastDurableSeq;
+      const applicable = history.entries.filter(({ seq: entrySeq, record }: any) =>
+        entrySeq <= seq && record.type === 'session_context' && isDeepStrictEqual(record.configuration, configuration)).at(-1);
+      expect(manifest.replay).toEqual({ seq, sha256: digestThrough(bytes, seq), incomplete });
+      expect(manifest.contextSeq).toBe(applicable.seq);
+      return manifest;
+    };
+
+    await lease.initializeSettledWithPredecessor(freshBoundary(first));
+    const firstContextSeq = (await expectDerived(first)).contextSeq;
+    await lease.append({ type: 'player_event', timestamp: 1 }, 'coder');
+    await lease.beginTurn({ input: 'second configuration', attemptId: attempt1, attemptedExecutionProjection: second });
+    const secondContextSeq = (await expectDerived(second)).contextSeq;
+    expect(secondContextSeq).toBeGreaterThan(firstContextSeq);
+    await lease.append({ type: 'player_event', timestamp: 2 }, 'coder');
+    await lease.recordProgress({ snapshot: null });
+    await expectDerived(second);
+    const readable = lease.streamStatus().lastReadableSeq;
+    expect(await lease.recordContext(contextFromRecovery(await lease.read()))).toBe(secondContextSeq);
+    expect(lease.streamStatus().lastReadableSeq).toBe(readable);
+    await lease.settle({ attemptId: attempt1, snapshot: shellSnapshot(second, 1), unresolvedEffects: [] });
+    await expectDerived(second);
+    await lease.beginTurn({ input: 'first configuration again', attemptId: attempt2, attemptedExecutionProjection: first });
+    expect((await expectDerived(first)).contextSeq).toBe(firstContextSeq);
+    const asset = await lease.importAsset({ bytes: Buffer.from('progress evidence'), mimeType: 'text/plain' });
+    await lease.append({ type: 'player_event', timestamp: 3 }, 'coder');
+    await lease.recordProgress({ snapshot: null });
+    expect((await expectDerived(first)).assets.entries.map(({ assetId }: any) => assetId)).toEqual([asset.assetId]);
+    await lease.append({ type: 'player_event', timestamp: 4 }, 'coder');
+    failRootPublication = true;
+    await expect(lease.append({ type: 'player_event', timestamp: 5 }, 'coder')).rejects.toThrow(/injected/);
+    const latched = lease.streamStatus();
+    expect(latched).toMatchObject({ incomplete: true });
+    expect(latched.lastReadableSeq).toBeGreaterThan(latched.lastDurableSeq);
+    await lease.recordProgress({ snapshot: null });
+    await expectDerived(first, true);
+    await lease.release();
+  });
+
+  it('refuses a progress write on a monolithic session and leaves its record unchanged (SP-14)', async () => {
+    const { sessionsDir } = await fixtureDir();
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await chmod(sessionsDir, 0o700);
+    const recordBytes = JSON.stringify(freshUncertainRecord());
+    await writeFile(recordPathOf(sessionsDir), recordBytes, { mode: 0o600 });
+    await chmod(recordPathOf(sessionsDir), 0o600);
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    await expect(lease.recordProgress({ snapshot: null })).rejects.toThrow(/session context/);
+    expect(await readFile(recordPathOf(sessionsDir), 'utf8')).toBe(recordBytes);
+    await lease.release();
+  });
+
+  it('keeps the digest of the written bytes when a chunk is corrupted during the lease, and the next open refuses (SP-9)', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const execution = executionProjection();
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
+    await lease.beginTurn({ input: 'corrupted during the lease', attemptId: attempt1, attemptedExecutionProjection: execution });
+    for (let timestamp = 1; timestamp <= 3; timestamp++) await lease.append({ type: 'player_event', timestamp }, 'coder');
+    const written = await readFixtureReplay(rootPathOf(sessionsDir));
+    const chunks = createSessionChunks({ directory: chunksDirOf(sessionsDir) });
+    let node = await chunks.readJson(JSON.parse(await readFile(rootPathOf(sessionsDir), 'utf8')).head);
+    while (node.previous !== null) node = await chunks.readJson(node.previous);
+    const corruptedPath = join(chunksDirOf(sessionsDir), node.content.sha256);
+    const original = await readFile(corruptedPath);
+    const corrupted = Buffer.from(original);
+    corrupted[corrupted.length - 2] ^= 1;
+    await writeFile(corruptedPath, corrupted);
+
+    await lease.recordProgress({ snapshot: null });
+    const seq = lease.streamStatus().lastDurableSeq;
+    expect((await fixedStore(sessionsDir, tokenN).readManifest(sessionId)).replay).toEqual({
+      seq, sha256: digestThrough(written, seq), incomplete: false,
+    });
+    await lease.release();
+    await expect(fixedStore(sessionsDir, tokenR).validate(sessionId)).rejects.toThrow();
+
+    await writeFile(corruptedPath, original);
+    expect(await fixedStore(sessionsDir, tokenThird).validate(sessionId)).toMatchObject({ integrityValid: true, resumable: true });
   });
 });
 
