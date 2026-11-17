@@ -6491,30 +6491,35 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     for (let line = 0; line < seq; line++) end = bytes.indexOf(10, end) + 1;
     return createHash('sha256').update(bytes.subarray(0, end)).digest('hex');
   };
-  // Fixture construction only: a thousand appends with real syncing take about
-  // half a minute, so the chain under test is built without syncing.
-  const unsynced = {
-    async open(...args: Parameters<typeof open>) {
-      const handle = await open(...args);
-      return new Proxy(handle, {
-        get(target, key) {
-          if (key === 'sync' || key === 'datasync') return async () => {};
-          const value = Reflect.get(target, key);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      });
-    },
-  };
+  // Fixture construction only: a thousand appends through the store take about
+  // half a minute, so the chain under test is written directly in its chunk
+  // encoding (SP-11, SP-12) and published once; the store verifies it on acquisition.
   async function filledChain(records: number) {
     const { sessionsDir } = await fixtureDir();
-    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await mkdir(chunksDirOf(sessionsDir), { recursive: true, mode: 0o700 });
     await chmod(sessionsDir, 0o700);
-    const chunks = createSessionChunks({ directory: chunksDirOf(sessionsDir), fsOps: unsynced });
-    const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: unsynced, chunks });
+    await chmod(chunksDirOf(sessionsDir), 0o700);
+    const replayChunks = new Set<string>();
+    const writeChunk = async (bytes: Buffer) => {
+      const ref = { sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.length };
+      const path = join(chunksDirOf(sessionsDir), ref.sha256);
+      await writeFile(path, bytes, { mode: 0o600 });
+      replayChunks.add(path);
+      return ref;
+    };
+    const tagged = (value: unknown): unknown => value === null || typeof value !== 'object'
+      ? ['v', value]
+      : ['o', Object.entries(value as Record<string, unknown>).map(([key, child]) => [key, tagged(child)])];
+    let head: unknown = null, totalBytes = 0;
     for (let seq = 1; seq <= records; seq++) {
-      await backend.appendBytes(Buffer.from(replayLine(replayEnvelope(seq, { type: 'player_event', timestamp: seq }, 'coder'))));
+      const bytes = Buffer.from(replayLine(replayEnvelope(seq, { type: 'player_event', timestamp: seq }, 'coder')));
+      const content = await writeChunk(Buffer.concat([Buffer.from([0]), bytes]));
+      totalBytes += bytes.length;
+      const node = { previous: head, content, byteLength: bytes.length, totalBytes };
+      head = await writeChunk(Buffer.concat([Buffer.from([2]), Buffer.from(JSON.stringify(tagged(node)))]));
     }
-    return sessionsDir;
+    await writeFile(rootPathOf(sessionsDir), `${JSON.stringify({ kind: 'captain-session-replay', schemaVersion: 1, sessionId, head, byteLength: totalBytes })}\n`, { mode: 0o600 });
+    return { sessionsDir, replayChunks };
   }
   // Every filesystem call the store makes, by operation and path.
   function recordingFs() {
@@ -6528,26 +6533,26 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     }
     return { calls, fsOps };
   }
-  async function replayChunkPaths(sessionsDir: string) {
-    const files = await (await createBoundedReplay({ sessionId, sessionsDir })).collectFiles();
-    return new Set(files.filter(({ path }) => path.startsWith(`${sessionId}.chunks/`)).map(({ path }) => join(sessionsDir, path)));
-  }
   async function progressWrites(records: number) {
-    const sessionsDir = await filledChain(records);
+    const { sessionsDir, replayChunks } = await filledChain(records);
     const { calls, fsOps } = recordingFs();
     const lease = await fixedStore(sessionsDir, tokenO, { fsOps }).acquire(sessionId);
+    expect(lease.streamStatus()).toEqual({ lastReadableSeq: records, lastDurableSeq: records, incomplete: false });
     const execution = executionProjection();
     await lease.initializeSettledWithPredecessor(freshBoundary(execution));
     await lease.beginTurn({ input: 'long run', attemptId: attempt1, attemptedExecutionProjection: execution });
     const writes: Array<Array<{ op: string; path: string }>> = [];
+    const chunkNames = async () => new Set((await readdir(chunksDirOf(sessionsDir))).filter((name) => /^[0-9a-f]{64}$/.test(name)));
     for (let write = 1; write <= 4; write++) {
+      const before = await chunkNames();
       await lease.append({ type: 'player_event', timestamp: records + write }, 'coder');
+      for (const name of await chunkNames()) if (!before.has(name)) replayChunks.add(join(chunksDirOf(sessionsDir), name));
       calls.length = 0;
       await lease.recordProgress({ snapshot: null });
       writes.push([...calls]);
     }
     await lease.release();
-    return { writes, replayChunks: await replayChunkPaths(sessionsDir) };
+    return { writes, replayChunks };
   }
 
   it('reads no replay chunk in a progress write and makes as many file calls at 3,000 records as at 1,000 (SP-13)', async () => {
