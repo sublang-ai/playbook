@@ -5,13 +5,14 @@ name: Release
 
 on:
   push:
-    # GitHub ref filters use glob syntax: `+` repeats the preceding
-    # numeric character class, while each dot is literal.
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    # The metadata/source gates below distinguish stable and rc.N tags.
+    tags: ['v[0-9]*']
 
 permissions:
   contents: write
   id-token: write
+  actions: read
+  pull-requests: read
 
 jobs:
   release:
@@ -24,6 +25,11 @@ jobs:
         # RELEASE-2 / RELEASE-7 step 1. Reject malformed or mismatched tags
         # before changing the checkout or spending install/build resources.
         run: node scripts/check-release-metadata.mjs --tag-only "$GITHUB_REF_NAME"
+
+      - name: Require passing CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-source-guard.mjs
 
       - name: Drop dev-only workspace override
         # A local pnpm-workspace.yaml links @sublang/cligent to a
@@ -161,9 +167,9 @@ jobs:
         # attestation linking the tarball to this workflow run;
         # --access public is required for scoped packages on the
         # default npm registry.
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag "$(node --input-type=module -e 'import { releaseChannel } from "./scripts/release-source-guard.mjs"; import { readFileSync } from "node:fs"; console.log(releaseChannel(process.env.GITHUB_REF_NAME, JSON.parse(readFileSync("package.json", "utf8")).version));')"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
+        run: gh release create "$GITHUB_REF_NAME" $([[ "$GITHUB_REF_NAME" == *-rc.* ]] && echo --prerelease) --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md

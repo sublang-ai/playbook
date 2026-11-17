@@ -13,11 +13,11 @@ It owns environment preparation and loading identity, not compilation semantics 
 
 ### artifact-environment-1
 
-The distributable shall expose `@sublang/playbook/artifact-environment` as a JavaScript and declaration surface supporting environment inspection, workflow-environment preparation, and manifest validation for both external compilers and launchers, with explicit artifact directory, selected package roots, and provisioning authority supplied by the caller, returning immutable JSON environment facts or structured failures without CLI prefixes.
+The distributable shall expose `@sublang/playbook/artifact-environment` as a JavaScript and declaration surface supporting environment inspection, parsed executable-file closure inspection, workflow-environment preparation, and manifest validation for both external compilers and launchers, with explicit artifact directory, selected package roots, and provisioning authority supplied by the caller, returning immutable JSON environment facts or structured failures without CLI prefixes.
 
 ### artifact-environment-2
 
-On macOS, Linux and native Windows, when inspecting a selected environment, the service shall identify the canonical Playbook and XState package roots, versions and relevant runtime-content digests, exported engine entry, runtime ABI and supported artifact schemas, refusing missing or incompatible required surfaces and unsupported actual module formats, including TypeScript where the host cannot load it, before artifact import instead of substituting another package or relying on an undeclared loader.
+On macOS, Linux and native Windows, when inspecting a selected environment, the service shall identify the canonical Playbook and XState package roots, versions and relevant runtime-content digests, exported engine entry, runtime ABI and supported artifact schemas, refusing missing or incompatible required surfaces and missing fresh-loader surfaces or unsupported actual module formats, including TypeScript where the host cannot load it, before artifact import instead of substituting another package or relying on an undeclared loader.
 
 ### artifact-environment-3
 
@@ -42,6 +42,7 @@ When validating a managed bundle, the service shall accept only `build-manifest.
 | `verification` | `{ checks, attemptRecord }`, recording accepted checks of shape `{ name, status: "passed", evidence }` and the retained invocation-record reference; evidence paths are archival metadata, not files required for execution. |
 
 - Runtime refusal: malformed metadata, escaping runtime entry/import/identity paths, missing or changed runtime-required files, or incompatible package, ABI or schema identities; every actual entry/FSM/linked module and required local runtime import belongs to the checked runtime file set.
+- Runtime closure: parse actual JavaScript and TypeScript syntax without executing the inspected modules or requiring a project compiler, follow literal ESM and CommonJS imports while excluding comments, prompt examples and type-only imports, and refuse unprovable dynamic module paths rather than omit them from the accepted identity.
 - Runtime scope: only required generated code, its runtime-support closure, the declared entry and selected package roots; missing or changed original Source, GEARS, snapshots, logs, generated test files or other archival evidence does not by itself prevent loading unchanged runtime code.
 - Runtime identity: `identityFiles` covers the installed public runtime entry, the same-package runtime dependency closure and declarations actually used for artifact checking; unrelated documentation, tests, repository metadata and logs are excluded.
 - Runtime `contentHash`: SHA-256 over the sorted identity-file paths and bytes, using UTF-8 `/`-separated relative paths and unsigned 64-bit big-endian byte lengths before each path and file; verify the recorded per-file SHA-256 values, and reject identity-file links escaping the selected package.

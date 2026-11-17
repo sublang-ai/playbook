@@ -43,11 +43,10 @@ Inspector binds `inspect.inspector`.
 
 ```sh
 npm install -g @sublang/playbook
-npm install -g @anthropic-ai/claude-agent-sdk @openai/codex-sdk
 ```
 
-Custom configurations need the SDKs required by their providers; see [Configuring agents](docs/configuration.md).
-If an SDK is missing or older than cligent supports, Playbook prints the pinned install command before launching anything; see [Installing agent SDKs](docs/cli.md#installing-agent-sdks) for upgrades, `npx`, and other adapters.
+Cligent automatically installs the Claude and Codex SDKs with Playbook. Optional backends retain their own runtime setup; see [Configuring agents](docs/configuration.md).
+If an SDK is missing or older than cligent supports, Playbook reports the selected runtime and its repair before launching anything; see [Installing agent SDKs](docs/cli.md#installing-agent-sdks) for upgrades, `npx`, and other adapters.
 
 Prerequisites:
 
@@ -93,16 +92,16 @@ See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configurin
 
 ## Create your own playbook
 
-The separate [SLC compiler](https://github.com/sublang-ai/slc) requires Node.js >= 23.6 and compiles a plain-language `.md` or `.txt` procedure:
+The separate [SLC compiler](https://github.com/sublang-ai/slc) requires Node.js >= 25.5 (Node 26 LTS is recommended) and compiles a plain-language `.md` or `.txt` procedure:
 
 ```sh
 npm install -g @sublang/slc
 slc playbook my-workflow.md
-# After enabling /absolute/path/to/my-workflow.ts in the shared config:
+# After enabling /absolute/path/to/my-workflow.mjs in the shared config:
 playbook run "/my-workflow <your task>"
 ```
 
-SLC writes `my-workflow.ts`, a registry entry ready for Playbook, beside the source, and the inspectable intermediates and tests under `my-workflow.playbook/`.
+SLC writes `my-workflow.mjs` as real JavaScript beside the source and prepares one private ESM environment under `my-workflow.playbook/`, with owned Playbook/XState links and a checked `build-manifest.json`. It uses its own compiler tools and selected runtime pair independently of enclosing project settings. Managed loading requires Node >=23.6 and validates current executable identity before import; missing compiler archives alone do not block runtime loading. Historical `.ts` entries retain their legacy loading path. This shared preparation and library lifecycle also supports native Windows; the POSIX interactive host keeps its own platform requirements.
 Enable that entry and bind each role it declares under `playbooks.my-workflow` in the shared config, then invoke `/my-workflow`; see [External playbooks](docs/configuration.md#external-playbooks) and the [SLC documentation](https://github.com/sublang-ai/slc#quick-start).
 
 ## How it compiles

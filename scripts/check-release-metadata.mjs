@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.(?:0|[1-9]\d*))?$/;
 const RELEASE_HEADING = /^## \[([^\]]+)\](?: - (.*))?$/;
 const GROUP_HEADING = /^###\s+(.+?)\s*$/;
 const LINK_DEFINITION = /^\[([^\]]+)\]:\s+(\S+)\s*$/;
@@ -51,7 +51,7 @@ function parseManifestVersion(manifestText) {
 export function validateReleaseTag({ tag, manifestText }) {
   const tagMatch = RELEASE_TAG.exec(tag);
   if (tagMatch === null) {
-    throw new Error(`release tag is not exact stable SemVer: ${tag}`);
+    throw new Error(`release tag is not exact stable or candidate SemVer: ${tag}`);
   }
   const version = tag.slice(1);
   const manifestVersion = parseManifestVersion(manifestText);

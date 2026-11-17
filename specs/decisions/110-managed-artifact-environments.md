@@ -5,7 +5,7 @@
 
 ## Status
 
-Proposed specification; direction approved by the user, detailed contract awaiting review; implementation has not started.
+Approved direction; implementation and delivery acceptance authorized by the user on 2026-11-17.
 Amends [DR-024](024-runtime-engine-provisioning.md), [DR-026](026-optional-adapter-sdks.md), and [DR-027](027-runtime-compatibility-from-cligent.md) in provisioning scope and SDK delivery, retaining runtime compatibility ownership and preflight gates.
 
 ## Context

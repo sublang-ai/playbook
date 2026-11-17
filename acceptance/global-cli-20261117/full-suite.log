@@ -1,0 +1,1141 @@
+
+> @sublang/playbook@19.1.0-rc.4 test /Users/boboyang/work/sublang.ai/playbook
+> spex lint && vitest run --exclude src/cligent-release-capabilities.test.ts && vitest run src/cligent-release-capabilities.test.ts
+
+specs/packages/captain-playbook.md:20: warning item/sentence: item captain-playbook-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:30: warning item/sentence: item captain-playbook-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:41: warning item/sentence: item captain-playbook-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:50: warning item/sentence: item captain-playbook-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:63: warning item/sentence: item captain-playbook-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:96: warning item/sentence: item captain-playbook-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:106: warning item/sentence: item captain-playbook-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:122: warning item/sentence: item captain-playbook-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:162: warning item/sentence: item captain-playbook-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:182: warning item/sentence: item captain-playbook-16 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:205: warning item/sentence: item captain-playbook-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:219: warning item/sentence: item captain-playbook-23 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:226: warning item/sentence: item captain-playbook-21 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:236: warning item/sentence: item captain-playbook-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:247: warning item/sentence: item captain-playbook-13 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:255: warning item/sentence: item captain-playbook-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:265: warning item/sentence: item captain-playbook-17 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:306: warning item/sentence: item captain-playbook-20 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/captain-playbook.md:321: warning item/sentence: item captain-playbook-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-child-validation.md:15: warning item/sentence: item compiler-child-validation-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-child-validation.md:20: warning item/sentence: item compiler-child-validation-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-child-validation.md:27: warning item/sentence: item compiler-child-validation-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-prompt-prefix.md:15: warning item/sentence: item compiler-prompt-prefix-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-prompt-prefix.md:40: warning item/sentence: item compiler-prompt-prefix-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:17: warning item/sentence: item compiler-results-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:23: warning item/sentence: item compiler-results-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:29: warning item/sentence: item compiler-results-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:79: warning item/sentence: item compiler-results-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:85: warning item/sentence: item compiler-results-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-results.md:106: warning item/sentence: item compiler-results-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-source-state.md:30: warning item/sentence: item compiler-source-state-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-source-state.md:35: warning item/sentence: item compiler-source-state-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-source-state.md:54: warning item/sentence: item compiler-source-state-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-source-state.md:60: warning item/sentence: item compiler-source-state-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-workflow-contracts.md:16: warning item/sentence: item compiler-workflow-contracts-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/compiler-workflow-contracts.md:22: warning item/sentence: item compiler-workflow-contracts-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/cross-references.md:21: warning item/sentence: item cross-references-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:16: warning item/sentence: item fsm-scaffolding-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:21: warning item/sentence: item fsm-scaffolding-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:28: warning item/sentence: item fsm-scaffolding-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:34: warning item/sentence: item fsm-scaffolding-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:42: warning item/sentence: item fsm-scaffolding-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/fsm-scaffolding.md:49: warning item/sentence: item fsm-scaffolding-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/link-experiments.md:62: warning item/sentence: item link-experiments-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/link-experiments.md:80: warning item/sentence: item link-experiments-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/link-experiments.md:90: warning item/sentence: item link-experiments-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/link-experiments.md:95: warning item/sentence: item link-experiments-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/link-materialization.md:137: warning item/sentence: item link-materialization-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:26: warning item/sentence: item playbook-captain-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:55: warning item/sentence: item playbook-captain-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:91: warning item/sentence: item playbook-captain-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:128: warning item/sentence: item playbook-captain-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:140: warning item/sentence: item playbook-captain-19 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:194: warning item/sentence: item playbook-captain-25 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:209: warning item/sentence: item playbook-captain-28 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:231: warning item/sentence: item playbook-captain-34 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:270: warning item/sentence: item playbook-captain-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:319: warning item/sentence: item playbook-captain-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:367: warning item/sentence: item playbook-captain-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:464: warning item/sentence: item playbook-captain-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:512: warning item/sentence: item playbook-captain-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:701: warning item/sentence: item playbook-captain-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:753: warning item/sentence: item playbook-captain-31 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:790: warning item/sentence: item playbook-captain-20 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:876: warning item/sentence: item playbook-captain-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:917: warning item/sentence: item playbook-captain-16 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:968: warning item/sentence: item playbook-captain-26 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1001: warning item/sentence: item playbook-captain-29 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1052: warning item/sentence: item playbook-captain-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1078: warning item/sentence: item playbook-captain-17 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1089: warning item/sentence: item playbook-captain-35 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1146: warning item/sentence: item playbook-captain-41 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1177: warning item/sentence: item playbook-captain-42 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1193: warning item/sentence: item playbook-captain-50 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1201: warning item/sentence: item playbook-captain-52 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1210: warning item/sentence: item playbook-captain-44 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1225: warning item/sentence: item playbook-captain-46 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1240: warning item/sentence: item playbook-captain-47 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1252: warning item/sentence: item playbook-captain-54 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1261: warning item/sentence: item playbook-captain-56 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1267: warning item/sentence: item playbook-captain-58 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1430: warning item/sentence: item playbook-captain-78 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1454: warning item/sentence: item playbook-captain-79 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1487: warning item/sentence: item playbook-captain-12 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1521: warning item/sentence: item playbook-captain-13 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1574: warning item/sentence: item playbook-captain-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1599: warning item/sentence: item playbook-captain-15 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1703: warning item/sentence: item playbook-captain-21 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1738: warning item/sentence: item playbook-captain-27 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1780: warning item/sentence: item playbook-captain-30 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1817: warning item/sentence: item playbook-captain-36 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1870: warning item/sentence: item playbook-captain-37 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1907: warning item/sentence: item playbook-captain-38 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:1957: warning item/sentence: item playbook-captain-39 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2011: warning item/sentence: item playbook-captain-40 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2103: warning item/sentence: item playbook-captain-51 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2109: warning item/sentence: item playbook-captain-53 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2115: warning item/sentence: item playbook-captain-45 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2120: warning item/sentence: item playbook-captain-48 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2146: warning item/sentence: item playbook-captain-55 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2153: warning item/sentence: item playbook-captain-57 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2158: warning item/sentence: item playbook-captain-59 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2167: warning item/sentence: item playbook-captain-66 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2184: warning item/sentence: item playbook-captain-68 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-captain.md:2212: warning item/sentence: item playbook-captain-80 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:17: warning item/sentence: item playbook-cli-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:25: warning item/sentence: item playbook-cli-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:41: warning item/sentence: item playbook-cli-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:60: warning item/sentence: item playbook-cli-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:94: warning item/sentence: item playbook-cli-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:99: warning item/sentence: item playbook-cli-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:107: warning item/sentence: item playbook-cli-49 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:134: warning item/sentence: item playbook-cli-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:151: warning item/sentence: item playbook-cli-19 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:164: warning item/sentence: item playbook-cli-36 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:169: warning item/sentence: item playbook-cli-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:191: warning item/sentence: item playbook-cli-28 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:219: warning item/sentence: item playbook-cli-25 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:266: warning item/sentence: item playbook-cli-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:286: warning item/sentence: item playbook-cli-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:317: warning item/sentence: item playbook-cli-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:333: warning item/sentence: item playbook-cli-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:389: warning item/sentence: item playbook-cli-12 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:405: warning item/sentence: item playbook-cli-39 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:465: warning item/sentence: item playbook-cli-20 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:483: warning item/sentence: item playbook-cli-23 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:537: warning item/sentence: item playbook-cli-51 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:548: warning item/sentence: item playbook-cli-53 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:572: warning item/sentence: item playbook-cli-55 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:587: warning item/sentence: item playbook-cli-26 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:594: warning item/sentence: item playbook-cli-29 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:600: warning item/sentence: item playbook-cli-37 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:638: warning item/sentence: item playbook-cli-33 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:778: warning item/sentence: item playbook-cli-73 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:820: warning item/sentence: item playbook-cli-74 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:827: warning item/sentence: item playbook-cli-75 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:835: warning item/sentence: item playbook-cli-76 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:849: warning item/sentence: item playbook-cli-77 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:880: warning item/sentence: item playbook-cli-82 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:893: warning item/sentence: item playbook-cli-83 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:903: warning item/sentence: item playbook-cli-84 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:913: warning item/sentence: item playbook-cli-87 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1103: warning item/sentence: item playbook-cli-57 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1111: warning item/sentence: item playbook-cli-59 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1121: warning item/sentence: item playbook-cli-63 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1133: warning item/sentence: item playbook-cli-65 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1140: warning item/sentence: item playbook-cli-67 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1145: warning item/sentence: item playbook-cli-69 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1152: warning item/sentence: item playbook-cli-71 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1233: warning item/sentence: item playbook-cli-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1240: warning item/sentence: item playbook-cli-15 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1258: warning item/sentence: item playbook-cli-16 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1263: warning item/sentence: item playbook-cli-17 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1272: warning item/sentence: item playbook-cli-24 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1297: warning item/sentence: item playbook-cli-35 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1305: warning item/sentence: item playbook-cli-32 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1333: warning item/sentence: item playbook-cli-34 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1343: warning item/sentence: item playbook-cli-41 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1378: warning item/sentence: item playbook-cli-50 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1393: warning item/sentence: item playbook-cli-54 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1400: warning item/sentence: item playbook-cli-56 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1420: warning item/sentence: item playbook-cli-64 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1428: warning item/sentence: item playbook-cli-66 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1434: warning item/sentence: item playbook-cli-68 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1439: warning item/sentence: item playbook-cli-70 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-cli.md:1446: warning item/sentence: item playbook-cli-72 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:17: warning item/sentence: item playbook-runtime-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:22: warning item/sentence: item playbook-runtime-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:45: warning item/sentence: item playbook-runtime-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:50: warning item/sentence: item playbook-runtime-29 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:58: warning item/sentence: item playbook-runtime-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:83: warning item/sentence: item playbook-runtime-34 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:160: warning item/sentence: item playbook-runtime-50 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:190: warning item/sentence: item playbook-runtime-67 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:211: warning item/sentence: item playbook-runtime-69 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:235: warning item/sentence: item playbook-runtime-71 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:245: warning item/sentence: item playbook-runtime-73 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:271: warning item/sentence: item playbook-runtime-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:283: warning item/sentence: item playbook-runtime-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:337: warning item/sentence: item playbook-runtime-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:371: warning item/sentence: item playbook-runtime-47 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:405: warning item/sentence: item playbook-runtime-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:440: warning item/sentence: item playbook-runtime-77 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:474: warning item/sentence: item playbook-runtime-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:484: warning item/sentence: item playbook-runtime-12 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:496: warning item/sentence: item playbook-runtime-13 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:531: warning item/sentence: item playbook-runtime-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:556: warning item/sentence: item playbook-runtime-81 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:602: warning item/sentence: item playbook-runtime-15 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:609: warning item/sentence: item playbook-runtime-16 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:614: warning item/sentence: item playbook-runtime-30 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:626: warning item/sentence: item playbook-runtime-37 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:674: warning item/sentence: item playbook-runtime-38 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:687: warning item/sentence: item playbook-runtime-55 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:702: warning item/sentence: item playbook-runtime-40 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:739: warning item/sentence: item playbook-runtime-41 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:780: warning item/sentence: item playbook-runtime-42 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:836: warning item/sentence: item playbook-runtime-84 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:853: warning item/sentence: item playbook-runtime-45 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:889: warning item/sentence: item playbook-runtime-61 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:901: warning item/sentence: item playbook-runtime-63 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:910: warning item/sentence: item playbook-runtime-65 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:927: warning item/sentence: item playbook-runtime-75 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:946: warning item/sentence: item playbook-runtime-52 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1091: warning item/sentence: item playbook-runtime-79 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1152: warning item/sentence: item playbook-runtime-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1229: warning item/sentence: item playbook-runtime-70 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1238: warning item/sentence: item playbook-runtime-72 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1245: warning item/sentence: item playbook-runtime-74 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1255: warning item/sentence: item playbook-runtime-76 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1262: warning item/sentence: item playbook-runtime-78 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1283: warning item/sentence: item playbook-runtime-80 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1290: warning item/sentence: item playbook-runtime-82 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1312: warning item/sentence: item playbook-runtime-32 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1330: warning item/sentence: item playbook-runtime-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1425: warning item/sentence: item playbook-runtime-33 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1442: warning item/sentence: item playbook-runtime-25 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1458: warning item/sentence: item playbook-runtime-27 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1482: warning item/sentence: item playbook-runtime-28 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1516: warning item/sentence: item playbook-runtime-35 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1540: warning item/sentence: item playbook-runtime-36 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1552: warning item/sentence: item playbook-runtime-39 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1594: warning item/sentence: item playbook-runtime-43 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1637: warning item/sentence: item playbook-runtime-44 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1669: warning item/sentence: item playbook-runtime-46 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1690: warning item/sentence: item playbook-runtime-62 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1695: warning item/sentence: item playbook-runtime-64 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1702: warning item/sentence: item playbook-runtime-66 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1710: warning item/sentence: item playbook-runtime-59 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1740: warning item/sentence: item playbook-runtime-53 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1834: warning item/sentence: item playbook-runtime-54 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook-runtime.md:1839: warning item/sentence: item playbook-runtime-98 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:17: warning item/sentence: item playbook-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:61: warning item/sentence: item playbook-52 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:76: warning item/sentence: item playbook-24 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:99: warning item/sentence: item playbook-25 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:232: warning item/sentence: item playbook-32 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:258: warning item/sentence: item playbook-34 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:278: warning item/sentence: item playbook-36 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:300: warning item/sentence: item playbook-39 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:318: warning item/sentence: item playbook-49 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:343: warning item/sentence: item playbook-55 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:348: warning item/sentence: item playbook-58 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:363: warning item/sentence: item playbook-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:412: warning item/sentence: item playbook-33 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:418: warning item/sentence: item playbook-35 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:424: warning item/sentence: item playbook-37 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/playbook.md:461: warning item/sentence: item playbook-56 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:15: warning item/sentence: item recovery-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:28: warning item/sentence: item recovery-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:35: warning item/sentence: item recovery-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:48: warning item/sentence: item recovery-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:64: warning item/sentence: item recovery-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:71: warning item/sentence: item recovery-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:77: warning item/sentence: item recovery-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:84: warning item/sentence: item recovery-12 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:93: warning item/sentence: item recovery-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:132: warning item/sentence: item recovery-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:137: warning item/sentence: item recovery-20 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:142: warning item/sentence: item recovery-21 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:147: warning item/sentence: item recovery-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:167: warning item/sentence: item recovery-27 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:186: warning item/sentence: item recovery-28 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:216: warning item/sentence: item recovery-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:221: warning item/sentence: item recovery-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:226: warning item/sentence: item recovery-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:231: warning item/sentence: item recovery-13 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/recovery.md:240: warning item/sentence: item recovery-17 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:24: warning item/sentence: item release-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:63: warning item/sentence: item release-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:81: warning item/sentence: item release-7 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:96: warning item/sentence: item release-8 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:108: warning item/sentence: item release-31 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:142: warning item/sentence: item release-12 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:159: warning item/sentence: item release-14 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:195: warning item/sentence: item release-22 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:207: warning item/sentence: item release-15 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:254: warning item/sentence: item release-16 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:264: warning item/sentence: item release-20 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:302: warning item/sentence: item release-33 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:318: warning item/sentence: item release-34 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:330: warning item/sentence: item release-28 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:394: warning item/sentence: item release-24 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:460: warning item/sentence: item release-10 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:472: warning item/sentence: item release-35 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:484: warning item/sentence: item release-39 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:533: warning item/sentence: item release-19 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:647: warning item/sentence: item release-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:669: warning item/sentence: item release-21 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:740: warning item/sentence: item release-29 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:760: warning item/sentence: item release-25 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/release.md:844: warning item/sentence: item release-26 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:15: warning item/sentence: item session-assets-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:20: warning item/sentence: item session-assets-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:26: warning item/sentence: item session-assets-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:37: warning item/sentence: item session-assets-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:42: warning item/sentence: item session-assets-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-assets.md:49: warning item/sentence: item session-assets-9 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:15: warning item/sentence: item session-persistence-1 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:20: warning item/sentence: item session-persistence-2 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:25: warning item/sentence: item session-persistence-3 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:31: warning item/sentence: item session-persistence-4 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:37: warning item/sentence: item session-persistence-5 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:43: warning item/sentence: item session-persistence-6 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-persistence.md:55: warning item/sentence: item session-persistence-11 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-storage.md:222: warning item/sentence: item session-storage-18 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-storage.md:236: warning item/sentence: item session-storage-21 carries more than one sentence; review it for a second requirement (meta-29)
+specs/packages/session-storage.md:242: warning item/sentence: item session-storage-23 carries more than one sentence; review it for a second requirement (meta-29)
+
+spex lint: 0 errors, 308 warnings
+
+ RUN  v3.2.4 /Users/boboyang/work/sublang.ai/playbook
+
+ ✓ reference/sdlc/code.playbook/captain-recovery.integration.test.ts (45 tests) 225239ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation  3604ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with the agreed handoff  3688ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using codex  3745ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using codex with the agreed handoff  3982ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using kimi  3741ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using kimi with the agreed handoff  4024ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using opencode  4401ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using opencode with the agreed handoff  5117ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using gemini  3852ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question using gemini with the agreed handoff  4699ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption with drained cancellation in the interactive pane  4821ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with check {"instructionIndex":9}  2664ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with check not JSON  2384ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with check error  2880ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with check {"instructionIndex":0}  5239ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question with check Both instructions were checked.
+
+{"instructionIndex":0}  5674ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation from a prose-wrapped reply  8694ms
+   ✓ Captain preparation through a durable session > restored failed step with blocked preparation from a prose-wrapped reply  4010ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption with drained cancellation  5156ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption from CLI to SDK with drained cancellation  5112ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation after a committed continuation before saving progress  5581ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation after a committed continuation before saving progress  5869ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation  4333ms
+   ✓ Captain preparation through a durable session > restored nested throwing failed step with ready preparation  4932ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption  5476ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption from SDK to CLI  6064ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation after preparation interruption from CLI to SDK  5404ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation  7916ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation after a host retry  5874ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation during a long continuation  10379ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation for an already answered question  4003ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation after rejected admission  5780ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation  8918ms
+   ✓ Captain preparation through a durable session > restored question with ready preparation after a committed continuation  5423ms
+   ✓ Captain preparation through a durable session > restored failed step with ready preparation after a committed continuation  5058ms
+   ✓ Captain preparation through a durable session > restored nested failed step with ready preparation  8622ms
+   ✓ Captain preparation through a durable session > restored failed step with blocked preparation  4114ms
+   ✓ Captain preparation through a durable session > restored failed step with malformed preparation  3939ms
+   ✓ Captain preparation through a durable session > restored failed step with network preparation  3745ms
+   ✓ Captain preparation through a durable session > restored failed step with aborted preparation  3521ms
+   ✓ Captain preparation through a durable session > restored failed step with stale preparation  4857ms
+   ✓ Captain preparation through a durable session > restored failed step with unresolved preparation  3563ms
+   ✓ Captain preparation through a durable session > restored failed step with missing-transition preparation  4009ms
+   ✓ Captain preparation through a durable session > restored failed step with save-failure preparation  3865ms
+   ✓ Captain preparation through a durable session > restored failed step with timeout preparation  6506ms
+ ✓ reference/sdlc/code.playbook/durable-progress.integration.test.ts (52 tests) 231034ms
+   ✓ restores completed-report-budget after SIGKILL without repeating work  6111ms
+   ✓ restores repeated-player-boundary after SIGKILL without repeating work  3375ms
+   ✓ restores completed-clear after SIGKILL without repeating work  4954ms
+   ✓ restores completed-unfinished after SIGKILL without repeating work  5359ms
+   ✓ restores validation-matrix after SIGKILL without repeating work  3756ms
+   ✓ restores consumed-result after SIGKILL without repeating work  4220ms
+   ✓ restores completed-exact after SIGKILL without repeating work  3536ms
+   ✓ restores player-before-change after SIGKILL without repeating work  4503ms
+   ✓ restores exact-answer after SIGKILL without repeating work  6102ms
+   ✓ restores command-override after SIGKILL without repeating work  3970ms
+   ✓ restores give-up after SIGKILL without repeating work  3550ms
+   ✓ restores later-step after SIGKILL without repeating work  6452ms
+   ✓ restores player-result after SIGKILL without repeating work  4873ms
+   ✓ restores player-before-receipt after SIGKILL without repeating work  4423ms
+   ✓ restores script-result after SIGKILL without repeating work  4009ms
+   ✓ restores script-before-result after SIGKILL without repeating work  1794ms
+   ✓ restores nested-player after SIGKILL without repeating work  4841ms
+   ✓ restores nested-script after SIGKILL without repeating work  3973ms
+   ✓ restores preparation after SIGKILL without repeating work  2553ms
+   ✓ restores completed after SIGKILL without repeating work  2881ms
+   ✓ restores completed-terminal-only after SIGKILL without repeating work  2750ms
+   ✓ restores automatic-answer after SIGKILL without repeating work  5774ms
+   ✓ restores script-before-rename after SIGKILL without repeating work  3414ms
+   ✓ restores script-after-rename after SIGKILL without repeating work  3132ms
+   ✓ restores carried after SIGKILL without repeating work  4155ms
+   ✓ restores accepted-answer after SIGKILL without repeating work  6657ms
+   ✓ restores waiting-question after SIGKILL without repeating work  2978ms
+   ✓ restores reserved-question after SIGKILL without repeating work  3144ms
+   ✓ restores before-first-step after SIGKILL without repeating work  4062ms
+   ✓ restores retention-switch after SIGKILL without repeating work  5331ms
+   ✓ restores retention-lost-switch after SIGKILL without repeating work  5145ms
+   ✓ restores retention-lost-same-root after SIGKILL without repeating work  5940ms
+   ✓ reports safely through second-crash  3777ms
+   ✓ reports safely through player-second-crash  4732ms
+   ✓ reports safely through lost-position-second-crash  5381ms
+   ✓ reports safely through cli  2373ms
+   ✓ settles live-retain-none without losing work  5491ms
+   ✓ settles live-retain-earlier without losing work  9222ms
+   ✓ settles carried-cancel-command without losing work  4161ms
+   ✓ settles carried-cancel-decision-error without losing work  4582ms
+   ✓ settles carried-cancel-malformed without losing work  4319ms
+   ✓ settles carried-cancel-cli-command without losing work  4390ms
+   ✓ settles carried-cancel-cli-decision-error without losing work  4598ms
+   ✓ settles carried-cancel-cli-malformed without losing work  4759ms
+   ✓ settles carried-after-reply without losing work  4027ms
+   ✓ settles parent-accepted-child-failed without losing work  2820ms
+   ✓ settles carried-cancel without losing work  4051ms
+   ✓ settles carried-cancel-cli without losing work  4802ms
+   ✓ settles cancelled-stop without losing work  4277ms
+   ✓ settles old-stop without losing work  5889ms
+   ✓ settles resume-stop without losing work  6127ms
+   ✓ settles no-work-discard without losing work  3530ms
+ ✓ reference/sdlc/code.playbook/headless-run.test.ts (93 tests) 106469ms
+   ✓ former-default headless migration > migrates and continues complete history (XDG override: false)  1853ms
+   ✓ former-default headless migration > migrates and continues complete history (XDG override: true)  2164ms
+   ✓ former-default headless migration > leaves the former default untouched with an explicit SPEX_HOME  963ms
+   ✓ former-default headless migration > leaves the former default untouched with an explicit directory  1038ms
+   ✓ former-default headless migration > leaves the former default untouched with an explicit store  978ms
+   ✓ former-default headless migration > leaves the former default untouched with an explicit config  987ms
+   ✓ former-default headless migration > leaves the former default untouched with an explicit overlay  978ms
+   ✓ headless sessions locator (PBCLI-78/81) > selects and persists through a configured relative directory without projecting the locator  1046ms
+   ✓ headless sessions locator (PBCLI-78/81) > gives an injected store precedence over an invalid configured locator  552ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > tees every hidden and visible record with roles across two turns  2452ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > keeps a sanitizer failure outside dispatch and swallows warning failure  535ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a initialization failure  337ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a sanitization failure  317ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a append failure  354ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a first-publication directory sync failure  364ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a torn-tail repair failure  327ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a settlement checkpoint failure  639ms
+   ✓ headless replay tee (PBCLI-74/77/79/80/84) > adds only the native warning for a release checkpoint failure  562ms
+   ✓ playbook run shared Captain host (PBCLI-48) > runs configured CODE through nested REVIEW on the real headless host  1942ms
+   ✓ playbook run shared Captain host (PBCLI-48) > injects current-lease capabilities into schema-3 root and nested runtimes  1744ms
+   ✓ playbook run shared Captain host (PBCLI-48) > runs configured REVIEW as a root through the same Captain  1414ms
+   ✓ playbook run shared Captain host (PBCLI-48) > uses the shipped compiled Captain for ordinary Boss text  988ms
+   ✓ playbook run shared Captain host (PBCLI-48) > drains and preserves stdin, overlays config, and exposes only JSON reply keys  523ms
+   ✓ playbook run shared Captain host (PBCLI-48) > treats terminator content as one literal input and rejects retired surfaces  554ms
+   ✓ playbook run shared Captain host (PBCLI-48) > relocates through default run delegation before config preparation  556ms
+   ✓ playbook run shared Captain host (PBCLI-48) > relocates the root former config, keeping a directory that holds more  583ms
+   ✓ playbook run shared Captain host (PBCLI-48) > uses canonical and keeps legacy readable after interrupted publication  599ms
+   ✓ playbook run shared Captain host (PBCLI-48) > relocates before migrating profiles through the headless front end  480ms
+   ✓ playbook run shared Captain host (PBCLI-48) > awaits stdout backpressure before reporting success  472ms
+   ✓ playbook run shared Captain host (PBCLI-48) > classifies host setup separately from turn and reply-boundary failures  1534ms
+   ✓ playbook run shared Captain host (PBCLI-48) > retains the writer lease when headless host cleanup is incomplete  584ms
+   ✓ durable Captain continuation (PBCLI-24) > retracts an unchanged fresh boundary after pre-turn setup fails  705ms
+   ✓ durable Captain continuation (PBCLI-24) > starts fresh while the newest settled predecessor lease is live  1015ms
+   ✓ durable Captain continuation (PBCLI-24) > skips a pre-cutover record for fresh work and explains explicit selection  1041ms
+   ✓ durable Captain continuation (PBCLI-24) > starts fresh when the predecessor root options no longer match  2037ms
+   ✓ durable Captain continuation (PBCLI-24) > persists a closed v7 record before stdout without semantic disposal  539ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects a fresh logical-id collision before the Boss turn without changing prior bytes  608ms
+   ✓ durable Captain continuation (PBCLI-24) > restores an explicit session instead of init and preserves cwd and timestamps  1221ms
+   ✓ durable Captain continuation (PBCLI-24) > prunes additive current config members before continuation hooks  901ms
+   ✓ durable Captain continuation (PBCLI-24) > persists completed-root settlement evidence as a continuable chat snapshot  1141ms
+   ✓ durable Captain continuation (PBCLI-24) > restores a nested parked stack across CLI hosts without repeating the child start  1616ms
+   ✓ durable Captain continuation (PBCLI-24) > lets explicit start beat an offer before bare --continue adopts it (PBCLI-56)  9726ms
+   ✓ durable Captain continuation (PBCLI-24) > prefers same-cwd continuation, reports global fallback, and honors explicit selection  4125ms
+   ✓ durable Captain continuation (PBCLI-24) > selects the newest resumable same-cwd session and refuses pre-effect records  2525ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects explicit released 'shell schema 1' before host work  832ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects explicit released 'runtime schema 1' before host work  625ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects explicit released 'runtime schema 2' before host work  660ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects frozen unsupported fast mode before prepare or import  716ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects a frozen unsupported subagent model before prepare or import  706ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects a frozen unsupported subagent effort before prepare or import  710ms
+   ✓ durable Captain continuation (PBCLI-24) > rereads the selected session under its lease before deciding whether to run  777ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects a changed manifest default even under a frozen command override  2943ms
+   ✓ durable Captain continuation (PBCLI-24) > leaves uncertainty and withholds output when settlement persistence fails  1582ms
+   ✓ durable Captain continuation (PBCLI-24) > settles a same-turn unfinished terminal without retaining its initialized state  1290ms
+   ✓ durable Captain continuation (PBCLI-24) > withholds output but preserves a complete settlement after post-rename sync failure  924ms
+   ✓ durable Captain continuation (PBCLI-24) > writes uncertainty before effects and reports the exact interrupted input without replay  839ms
+   ✓ durable Captain continuation (PBCLI-24) > reports an all-unchanged multi-attempt suffix without replay  2956ms
+   ✓ durable Captain continuation (PBCLI-24) > settles earlier non-unchanged evidence without replay  2130ms
+   ✓ durable Captain continuation (PBCLI-24) > settles logical-only progress without reusing the stored Boss turn  2197ms
+   ✓ durable Captain continuation (PBCLI-24) > settles changed evidence inside the old checkpoint without replay  2041ms
+   ✓ durable Captain continuation (PBCLI-24) > restores the attempted tuning without rerunning its input  1723ms
+   ✓ durable Captain continuation (PBCLI-24) > rechecks lease ownership after the marker and immediately before model work  355ms
+   ✓ durable Captain continuation (PBCLI-24) > discards to the exact settled boundary without input, config, readiness, or host work  1922ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects a concurrent writer while the first turn owns the session lease  972ms
+   ✓ durable Captain continuation (PBCLI-24) > aborts a signaled turn, preserves uncertainty, retires ownership, and lets a second signal escape  997ms
+   ✓ durable Captain continuation (PBCLI-24) > withholds stdout when a signal arrives during atomic settlement  1018ms
+   ✓ durable Captain continuation (PBCLI-24) > rejects an unrestorable or id-colliding record before host or agent work  1296ms
+   ✓ playbook run --module (PBCLI-95) > runs and records supplied modules, then continues on the recorded ones  2481ms
+   ✓ playbook run --module (PBCLI-95) > lets a supplied module win over the file from on a fresh run  858ms
+   ✓ configured engine provisioning parity (PBCLI-38/48) > prepares filesystem registries for interactive and headless front ends  1042ms
+   ✓ portable CLI provider hints > continues a saved Captain with a missing local hint safely  3844ms
+   ✓ portable CLI provider hints > continues a saved Captain with a rejected local hint safely  2704ms
+   ✓ portable CLI provider hints > continues a saved Captain with a ambiguous local hint safely  2460ms
+   ✓ pre-existing changes carried by a real commit (DR-062) > tells the Coder about the Boss dirt and reports what the commit carried  3667ms
+   ✓ a parked failure explains itself (DR-063) > names the residual commit and marks reconciliation a no-op  3311ms
+ ✓ reference/sdlc/code.playbook/captain-recovery-progress.integration.test.ts (14 tests) 146376ms
+   ✓ keeps the stopped step through step recovery and process loss  9968ms
+   ✓ keeps the stopped step through adjudication recovery and process loss  9929ms
+   ✓ keeps the stopped step through adjudication-discard recovery and process loss  5064ms
+   ✓ keeps the stopped step through restored recovery and process loss  10543ms
+   ✓ keeps the stopped step through adopted-assessment recovery and process loss  6521ms
+   ✓ keeps the stopped step through vanished recovery and process loss  4235ms
+   ✓ keeps the stopped step through counts recovery and process loss  9854ms
+   ✓ keeps the stopped step through auto-child recovery and process loss  8848ms
+   ✓ keeps the stopped step through answer-failure recovery and process loss  10610ms
+   ✓ keeps the stopped step through start-prepares-question recovery and process loss  11248ms
+   ✓ keeps the stopped step through child-cancel recovery and process loss  15594ms
+   ✓ keeps the stopped step through child-later-cancel recovery and process loss  18438ms
+   ✓ keeps the stopped step through child-only-counts recovery and process loss  14597ms
+   ✓ keeps the stopped step through save-failure recovery and process loss  10925ms
+ ✓ reference/sdlc/code.playbook/session-store.test.ts (102 tests) 36200ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > writes exact effect-ledger batches atomically and preserves their authoritative mirror  695ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > persists abandonment disposal and crash-recovers its exact settlement (PBCLI-71/72)  905ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > re-synchronizes every published abandonment phase before acknowledging replay  1544ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > uses Spex home and advances fresh, retry, settle, and exact discard boundaries  569ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > replaces and clears one retained generation without disturbing another root  532ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > selects the newest settled same-cwd member-less schema 6 predecessor without older fallback  594ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > selects the newest settled same-cwd explicitly empty predecessor without older fallback  522ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines a live newest predecessor without falling through to older work  411ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines when the nominated predecessor is superseded before authoritative read  384ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines when the nominated predecessor is invalid before authoritative read  340ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines incompatible root options before publishing an empty target  330ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > keeps monolithic schema-7 history readable while skipping it for continuation and adoption  565ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > reports a unsafe canonical record and declines older adoption during fresh discovery  310ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > orders validated legacy records without globally fencing adoption  425ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > moves retained ledger checkpoints without moving settlement evidence  397ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > transfers descendant option drift without changing the generation  335ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines an incompatible adoption concurrent roles envelope into an empty target  303ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > declines an incompatible adoption descendant catalog envelope into an empty target  338ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > lets two concurrent guarded contenders leave one generation owner  602ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > keeps at most one complete generation owner after a target pre-publication fault  372ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > keeps at most one complete generation owner after a target post-publication fault  303ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > keeps prior bytes and cleans its temp when a replacement rename fails  385ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > reports post-settlement sync failure while exposing only a complete settled replacement  471ms
+   ✓ durable Captain session records (PBCLI-23/24/51/52/53/54/63/64) > skips nonresumable records and fails closed on corruption  814ms
+   ✓ lease-bound replay mutation (PBCLI-73/75/76/79/80/83) > refuses legacy mutation and opens bounded snapshots without repairing their bytes  391ms
+   ✓ lease-bound replay mutation (PBCLI-73/75/76/79/80/83) > advances readability on append and durability on settlement and release  440ms
+   ✓ lease-bound replay mutation (PBCLI-73/75/76/79/80/83) > classifies raw arguments before sanitization and leaves retry eligible  742ms
+   ✓ lease-bound replay mutation (PBCLI-73/75/76/79/80/83) > latches sanitizer failures only for the live lease  546ms
+   ✓ lease-bound replay mutation (PBCLI-73/75/76/79/80/83) > isolates publication, staging-write, checkpoint, and release failures  519ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > reads only the appended node and content chunks through the store and the writer lease alike  1783ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > verifies only appended nodes for an independent follower across successive retiring writer leases (PBCLI-79)  891ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > verifies the complete chain for a request below the cached sequence and keeps later reads cheap  1150ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > verifies the complete chain on a new store first read  1099ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > verifies the complete chain of a root that does not extend the cached head  1261ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > rejects a root shortened below the cached boundary while a new store accepts the retained prefix  1726ms
+   ✓ bounded follower cursor (PBCLI-80, SP-9) > refuses a chunk corrupted after another store verified it on a new store first read (SP-9)  529ms
+   ✓ writer-verified checkpoints (SP-9, SP-13, SP-14) > reads no replay chunk in a progress write and makes as many file calls at 600 records as at 200 (SP-13)  2576ms
+   ✓ writer-verified checkpoints (SP-9, SP-13, SP-14) > publishes the replay boundary and context a complete read derives across context changes, assets and a latch (SP-14)  521ms
+ ✓ src/package-surface.test.ts (94 tests) 17781ms
+   ✓ runtime dependency specifiers (RELEASE-19) > pins the complete cligent release capabilities  1447ms
+   ✓ normal test gate (RELEASE-32) > fails on Spex lint before starting Vitest  1317ms
+   ✓ packed tarball contents (RELEASE-18) > includes runtime, Captain, and slc artifacts  1140ms
+   ✓ packed tarball contents (RELEASE-18) > resolves every relative link in packed markdown against the packed list  1338ms
+   ✓ packed tarball contents (RELEASE-18) > resolves every living-pointer URL in packed markdown against the repository  6561ms
+   ✓ public CLI and registry surface (RELEASE-21) > publishes strict session-store and asset declarations through public dependencies  835ms
+   ✓ public CLI and registry surface (RELEASE-21) > publishes a self-contained strict host-capabilities declaration  826ms
+   ✓ public CLI and registry surface (RELEASE-21) > declares validated Captain shell snapshots recursively readonly  1146ms
+   ✓ public CLI and registry surface (RELEASE-21) > discriminates schema-gated factory and registry construction types  1378ms
+   ✓ public CLI and registry surface (RELEASE-21) > packs the launcher and bundled registry artifacts, not retired surfaces  1069ms
+ ✓ reference/sdlc/code.playbook/cli-storage.integration.test.ts (8 tests) 18074ms
+   ✓ real CLI over an application-owned home > continues the application session among migrated desktop history and unmigrated CLI records  4369ms
+   ✓ real CLI over an application-owned home > seeds a mixed lineup under both credentials and continues its own session  3199ms
+   ✓ real CLI over an application-owned home > migrates an explicitly configured directory through the executable without provider work  1304ms
+   ✓ real CLI over an application-owned home > rejects digest before either CLI imports registry code  1600ms
+   ✓ real CLI over an application-owned home > rejects incomplete before either CLI imports registry code  1955ms
+   ✓ real CLI over an application-owned home > rejects context before either CLI imports registry code  1885ms
+   ✓ real CLI over an application-owned home > rejects path before either CLI imports registry code  1644ms
+   ✓ real CLI over an application-owned home > rejects module before either CLI imports registry code  2117ms
+ ✓ reference/sdlc/code.playbook/captain-process-loss.integration.test.ts (5 tests) 34599ms
+   ✓ settles loss through the maintained DECIDE runtime (root)  10830ms
+   ✓ settles loss through the maintained DECIDE runtime (nested)  11231ms
+   ✓ settles loss through the maintained DECIDE runtime (parallel-root)  3513ms
+   ✓ settles loss through the maintained DECIDE runtime (parallel-nested)  4004ms
+   ✓ keeps real DECIDE under its parent when the first accepted proposal is cancelled  5018ms
+ ✓ reference/sdlc/code.playbook/captain-review-admission.integration.test.ts (11 tests) 37178ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses fresh code before a working factory, player or Git effect  2218ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses a switch to code without dismissing the active root  3766ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses repeated nested code before child bookkeeping and leaves its parent usable  4502ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses fresh decide before a working factory, player or Git effect  2788ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses a switch to decide without dismissing the active root  3782ms
+   ✓ packaged workflow REVIEW admission through the shared host > refuses repeated nested decide before child bookkeeping and leaves its parent usable  4538ms
+   ✓ packaged workflow REVIEW admission through the shared host > uses the configured effective command in the refusal  1322ms
+   ✓ packaged workflow REVIEW admission through the shared host > keeps custom same-id or aliased modules admitted: mod://custom-code  3645ms
+   ✓ packaged workflow REVIEW admission through the shared host > keeps custom same-id or aliased modules admitted: @sublang/playbook/code/registry-alias  3899ms
+   ✓ packaged workflow REVIEW admission through the shared host > admits the real packaged code when validated REVIEW is enabled  3168ms
+   ✓ packaged workflow REVIEW admission through the shared host > admits the real packaged decide when validated REVIEW is enabled  3547ms
+ ✓ reference/sdlc/code.playbook/code-intent-review.integration.test.ts (5 tests) 23863ms
+   ✓ model-free intent review through real CODE and REVIEW > reviews a requested status-only update to a completed IR once as a direct phase  2912ms
+   ✓ model-free intent review through real CODE and REVIEW > reviews every phase commit of a multi-task intent once, after its final task  4949ms
+   ✓ model-free intent review through real CODE and REVIEW > restores a later task across a genuinely new owner question before the one REVIEW  7814ms
+   ✓ model-free intent review through real CODE and REVIEW > keeps every task commit when the intent's transport-failed REVIEW does not pass  4109ms
+   ✓ model-free intent review through real CODE and REVIEW > keeps every task commit when the intent's malformed-child REVIEW does not pass  4078ms
+ ✓ reference/sdlc/pr.playbook/pr.playbook.test.ts (30 tests) 27757ms
+   ✓ linked PR runtime > refuses a zero-exit merge with queued  813ms
+   ✓ linked PR runtime > refuses a zero-exit merge with unreadable state  1065ms
+   ✓ linked PR runtime > refuses a zero-exit merge with unchanged checkout  976ms
+   ✓ linked PR runtime > publishes under an unchanged receipt, waits, merges, and fast-forwards the local default branch  1162ms
+   ✓ linked PR runtime > runs its scripts in the host authority working directory when created through the registry  1084ms
+   ✓ linked PR runtime > reports a merged pull request whose local default branch stayed behind  1091ms
+   ✓ linked PR runtime > counts a pull request that still reports no checks after the brief wait as passed  1347ms
+   ✓ linked PR runtime > reports an unpublished branch with the Coder result verbatim and runs no script  412ms
+   ✓ linked PR runtime > parks a publication that mutates the repository (commit) as unresolved  398ms
+   ✓ linked PR runtime > parks a publication that mutates the repository (worktree) as unresolved  431ms
+   ✓ linked PR runtime > requires the judge to supply both semantic pull request fields  1098ms
+   ✓ linked PR runtime > parks for a Boss reply and resumes the publication with the answer in the same conversation  1179ms
+   ✓ linked PR runtime > fixes red checks once through CODE, republishes the fix, waits again, and merges  1283ms
+   ✓ linked PR runtime > suspends on the nested CODE call and resumes from its canonical result  1410ms
+   ✓ linked PR runtime > relays an authored CODE failure and leaves the pull request open  1961ms
+   ✓ linked PR runtime > relays a CODE failure terminal delivered through the error path  759ms
+   ✓ linked PR runtime > relays a resolved CODE result that does not prove success  930ms
+   ✓ linked PR runtime > reports a fix whose push was rejected  930ms
+   ✓ linked PR runtime > reports a fix whose pull request head never advanced within the poll bound  1441ms
+   ✓ linked PR runtime > reports checks still failing after the one fix attempt without a second CODE call  953ms
+   ✓ linked PR runtime > reports a refused merge and leaves the branch checked out  935ms
+   ✓ linked PR runtime > publishes no fix when the suspended CODE call left another branch checked out  1123ms
+   ✓ linked PR runtime > never merges when the checkout no longer infers the published pull request  892ms
+   ✓ linked PR runtime > binds a Coder-reported pull request URL as data, never as shell syntax  870ms
+   ✓ linked PR runtime > never merges a reused pull request that targets another branch  871ms
+   ✓ linked PR runtime > parks a raw nested-call rejection as a control-plane failure  1095ms
+   ✓ linked PR runtime > publishes a rejected Coder port as `player-failed` naming the Coder role and its player  609ms
+   ✓ linked PR runtime > publishes a non-`ok` Coder result as `player-failed` naming the Coder role and its player  376ms
+ ✓ src/link-materialization-labelled.test.ts (7 tests) 22976ms
+   ✓ emits and strictly checks the unchanged maintained code machine  1089ms
+   ✓ emits and strictly checks the unchanged maintained dev machine  1413ms
+   ✓ emits and strictly checks the unchanged maintained decide machine  1029ms
+   ✓ refuses unsupported strategies and metadata without replacing an accepted target  1680ms
+   ✓ passes maintained CODE/DEV real-Git and nested-boundary suites with only their factory wiring replaced  15756ms
+   ✓ passes the maintained DECIDE parallel-proposal suite with only its factory wiring replaced  1819ms
+ ✓ reference/sdlc/code.playbook/repository-effects.test.ts (59 tests) 27152ms
+   ✓ repository-relevant Git observations (PBRT-68) > records the branch HEAD names and none at a detached HEAD  327ms
+   ✓ repository-relevant Git observations (PBRT-68) > projects index, tracked-worktree, mode, and nonignored-untracked layers but not ignored output  541ms
+   ✓ repository-relevant Git observations (PBRT-68) > observes an unborn HEAD as the null OID and proves its first root commit  430ms
+   ✓ repository-relevant Git observations (PBRT-68) > content-addresses dirty bytes inside an embedded Git worktree  774ms
+   ✓ repository-relevant Git observations (PBRT-68) > proves unchanged and one descendant only against the complete baseline projection  559ms
+   ✓ repository-relevant Git observations (PBRT-68) > classifies staged, tracked, and nonignored-untracked deltas by the same complete predicate  1365ms
+   ✓ repository-relevant Git observations (PBRT-68) > accounts for altered and consumed overlays, lists every new commit, and fails closed on residual changes and rewritten history  1821ms
+   ✓ repository-relevant Git observations (PBRT-68) > gives every pre-existing baseline entry its fate on the call that ends it (DR-062)  6320ms
+   ✓ repository-relevant Git observations (PBRT-68) > omits the accounting entirely when every baseline entry is preserved  303ms
+   ✓ repository-relevant Git observations (PBRT-68) > rejects a mixed observation and captures it as ambiguous evidence  328ms
+   ✓ canonical-worktree cooperative claims (PBCLI-58) > serializes same-worktree claims across processes and permanently retires owners  380ms
+   ✓ canonical-worktree cooperative claims (PBCLI-58) > reclaims only a same-host owner whose process is definitively dead  826ms
+   ✓ canonical-worktree cooperative claims (PBCLI-58) > holds an exclusive claim through its receipt and captures rejected work  436ms
+   ✓ canonical-worktree cooperative claims (PBCLI-58) > runs only a declared all-unchanged cohort from one baseline while outsiders wait  321ms
+   ✓ schema-3 repository host capabilities > recovers a child process boundary before source-state restoration  462ms
+   ✓ schema-3 repository host capabilities > rebases deferred completion on an in-callback correction-budget spend  428ms
+   ✓ schema-3 repository host capabilities > exact-retries the deferred completion after a correction spend and a before-storage failure before acknowledgement  387ms
+   ✓ schema-3 repository host capabilities > exact-retries the deferred completion after a correction spend and a after-storage failure before acknowledgement  381ms
+   ✓ schema-3 repository host capabilities > authoritatively recovers a live claim when completion fails after acknowledgement  306ms
+   ✓ schema-3 repository host capabilities > assembles over a directory that is not a repository and governs its own git init  485ms
+   ✓ schema-3 repository host capabilities > binds repeated deferred checkpoints and reconciles one cumulative receipt  766ms
+   ✓ schema-3 repository host capabilities > reconciles a deferred chain that absorbs the original baseline dirt  753ms
+   ✓ schema-3 repository host capabilities > fences mismatched deferred checkpoints and restores or parks without a call  651ms
+   ✓ schema-3 repository host capabilities > withholds an initial deferred binding when its completed checkpoint is ineligible  316ms
+   ✓ schema-3 repository host capabilities > recovers an indeterminate deferred checkpoint fence before acknowledgement without a call  357ms
+   ✓ schema-3 repository host capabilities > recovers an indeterminate deferred checkpoint fence after acknowledgement without a call  353ms
+ ✓ reference/sdlc/code.playbook/session-snapshot-compatibility.integration.test.ts (5 tests) 13402ms
+   ✓ SDK continue reads a stored snapshot with an omitted presentation prefix  2818ms
+   ✓ CLI session reads a stored snapshot with an omitted presentation prefix  2976ms
+   ✓ CLI continue reads a stored snapshot with an omitted presentation prefix  2806ms
+   ✓ CLI retry reads a stored snapshot with an omitted presentation prefix  2415ms
+   ✓ SDK recover reads a stored snapshot with an omitted presentation prefix  2385ms
+ ✓ reference/sdlc/code.playbook/captain-frontend-parity.integration.test.ts (3 tests) 25741ms
+   ✓ continues a Captain conversation starting in SDK through both hosts  8428ms
+   ✓ continues a Captain conversation starting in CLI through both hosts  7624ms
+   ✓ continues a Captain conversation starting in legacy through both hosts  9687ms
+ ✓ reference/sdlc/code.playbook/portable-session.test.ts (77 tests) 13700ms
+   ✓ shared portable session lifecycle > migrates validated schema6 through retained exact inputs and is idempotent  307ms
+   ✓ shared portable session lifecycle > moves the former default with its complete replay and retained original bytes  454ms
+   ✓ shared portable session lifecycle > retains old-default inputs when source ownership or the destination blocks migration  377ms
+   ✓ shared portable session lifecycle > retries a cross-directory migration interrupted during destination-publication  521ms
+   ✓ shared portable session lifecycle > retries a cross-directory migration interrupted during source-cleanup  493ms
+   ✓ shared portable session lifecycle > reports unsupported old-default inputs unchanged and leaves absent defaults absent  358ms
+   ✓ shared portable session lifecycle > retains a valid unterminated legacy replay record (external=true)  377ms
+   ✓ shared portable session lifecycle > skips history-only and unmigrated schema6 during discovery and fresh adoption  516ms
+   ✓ shared portable session lifecycle > recovers a migration interrupted between replay and manifest publication  373ms
+   ✓ shared portable session lifecycle > refuses divergent migration output and preserves malformed source bytes  348ms
+   ✓ checkpoints asset-only accepted input, exports its exact prefix and preserves independent copied bundles (session-storage-20)  391ms
+   ✓ prepares, acquires and deletes sessions past foreign entries in their asset directories (session-storage-20)  386ms
+ ✓ reference/sdlc/code.playbook/host-capabilities.facade.test.ts (36 tests) 11784ms
+   ✓ host-capabilities facade surface (playbook-cli-87, playbook-cli-89) > narrows receipt options to the declared dispositions and rejects a missing option object  320ms
+   ✓ createWorktreeHostCapabilities (playbook-cli-88) > rejects a missing working directory and a seed naming another playbook or worktree  492ms
+   ✓ exclusive governed calls (playbook-cli-88) > classifies one clean commit  418ms
+   ✓ exclusive governed calls (playbook-cli-88) > classifies two commits  418ms
+   ✓ exclusive governed calls (playbook-cli-88) > classifies an amended HEAD  308ms
+   ✓ exclusive governed calls (playbook-cli-88) > classifies a commit that leaves the worktree dirty  344ms
+   ✓ exclusive governed calls (playbook-cli-88) > classifies a stray file under unchanged-only dispositions  315ms
+   ✓ exclusive governed calls (playbook-cli-88) > commit outcomes over every new commit or the commit already at HEAD (DR-088) > takes two commits in one step as its commit outcome with both listed  436ms
+   ✓ exclusive governed calls (playbook-cli-88) > commit outcomes over every new commit or the commit already at HEAD (DR-088) > takes the commit already at HEAD when the player names it and nothing changed  375ms
+   ✓ exclusive governed calls (playbook-cli-88) > commit outcomes over every new commit or the commit already at HEAD (DR-088) > keeps the committed-nothing failure when no commit is named  317ms
+   ✓ exclusive governed calls (playbook-cli-88) > commit outcomes over every new commit or the commit already at HEAD (DR-088) > keeps a rewritten history a failure even when the player names its HEAD  371ms
+   ✓ exclusive governed calls (playbook-cli-88) > sees a re-modified already-dirty file and a reverted baseline-dirty entry  601ms
+   ✓ exclusive governed calls (playbook-cli-88) > retains a mid-completion correction-budget spend with the completion evidence  386ms
+   ✓ exclusive governed calls (playbook-cli-88) > excludes governed calls while preparation holds the public claim  350ms
+   ✓ exclusive governed calls (playbook-cli-88) > serializes overlapping calls in invocation order with contiguous sequences  484ms
+   ✓ deferred Boss-question operations (playbook-cli-88) > marks eligibility on a mismatched continuation, restores on equality, and continues with a cumulative receipt  523ms
+   ✓ seeded continuation (playbook-cli-88) > continues sequences under a fresh attempt over a prior snapshot  403ms
+   ✓ a working directory that is not a repository yet (playbook-cli-88) > governs git init, the first root commit, and an idle call under one identity  757ms
+   ✓ a working directory that is not a repository yet (playbook-cli-88) > sees content before the repository exists and keeps every fail-closed classification  1104ms
+   ✓ a working directory that is not a repository yet (playbook-cli-88) > binds the nearest enclosing worktree until the directory becomes its own root  521ms
+ ✓ reference/sdlc/code.playbook/code.playbook.test.ts (42 tests) 15039ms
+   ✓ linked CODE runtime > runs one direct commit and calls REVIEW with exact quoted context  337ms
+   ✓ linked CODE runtime > ignores missing Commit prose when effect evidence proves the commit  332ms
+   ✓ linked CODE runtime > ignores glued Commit prose when effect evidence proves the commit  338ms
+   ✓ linked CODE runtime > ignores fenced Commit prose when effect evidence proves the commit  358ms
+   ✓ linked CODE runtime > ignores quoted Commit prose when effect evidence proves the commit  319ms
+   ✓ linked CODE runtime > ignores duplicated Commit prose when effect evidence proves the commit  330ms
+   ✓ linked CODE runtime > ignores misleading Commit prose when effect evidence proves the commit  346ms
+   ✓ linked CODE runtime > adjudicates current-call completion with resolved interim question without dropping worker text  374ms
+   ✓ linked CODE runtime > adjudicates current-call completion with later-stage owner prerequisites without dropping worker text  373ms
+   ✓ linked CODE runtime > requests ordinary-prose IR task finality in first and later Coder calls  535ms
+   ✓ linked CODE runtime > keeps blocked contradictory completion unresolved despite current-call guidance  348ms
+   ✓ linked CODE runtime > keeps wrong question after a commit unresolved despite current-call guidance  336ms
+   ✓ linked CODE runtime > refuses a later IR task partial commit while its required owner answer remains unanswered  571ms
+   ✓ linked CODE runtime > rejects a semantic attempt to supply effect-owned latestCommit  326ms
+   ✓ linked CODE runtime > accepts a directCommit candidate over two new commits  396ms
+   ✓ linked CODE runtime > accepts a directCommit candidate naming the commit already at HEAD  310ms
+   ✓ linked CODE runtime > parks a directCommit candidate for worktree repository evidence  301ms
+   ✓ linked CODE runtime > parks a directCommit candidate for rewritten repository evidence  338ms
+   ✓ linked CODE runtime > parks a directCommit candidate for residual repository evidence  350ms
+   ✓ linked CODE runtime > keeps one Coder conversation through an IR-task Boss question  986ms
+   ✓ linked CODE runtime > starts the first task after the new-IR commit without a review between  444ms
+   ✓ linked CODE runtime > reports every task commit and starts nothing after the one REVIEW fails  497ms
+   ✓ linked CODE runtime > checks caller-owned 'missing revision' after bridge delivery (terminal declared: false)  550ms
+   ✓ linked CODE runtime > checks caller-owned 'invalid revision' after bridge delivery (terminal declared: false)  492ms
+   ✓ linked CODE runtime > checks caller-owned 'unsettled findings' after bridge delivery (terminal declared: false)  353ms
+   ✓ linked CODE runtime > checks caller-owned 'foreign approval shape' after bridge delivery (terminal declared: false)  325ms
+   ✓ linked CODE runtime > checks caller-owned 'complete clean evidence' after bridge delivery (terminal declared: true)  300ms
+   ✓ linked CODE runtime > checks caller-owned 'missing revision' after bridge delivery (terminal declared: true)  383ms
+   ✓ linked CODE runtime > checks caller-owned 'invalid revision' after bridge delivery (terminal declared: true)  336ms
+   ✓ linked CODE runtime > checks caller-owned 'unsettled findings' after bridge delivery (terminal declared: true)  328ms
+   ✓ linked CODE runtime > checks caller-owned 'foreign approval shape' after bridge delivery (terminal declared: true)  357ms
+   ✓ linked CODE runtime > resumes the same Coder state with a quoted Boss answer  564ms
+   ✓ linked CODE runtime > emits a complete trace pair around every nested REVIEW call  318ms
+ ✓ reference/sdlc/code.playbook/managed-interactive.integration.test.ts (5 tests) 9694ms
+   ✓ managed interactive cross-front durability (PBCLI-50/56) > reopens an interactive-fresh session headlessly with current tuning and prior player continuity  1912ms
+   ✓ managed interactive cross-front durability (PBCLI-50/56) > reopens a headless-fresh session interactively, fences its reply, and holds ownership until child shutdown  1646ms
+   ✓ managed interactive cross-front durability (PBCLI-50/56) > keeps the durable turn settled when ordered reply release later fails  954ms
+   ✓ managed interactive cross-front durability (PBCLI-50/56) > arbitrates bare resumption and explicit fresh start after interactive reopen  4580ms
+   ✓ managed interactive cross-front durability (PBCLI-50/56) > flushes an open managed block before the direct replay warning  601ms
+ ✓ src/step-recovery.integration.test.ts (12 tests) 7822ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after player failure (live)  677ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after judge failure (live)  480ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after blocked-judge failure (live)  339ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after files failure (live)  1265ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after moved-head failure (live)  909ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after missing-transition failure (live)  463ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after player failure (restored)  596ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after judge failure (restored)  557ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after blocked-judge failure (restored)  329ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after files failure (restored)  1008ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after moved-head failure (restored)  657ms
+   ✓ interrupted-step recovery with real Git > preserves the commit after missing-transition failure (restored)  540ms
+ ✓ reference/sdlc/code.playbook/headless-failure-retry.test.ts (2 tests) 7427ms
+   ✓ headless failure retry across a continued session (DR-034) > advertises and applies the retry the first process could not keep  2904ms
+   ✓ headless failure retry across a continued session (DR-034) > settles and recovers a failure reached after an answered Boss question  4523ms
+ ✓ src/live-acceptance-runner.test.ts (6 tests) 10041ms
+   ✓ stops after a real beforeAll failure before importing any later provider file (release-37)  872ms
+   ✓ discovers every configured file, runs installed first, and owns cache without changing auth roots  1938ms
+   ✓ forwards SIGINT and never starts a later file  743ms
+   ✓ forwards SIGTERM and never starts a later file  724ms
+   ✓ reaps an owned descendant that ignores termination after Vitest closes  5763ms
+ ✓ reference/sdlc/code.playbook/decide-resume.integration.test.ts (1 test) 6576ms
+   ✓ reopens DECIDE from the portable store and answers without a provider hint  6576ms
+ ✓ reference/sdlc/code.playbook/captain-deferred-projection.integration.test.ts (1 test) 14030ms
+   ✓ keeps a checkpoint-mismatched deferred wait durable through restoration and one explicit continuation  14029ms
+ ✓ reference/sdlc/code.playbook/playbook.test.ts (107 tests) 10880ms
+   ✓ former-default interactive migration > selects the migrated checkpoint and complete replay before managed launch  1734ms
+   ✓ former-default interactive migration > leaves the former default untouched with an explicit SPEX_HOME  1747ms
+   ✓ former-default interactive migration > leaves the former default untouched with an explicit directory  1436ms
+   ✓ former-default interactive migration > leaves the former default untouched with an explicit store  1522ms
+   ✓ former-default interactive migration > leaves the former default untouched with an explicit config  1478ms
+   ✓ former-default interactive migration > leaves the former default untouched with an explicit overlay  1112ms
+ ✓ src/compact-link-definition.test.ts (2 tests | 1 skipped) 9589ms
+   ✓ ships the full contract and keeps the rejected compact recipe outside the package  9588ms
+ ✓ reference/sdlc/code.playbook/session-approval.integration.test.ts (3 tests) 13066ms
+   ✓ 'preserves approval identity and archi…'  5689ms
+   ✓ 'denies pending and later approvals be…'  2102ms
+   ✓ 'retains invalid and failed approval h…'  5274ms
+ ✓ reference/sdlc/code.playbook/worker-evidence-adoption.integration.test.ts (1 test) 10464ms
+   ✓ playbook-captain-80: reports exact adopted-root observations after completion, disposal and process loss  10463ms
+ ✓ reference/sdlc/dev.playbook/dev.playbook.test.ts (19 tests) 5952ms
+   ✓ linked DEV runtime > parks planning that mutates the repository (commit) as unresolved  306ms
+   ✓ linked DEV runtime > parks planning that mutates the repository (worktree) as unresolved  513ms
+   ✓ linked DEV runtime > sequences decide then code and quotes the decide identities  315ms
+   ✓ linked DEV runtime > preserves Analyst clarification context (resumed=true)  527ms
+   ✓ linked DEV runtime > preserves Analyst clarification context (resumed=false)  571ms
+   ✓ linked DEV runtime > relays an authored BRANCH failure without starting CODE  316ms
+   ✓ linked DEV runtime > relays a BRANCH refusal terminal through the error path  398ms
+   ✓ linked DEV runtime > relays a BRANCH success that omits a consumed field without starting CODE  464ms
+   ✓ linked DEV runtime > relays a PR failure terminal after branch and code succeeded  313ms
+ ✓ reference/sdlc/inspect.playbook/inspect.playbook.test.ts (4 tests) 14822ms
+   ✓ runs the compiled inspection through the durable host: completed  3837ms
+   ✓ runs the compiled inspection through the durable host: unavailable  3574ms
+   ✓ runs the compiled inspection through the durable host: question  4562ms
+   ✓ runs the compiled inspection through the durable host: mutation  2847ms
+ ✓ src/link-materialization.test.ts (31 tests) 8287ms
+   ✓ optional link materialization integration > runs compiled flat scalar question discovery through the actual factory  808ms
+   ✓ optional link materialization integration > runs compiled flat keyed question discovery through the actual factory  629ms
+   ✓ optional link materialization integration > runs compiled flat private-wrapper question discovery through the actual factory  664ms
+   ✓ optional link materialization integration > emits, loads, and type-checks flat-defaults with exact metadata and strict options  1418ms
+   ✓ optional link materialization integration > emits, loads, and type-checks flat-quoted-relays with exact metadata and strict options  1131ms
+   ✓ optional link materialization integration > emits a declared .js FSM specifier from a TypeScript FSM and rejects one naming another sibling  489ms
+ ✓ reference/sdlc/review.playbook/review.playbook.test.ts (25 tests) 11193ms
+   ✓ linked REVIEW runtime > carries both players verbatim through a commit-fix round  722ms
+   ✓ linked REVIEW runtime > adjudicates an all-rejected round without inventing a commit  647ms
+   ✓ linked REVIEW runtime > relays a labelled request whole in every round  1152ms
+   ✓ linked REVIEW runtime > stops after the third round with the findings unsettled after a rejection  1233ms
+   ✓ linked REVIEW runtime > stops after the third round with the findings unsettled after a second commit  1063ms
+   ✓ linked REVIEW runtime > keeps a Reviewer outcome unresolved after any repository change  346ms
+   ✓ linked REVIEW runtime > fails Coder committed under unchanged evidence into the ordinary retryable failure  405ms
+   ✓ linked REVIEW runtime > parks Coder rejectedAll under commit evidence without replay  441ms
+   ✓ linked REVIEW runtime > parks Coder committed under residual evidence without replay  446ms
+   ✓ linked REVIEW runtime > rejects a judge-authored commit identity instead of trusting prose  405ms
+   ✓ linked REVIEW runtime > resumes 'firstReview' after a Boss answer  352ms
+   ✓ linked REVIEW runtime > resumes 'fixFindings' after a Boss answer  769ms
+   ✓ linked REVIEW runtime > resumes 'reviewAfterFix' after a Boss answer  702ms
+   ✓ linked REVIEW runtime > resumes 'reviewAfterRejection' after a Boss answer  639ms
+   ✓ linked REVIEW runtime > abandons a pending question when Boss starts a fresh review  316ms
+   ✓ linked REVIEW runtime > restarts a failed review with fresh caller context  333ms
+   ✓ linked REVIEW runtime > drops the answered question when the resumed 'Reviewer' call fails  316ms
+   ✓ linked REVIEW runtime > drops the answered question when the resumed 'Coder' call fails  424ms
+ ✓ src/compiler-boss-reply-retention.integration.test.ts (11 tests) 3789ms
+   ✓ retains canonical approved input through clearing and a later real governed call: "Approve exactly this scope.\n"  477ms
+   ✓ retains canonical approved input through clearing and a later real governed call: "  同意本范围。\r\n\r\nKeep $& and <literal>.\r\n "  484ms
+   ✓ starts no later call for different echo  379ms
+   ✓ starts no later call for exact echo  379ms
+   ✓ starts no later call for malformed result  365ms
+   ✓ starts no later call for semantic refusal  343ms
+   ✓ confers no retained approval or later call with restored stale asker authority  320ms
+   ✓ confers no retained approval or later call with restored stale sourceItem authority  393ms
+ ✓ src/xstate-playbook-runtime.test.ts (293 tests) 10253ms
+   ✓ player + script workflow over the shared factory > terminates the aborted script process group and settles only after the shell exits  2043ms
+   ✓ player + script workflow over the shared factory > surfaces a distinct teardown failure when group disappearance cannot be confirmed (timeout)  2025ms
+   ✓ player + script workflow over the shared factory > surfaces a distinct teardown failure when group disappearance cannot be confirmed (persistent-eperm)  2021ms
+   ✓ player + script workflow over the shared factory > settles before a descendant that holds the output pipe writes again, and leaves that write working  345ms
+   ✓ player + script workflow over the shared factory > leaves a descendant's later write working after a host with a pipe of its own making has exited  439ms
+   ✓ player + script workflow over the shared factory > leaves a descendant's later write working after a host with none, for want of a temporary directory has exited  432ms
+ ✓ reference/sdlc/code.playbook/session-skills.integration.test.ts (2 tests) 6775ms
+   ✓ persists skill settings through continue and isolates Captain control  3159ms
+   ✓ persists skill settings through recover and isolates Captain control  3615ms
+ ✓ src/pending-question-origin.test.ts (11 tests) 3912ms
+   ✓ pending question origin restore > resumes authored question with current token backend-token  463ms
+   ✓ pending question origin restore > resumes authored question with current token false  433ms
+   ✓ pending question origin restore > resumes canonical question with current token backend-token  423ms
+   ✓ pending question origin restore > resumes canonical question with current token false  466ms
+   ✓ pending question origin restore > keeps an open canonical operation ahead of a later matching authored boundary  467ms
+   ✓ pending question origin restore > marks canonical checkpoint mismatch without starting the player  341ms
+ ✓ reference/sdlc/code.playbook/interactive-session.test.ts (48 tests) 8407ms
+   ✓ managed interactive Captain lifecycle (PBCLI-49/50/56/84) > persists turn zero before readiness, brackets each reply, and retains the lease until shutdown  345ms
+ ✓ reference/sdlc/code.playbook/bounded-session-storage.integration.test.ts (22 tests) 6290ms
+   ✓ bounded session storage through the shared lifecycle > writes schema8 roots, checkpoints an oversized event, and exports a portable closure with an exact proven prefix  486ms
+   ✓ bounded session storage through the shared lifecycle > hydrates repeated large journal evidence without copying equal evidence into every physical checkpoint  1347ms
+   ✓ bounded session storage through the shared lifecycle > migrates an exact schema7 bundle explicitly, retains source bytes, and preserves logical recovery and replay  354ms
+   ✓ bounded session storage through the shared lifecycle > normalizes only unaccepted schema7 replay tail while retaining original bytes: valid  337ms
+   ✓ bounded session storage through the shared lifecycle > normalizes only unaccepted schema7 replay tail while retaining original bytes: torn  307ms
+   ✓ bounded session storage through the shared lifecycle > requires the original publication and retained source before completing interrupted schema7 migration: root  321ms
+   ✓ bounded session storage through the shared lifecycle > requires the original publication and retained source before completing interrupted schema7 migration: retained-manifest  354ms
+ ✓ reference/sdlc/code.playbook/host-give-up.integration.test.ts (3 tests) 8235ms
+   ✓ host-selected give-up over a real session host > durably abandons unresolved work before clearing its root  2253ms
+   ✓ host-selected give-up over a real session host > ends the parked run with no model call of any kind and offers no resumption  3034ms
+   ✓ host-selected give-up over a real session host > drops the selection when another turn carries other text  2947ms
+ ✓ reference/sdlc/code.playbook/session-media.integration.test.ts (3 tests) 4186ms
+   ✓ preserves attachment-only turns, explicitly relays pending evidence and stores real worker media through the durable host  4119ms
+ ✓ src/fsm-scaffolding.test.ts (24 tests | 1 skipped) 6211ms
+   ✓ initializes an original two-actor workflow with exact constants, then preserves strict actor typing and real execution after authoring  3680ms
+   ✓ refuses an existing target, including a source hardlink, and exposes only the optional package surface  1196ms
+ ✓ reference/sdlc/branch.playbook/branch.playbook.test.ts (13 tests) 3890ms
+   ✓ linked BRANCH runtime > branches under an unchanged receipt over a clean tree and returns the receipt-observed base revision  318ms
+   ✓ linked BRANCH runtime > branches under an unchanged receipt over byte-identical pre-existing dirt and returns the receipt-observed base revision  311ms
+   ✓ linked BRANCH runtime > parks a branching call that mutates the repository (commit) as unresolved  355ms
+   ✓ linked BRANCH runtime > parks a branching call that mutates the repository (worktree) as unresolved  308ms
+   ✓ linked BRANCH runtime > rejects a judge-authored base revision instead of trusting prose  304ms
+   ✓ linked BRANCH runtime > asks Boss about an ambiguous request and resumes the same Coder conversation (resumed=true)  482ms
+   ✓ linked BRANCH runtime > asks Boss about an ambiguous request and resumes the same Coder conversation (resumed=false)  430ms
+   ✓ linked BRANCH runtime > restarts a failed branching call with fresh caller context  440ms
+ ✓ reference/sdlc/code.playbook/headless-crash.test.ts (2 tests) 2987ms
+   ✓ headless Captain process-crash recovery (PBCLI-24) > reconstructs an unchanged boundary and reports without whole-turn replay  1652ms
+   ✓ headless Captain process-crash recovery (PBCLI-24) > settles a real worktree delta without starting a workflow or player  1335ms
+ ✓ reference/sdlc/code.playbook/host-runtime-action.integration.test.ts (1 test) 3576ms
+   ✓ host-selected runtime recovery over a real session host > advertises the parked leaf’s actions and runs the selected one with no decision call  3576ms
+ ✓ src/compiler-prompt-prefix.test.ts (35 tests) 4076ms
+   ✓ prompt-prefix pass tool (compiler-prompt-prefix-6) > 'review': rewrites exactly the relay-first items  329ms
+   ✓ prompt-prefix pass tool (compiler-prompt-prefix-6) > 'branch': rewrites exactly the relay-first items  305ms
+ ✓ src/compiler-workflow-contracts.test.ts (5 tests | 1 skipped) 1890ms
+   ✓ agrees bidirectionally with all exported public output types and catches an invented REVIEW interface  1883ms
+ ✓ reference/sdlc/code.playbook/session-replay.test.ts (20 tests) 2382ms
+   ✓ bounded replay on the real filesystem > checks only the verified publication root for lease-trusted checkpoints, with full checks on reopen and public reads  525ms
+ ✓ src/cross-references.test.ts (27 tests) 1703ms
+   ✓ XREF-3: link targets resolve > resolves every relative link in the checked files  1625ms
+ ✓ reference/sdlc/code.playbook/headless-boss-question.test.ts (1 test) 1689ms
+   ✓ headless Boss-question settlement > settles durably when the real CODE artifact parks at a coder question  1689ms
+ ✓ src/recovery-model.test.ts (1 test) 1504ms
+   ✓ checks recovery policy and rejects every deliberately broken rule  1503ms
+ ✓ src/release-smoke.test.ts (13 tests) 1756ms
+   ✓ deterministic packed release lane smoke > executes the asset consumer against a real durable session without provider calls  775ms
+   ✓ deterministic packed release lane smoke > strictly compiles and emits the packed host-capabilities consumer  799ms
+ ✓ reference/sdlc/code.playbook/session-store.facade.test.ts (10 tests) 1283ms
+   ✓ published session-store facade (PBCLI-73, PBCLI-79, PBCLI-80) > keeps facade argument failures retryable and sanitizer failures live-only  390ms
+ ✓ reference/sdlc/code.playbook/session-chunks.integration.test.ts (15 tests) 1053ms
+   ✓ bounded immutable session chunks on real disk > round trips large strings, keys, arrays, byte streams and unambiguous user shapes within the file bound  700ms
+ ✓ src/script-output.test.ts (82 tests) 1562ms
+ ✓ reference/sdlc/code.playbook/playbook-captain.test.ts (538 tests) 1128ms
+ ✓ src/compiler-child-validation.test.ts (1 test) 1070ms
+   ✓ emits strict standalone canonical validation and agrees with the real nested bridge across public envelopes  1070ms
+ ✓ src/artifact-environment.test.ts (12 tests) 576ms
+ ✓ reference/sdlc/captain.playbook/captain.playbook.integration.test.ts (162 tests) 533ms
+ ✓ reference/sdlc/code.playbook/machine-identity.test.ts (11 tests) 715ms
+ ✓ reference/sdlc/code.playbook/session-assets.test.ts (10 tests) 568ms
+   ✓ immutable owner assets (session-assets-6, session-assets-7) > imports a real file, deduplicates content aliases, reads ranges and copies ownership  329ms
+ ✓ reference/sdlc/code.playbook/replay-observer.test.ts (5 tests) 586ms
+ ✓ src/optimization-predicates.test.ts (6 tests) 381ms
+ ✓ reference/sdlc/decide.playbook/decide.playbook.test.ts (85 tests) 544ms
+ ✓ src/role-runtime-transition.test.ts (84 tests) 572ms
+ ✓ src/xstate-runtime.test.ts (122 tests) 527ms
+ ✓ reference/sdlc/code.playbook/headless-captain-skew.test.ts (3 tests) 343ms
+ ✓ src/script-output.integration.test.ts (14 tests | 7 skipped) 157ms
+ ✓ src/fsm-scaffold-experiment.test.ts (3 tests | 2 skipped) 120ms
+ ✓ reference/sdlc/code.playbook/launch-config.test.ts (133 tests) 154ms
+ ✓ src/durable-step.integration.test.ts (4 tests) 74ms
+ ✓ src/link-experiment-13.2.test.ts (11 tests | 10 skipped) 121ms
+ ✓ src/nested-playbook.integration.test.ts (8 tests) 110ms
+ ✓ reference/sdlc/captain.playbook/captain.fsm.coverage.test.ts (1 test) 65ms
+ ✓ src/merge-gate.test.ts (3 tests) 49ms
+ ✓ src/dismiss-parked-runtime.integration.test.ts (7 tests) 37ms
+ ✓ reference/sdlc/code.playbook/seed-config.integration.test.ts (2 tests) 32ms
+ ✓ src/runtime.test.ts (29 tests) 13ms
+ ✓ reference/sdlc/inspect.playbook/inspect.fsm.coverage.test.ts (1 test) 28ms
+ ✓ reference/sdlc/review.playbook/review.gears-fsm.test.ts (23 tests) 16ms
+ ✓ reference/sdlc/pr.playbook/pr.fsm.coverage.test.ts (16 tests) 13ms
+ ✓ src/compiler-results.test.ts (27 tests | 5 skipped) 13ms
+ ✓ reference/sdlc/dev.playbook/dev.fsm.coverage.test.ts (23 tests) 17ms
+ ✓ reference/sdlc/decide.playbook/decide.gears-fsm.test.ts (14 tests) 13ms
+ ✓ src/compiler-nested-tags.test.ts (1 test) 11ms
+ ✓ src/compiler-history-shape.test.ts (11 tests | 1 skipped) 9ms
+ ✓ reference/sdlc/code.playbook/code.fsm.coverage.test.ts (15 tests) 13ms
+ ✓ reference/sdlc/pr.playbook/pr.gears-fsm.test.ts (12 tests) 9ms
+ ✓ src/compiler-state-identity.test.ts (3 tests) 11ms
+ ✓ reference/sdlc/code.playbook/code.gears-fsm.test.ts (9 tests) 6ms
+ ✓ src/slc-source-contract.test.ts (22 tests) 10ms
+ ✓ reference/sdlc/branch.playbook/branch.fsm.coverage.test.ts (8 tests) 8ms
+ ✓ reference/sdlc/dev.playbook/dev.gears-fsm.test.ts (10 tests) 8ms
+ ✓ reference/sdlc/inspect.playbook/inspect.prompt-contract.test.ts (4 tests) 5ms
+ ✓ src/compiler-continuation.test.ts (6 tests) 7ms
+ ✓ src/compiler-source-state.test.ts (3 tests) 7ms
+ ✓ src/compiler-task-input.test.ts (4 tests) 6ms
+ ✓ reference/sdlc/code.playbook/private-paths.integration.test.ts (2 tests) 5ms
+ ✓ reference/sdlc/branch.playbook/branch.gears-fsm.test.ts (9 tests) 5ms
+ ✓ reference/sdlc/captain.playbook/captain.prompt-contract.test.ts (3 tests) 4ms
+ ✓ reference/sdlc/captain.playbook/captain.gears-fsm.test.ts (1 test) 4ms
+ ✓ src/release-metadata.test.ts (21 tests) 4ms
+ ✓ src/compiler-nested-calls.test.ts (4 tests) 4ms
+ ✓ reference/sdlc/inspect.playbook/inspect.gears-fsm.test.ts (2 tests) 4ms
+ ✓ reference/sdlc/dev.playbook/dev.playbook.contract.test.ts (3 tests) 2ms
+ ✓ reference/sdlc/dev.playbook/dev.prompt-contract.test.ts (12 tests) 2ms
+ ✓ src/compiler-prompt-relays.test.ts (6 tests | 3 skipped) 3ms
+ ✓ reference/sdlc/pr.playbook/pr.fsm.introspect.test.ts (4 tests) 3ms
+ ✓ reference/sdlc/captain.playbook/captain.fsm.introspect.test.ts (1 test) 2ms
+ ✓ reference/sdlc/code.playbook/code.fsm.introspect.test.ts (3 tests) 2ms
+ ✓ reference/sdlc/code.playbook/code.prompt-contract.test.ts (6 tests) 2ms
+ ✓ src/captain-artifact-schema.test.ts (1 test) 1ms
+ ✓ reference/sdlc/code.playbook/code.playbook.contract.test.ts (3 tests) 2ms
+ ✓ reference/sdlc/branch.playbook/branch.playbook.contract.test.ts (3 tests) 2ms
+ ✓ reference/sdlc/pr.playbook/pr.playbook.contract.test.ts (4 tests) 2ms
+ ✓ reference/sdlc/inspect.playbook/inspect.fsm.introspect.test.ts (1 test) 2ms
+ ✓ reference/sdlc/branch.playbook/branch.prompt-contract.test.ts (5 tests) 2ms
+ ✓ reference/sdlc/dev.playbook/dev.fsm.introspect.test.ts (3 tests) 2ms
+ ✓ reference/sdlc/pr.playbook/pr.prompt-contract.test.ts (5 tests) 2ms
+ ✓ reference/sdlc/branch.playbook/branch.fsm.introspect.test.ts (2 tests) 2ms
+ ↓ reference/sdlc/code.playbook/windows-storage.integration.test.ts (3 tests | 3 skipped)
+
+ Test Files  119 passed | 1 skipped (120)
+      Tests  3088 passed | 34 skipped (3122)
+   Start at  03:27:05
+   Duration  652.02s (transform 2.26s, setup 0ms, collect 14.31s, tests 1270.36s, environment 9ms, prepare 3.48s)
+
+
+ RUN  v3.2.4 /Users/boboyang/work/sublang.ai/playbook
+
+ ✓ src/cligent-release-capabilities.test.ts (156 tests) 89808ms
+   ✓ the cligent release-capability guard > proves the complete contract against the installed dependency  1215ms
+   ✓ the cligent release-capability guard > passes a complete fixture  574ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing model resolver  571ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: empty model pair  569ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing child model  569ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing Ultracode capability  570ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: Claude incorrectly unsupported  560ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: Codex incorrectly supported  556ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: lost enabled Ultracode  621ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: lost disabled Ultracode  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent runtime approval callback  555ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required runtime approval callback  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened runtime approval callback  567ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing invocation approval identity  550ms
+   ✓ the cligent release-capability guard > fails when the fixture loses string turn approval identity  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional actor approval identity  580ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing signal approval handler  555ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional signal approval handler  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses synchronous answer approval handler  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed answer approval handler  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses persistent approval answer  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing native approval expiry  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CallPlayerOptions attachments  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CallPlayerOptions attachments  554ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array CallPlayerOptions attachments  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CallPlayerOptions attachments  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CallPlayerOptions attachments  548ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CallCaptainOptions attachments  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CallCaptainOptions attachments  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array CallCaptainOptions attachments  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CallCaptainOptions attachments  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CallCaptainOptions attachments  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete browser setting  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete browser setting  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete browser setting  578ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete browser setting  567ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete skill setting  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete skill setting  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array complete skill setting  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete skill setting  546ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete skill setting  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete native-skill setting  568ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete native-skill setting  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete native-skill setting  537ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete native-skill setting  618ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete MCP setting  551ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete MCP setting  539ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete MCP setting  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete MCP setting  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent path public attachment shape  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required MIME public attachment shape  557ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed MIME public attachment shape  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed public MCP transport  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed public MCP map  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CaptainRunResult resume rejection  580ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CaptainRunResult resume rejection  618ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CaptainRunResult resume rejection  603ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CaptainRunResult resume rejection  581ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent PlayerRunResult resume rejection  593ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required PlayerRunResult resume rejection  604ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened PlayerRunResult resume rejection  614ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed PlayerRunResult resume rejection  595ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required Captain reply emitter  594ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain resume token  585ms
+   ✓ the cligent release-capability guard > fails when the fixture loses pre-close Captain lifecycle  574ms
+   ✓ the cligent release-capability guard > fails when the fixture loses synchronous pre-close Captain lifecycle  554ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required pre-close Captain lifecycle  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player call-option plumbing  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed player call-option plumbing  565ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required player call-option plumbing  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain call-option plumbing  546ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required Captain call-option plumbing  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed Captain call-option plumbing  541ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player resume selection  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player fresh selection  573ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player token selection  573ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional player resume selection  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player call settings  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional player call settings  546ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain resume selection  821ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain fresh selection  586ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain token selection  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain resume selection  572ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain tool allowlist  548ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain tool allowlist  541ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed Captain tool allowlist  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain call settings  551ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain call settings  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required model  587ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed model value domain  552ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required effort  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed effort value domain  569ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed root effort value domain  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses independent Ultracode setting  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses independent Ultracode boolean domain  554ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode setting  548ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional fast-mode setting  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete fast-mode boolean domain  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model setting  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional subagent-model setting  572ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete subagent-model string domain  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-effort setting  541ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional subagent-effort setting  564ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete subagent-effort domain  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed root permission value domain  536ms
+   ✓ the cligent release-capability guard > fails when the fixture loses instruction replacement  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional instruction replacement  578ms
+   ✓ the cligent release-capability guard > fails when the fixture loses permission replacement  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional permission replacement  553ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed permission replacement  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses model provider-default tuning  540ms
+   ✓ the cligent release-capability guard > fails when the fixture loses model concrete-value tuning  580ms
+   ✓ the cligent release-capability guard > fails when the fixture loses effort provider-default tuning  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses effort concrete-value tuning  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses typed settings error  569ms
+   ✓ the cligent release-capability guard > fails when the fixture loses settings-error predicate  624ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode capability assertion  546ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed fast-mode capability assertion  554ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode runtime capability assertion  587ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode runtime capability semantics  582ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model capability assertion  622ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed subagent-model capability assertion  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model runtime capability assertion  572ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model runtime capability semantics  593ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support lookup  570ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional native-skill support  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses boolean native-skill support flag  568ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support runtime lookup  598ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support claude alias  578ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch declaration  597ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch signature  635ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch work-directory ownership  740ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed launch work-directory ownership  581ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete managed launch work-directory ownership  576ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session declaration  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session signature  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed runner work-directory ownership  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed runner work-directory ownership  540ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete managed runner work-directory ownership  558ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch runtime export  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session runtime export  552ms
+   ✓ the cligent release-capability guard > fails when the fixture loses activation signal  571ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional activation signal  564ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-client hand-off  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional native-client hand-off  575ms
+   ✓ the cligent release-capability guard > fails when the fixture loses asynchronous native-client hand-off  580ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed attach options parameter  587ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed attach options parameter  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed managed attach options parameter  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses segmented player grammar  585ms
+   ✓ the cligent release-capability guard > fails when the fixture loses empty-roster config normalization  583ms
+   ✓ the cligent release-capability guard > fails when the fixture loses empty-roster runtime initialization  723ms
+   ✓ the cligent release-capability guard > fails when CaptainContext.emitReply is absent, where a name scan passes  561ms
+   ✓ the cligent release-capability guard > fails when CaptainRunResult.resumeToken is absent, where a name scan passes  570ms
+   ✓ the cligent release-capability guard > fails when a member survives under a shape the shell cannot call  545ms
+   ✓ the cligent release-capability guard > fails when the public specifier no longer resolves  536ms
+
+ Test Files  1 passed (1)
+      Tests  156 passed (156)
+   Start at  03:37:57
+   Duration  90.25s (transform 35ms, setup 0ms, collect 267ms, tests 89.81s, environment 0ms, prepare 33ms)
+

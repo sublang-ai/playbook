@@ -1,0 +1,177 @@
+
+ RUN  v3.2.4 /Users/boboyang/work/sublang.ai/playbook
+
+ ✓ src/package-surface.test.ts (94 tests) 35016ms
+   ✓ runtime dependency specifiers (RELEASE-19) > pins the complete cligent release capabilities  2575ms
+   ✓ normal test gate (RELEASE-32) > fails on Spex lint before starting Vitest  8183ms
+   ✓ packed tarball contents (RELEASE-18) > includes runtime, Captain, and slc artifacts  2853ms
+   ✓ packed tarball contents (RELEASE-18) > resolves every relative link in packed markdown against the packed list  3956ms
+   ✓ packed tarball contents (RELEASE-18) > resolves every living-pointer URL in packed markdown against the repository  9541ms
+   ✓ public CLI and registry surface (RELEASE-21) > publishes strict session-store and asset declarations through public dependencies  1083ms
+   ✓ public CLI and registry surface (RELEASE-21) > publishes a self-contained strict host-capabilities declaration  938ms
+   ✓ public CLI and registry surface (RELEASE-21) > declares validated Captain shell snapshots recursively readonly  1530ms
+   ✓ public CLI and registry surface (RELEASE-21) > discriminates schema-gated factory and registry construction types  1563ms
+   ✓ public CLI and registry surface (RELEASE-21) > packs the launcher and bundled registry artifacts, not retired surfaces  1059ms
+ ✓ src/cligent-release-capabilities.test.ts (156 tests) 108615ms
+   ✓ the cligent release-capability guard > proves the complete contract against the installed dependency  2522ms
+   ✓ the cligent release-capability guard > passes a complete fixture  1328ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing model resolver  1243ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: empty model pair  1430ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing child model  1582ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: missing Ultracode capability  1616ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: Claude incorrectly unsupported  1568ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: Codex incorrectly supported  1690ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: lost enabled Ultracode  1248ms
+   ✓ the cligent release-capability guard > rejects provider model and Ultracode runtime regression: lost disabled Ultracode  1636ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent runtime approval callback  1406ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required runtime approval callback  1338ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened runtime approval callback  994ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing invocation approval identity  976ms
+   ✓ the cligent release-capability guard > fails when the fixture loses string turn approval identity  1597ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional actor approval identity  1078ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing signal approval handler  722ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional signal approval handler  644ms
+   ✓ the cligent release-capability guard > fails when the fixture loses synchronous answer approval handler  651ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed answer approval handler  619ms
+   ✓ the cligent release-capability guard > fails when the fixture loses persistent approval answer  599ms
+   ✓ the cligent release-capability guard > fails when the fixture loses missing native approval expiry  723ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CallPlayerOptions attachments  644ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CallPlayerOptions attachments  698ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array CallPlayerOptions attachments  794ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CallPlayerOptions attachments  827ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CallPlayerOptions attachments  839ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CallCaptainOptions attachments  834ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CallCaptainOptions attachments  777ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array CallCaptainOptions attachments  735ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CallCaptainOptions attachments  773ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CallCaptainOptions attachments  713ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete browser setting  687ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete browser setting  590ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete browser setting  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete browser setting  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete skill setting  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete skill setting  550ms
+   ✓ the cligent release-capability guard > fails when the fixture loses mutable array complete skill setting  577ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete skill setting  564ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete skill setting  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete native-skill setting  532ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete native-skill setting  616ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete native-skill setting  540ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete native-skill setting  531ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent complete MCP setting  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required complete MCP setting  551ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed complete MCP setting  533ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened complete MCP setting  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent path public attachment shape  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required MIME public attachment shape  532ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed MIME public attachment shape  548ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed public MCP transport  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed public MCP map  567ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent CaptainRunResult resume rejection  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required CaptainRunResult resume rejection  553ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened CaptainRunResult resume rejection  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed CaptainRunResult resume rejection  543ms
+   ✓ the cligent release-capability guard > fails when the fixture loses absent PlayerRunResult resume rejection  534ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required PlayerRunResult resume rejection  550ms
+   ✓ the cligent release-capability guard > fails when the fixture loses widened PlayerRunResult resume rejection  557ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed PlayerRunResult resume rejection  569ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required Captain reply emitter  579ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain resume token  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses pre-close Captain lifecycle  607ms
+   ✓ the cligent release-capability guard > fails when the fixture loses synchronous pre-close Captain lifecycle  596ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required pre-close Captain lifecycle  557ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player call-option plumbing  646ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed player call-option plumbing  580ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required player call-option plumbing  590ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain call-option plumbing  656ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required Captain call-option plumbing  619ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed Captain call-option plumbing  662ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player resume selection  581ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player fresh selection  562ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player token selection  579ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional player resume selection  579ms
+   ✓ the cligent release-capability guard > fails when the fixture loses player call settings  596ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional player call settings  720ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain resume selection  596ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain fresh selection  619ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain token selection  610ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain resume selection  577ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain tool allowlist  593ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain tool allowlist  582ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed Captain tool allowlist  599ms
+   ✓ the cligent release-capability guard > fails when the fixture loses Captain call settings  674ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional Captain call settings  745ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required model  756ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed model value domain  692ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required effort  703ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed effort value domain  663ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed root effort value domain  662ms
+   ✓ the cligent release-capability guard > fails when the fixture loses independent Ultracode setting  824ms
+   ✓ the cligent release-capability guard > fails when the fixture loses independent Ultracode boolean domain  644ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode setting  618ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional fast-mode setting  619ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete fast-mode boolean domain  540ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model setting  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional subagent-model setting  575ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete subagent-model string domain  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-effort setting  528ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional subagent-effort setting  544ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete subagent-effort domain  531ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed root permission value domain  617ms
+   ✓ the cligent release-capability guard > fails when the fixture loses instruction replacement  633ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional instruction replacement  649ms
+   ✓ the cligent release-capability guard > fails when the fixture loses permission replacement  597ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional permission replacement  637ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed permission replacement  676ms
+   ✓ the cligent release-capability guard > fails when the fixture loses model provider-default tuning  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses model concrete-value tuning  778ms
+   ✓ the cligent release-capability guard > fails when the fixture loses effort provider-default tuning  597ms
+   ✓ the cligent release-capability guard > fails when the fixture loses effort concrete-value tuning  575ms
+   ✓ the cligent release-capability guard > fails when the fixture loses typed settings error  667ms
+   ✓ the cligent release-capability guard > fails when the fixture loses settings-error predicate  555ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode capability assertion  545ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed fast-mode capability assertion  587ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode runtime capability assertion  574ms
+   ✓ the cligent release-capability guard > fails when the fixture loses fast-mode runtime capability semantics  583ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model capability assertion  604ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed subagent-model capability assertion  599ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model runtime capability assertion  710ms
+   ✓ the cligent release-capability guard > fails when the fixture loses subagent-model runtime capability semantics  715ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support lookup  573ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional native-skill support  556ms
+   ✓ the cligent release-capability guard > fails when the fixture loses boolean native-skill support flag  563ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support runtime lookup  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-skill support claude alias  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch declaration  550ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch signature  549ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch work-directory ownership  551ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed launch work-directory ownership  559ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete managed launch work-directory ownership  571ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session declaration  538ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session signature  548ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed runner work-directory ownership  537ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed runner work-directory ownership  547ms
+   ✓ the cligent release-capability guard > fails when the fixture loses complete managed runner work-directory ownership  579ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed launch runtime export  582ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed session runtime export  557ms
+   ✓ the cligent release-capability guard > fails when the fixture loses activation signal  561ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional activation signal  550ms
+   ✓ the cligent release-capability guard > fails when the fixture loses native-client hand-off  634ms
+   ✓ the cligent release-capability guard > fails when the fixture loses optional native-client hand-off  565ms
+   ✓ the cligent release-capability guard > fails when the fixture loses asynchronous native-client hand-off  542ms
+   ✓ the cligent release-capability guard > fails when the fixture loses managed attach options parameter  658ms
+   ✓ the cligent release-capability guard > fails when the fixture loses required managed attach options parameter  583ms
+   ✓ the cligent release-capability guard > fails when the fixture loses narrowed managed attach options parameter  555ms
+   ✓ the cligent release-capability guard > fails when the fixture loses segmented player grammar  567ms
+   ✓ the cligent release-capability guard > fails when the fixture loses empty-roster config normalization  579ms
+   ✓ the cligent release-capability guard > fails when the fixture loses empty-roster runtime initialization  545ms
+   ✓ the cligent release-capability guard > fails when CaptainContext.emitReply is absent, where a name scan passes  564ms
+   ✓ the cligent release-capability guard > fails when CaptainRunResult.resumeToken is absent, where a name scan passes  559ms
+   ✓ the cligent release-capability guard > fails when a member survives under a shape the shell cannot call  559ms
+   ✓ the cligent release-capability guard > fails when the public specifier no longer resolves  529ms
+
+ Test Files  2 passed (2)
+      Tests  250 passed (250)
+   Start at  03:22:22
+   Duration  109.35s (transform 750ms, setup 0ms, collect 1.04s, tests 143.63s, environment 0ms, prepare 126ms)
+
