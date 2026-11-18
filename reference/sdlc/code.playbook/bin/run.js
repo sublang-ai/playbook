@@ -18,6 +18,7 @@ import {
   assertSubagentModelSupported,
 } from "@sublang/cligent";
 import { ultracodeForCall } from "../ultracode.js";
+import { parseRegisteredCommand } from "../registered-command.js";
 import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
@@ -27,7 +28,6 @@ import {
 import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
-  parseRegisteredCommand,
   projectUnresolvedEffects,
 } from "../playbook-captain.js";
 import {

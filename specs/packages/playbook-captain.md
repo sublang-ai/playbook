@@ -782,7 +782,7 @@ When the shell builds a call's complete settings, it shall decide their `nativeS
 
 #### playbook-captain-20
 
-Where the headless host requests preservation of one selected root's terminal text under [[playbook-cli-18](playbook-cli.md#playbook-cli-18)] and that root has completed successfully and disposed, the shell shall preserve its single printable text output in the Boss-visible reply, leaving the result-phase prompt and the model's evaluation evidence unchanged.
+Where the headless host requests preservation of one selected root's terminal text under [[playbook-cli-18](playbook-cli.md#playbook-cli-18)] and that root has completed successfully and disposed, the shell shall preserve its single printable text output that passes the Captain reply validation in the Boss-visible reply, leaving the result-phase prompt and the model's evaluation evidence unchanged.
 
 Where the Playbook Captain shell settles a non-`respond` selection for
 a Boss turn, the shell shall collect turn-summary counts only for the

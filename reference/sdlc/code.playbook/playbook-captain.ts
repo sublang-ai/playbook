@@ -18,6 +18,7 @@ import {
 } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
 import { ultracodeForCall } from './ultracode.js';
+import { parseRegisteredCommand } from './registered-command.js';
 export { isUltracodeSupported } from './ultracode.js';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
@@ -856,16 +857,6 @@ interface ActiveTurn {
   carriedEffectPrefix?: number;
   /** DR-063 §4: set once this turn's failure report has been appended. */
   failureReported?: boolean;
-}
-
-export function parseRegisteredCommand(
-  prompt: string,
-): { command: string; text: string } | undefined {
-  const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(
-    prompt.trim(),
-  );
-  if (!match) return undefined;
-  return { command: match[1], text: (match[2] ?? '').trim() };
 }
 
 // CAPTAIN-9: every session-Captain call is hidden control work. The runtime
@@ -7321,17 +7312,19 @@ export function createPlaybookCaptainShell(
         if (scriptFact !== undefined) activeTurn?.settlementFacts.push(scriptFact);
         recordTerminalRetention(frame, result);
         const retention = pendingRetentionUpdates.get(frame.entry.id)?.kind === 'clear' ? 'clear' : 'keep';
-        await runEffect(() => disposeStack('final'));
+        let terminalText: string | undefined;
         if (activeTurn && frame.entry.id === presentTerminalOutputFor && result.terminal?.kind === 'success') {
           const output = result.output;
           const values = output !== null && typeof output === 'object' && !Array.isArray(output)
             ? Object.values(output) : [output];
           const [text] = values;
           if (values.length === 1 && typeof text === 'string' && text.trim() &&
-              !/[\p{Cc}\u2028\u2029]/u.test(text)) {
-            activeTurn.terminalText = text;
+              !/[\p{Cc}\u2028\u2029]/u.test(text) && replyRejection(text) === undefined) {
+            terminalText = text;
           }
         }
+        await runEffect(() => disposeStack('final'));
+        if (activeTurn && terminalText !== undefined) activeTurn.terminalText = terminalText;
         try { await saveProgress(undefined, { id: randomUUID(), kind: 'completion', stateId: result.state.stateId ?? result.terminal?.stateId ?? 'completed', runtimeSessionId: frame.sessionId, playbookId: frame.entry.id, result: snapshotJsonValue({ state: result.state, retention, ...(description === undefined ? {} : { description }), ...(result.terminal === undefined ? {} : { terminalOutcome: result.terminal }) }) }, false); }
         catch { /* The last acknowledged step result remains available. */ }
       }
@@ -8117,7 +8110,7 @@ export function createPlaybookCaptainShell(
         ? settlement.text
         : `${settlement.text.trimEnd()}\n\n${suffix}`;
     const terminalText = turn?.terminalText;
-    const visibleText = terminalText === undefined || summary.split('\n').includes(terminalText)
+    const visibleText = terminalText === undefined || summary.split(/\r?\n/u).includes(terminalText)
       ? summary : `${summary.trimEnd()}\n\n${terminalText}`;
     appendJournal('reply', visibleText);
     try {

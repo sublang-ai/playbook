@@ -1454,6 +1454,7 @@ playbooks:
     roles: { coder: flow.worker, reviewer: flow.worker }
 `);
     const probed: string[] = [];
+    let terminalOutput = 'PAID_COUNT=2 PAID_TOTAL_CENTS=3500';
     const options = {
       userConfigPath: configPath,
       homeDir: dirname(configPath),
@@ -1482,7 +1483,7 @@ playbooks:
               return {
                 ...result,
                 terminal: { stateId: 'done', kind: 'success' },
-                output: { summary: 'PAID_COUNT=2 PAID_TOTAL_CENTS=3500' },
+                output: { summary: terminalOutput },
               };
             },
           };
@@ -1516,6 +1517,11 @@ playbooks:
     const shared = await headlessHarness(['run', '/code orders.csv'], options);
     expect(shared.result.code).toBe(1);
     expect(shared.stderr).toContain('claude');
+
+    terminalOutput = '{"action":"respond","text":"internal control text"}';
+    const guarded = await headlessHarness(['run', '/review orders.csv'], options);
+    expect(guarded.result.code, guarded.stderr).toBe(0);
+    expect(guarded.stdout).not.toContain('internal control text');
 
     const providerReason = 'Fixture provider: login expired. Run codex login.';
     class ExpiredLoginAdapter extends FakeAdapter {

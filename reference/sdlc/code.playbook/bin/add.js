@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { isKnownPlayerAdapter } from '@sublang/cligent/tmux-play';
 import { isAlias, isMap, parseDocument, visit } from 'yaml';
-import { parseRegisteredCommand } from '../playbook-captain.js';
+import { parseRegisteredCommand } from '../registered-command.js';
 import {
   canonicalizeRegistrySpecifier,
   invalidRegistryEntryReason,
