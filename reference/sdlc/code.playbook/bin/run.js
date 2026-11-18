@@ -27,6 +27,7 @@ import {
 import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
+  parseRegisteredCommand,
   projectUnresolvedEffects,
 } from "../playbook-captain.js";
 import {
@@ -46,6 +47,7 @@ import {
   relocateLegacyUserConfig,
   resolveFormerUserConfigPaths,
   resolveUserConfigPath,
+  scopedPlayerIds,
   snapshotRegistryEntry,
   suppliedModulesFromFlags,
 } from "./launch-config.js";
@@ -411,7 +413,7 @@ export async function runPlaybookRun(options = {}) {
     for (const line of configNotices) await writeStream(stderr, line);
 
     try {
-      const current = executionConfigFromPlan(plan);
+      const current = executionConfigFromPlan(continuing ? plan : selectWorkflowExecution(plan, input));
       if (continuing) {
         config = await validateFrozenExecutionConfig(
           priorRecord.structuralProjection,
@@ -1348,9 +1350,22 @@ function captainHostBoundary(shell, restoreSnapshot, sessionLease, onInterrupted
 
 // Host-neutral execution-only projection. It is detached from the frozen
 // launch plan and intentionally excludes layout, theme, and notifications.
+function selectWorkflowExecution(plan, input) {
+  const parsed = parseRegisteredCommand(input);
+  if (parsed === undefined) return plan;
+  const selected = Object.values(plan.catalog).find(({ command }) => command === parsed.command);
+  if (selected?.executionCaptain === undefined) return plan;
+  return {
+    ...plan,
+    scopedWorkflowId: selected.id,
+    captain: selected.executionCaptain,
+  };
+}
+
 export function executionConfigFromPlan(plan) {
   return validateCaptainSessionExecutionProjection({
     schemaVersion: 2,
+    ...(plan.scopedWorkflowId === undefined ? {} : { scopedWorkflowId: plan.scopedWorkflowId }),
     captain: plan.captain,
     players: plan.players.map(({ id, agent }) => ({ id, ...agent })),
     catalog: Object.fromEntries(
@@ -1500,10 +1515,11 @@ function assertFrozenTuningSupported(config) {
 }
 
 function adaptersFromExecutionConfig(config) {
+  const selected = scopedPlayerIds(config.catalog, config.scopedWorkflowId);
   return [
     ...new Set([
       config.captain.adapter,
-      ...config.players.map((player) => player.adapter),
+      ...config.players.filter(({ id }) => selected === undefined || selected.has(id)).map(({ adapter }) => adapter),
     ]),
   ];
 }

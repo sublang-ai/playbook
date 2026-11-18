@@ -3762,6 +3762,7 @@ function projectCaptainSessionStructureWithSchemas(value, artifactSchemas) {
   return validateCaptainSessionStructuralProjectionWithSchemas(
     {
       schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
+      ...(execution.scopedWorkflowId === undefined ? {} : { scopedWorkflowId: execution.scopedWorkflowId }),
       captain: fixedAgent(execution.captain),
       players: execution.players.map(({ id, ...agent }) => ({
         id,
@@ -5323,9 +5324,10 @@ function validateCaptainSessionProjection(
   projection,
   { path, structural, artifactSchemas },
 ) {
-  rejectUnknownOrMissingKeys(
+  exactOptionalKeys(
     projection,
     ['schemaVersion', 'captain', 'players', 'catalog'],
+    ['scopedWorkflowId'],
     path,
   );
   const expectedSchema = structural
@@ -5377,6 +5379,10 @@ function validateCaptainSessionProjection(
   const catalogEntries = Object.entries(catalog);
   if (catalogEntries.length === 0) {
     throw new Error(`${path}.catalog must not be empty`);
+  }
+  if (Object.hasOwn(projection, 'scopedWorkflowId') &&
+      (typeof projection.scopedWorkflowId !== 'string' || !Object.hasOwn(catalog, projection.scopedWorkflowId))) {
+    throw new Error(`${path}.scopedWorkflowId must name an enabled catalog member`);
   }
   const commands = new Set();
   for (const [id, rawItem] of catalogEntries) {

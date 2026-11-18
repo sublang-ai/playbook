@@ -292,6 +292,10 @@ export interface PlaybookCaptainShell extends Captain {
     /** Report an interrupted attempt without dispatching work. */
     selectInterruptedReport?(input: string, report: InterruptedReport): void;
 }
+export declare function parseRegisteredCommand(prompt: string): {
+    command: string;
+    text: string;
+} | undefined;
 /**
  * Whether words may stand outside a code span in a statement the shell says
  * (CAPTAIN-9); the pure renderer accepts everything, and the shell passes its

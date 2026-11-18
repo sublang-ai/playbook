@@ -52,6 +52,7 @@ const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
   "skills",
   "players",
   "playbooks",
+  "workflowCaptains",
   "layout",
   "notifications",
   "theme",
@@ -547,11 +548,14 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, ["id"]);
     configuredAgents.set(playerId, agent);
   }
-  let captain = resolveDelegationDefault(
-    resolveAgent(top.captain, "captain", ["from", "options"]),
-  );
-
   const playbooksCfg = requireObject(top.playbooks, "playbooks");
+  const scopedWorkflowId = stored.scopedWorkflowId;
+  const captainPath = scopedWorkflowId === undefined
+    ? "captain"
+    : `workflowCaptains.${scopedWorkflowId}`;
+  let captain = scopedWorkflowId === undefined
+    ? resolveDelegationDefault(resolveAgent(top.captain, captainPath, ["from", "options"]))
+    : resolveExecutionCaptain(top.workflowCaptains?.[scopedWorkflowId], captainPath);
   const suppliedModules = resolveSuppliedModules(
     modules,
     expectedMembers.playbookIds,
@@ -702,7 +706,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     options: _captainOptions,
     ...normalizedCaptain
   } = normalizedHost.captain;
-  captain = sessionAgentFromHostAgent(normalizedCaptain, "captain", normalizedHost.skills);
+  captain = sessionAgentFromHostAgent(normalizedCaptain, captainPath, normalizedHost.skills);
   const hostAgents = new Map(
     normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
   );
@@ -758,6 +762,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
   );
   const candidateStructure = {
     schemaVersion: stored.schemaVersion,
+    ...(scopedWorkflowId === undefined ? {} : { scopedWorkflowId }),
     captain: fixedAgentProjection(captain),
     players: expectedMembers.playerIds.map((id) => ({
       id,
@@ -788,6 +793,7 @@ async function normalizeSelectedLaunchPlanDataOnlyWith(
     cloneJson(
       {
         schemaVersion: 1,
+        ...(scopedWorkflowId === undefined ? {} : { scopedWorkflowId }),
         captain,
         players: expectedMembers.playerIds.map((id) => ({
           id,
@@ -828,6 +834,20 @@ export function resolveAgent(value, path, reservedKeys = []) {
     return cloneJson(value, path);
   }
   throw new Error(`${path} must be an adapter shorthand or an agent block`);
+}
+
+function resolveExecutionCaptain(value, path) {
+  const config = requireObject(value, path);
+  if (
+    Object.keys(config).length !== 2 ||
+    !hasOwn(config, "adapter") || !hasOwn(config, "model") ||
+    typeof config.adapter !== "string" ||
+    typeof config.model !== "string" ||
+    [config.adapter, config.model].some(value => value.length === 0 || value !== value.trim())
+  ) {
+    throw new Error(`${path} must specify an adapter and a model`);
+  }
+  return resolveDelegationDefault(config);
 }
 
 function rejectConfiguredHostCapabilities(value, path) {
@@ -911,6 +931,13 @@ async function normalizeLaunchPlanWith(
   }
   if (ids.some((id) => id.trim().length === 0 || id !== id.trim())) {
     throw new Error("playbooks keys must be canonical trimmed nonblank ids");
+  }
+  const dedicatedCaptains = hasOwn(top, "workflowCaptains")
+    ? requireObject(top.workflowCaptains, "workflowCaptains") : {};
+  for (const id of Object.keys(dedicatedCaptains)) {
+    if (!hasOwn(playbooksCfg, id)) {
+      throw new Error(`workflowCaptains.${id} must name an enabled playbook`);
+    }
   }
   // PBCLI-94 (DR-083): supplied modules are checked before any preparation
   // or import; an ordinary reopen skips a current playbook it does not hold.
@@ -1045,6 +1072,9 @@ async function normalizeLaunchPlanWith(
       roles,
       bindings,
       optionSlice,
+      ...(hasOwn(dedicatedCaptains, id) ? {
+        executionCaptain: resolveExecutionCaptain(dedicatedCaptains[id], `workflowCaptains.${id}`),
+      } : {}),
     });
   }
 
@@ -1121,6 +1151,17 @@ async function normalizeLaunchPlanWith(
       sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`, normalizedHost.skills),
     ]),
   );
+  const executionCaptains = new Map();
+  for (const { id, executionCaptain } of configuredPlaybooks) {
+    if (executionCaptain === undefined) continue;
+    const host = await normalizeHostConfig({
+      ...(top.skills === undefined ? {} : { skills: top.skills }),
+      players: [],
+      captain: { ...executionCaptain, from: PLAYBOOK_CAPTAIN_MODULE, options: {} },
+    });
+    const { from: _from, options: _options, ...agent } = host.captain;
+    executionCaptains.set(id, sessionAgentFromHostAgent(agent, `workflowCaptains.${id}`, host.skills));
+  }
 
   // Preparation is a transaction-like pre-import phase across the complete
   // configured catalog. A provisioning failure therefore cannot leave some
@@ -1255,6 +1296,7 @@ async function normalizeLaunchPlanWith(
         manifestCommand: entry.command,
         command,
         ...(commandOverride === undefined ? {} : { commandOverride }),
+        ...(executionCaptains.has(id) ? { executionCaptain: executionCaptains.get(id) } : {}),
         intent: entry.intent,
         artifactSchema: entry.artifactSchema,
         requiredRoleIds: [...entry.requiredRoleIds],
@@ -1430,10 +1472,18 @@ export async function composeGenericConfig(top, loadModule, configPath) {
 export function adaptersFromLaunchPlan(plan) {
   const adapters = new Set();
   if (plan?.captain?.adapter) adapters.add(plan.captain.adapter);
+  const selected = scopedPlayerIds(plan?.catalog, plan?.scopedWorkflowId);
   for (const player of plan?.players ?? []) {
-    if (player?.agent?.adapter) adapters.add(player.agent.adapter);
+    if (player?.agent?.adapter && (selected === undefined || selected.has(player.id))) {
+      adapters.add(player.agent.adapter);
+    }
   }
   return [...adapters];
+}
+
+export function scopedPlayerIds(catalog, scopedWorkflowId) {
+  if (scopedWorkflowId === undefined) return undefined;
+  return new Set(Object.values(catalog[scopedWorkflowId].roles).map(({ playerId }) => playerId));
 }
 
 export function adaptersFromComposedConfig(config) {
@@ -2106,6 +2156,10 @@ function validateStoredStructuralProjection(value) {
       "stored structural projection must contain players and catalog",
     );
   }
+  if (stored.scopedWorkflowId !== undefined &&
+      (typeof stored.scopedWorkflowId !== "string" || !hasOwn(stored.catalog, stored.scopedWorkflowId))) {
+    throw new Error("stored scoped workflow must name an enabled catalog member");
+  }
   const playerIds = stored.players.map((player, index) => {
     const record = requireObject(player, `stored structural players.${index}`);
     assertPlayerId(record.id, `stored structural players.${index}.id`);
@@ -2224,6 +2278,13 @@ function projectSelectedMembers(top, selectedMembers) {
     playerIds,
     "players",
   );
+  if (hasOwn(projected, "workflowCaptains")) {
+    projected.workflowCaptains = projectOptionalSelectedMap(
+      projected.workflowCaptains,
+      playbookIds,
+      "workflowCaptains",
+    );
+  }
   return projected;
 }
 
@@ -2264,12 +2325,12 @@ function projectSelectedLayer(value, selected, path) {
         `${path}.${String(key)} must be an enumerable data property`,
       );
     }
-    if (key === "playbooks" || key === "players") {
+    if (key === "playbooks" || key === "players" || key === "workflowCaptains") {
       entries.push([
         key,
         projectOptionalSelectedMap(
           descriptor.value,
-          key === "playbooks" ? selected.playbookIds : selected.playerIds,
+          key === "players" ? selected.playerIds : selected.playbookIds,
           `${path}.${key}`,
         ),
       ]);

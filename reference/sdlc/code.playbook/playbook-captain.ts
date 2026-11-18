@@ -856,7 +856,7 @@ interface ActiveTurn {
   failureReported?: boolean;
 }
 
-function parseRegisteredCommand(
+export function parseRegisteredCommand(
   prompt: string,
 ): { command: string; text: string } | undefined {
   const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(

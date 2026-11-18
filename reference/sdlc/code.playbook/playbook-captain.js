@@ -101,7 +101,7 @@ const GIVE_UP_ACTION_ID = 'give-up';
 // Boss rather than sparing Boss a relay.
 const BOSS_QUESTION_OUTCOME = 'needsBossReply';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING = 'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
-function parseRegisteredCommand(prompt) {
+export function parseRegisteredCommand(prompt) {
     const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
     if (!match)
         return undefined;

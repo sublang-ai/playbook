@@ -97,12 +97,13 @@ The separate [SLC compiler](https://github.com/sublang-ai/slc) requires Node.js 
 ```sh
 npm install -g @sublang/slc
 slc playbook my-workflow.md
-# After enabling /absolute/path/to/my-workflow.mjs in the shared config:
+playbook add ./my-workflow.mjs --agent codex --model gpt-6.2-sol
+playbook --list
 playbook run "/my-workflow <your task>"
 ```
 
 SLC writes `my-workflow.mjs` as real JavaScript beside the source and prepares one private ESM environment under `my-workflow.playbook/`, with owned Playbook/XState links and a checked `build-manifest.json`. It uses its own compiler tools and selected runtime pair independently of enclosing project settings. Managed loading requires Node >=23.6 and validates current executable identity before import; missing compiler archives alone do not block runtime loading. Historical `.ts` entries retain their legacy loading path. This shared preparation and library lifecycle also supports native Windows; the POSIX interactive host keeps its own platform requirements.
-Enable that entry and bind each role it declares under `playbooks.my-workflow` in the shared config, then invoke `/my-workflow`; see [External playbooks](docs/configuration.md#external-playbooks) and the [SLC documentation](https://github.com/sublang-ai/slc#quick-start).
+`playbook add` registers the entry and binds its declared roles in the shared config. The agent and model flags set the new workflow's dedicated Captain and execution roles. Use its slash command with `playbook run` to start the dedicated session. For advanced configuration see [External playbooks](docs/configuration.md#external-playbooks) and the [SLC documentation](https://github.com/sublang-ai/slc#quick-start).
 
 ## How it compiles
 

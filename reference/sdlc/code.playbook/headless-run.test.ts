@@ -1437,6 +1437,68 @@ describe('headless replay tee (PBCLI-74/77/79/80/84)', () => {
 });
 
 describe('playbook run shared Captain host (PBCLI-48)', () => {
+  it('uses the selected workflow Captain and roles, even when reopening without a slash command', async () => {
+    const configPath = await writeConfig(`
+captain: { adapter: claude, model: shared-cap }
+players:
+  dev.coder: claude
+  flow.worker: { adapter: codex, model: gpt-6.2-sol }
+workflowCaptains:
+  review: { adapter: codex, model: gpt-6.2-sol }
+playbooks:
+  code:
+    from: mod://code
+    roles: { coder: dev.coder }
+  review:
+    from: mod://review
+    roles: { coder: flow.worker, reviewer: flow.worker }
+`);
+    const probed: string[] = [];
+    const options = {
+      userConfigPath: configPath,
+      homeDir: dirname(configPath),
+      env: { CODEX_API_KEY: 'fixture' },
+      adapterImports: {
+        codex: async () => FakeAdapter,
+        claude: async () => class extends FakeAdapter {
+          async *run(): AsyncGenerator<AgentEvent> {
+            throw new Error('unrelated Claude role must not be called');
+          }
+        },
+      },
+      probeAdapterSdk: async (adapter: string) => {
+        probed.push(adapter);
+        return adapter === 'codex';
+      },
+    };
+    const first = await headlessHarness(['run', '/review orders.csv'], options);
+    expect(first.result.code, first.stderr).toBe(0);
+    expect(first.events).toEqual(['review:orders.csv']);
+    expect(first.result.config).toMatchObject({
+      scopedWorkflowId: 'review',
+      captain: { adapter: 'codex', model: { kind: 'value', value: 'gpt-6.2-sol' } },
+    });
+    expect(Object.keys(first.result.config.catalog)).toEqual(['code', 'review']);
+    expect(FakeAdapter.calls.map(({ prompt }) => prompt)).toEqual([
+      'review-coder',
+      'review-reviewer',
+      expect.stringContaining('compose closing reply'),
+    ]);
+    expect(FakeAdapter.options.map(options => options?.model)).toEqual(Array(3).fill('gpt-6.2-sol'));
+
+    const next = await headlessHarness(['run', '--session', first.result.sessionId, 'Thanks'], {
+      ...options, sessionsDir: first.sessionsDir,
+    });
+    expect(next.result.code, next.stderr).toBe(0);
+    expect(next.result.config.scopedWorkflowId).toBe('review');
+    expect(FakeAdapter.options.at(-1)?.model).toBe('gpt-6.2-sol');
+    expect(probed).toEqual(['codex', 'codex']);
+
+    const shared = await headlessHarness(['run', '/code orders.csv'], options);
+    expect(shared.result.code).toBe(1);
+    expect(shared.stderr).toContain('claude');
+  });
+
   it('runs configured CODE through nested REVIEW on the real headless host', async () => {
     const out = await headlessHarness(['run', '/code implement it']);
 
