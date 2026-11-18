@@ -5,7 +5,7 @@
 // RELEASE-28: the local, model-free release smoke — `pnpm smoke:release`.
 //
 // It packs the candidate, installs it into throwaway npm prefixes in both
-// documented DR-026 shapes, exercises the installed CLI, drives the shared
+// documented included-SDK installation shapes, exercises the installed CLI, drives the shared
 // compiled Captain over a provisioned filesystem registry deterministically,
 // and checks that what the tarball carries is byte-for-byte what the
 // repository committed.
@@ -23,6 +23,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { verifySdkInstallShapes } from './smoke-sdk-installation.mjs';
 import {
   existsSync,
   lstatSync,
@@ -54,7 +55,7 @@ const unsupportedFastModeAdapterMarker =
   '__PLAYBOOK_FAST_MODE_UNSUPPORTED_ADAPTER__';
 const sessionIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const adapterSdks = ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'];
+
 let isolatedNpmCache;
 let tmuxSentinel;
 
@@ -163,18 +164,7 @@ function walkFiles(root, onFile) {
   }
 }
 
-function walkDirectories(root, onDirectory) {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const path = join(root, entry.name);
-    onDirectory(path, entry.name);
-    walkDirectories(path, onDirectory);
-  }
-}
 
-// SemVer caret membership, enough for the single `^x.y.z` range the manifest
-// declares. Nothing here needs a dependency: a prerelease is outside a stable
-// caret, and that is the only subtlety the guard depends on.
 function satisfiesCaret(version, range) {
   const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range.trim());
   if (!caret) return undefined;
@@ -240,8 +230,7 @@ function installGlobally(prefix, packages) {
       '-g',
       '--prefix',
       prefix,
-      '--ignore-scripts',
-      '--no-audit',
+            '--no-audit',
       '--no-fund',
       '--prefer-offline',
       ...packages,
@@ -275,7 +264,7 @@ function probeAdapters(prefix, expectation) {
     probe,
     readFileSync(join(repoRoot, 'scripts', 'smoke-adapters.mjs')),
   );
-  const result = run('node', ['./smoke-adapters.mjs', expectation], {
+  const result = run('node', ['./smoke-adapters.mjs', expectation, installedPackageRoot(prefix)], {
     cwd: cligent,
     allowFailure: true,
   });
@@ -1528,8 +1517,8 @@ async function main() {
   const state = {};
   const steps = [
     ['pack the publishable tarball', () => stepPack(root, state)],
-    ['install the lean global shape', () => stepLean(root, state)],
-    ['install the opted-in global shape', () => stepOptedIn(root, state)],
+    ['install the complete global shape', () => stepLean(root, state)],
+    ['verify nested, ephemeral and damaged SDK shapes', () => stepOptedIn(root, state)],
     ['run the installed CLI surfaces', () => stepInstalledCli(root, state)],
     ['drive the installed headless Captain', () => stepHermetic(root, state)],
     ['reconcile packed repository effects', () =>
@@ -1627,46 +1616,22 @@ function stepPack(root, state) {
   ];
 }
 
-// Step 2 — RELEASE-13 lean shape: the tarball ALONE. Global topology does not
-// hoist between separately named top-level packages, so this is the only
-// shape that reflects what a user gets; an in-repo install hoists the SDK
-// flat and passes regardless.
+// Steps 2/3 verify the included-SDK contract using only the candidate tarball.
 function stepLean(root, state) {
-  const prefix = join(root, 'lean');
-  const { installed, cligent } = installGlobally(prefix, [state.tarball]);
-  const found = [];
-  walkDirectories(join(prefix, 'lib', 'node_modules'), (path, name) => {
-    if (name === '@anthropic-ai' || name === '@openai') found.push(path);
-  });
-  if (found.length > 0) {
-    fail(
-      'a bare install shipped an agent SDK stack',
-      `DR-026 / RELEASE-12: the SDKs are optional peers.\n${found.join('\n')}`,
-    );
-  }
+  const prefix = join(root, 'complete');
+  const { installed, cligent, bin } = installGlobally(prefix, [state.tarball]);
   state.leanPrefix = prefix;
-  const probe = probeAdapters(prefix, 'unavailable');
+  state.optinPrefix = prefix;
+  state.optinBin = bin;
   return [
     `cligent nested under ${relative(root, installed)}`,
-    'no @anthropic-ai or @openai directory in the installed closure',
-    ...probe.split('\n'),
+    ...probeAdapters(prefix, 'available').split('\n'),
     `probed from ${relative(root, cligent)}`,
   ];
 }
 
-// Step 3 — RELEASE-13 opted-in shape: the documented install command, each
-// SDK its OWN top-level install root so it lands on the directory-ancestor
-// walk from the nested cligent (DR-026 §3).
 function stepOptedIn(root, state) {
-  const prefix = join(root, 'optin');
-  const { bin, cligent } = installGlobally(prefix, [
-    state.tarball,
-    ...adapterSdks,
-  ]);
-  state.optinPrefix = prefix;
-  state.optinBin = bin;
-  const probe = probeAdapters(prefix, 'available');
-  return [...probe.split('\n'), `probed from ${relative(root, cligent)}`];
+  return verifySdkInstallShapes(state.tarball, join(root, 'sdk-shapes'), state.leanPrefix, isolatedNpmCache);
 }
 
 // Step 4 — the installed executable's own non-launching surfaces.
@@ -2989,8 +2954,7 @@ function installPackedConsumer(root, state, { name, artifacts }) {
     'npm',
     [
       'install',
-      '--ignore-scripts',
-      '--no-audit',
+            '--no-audit',
       '--no-fund',
       '--prefer-offline',
     ],

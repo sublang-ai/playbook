@@ -157,166 +157,19 @@ jobs:
         # siblings are committed and pinned by the drift check above.
         run: npm pack --pack-destination /tmp
 
-      # RELEASE-13 shape 1 — LEAN: the tarball alone.
-      # --prefix points npm at a temp tree instead of the runner's real
-      # global root. Global topology DOES NOT hoist between separately-named
-      # top-level packages, so only these shapes reflect what users get; an
-      # in-repo or project-local install hoists the SDK flat and passes
-      # regardless, which is why no in-repo test ever caught DR-026's bug.
-      - name: Global-install the tarball alone under a temp prefix
+      - name: Verify automatic SDK installation and ownership
+        env:
+          PLAYBOOK_SDK_SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/playbook-sdk-smoke
         run: |
-          mkdir -p /tmp/lean
-          npm install --prefix /tmp/lean -g /tmp/sublang-playbook-*.tgz
-
-      - name: Verify cligent is bundled under playbook
-        # @sublang/cligent must be a regular dependency so it lands
-        # INSIDE playbook's tree. Otherwise the SDK-resolution walk
-        # from cligent's file location can't reach playbook's deps
-        # (the v0.1.0 / v0.1.1 failure mode).
-        run: |
-          test -d /tmp/lean/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent \
-            || { echo "::error::cligent did not install transitively under @sublang/playbook"; exit 1; }
-
-      - name: Verify no agent SDK stack ships with a bare install
-        # DR-026: the SDKs are optional peers. A bare install carrying an
-        # agent stack is the 466 MB footprint regression (slc#6).
-        run: |
-          found=$(find /tmp/lean/lib/node_modules \
-            \( -type d -name '@anthropic-ai' -o -type d -name '@openai' \) -print)
-          if [ -n "$found" ]; then
-            echo "::error::a bare install shipped an agent SDK stack:"
-            echo "$found"
-            exit 1
-          fi
-
-      - name: Probe adapters from cligent's installed location — expect none
-        # The probe must run from cligent's installed dir so Node's
-        # walk-up for the SDK starts at the SAME tree cligent will
-        # use at runtime. Probing from anywhere else (or from a
-        # hoisted local install) silently passes even when the SDK
-        # is unreachable to cligent.
-        run: |
-          SMOKE_DIR=/tmp/lean/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
-          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
-          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs unavailable)
-
-      # RELEASE-13 shape 2 — OPTED-IN: the documented install command.
-      # Each SDK is named as its OWN top-level global root, which places it
-      # on the directory-ancestor walk from the nested cligent. An SDK
-      # nested inside a sibling root's subtree is unreachable instead
-      # (DR-026 §3) — that difference is the whole of slc#1.
-      - name: Global-install the tarball plus both SDKs as sibling roots
-        run: |
-          mkdir -p /tmp/optin
-          npm install --prefix /tmp/optin -g \
-            /tmp/sublang-playbook-*.tgz \
-            @anthropic-ai/claude-agent-sdk \
-            @openai/codex-sdk
-
-      - name: Probe adapters from cligent's installed location — expect both
-        run: |
-          SMOKE_DIR=/tmp/optin/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
-          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
-          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)
-
-      # RELEASE-13 shapes 3 and 4 — EPHEMERAL: the npx / npm exec tree.
-      # npm materializes the run in a cache tree whose ancestor walk touches
-      # no global prefix, so no install command reaches it. The bare tree must
-      # therefore probe unavailable, and the documented multi-package form —
-      # each SDK a sibling package of one invocation — must probe available.
-      # In an exec tree npm hoists flat, so cligent sits at the tree root.
-      - name: Probe the bare exec tree — expect none
-        # The glob must be resolved before it is glued to --package=: a
-        # pattern embedded after the = never matches (its first path segment
-        # would be a directory literally named "--package=").
-        run: |
-          export npm_config_cache=/tmp/npxcache
           TARBALL=$(ls /tmp/sublang-playbook-*.tgz)
-          BIN=$(npm exec --yes --package="$TARBALL" --call 'command -v playbook')
-          SMOKE_DIR="$(dirname "$(dirname "$BIN")")/@sublang/cligent"
-          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
-          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs unavailable)
-
-      - name: Probe the multi-package exec tree — expect both
-        run: |
-          export npm_config_cache=/tmp/npxcache
-          TARBALL=$(ls /tmp/sublang-playbook-*.tgz)
-          BIN=$(npm exec --yes \
-            --package="$TARBALL" \
-            --package=@anthropic-ai/claude-agent-sdk \
-            --package=@openai/codex-sdk \
-            --call 'command -v playbook')
-          SMOKE_DIR="$(dirname "$(dirname "$BIN")")/@sublang/cligent"
-          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
-          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)
-
-      # RELEASE-13 partial exec shape: one SDK supplied, one missing. The
-      # real binary's gate must print a re-run naming BOTH SDKs — building
-      # it from the missing subset only made two partial trees alternate
-      # forever, since each distinct package set is a distinct tree — and
-      # must never emit a literal `playbook ...` placeholder.
-      #
-      # The two adapters are written here rather than taken from the seeded
-      # starter: this gate is about the alternation, not about whichever
-      # lineup the starter happens to ship, and coupling the two made a
-      # single-adapter starter silently retire the case (PBCLI-11).
-      - name: Gate the partially supplied exec tree — expect a one-hop re-run
-        run: |
-          export npm_config_cache=/tmp/npxcache
-          TARBALL=$(ls /tmp/sublang-playbook-*.tgz)
-          BIN=$(npm exec --yes \
-            --package="$TARBALL" \
-            --package=@anthropic-ai/claude-agent-sdk \
-            --call 'command -v playbook')
-          export HOME=/tmp/npxhome XDG_CONFIG_HOME=/tmp/npxhome/.config
-          mkdir -p "$HOME/.spex/config"
-          cat > "$HOME/.spex/config/playbook.config.yaml" <<'YAML'
-          captain:
-            adapter: claude
-            model: claude-fable-5-2
-            subagentModel: claude-opus-5-5
-            effort: high
-            permissions:
-              mode: auto
-          players:
-            dev.coder:
-              adapter: claude
-              model: claude-fable-5-2
-              subagentModel: claude-opus-5-5
-              effort: high
-              permissions:
-                mode: auto
-            dev.reviewer:
-              adapter: codex
-              model: gpt-6-astra
-              subagentModel: gpt-6.1-sol
-              effort: high
-              permissions:
-                mode: auto
-                writablePaths: ['.git']
-          playbooks:
-            code:
-              from: '@sublang/playbook/code/registry'
-              roles:
-                coder: dev.coder
-            review:
-              from: '@sublang/playbook/review/registry'
-              roles:
-                coder: dev.coder
-                reviewer: dev.reviewer
-          YAML
-          set +e
-          OUT=$(ANTHROPIC_API_KEY=x OPENAI_API_KEY=y "$BIN" 2>&1)
-          STATUS=$?
-          set -e
-          echo "$OUT"
-          test "$STATUS" -ne 0 || { echo "::error::gate did not block"; exit 1; }
-          echo "$OUT" | grep -q -- '-p @anthropic-ai/claude-agent-sdk' \
-            || { echo "::error::re-run dropped the supplied SDK (alternation regression)"; exit 1; }
-          echo "$OUT" | grep -q -- '-p @openai/codex-sdk' \
-            || { echo "::error::re-run omitted the missing SDK"; exit 1; }
-          echo "$OUT" | grep -q 'playbook \.\.\.' \
-            && { echo "::error::re-run still carries a literal placeholder"; exit 1; } || true
+          node scripts/smoke-sdk-installation.mjs "$TARBALL"
+      - name: Retain SDK installation receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: sdk-installation-smoke
+          path: ${{ runner.temp }}/playbook-sdk-smoke/*.json
+          if-no-files-found: ignore
 
   windows-storage:
     name: Windows storage (Node 22.19)
