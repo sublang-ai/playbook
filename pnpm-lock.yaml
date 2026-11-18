@@ -12,7 +12,7 @@ importers:
         specifier: ^7.29.7
         version: 7.29.14
       '@sublang/cligent':
-        specifier: 0.40.0
+        specifier: ^0.40.0
         version: 0.40.0(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))
       '@sublang/spex':
         specifier: ^3.0.0
