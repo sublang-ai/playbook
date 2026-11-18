@@ -1511,8 +1511,9 @@ async function main() {
   }
 
   const root = mkdtempSync(join(tmpdir(), 'playbook-release-smoke-'));
-  isolatedNpmCache = join(root, 'npm-cache');
+  isolatedNpmCache = process.env.PLAYBOOK_SMOKE_NPM_CACHE ?? join(root, 'npm-cache');
   mkdirSync(isolatedNpmCache, { recursive: true });
+  process.stdout.write(`npm download cache: ${isolatedNpmCache}\n`);
   installTmuxSentinel(root);
   const state = {};
   const steps = [
@@ -2769,8 +2770,8 @@ function stepCompiledFidelity(state) {
   const artifactDirectories = ['captain', ...workflows].map((id) =>
     `reference/sdlc/${id}.playbook`,
   );
-  const suites = run('pnpm', [
-    'vitest',
+  const suites = run(process.execPath, [
+    join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs'),
     'run',
     ...artifactDirectories,
   ]);
