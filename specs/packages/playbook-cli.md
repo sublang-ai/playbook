@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies the generic `playbook` launcher and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store, replay stream, and worktree host capabilities they publish for other hosts, and integration verification.
+This package specifies the generic `playbook` launcher, local `playbook add` registration, and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store, replay stream, and worktree host capabilities they publish for other hosts, and integration verification.
 
 ## External Behavior
 
@@ -14,10 +14,27 @@ This package specifies the generic `playbook` launcher and non-interactive `play
 #### playbook-cli-1
 
 Where `@sublang/playbook` is installed, the package shall expose a `playbook` executable.
-When the user invokes `playbook` without `--config`, `--help`, `-h`, `--list`, or `--theme-diagnostics`, the command shall resolve its top-level config (seeding it when absent per [[playbook-cli-3](#playbook-cli-3)]), compose the Captain projection of [[playbook-cli-8](#playbook-cli-8)], run the launcher-owned readiness gate of [[playbook-cli-12](#playbook-cli-12)], and, when readiness passes, prepare and attach the gated managed tmux-play presenter ([[release-14](release.md#release-14)]) of [[playbook-cli-49](#playbook-cli-49)], consuming launcher-owned session, working-directory, provisioning, and overlay arguments rather than forwarding them.
+When the user invokes the interactive form of `playbook` without `--config`, `--help`, `-h`, `--list`, or `--theme-diagnostics`, the command shall resolve its top-level config (seeding it when absent per [[playbook-cli-3](#playbook-cli-3)]), compose the Captain projection of [[playbook-cli-8](#playbook-cli-8)], run the launcher-owned readiness gate of [[playbook-cli-12](#playbook-cli-12)], and, when readiness passes, prepare and attach the gated managed tmux-play presenter ([[release-14](release.md#release-14)]) of [[playbook-cli-49](#playbook-cli-49)], consuming launcher-owned session, working-directory, provisioning, and overlay arguments rather than forwarding them.
 The managed grammar shall accept only optional repeated `--with <path>`, optional repeated `--module <id>=<specifier>` under [[playbook-cli-96](#playbook-cli-96)], optional `--no-provision`, optional `--cwd <path>` on a fresh launch, and one optional `--session <id>` selector, and shall reject unknown tmux-play options rather than forwarding them across the managed durability boundary.
 When the user invokes `--theme-diagnostics` without `--config`, the command shall perform the same shared-config composition and readiness gate, launch the stock tmux-play diagnostic subprocess ([[release-14](release.md#release-14)]) with the composed config and inherited streams, consume launcher-owned overlay, supplied-module, and provisioning arguments, and forward the remaining diagnostic arguments verbatim.
 When the user supplies `--config <path>`, the command shall launch the stock tmux-play subprocess ([[release-14](release.md#release-14)]) with that path and inherited streams, bypass config seeding, composition, readiness, durable-session preparation, and managed attachment, reject every managed selector, overlay, or supplied module, and add no second config argument.
+
+#### playbook-cli-105
+
+When the user invokes `playbook add <entry.mjs> --agent <adapter> --model <name>`, the command shall resolve a local entry path relative to the invocation directory, use the established filesystem registry preparation and schema validation [[playbook-cli-46](#playbook-cli-46)], and use the entry's id, default command and exact declared role ids without constructing a runtime or making an Agent call.
+When the user requests `playbook add --help`, the command shall explain the grammar and that the two flags configure only the new workflow's role bindings, without reading or writing configuration.
+
+#### playbook-cli-106
+
+When a new registration passes catalog validation, the command shall write its absolute entry path and declared command with a distinct new player per declared role, configure those players with the selected adapter and model, and preserve every existing workflow, player and shared Captain setting in the primary config [[playbook-cli-3](#playbook-cli-3)].
+Where no primary configuration or former configuration is present, the command shall use the starter configuration as its base and publish it together with the successful registration.
+The resulting catalog shall expose the registered command to `playbook --list` [[playbook-cli-5](#playbook-cli-5)] and `playbook run` [[playbook-cli-18](#playbook-cli-18)].
+
+#### playbook-cli-107
+
+When registration encounters an already registered id with the same canonical entry, effective command, role set, adapter and model, the command shall report that it is already registered and exit successfully without rewriting the config.
+When an entry or argument is invalid, an id or effective command conflicts, or the config changed during registration, the command shall report the cause and exit nonzero without changing existing config bytes.
+When publishing a new or updated config, the command shall make complete contents visible atomically and shall refuse to overwrite an intervening registration.
 
 #### playbook-cli-2
 
@@ -1534,3 +1551,8 @@ When integration tests normalize, project, and reopen independent Ultracode tuni
 #### playbook-cli-104
 
 When integration tests seed with a separate model environment, the suite shall verify adapter credentials remain independent, omitted model-home scope reads no user settings, and explicit local-user and approved seat scopes suppress Codex defaults on a private route (verifying [[playbook-cli-100](#playbook-cli-100)]).
+
+#### playbook-cli-108
+
+When the packed Playbook CLI is installed and exercised through its npm command entry on macOS, native Windows and Linux, the acceptance suite shall verify registration of an existing SLC order-check entry, listing its declared command and running it with the real Codex player on a CSV with a known count and total [[playbook-cli-105](#playbook-cli-105)], [[playbook-cli-106](#playbook-cli-106)], [[playbook-cli-107](#playbook-cli-107)].
+The suite shall verify a relative path containing spaces and Chinese characters, repeated registration, an id collision, an effective-command collision and an invalid entry, preserving the existing catalog, players and Captain on success and the original config bytes on failure.
