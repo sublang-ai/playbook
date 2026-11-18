@@ -165,7 +165,9 @@ function walkFiles(root, onFile) {
 }
 
 
-function satisfiesCaret(version, range) {
+function satisfiesCligentSpecifier(version, range, consumerVersion) {
+  const candidate = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.(0|[1-9]\d*)$/;
+  if (candidate.test(consumerVersion) && candidate.test(range)) return version === range;
   const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range.trim());
   if (!caret) return undefined;
   const parsed = /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/.exec(version.trim());
@@ -2880,11 +2882,11 @@ function stepCligentFloor(root, state) {
   }
   const cligentRoot = nestedCligentRoot(state.optinPrefix);
   const installedVersion = readJson(join(cligentRoot, 'package.json')).version;
-  const satisfied = satisfiesCaret(installedVersion, declared);
+  const satisfied = satisfiesCligentSpecifier(installedVersion, declared, state.packedManifest.version);
   if (satisfied === undefined) {
     fail(
-      `@sublang/cligent is declared as ${declared}, not a caret range`,
-      'RELEASE-14 requires a caret SemVer range, never a moving dist-tag.',
+      `@sublang/cligent has unsupported release specifier ${declared}`,
+      'RELEASE-14 requires a stable caret range or an exact coordinated candidate under RELEASE-48, never a moving dist-tag.',
     );
   }
   if (!satisfied) {
@@ -3830,6 +3832,11 @@ capabilities.repository.runCohort;
 }
 
 export const _testing = Object.freeze({
+  stepCligentFloor,
+  stepPackedSessionStore,
+  stepPackedHostCapabilities,
+  installTmuxSentinel,
+  assertTmuxWasNotInvoked,
   stepHermetic,
   stepEffectReconciliation,
   smokeConfig,
