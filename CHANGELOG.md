@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [19.1.0-rc.6] - 2026-11-18
+
+### Changed
+
+- Pin the coordinated Cligent 0.40.0-rc.3 candidate for public-registry installation acceptance. Runtime behavior is unchanged.
+
 ## [19.1.0-rc.5] - 2026-11-18
 
 ### Added
@@ -1171,7 +1177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.1.0-rc.6...HEAD
+[19.1.0-rc.6]: https://github.com/sublang-ai/playbook/compare/v19.0.0...v19.1.0-rc.6
 [19.0.0]: https://github.com/sublang-ai/playbook/compare/v18.3.1...v19.0.0
 [18.3.1]: https://github.com/sublang-ai/playbook/compare/v18.3.0...v18.3.1
 [18.3.0]: https://github.com/sublang-ai/playbook/compare/v18.2.0...v18.3.0
