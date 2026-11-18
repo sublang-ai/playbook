@@ -3,6 +3,16 @@
 
 # GEARS-to-Finite-State-Machine Transformation
 
+## Compiler-owned checking environment
+
+When SLC supplies a verification operation, use that exact operation after writing the target.
+SLC owns TypeScript, Node ambient declarations, fixed checking flags, selected Playbook/XState roots, and final acceptance.
+Do not infer a project/global `tsc` command, create a project manifest, or install project dependencies for checking.
+An unavailable alternative checker or an Agent's `BLOCKED` summary does not override the supplied compiler gate.
+Report exhausted bounded search as unverified, separately from an established code defect or environment failure.
+For source-permitted inputs that generic probing cannot infer, export JSON-only `coverageWitnesses` with schema `sublang.slc.coverage-witnesses.v1` and `entries` of `{ input?: <public startup options>, events: [<public events>] }`.
+Witnesses start at the actual initial state and cannot patch private context, jump states, or weaken guards.
+
 Second phase of a playbook (a state-machine agent orchestrating other agents).
 Transforms normative GEARS spec items into an XState v5 finite state machine.
 

@@ -13,48 +13,25 @@ the headless form requires neither presentation tool.
 
 ## Installing agent SDKs
 
-Each adapter is backed by a vendor runtime that installing
-`@sublang/playbook` never downloads for you, so no install carries an
-agent stack you did not ask for. Which versions each adapter supports
-is [cligent](https://github.com/sublang-ai/cligent)'s knowledge and
-ships with it
-([DR-027](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/027-runtime-compatibility-from-cligent.md));
-the commands below install the latest, which cligent accepts from its
-supported floor up. Install the SDKs your config names, each as its
-own top-level install root:
+Installing `@sublang/playbook` automatically acquires both Claude Agent SDK
+and Codex SDK through its ordinary Cligent dependency. Authenticate the selected
+backend separately; SDK availability does not prove provider access.
+Cligent owns their supported floors, tested targets, physical runtime lookup
+and dependency diagnostics.
 
 ```sh
-npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk   # claude
-npm install -g @sublang/playbook @openai/codex-sdk                # codex
-npm install -g @sublang/playbook @opencode-ai/sdk opencode-ai     # opencode (SDK + CLI)
+npm install -g @sublang/playbook
+# Only when selecting optional OpenCode:
+npm install -g @opencode-ai/sdk opencode-ai
 ```
 
-The `gemini` adapter needs no SDK install — its transport ships inside
-cligent — only the `gemini` CLI on `PATH`, at a version cligent
-supports; the preflight gates it like the SDKs.
-
-**Upgrading from ≤ 3.1.0:** run the same full line. The old releases
-bundled the SDKs inside `@sublang/playbook`'s own tree, and npm
-removes that bundled copy when it upgrades to a version that no
-longer declares them — an in-place `npm install -g @sublang/playbook`
-alone leaves no SDK behind.
-
-The "own top-level root" part matters. The adapter that imports the SDK
-lives at `@sublang/playbook/node_modules/@sublang/cligent/`, and Node
-finds a bare specifier by walking *up* from there — which reaches the
-install prefix's own `node_modules`, but never into a sibling package's
-subtree. An SDK that landed inside some other package is invisible to
-the adapter even though it is on disk
-([DR-026](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/026-optional-adapter-sdks.md)).
-
-Both surfaces check this before doing any work: a declared adapter
-whose runtime is not loadable — or is installed below the version
-cligent supports — blocks the launch and names the adapter. An absent
-runtime is reported as not installed; a stale one with its installed
-and required versions, never as absent. Either way the remedy printed
-is cligent's pinned install, `npm install -g <package>@<version>`, so
-following it cannot install a version the gate refuses again
-([[playbook-cli-40](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-40)]).
+The Gemini transport ships with Cligent but needs its supported native CLI on
+`PATH`. Optional backends retain their own setup. A damaged installed SDK or
+native component must be repaired in the dependency tree that the selected
+Cligent package actually resolves; an unrelated sibling SDK cannot replace a
+nearer damaged package. Follow the reported installation-specific repair.
+Both front ends refuse unavailable or unsupported selected runtimes before
+business execution, with installed/required identity where available.
 
 ## Interactive
 
@@ -66,22 +43,16 @@ playbook --list                  # ids, slash commands, and intents; no launch
 playbook --help                  # config path, auth pointers, binding recipe
 ```
 
-Without a global install, `npx` runs the same bin — but name each
-agent SDK as a sibling package of the same invocation:
+Without a global install, the same included Claude/Codex dependency closure
+is available to a single-package invocation:
 
 ```sh
-npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk playbook
+npx -y @sublang/playbook
 ```
 
-A bare `npx @sublang/playbook` cannot be repaired by any install
-command: npx materializes the run in an ephemeral cache tree whose
-ancestor walk touches no global prefix, so an SDK installed with
-`npm install -g` is invisible to it. The preflight detects this case
-and prints the multi-package re-run instead of an install line, naming
-every SDK your config needs at cligent's pinned version — including any
-already present, since each distinct package set is a distinct tree —
-and replaying your original arguments, so the printed command works in
-one hop.
+An optional SDK must be reachable from that invocation's Cligent tree. For
+OpenCode, name its SDK in the same npx package set; an unrelated global SDK is
+not a substitute for that ephemeral tree.
 
 For a managed launch, the outer command resolves current config (seeding it on
 first use), prepares the complete stored catalog and presenter, waits for the

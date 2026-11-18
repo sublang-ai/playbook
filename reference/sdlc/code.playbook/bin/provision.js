@@ -17,6 +17,10 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { inspectArtifactEnvironment, locateBuildManifest, prepareArtifactEnvironment, validateArtifactManifest } from '../../../../src/artifact-environment.js';
+
+import { canonicalFreshArtifactUrl } from '../../../../src/fresh-artifact.js';
+
 // PBCLI-37: probe specifier → the package name provisioning may link.
 const ENGINE_LINKS = new Map([
   ['xstate', 'xstate'],
@@ -239,11 +243,18 @@ export function prepareConfiguredRegistries({
 }) {
   return async ({ from }) => {
     if (!from.startsWith('file:')) return from;
-    const result = await provisionEngine({
-      modulePath: fileURLToPath(from),
-      enabled,
-      hostRoots,
-    });
+    const entry = fileURLToPath(from);
+    const manifestPath = await locateBuildManifest(entry);
+    let result;
+    if (manifestPath) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (!manifest.runtime?.playbook?.root) throw new EngineProvisioningError('managed-manifest', `invalid managed runtime identity: ${manifestPath}`);
+      const environment = await inspectArtifactEnvironment({ playbookRoot: manifest.runtime.playbook.root });
+      result = await prepareArtifactEnvironment({ artifactDir: dirname(manifestPath), environment, authority: 'host', provision: enabled });
+      await validateArtifactManifest(entry);
+    } else {
+      result = await provisionEngine({ modulePath: entry, enabled, hostRoots });
+    }
     if (result.createdLinks.length > 0) {
       await writeStream(
         stderr,
@@ -252,7 +263,7 @@ export function prepareConfiguredRegistries({
           .join(', ')}\n`,
       );
     }
-    return from;
+    return manifestPath ? canonicalFreshArtifactUrl(entry) : from;
   };
 }
 

@@ -3,7 +3,7 @@
 
 import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -18,7 +18,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import {
   AGENT_RUNTIME_TARGETS,
   classifyRuntime,
@@ -1747,7 +1747,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(spawn.calls).toHaveLength(1);
   });
 
-  it('blocks with the adapter id and its exact install command', async () => {
+  it('blocks with the adapter id and its actual owner repair command', async () => {
     const home = await makeTempHome();
     await writeUserConfig(home, twoAdapterConfig());
     const spawn = fakeSpawn();
@@ -1773,9 +1773,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(stderr.text()).toContain(
       `Adapter runtimes not usable: codex (${CODEX_TARGET.bundles} not installed)`,
     );
-    expect(stderr.text()).toContain(
-      `npm install -g ${CODEX_TARGET.repairSpec}`,
-    );
+    expect(stderr.text()).toContain(includedRepairCommand());
     // The available vendor's SDK is not advertised as a remedy.
     expect(stderr.text()).not.toContain(
       `npm install -g ${CLAUDE_TARGET.repairSpec}`,
@@ -1814,9 +1812,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       `Adapter runtimes not usable: codex (${CODEX_TARGET.bundles} 0.139.0 ` +
         `installed, >=${CODEX_TARGET.supportedFrom} required)`,
     );
-    expect(stderr.text()).toContain(
-      `npm install -g ${CODEX_TARGET.repairSpec}`,
-    );
+    expect(stderr.text()).toContain(includedRepairCommand());
     expect(stderr.text()).not.toContain('not installed');
     expect(spawn.calls).toHaveLength(0);
   });
@@ -1849,9 +1845,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(stderr.text()).toContain(
       `Adapter runtimes not usable: claude (${CLAUDE_TARGET.bundles ?? CLAUDE_TARGET.package} not installed)`,
     );
-    expect(stderr.text()).toContain(
-      `npm install -g ${CLAUDE_TARGET.repairSpec}`,
-    );
+    expect(stderr.text()).toContain(includedRepairCommand());
     expect(stderr.text()).toContain('Adapters not ready:');
     expect(spawn.calls).toHaveLength(0);
   });
@@ -1976,7 +1970,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     ]);
   });
 
-  it('detects an npm exec tree and prints the multi-package re-run', () => {
+  it('repairs an included SDK in its exec tree and preserves the exact running command', () => {
     // A global SDK install is not on the ephemeral tree's ancestor walk, so
     // an `npm install -g` remedy there is a command that cannot work.
     expect(
@@ -2005,12 +1999,12 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       },
     );
     expect(lines).toContain(
-      `    npx -y -p ${pkgSelfSpec()} -p ${CLAUDE_TARGET.repairSpec} ` +
-        `-p ${CODEX_TARGET.repairSpec} playbook run 'do the thing'`,
+      `    node ${adapterSdk.shellQuote(fileURLToPath(new URL('./bin/playbook.js', import.meta.url)))} run 'do the thing'`,
     );
     // One re-run line — not one npx line per SDK, no literal `...`, and no
     // npm install command that would land outside the tree.
-    expect(lines.filter((l: string) => l.includes('npx -y'))).toHaveLength(1);
+    expect(lines.filter((l: string) => l.includes('npx -y'))).toHaveLength(0);
+    expect(lines).toContain('    ' + includedRepairCommand());
     expect(lines.some((l: string) => l.includes('...'))).toBe(false);
     expect(
       lines.some((l: string) => l.trim().startsWith('npm install')),
@@ -2054,7 +2048,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     ).toEqual([CLAUDE_TARGET.repairSpec, CODEX_TARGET.repairSpec]);
   });
 
-  it('prints a one-hop re-run for a partially supplied exec tree', async () => {
+  it('prints the owned helper and same installed entry for a damaged exec tree', async () => {
     const home = await makeTempHome();
     await writeUserConfig(home, twoAdapterConfig());
     const spawn = fakeSpawn();
@@ -2081,21 +2075,18 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     const rerun = stderr
       .text()
       .split('\n')
-      .find((l) => l.includes('npx -y'));
-    expect(rerun).toContain(`-p ${CLAUDE_TARGET.repairSpec}`);
-    expect(rerun).toContain(`-p ${CODEX_TARGET.repairSpec}`);
+      .find((l) => l.includes('playbook.js'));
+    expect(stderr.text()).toContain(includedRepairCommand());
     // With no original arguments the command ends at the bin — never a
     // literal `...`, which tmux-play rejects as a positional.
-    expect(rerun?.trimEnd().endsWith('playbook')).toBe(true);
+    expect(rerun?.trim()).toBe(`node ${adapterSdk.shellQuote(fileURLToPath(new URL('./bin/playbook.js', import.meta.url)))}`);
     expect(spawn.calls).toHaveLength(0);
   });
 });
 
-function pkgSelfSpec(): string {
-  const manifest = JSON.parse(
-    readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
-  ) as { name: string; version: string };
-  return `${manifest.name}@${manifest.version}`;
+function includedRepairCommand(): string {
+  const root = realpathSync(fileURLToPath(new URL('../../../node_modules/@sublang/cligent', import.meta.url)));
+  return `node ${adapterSdk.shellQuote(join(root, 'bin', 'repair-included-runtimes.mjs'))}`;
 }
 
 describe('playbook launcher — CLI surface (PBCLI-17)', () => {

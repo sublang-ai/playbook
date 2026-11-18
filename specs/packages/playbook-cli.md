@@ -153,13 +153,15 @@ A single positional value such as `resume` or `mod://registry` shall remain ordi
 
 #### playbook-cli-36
 
-Where either front end prepares a configured filesystem `playbooks.<id>.from` module whose `xstate` or `@sublang/playbook/xstate-runtime` import does not resolve from the module's own directory, the shared launch path shall provision the missing engine links before importing any configured registry ([DR-024](../decisions/024-runtime-engine-provisioning.md)).
-The path shall create `node_modules/xstate` and `node_modules/@sublang/playbook` beside the module as symbolic links to the running host's own installed packages and shall print one front-end-prefixed stderr line naming each created link and target.
-Where both imports already resolve, the path shall change nothing, because an existing project-local installation always wins; a repeated launch over a provisioned directory shall likewise print no provisioning line.
-`--no-provision` shall disable new links for that interactive or headless launch, while retaining a named stale-link diagnostic for a dangling link.
-Where a `package.json` at or above the module declares `@sublang/playbook` while resolution fails, the path shall refuse provisioning with a diagnostic recommending the project's dependency install.
-The path shall replace a dangling link only when provisioning is enabled and shall never remove or overwrite a real file, real directory, or live foreign symlink occupying a destination.
-Every provisioning failure shall be a structured preparation failure that receives exactly one `playbook:` or `playbook run:` prefix from its front end and exits `1` before any registry import or agent call.
+Where either front end prepares a configured filesystem registry, the shared launch path shall distinguish a managed bundle from a legacy module before importing the registry:
+
+| Module | Preparation |
+| --- | --- |
+| Entry identified by its compiler marker or owned environment footprint, including a missing-manifest fault | Use the shared service to validate the selected runtime and entry, honoring `--no-provision`, refusing changed or missing recorded targets pending compiler revalidation, and returning structured notices or failures [[artifact-environment-5](artifact-environment.md#artifact-environment-5)], [[artifact-environment-6](artifact-environment.md#artifact-environment-6)], [[artifact-environment-8](artifact-environment.md#artifact-environment-8)]. |
+| Genuinely historical filesystem module with no managed marker or environment footprint | Probe its engine imports and create missing `node_modules/xstate` and `node_modules/@sublang/playbook` links beside that module from the host's own tree; preserve resolved project dependencies, refuse broken declarations and occupied foreign paths, and replace only recognized dangling provisioned links ([DR-024](../decisions/024-runtime-engine-provisioning.md)). |
+
+The front end shall print one prefixed line naming created links, print none for a no-op, and report preparation failure once with exit `1` before registry import or any Agent call.
+`--no-provision` shall disable environment mutations while preserving named missing or stale-link diagnostics.
 
 #### playbook-cli-22
 
@@ -193,59 +195,14 @@ The command shall never silently ignore the retired defaults, because doing so c
 
 #### playbook-cli-40
 
-The agent SDK backing each adapter is an optional peer dependency
-([[release-12](release.md#release-12)]), so an install carries only
-the agent stacks the user asked for and an unconfigured vendor's stack
-is never downloaded.
+Where interactive or headless launch performs readiness, when a configured adapter is unavailable or incompatible, the command shall fail before Agent work with a complete actionable report:
 
-Where `playbook` runs the readiness gate ([[playbook-cli-1](#playbook-cli-1)]) or binds
-agents for `playbook run` ([[playbook-cli-18](#playbook-cli-18)]), when a declared
-adapter's runtime is not loadable or is installed below the version
-cligent supports, the command shall block before launching tmux-play or
-making any agent call, print to stderr a line naming every such adapter
-and, for each affected runtime, the exact command that supplies it, and
-exit non-zero with a status distinct from `127`.
-An absent runtime shall be reported as not installed; a runtime
-installed below cligent's floor shall be reported as unsupported with
-its installed and required versions, and shall not be reported as
-absent, because that sends the user to install what is already present.
-For an installed tree, the remedy is `npm install -g <spec>` where
-`<spec>` is cligent's pinned repair specifier for that runtime, so a
-printed repair installs a version the gate accepts; only the runtimes
-at fault are named.
-Where the running installation is npm's ephemeral exec tree (`npx` /
-`npm exec`), no install command reaches the tree the adapters resolve
-from, so the command shall instead be one multi-package re-run naming
-the running package at its own version and, as sibling `-p` packages,
-the pinned repair specifier of **every** descriptor-backed adapter the
-lineup requires — not only the
-missing ones: a fresh exec tree starts empty, and a missing-only list
-drops the SDKs this tree does have, alternating between vendors
-forever.
-The re-run shall end with the original invocation's arguments, quoted
-where the shell requires it, so the printed command is executable
-exactly as printed and completes in one hop; it shall never carry
-placeholder text such as a literal `...`, which the launch surfaces
-reject as an argument.
-Where `playbook run` consumed Captain input from stdin before the gate fired, the re-run shall preserve the complete original run argv and append that exact input behind an effective `--` end-of-options terminator ([[playbook-cli-18](#playbook-cli-18)]).
-The input shall be shell-quoted because the original pipe will not exist when the printed command runs and a flag-shaped value such as `--json` or a `-`-leading bullet must remain Boss text.
-Where the original invocation itself already activated a terminator —
-one the parser treated as end-of-options, not a `--` consumed as an
-option's value — the re-run shall reuse it rather than append a
-second: parsing stops at the first `--`, so a doubled terminator is
-itself positional data and turns a `--json` task into `-- --json`.
-External CLI installs stay global, because the exec tree inherits
-`PATH`, and shall be printed **before** the re-run: the re-run probes
-the CLI again, so following the output top-to-bottom must install it
-first.
-
-This check is independent of the credential check
-([[playbook-cli-12](playbook-cli.md#playbook-cli-12)]): a missing SDK and a
-missing credential are separate failures with separate remedies, and
-where both apply the command shall report both rather than only the
-first.
-A raw `--config <path>` launch bypasses this check along with the rest
-of the gate ([[playbook-cli-1](#playbook-cli-1)]).
+- determine runtime identity, availability, supported versions and repair facts through installed Cligent rather than a duplicated adapter/SDK table [[release-12](release.md#release-12)];
+- distinguish an absent or damaged included SDK, an unsupported native host, a too-old runtime, and an optional external runtime, naming actual and required versions where available;
+- for the included Claude and Codex stacks, target repair or upgrade of the running Playbook installation's dependency tree, never assume that adding a sibling global SDK overrides its nested SDK, and preserve the actual running package version and invocation in any executable re-run;
+- for remaining optional adapters, preserve Cligent's exact repair specifications and the install-versus-ephemeral-tree distinction, with an ephemeral re-run carrying every required optional SDK rather than a missing-only subset;
+- preserve consumed stdin as quoted positional data behind one effective `--` terminator in a printed headless re-run, preserve the original argv, and place required external CLI installation steps before that re-run;
+- report credential readiness independently [[playbook-cli-12](#playbook-cli-12)], including both faults where both exist, return nonzero distinct from `127`, and retain the raw `--config` gate bypass [[playbook-cli-1](#playbook-cli-1)].
 
 ### Config overlays
 
@@ -639,7 +596,7 @@ A surviving top-level `run` block shall fail closed through [[playbook-cli-28](#
 
 #### playbook-cli-37
 
-Where the shared launch path prepares a configured filesystem module ([[playbook-cli-36](#playbook-cli-36)]), it shall first probe resolution of `xstate` and `@sublang/playbook/xstate-runtime` with the module's canonical file path as parent via `module.createRequire(<module path>).resolve(...)`, and shall skip provisioning entirely when both resolve.
+Where the shared launch path prepares a genuinely historical configured filesystem module without a managed marker or environment footprint ([[playbook-cli-36](#playbook-cli-36)]), it shall first probe resolution of `xstate` and `@sublang/playbook/xstate-runtime` with the module's canonical file path as parent via `module.createRequire(<module path>).resolve(...)`, and shall skip provisioning entirely when both resolve.
 A bare package or custom `playbooks.<id>.from` specifier shall be neither probed nor provisioned.
 For each specifier that does not resolve, the command shall create the
 missing `<module dir>/node_modules/` entry — `xstate`, or

@@ -238,6 +238,10 @@ The bullet order is authoritative, guard names are unique within the item, and
 the description shall name every required output property with its exact
 case-sensitive identifier.
 After `Output shall include`, reserve backticks for output-field declarations.
+The literal `Output shall include` is fixed parser syntax in every Source language; never translate this prefix.
+For each Source-required terminal returned field and condition, preserve a workflow-output requirement citing its producing action and a canonical declared producer field.
+Do not leave a returned value only in prompt prose or verification examples.
+When Source-to-GEARS return correspondence cannot be established, request clarification instead of asserting completeness.
 Keep each declaration outside plain-text parentheses; explanatory symbols in
 parenthetical guidance use plain text, never separate backticks, because those
 backticks would declare extra required fields. Guidance may instead occur

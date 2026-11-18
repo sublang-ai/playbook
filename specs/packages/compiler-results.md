@@ -21,6 +21,7 @@ Nested-playbook items shall remain without `Results:`, and what follows the chil
 
 When Source requires a terminal return to its caller, text2gears shall preserve every returned value or fact and its return condition as an explicit workflow output obligation in GEARS; merely naming a value in a completion predicate or acting result shall not substitute for that obligation.
 The terminal-return requirement shall be one requirement item under `## External Behavior`, outside prompt blockquotes and result descriptions [DR-108](../decisions/108-compiled-gears-is-a-spec-package.md), without a new Captain action solely to restate it.
+Where that return consumes an acting result value, text2gears shall also declare its producing result field, using the verbatim-final-text ownership rule [[compiler-results-9](#compiler-results-9)], and submit this mapping to the invoking compiler's Source-aware producer gate before GEARS acceptance, returning its concrete omission findings to the producer rather than leaving their first discovery to linking.
 
 ### compiler-results-5
 
@@ -75,7 +76,8 @@ When the integration suite checks candidate GEARS through the supplied SLC insta
 ### compiler-results-4
 
 When the integration suite parses terminal-return fixtures through the supplied SLC installation, it shall verify that a terminal-return requirement item beside a delegated action item or a nested-call item leaves the authored prompt, action-item count, and acting result contract unchanged [[compiler-results-3](#compiler-results-3)].
-This representation check shall not claim to detect a model's omission of a terminal-return requirement.
+The suite shall additionally drive the supplied compiler's actual producer boundary with complete and deliberately omitted success-message/failure-reason obligations, producer fields and return conditions, verifying producer correction or failure before downstream phases, rather than treating parser representation or prompt inspection alone as evidence that the omission is caught [[compiler-results-3](#compiler-results-3)].
+The suite shall claim this explicit regression coverage, not complete semantic detection of arbitrary natural-language omissions.
 
 ### compiler-results-6
 

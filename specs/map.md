@@ -133,11 +133,14 @@ meta.md       The spec of specs
 | [DR-107](decisions/107-a-script-steps-command-is-on-record.md) | 107-a-script-steps-command-is-on-record.md | A script step's command is on record: the `playbook.script` telemetry carries the command as executed, and the Captain closing a failed run is told its last script step's exit status and command and that the output is on record, never the output; amends DR-106 §3 and §4 |
 | [DR-108](decisions/108-compiled-gears-is-a-spec-package.md) | 108-compiled-gears-is-a-spec-package.md | Compiled GEARS is a spec package the machine cites: Intent / External Behavior / Internal Behavior / Verification, lowercase item ids, action, requirement and test items, a state citing its action item through `sourceItem` without regard to letter case, no `## Optimizations` section, the references migrated without recompiling; amends DR-016, DR-018, DR-050, DR-065, DR-068, DR-082 and DR-102 |
 | [DR-109](decisions/109-a-writer-checkpoints-from-what-it-verified.md) | 109-a-writer-checkpoints-from-what-it-verified.md | A writer checkpoints from what it verified: the lease writer keeps the running digest of the exact replay bytes it verified and appended and its context records, so recovery publication and context recording read no replay chunk; without that prefix they read the complete chain as before; amends DR-094 and DR-101 |
+| [DR-110](decisions/110-managed-artifact-environments.md) | 110-managed-artifact-environments.md | Shared compiler/host artifact environments and both default SDKs through Cligent |
 
 ## Packages
 
 | File | Summary |
 | --- | --- |
+| [compiler-verification.md](packages/compiler-verification.md) | Compiler-owned checking and public-entry coverage witnesses in published phase definitions |
+| [artifact-environment.md](packages/artifact-environment.md) | Shared environment inspection/preparation, runtime identity, managed entry loading and compatible repair |
 | [captain-playbook.md](packages/captain-playbook.md) | Compiled session Captain behavior, controller contract, compilation, and verification |
 | [cross-references.md](packages/cross-references.md) | Relative Markdown link and GitHub-anchor resolution plus repository checks |
 | [compiler-optimization.md](packages/compiler-optimization.md) | Exact environmental predicate and resource-location preservation in mechanical optimization |

@@ -2,51 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// RELEASE-13: probe every adapter SDK wired by the bundled production
-// config, and assert the expected availability for the install shape under
-// test. Run this from @sublang/cligent's INSTALLED directory: Node's
-// walk-up for the SDK must start at the same tree cligent uses at run time.
-// Probing from the prefix root, or from a hoisted project-local install,
-// passes even when the SDK is unreachable to cligent.
-//
-// Usage: node smoke-adapters.mjs <available|unavailable>
-//   available    the opted-in shape — tarball + each SDK as its own
-//                top-level install root; every adapter must load.
-//   unavailable  the lean shape — tarball alone; no adapter may load, which
-//                is what keeps the DR-026 footprint fix from regressing.
-
+// Copy into installed Cligent so all probes start at the adapter's module owner.
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import { readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ClaudeCodeAdapter } from '@sublang/cligent/adapters/claude-code';
 import { CodexAdapter } from '@sublang/cligent/adapters/codex';
+import { agentRuntimeTargets, classifyRuntime, describeRuntimeReadiness, locateAgentExecutable } from '@sublang/cligent';
 
-const expected = process.argv[2];
-if (expected !== 'available' && expected !== 'unavailable') {
-  console.error('usage: smoke-adapters.mjs <available|unavailable>');
-  process.exit(2);
+const [expectation, allowedRoot] = process.argv.slice(2);
+if (!['available', 'missing-codex', 'missing-claude'].includes(expectation) || !allowedRoot)
+  throw Error('usage: smoke-adapters.mjs <available|missing-codex|missing-claude> <owned-root>');
+const root = realpathSync(allowedRoot), owner = realpathSync(dirname(fileURLToPath(import.meta.url)));
+const require = createRequire(import.meta.url);
+const owned = (path) => { const rel = relative(root, realpathSync(path)); if (rel === '..' || rel.startsWith('..' + (process.platform === 'win32' ? '\\' : '/')) || isAbsolute(rel)) throw Error('SDK/native lookup escaped installed owner tree'); };
+owned(owner);
+const records = [];
+for (const [id, name, adapter] of [
+  ['claude', '@anthropic-ai/claude-agent-sdk', new ClaudeCodeAdapter()],
+  ['codex', '@openai/codex-sdk', new CodexAdapter()],
+]) {
+  const want = expectation !== 'missing-' + id;
+  const available = await adapter.isAvailable();
+  if (available !== want) throw Error(id + ' SDK availability mismatch');
+  const target = agentRuntimeTargets().find(target => target.package === name);
+  if (!target) throw Error('Cligent omitted the SDK runtime target');
+  const readiness = classifyRuntime(target, available);
+  if (want && !['satisfied', 'untested'].includes(readiness.state)) throw Error('Installed SDK is not supported/loadable');
+  if (!want && (readiness.state !== 'missing' || !readiness.repair.spec.startsWith(name + '@')))
+    throw Error('Damaged SDK lacks the real pre-Agent repair verdict');
+  let sdkRoot = null, native = null;
+  if (want) {
+    for (const base of require.resolve.paths(name) ?? []) {
+      try { const file = join(base, name, 'package.json'); if (JSON.parse(readFileSync(file)).name === name) { sdkRoot = realpathSync(dirname(file)); break; } }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    if (!sdkRoot) throw Error('SDK manifest is unreachable from Cligent');
+    owned(sdkRoot);
+    native = locateAgentExecutable(id);
+    if (native.state !== 'present') throw Error('SDK-owned native executable missing');
+    owned(native.path);
+  }
+  records.push({ id, sdk: name, available, sdkRoot, native, readiness,
+    diagnostic: describeRuntimeReadiness(readiness),
+    nativeSHA256: native ? createHash('sha256').update(readFileSync(native.path)).digest('hex') : null });
 }
-const want = expected === 'available';
-
-const checks = [
-  ['claude adapter SDK', new ClaudeCodeAdapter()],
-  ['codex adapter SDK', new CodexAdapter()],
-];
-
-let failed = 0;
-for (const [label, adapter] of checks) {
-  const got = await adapter.isAvailable();
-  console.log(`${got === want ? 'OK  ' : 'FAIL'}  ${label} (${got ? 'loadable' : 'not loadable'})`);
-  if (got !== want) failed++;
-}
-
-if (failed) {
-  console.error(
-    want
-      ? `\n${failed} adapter SDK(s) are not loadable from cligent's installed ` +
-          `location even though each was installed as its own top-level ` +
-          `global root. The documented install command is broken: an SDK on ` +
-          `the directory-ancestor walk from cligent must resolve (DR-026 §3).`
-      : `\n${failed} adapter SDK(s) loaded from an install of the tarball ` +
-          `ALONE. The SDKs are optional peers (RELEASE-12): a bare install ` +
-          `must carry no agent stack, or the 466 MB footprint returns.`,
-  );
-  process.exit(1);
-}
+console.log(JSON.stringify({ owner, cligentVersion: JSON.parse(readFileSync(join(owner, 'package.json'))).version,
+  allowedRoot: root, expectation, records }));

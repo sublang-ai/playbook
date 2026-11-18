@@ -39,14 +39,20 @@ describe('hosted release metadata', () => {
     'v06.2.1',
     'release-v6.2.1',
     'v6.2.1/extra',
-  ])('rejects non-exact stable SemVer tag %s', (tag) => {
+  ])('rejects tags outside exact stable/candidate SemVer %s', (tag) => {
     expect(() =>
       validateReleaseMetadata({
         tag,
         manifestText: manifest(),
         changelogText: changelog('### Fixed\n\n- Correctness fix.'),
       }),
-    ).toThrow(/not exact stable SemVer/);
+    ).toThrow(/not exact stable or candidate SemVer/);
+  });
+
+  it('accepts exact rc.N metadata while keeping unsupported prereleases invalid', () => {
+    expect(validateReleaseTag({ tag: 'v6.3.0-rc.1', manifestText: manifest('6.3.0-rc.1') })).toBe('6.3.0-rc.1');
+    expect(() => validateReleaseTag({ tag: 'v6.3.0-rc.01', manifestText: manifest('6.3.0-rc.01') })).toThrow();
+    expect(() => validateReleaseTag({ tag: 'v6.3.0-beta.1', manifestText: manifest('6.3.0-beta.1') })).toThrow();
   });
 
   it('rejects a tag that differs from the manifest version', () => {
@@ -133,8 +139,8 @@ describe('hosted release metadata', () => {
       new URL('../.github/workflows/release.yml', import.meta.url),
       'utf8',
     );
-    expect(workflow).toContain("tags: ['v[0-9]+.[0-9]+.[0-9]+']");
-    expect(workflow).not.toContain("tags: ['v[0-9]*']");
+    expect(workflow).toContain("tags: ['v[0-9]*']");
+    expect(workflow).toContain("node scripts/release-source-guard.mjs");
 
     const orderedSteps = [
       'run: node scripts/check-release-metadata.mjs --tag-only "$GITHUB_REF_NAME"',

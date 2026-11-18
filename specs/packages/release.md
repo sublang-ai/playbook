@@ -14,7 +14,7 @@ This project-local package specifies and verifies versioning, changelog, packagi
 #### release-1
 
 The project shall follow Semantic Versioning 2.0.0 [[1]]:
-`MAJOR.MINOR.PATCH` where MAJOR indicates breaking changes, MINOR
+stable `MAJOR.MINOR.PATCH` and candidate `MAJOR.MINOR.PATCH-rc.N`, where MAJOR indicates breaking changes, MINOR
 indicates new features, and PATCH indicates bug fixes.
 
 #### release-2
@@ -32,7 +32,7 @@ repository root, following the Keep a Changelog format [[2]].
 
 #### release-4
 
-Before creating a release tag, the developer/agent shall:
+Before creating a stable release tag, the developer/agent shall:
 
 1. Review all commits since the last release (`git log <last-tag>..HEAD`).
 2. Ensure all notable changes are documented in `[Unreleased]`.
@@ -66,12 +66,12 @@ workflow drops it before install ([[release-7](#release-7)]).
 
 #### release-6
 
-Releases shall be triggered by pushing a git tag matching the
+Stable releases shall be triggered by pushing a git tag matching the
 pattern `vMAJOR.MINOR.PATCH` (e.g., `v0.1.0`).
 
 #### release-7
 
-The release workflow on GitHub shall:
+The stable release lane on GitHub shall:
 
 1. Verify the tag version matches the `version` field in
    `package.json`.
@@ -138,55 +138,16 @@ When a change adds or changes a test, that test shall be deterministic by constr
 
 #### release-12
 
-The published `@sublang/playbook` package shall declare
-`@sublang/cligent` as a regular runtime dependency, not as an
-optional or peer dependency, so that a global install nests it
-inside `@sublang/playbook`'s own module tree.
-
-The package shall declare no agent SDK among `dependencies`,
-`optionalDependencies`, `peerDependencies`, or `peerDependenciesMeta`
-([DR-026](../decisions/026-optional-adapter-sdks.md),
-[DR-027](../decisions/027-runtime-compatibility-from-cligent.md)).
-cligent is the only package that imports the SDKs, and its own
-optional-peer declaration is the single range npm checks; a second
-identical copy here adds no acceptance and one more declaration to
-drift — the mirror froze at cligent's old floor the first time
-cligent's moved — while a non-identical copy either rejects versions
-the loader accepts or admits versions it would warn on.
-Both SDKs shall additionally be `devDependencies`, so this
-repository's own test, CI, and local acceptance runs exercise real
-adapters.
-
-An installed adapter SDK therefore resolves from
-`@sublang/cligent`'s installed location whenever it sits on the
-directory-ancestor walk from that location — as a top-level
-install root does, and as a package hoisted flat in a project
-`node_modules` does. An SDK nested inside a *sibling* install
-root's own subtree does not, which is why the documented global
-install shall name each wanted SDK alongside the package
-([DR-026](../decisions/026-optional-adapter-sdks.md) §3):
-
-```sh
-npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sdk
-```
-
-A user configuring a single vendor shall be able to install that
-vendor's SDK alone and pay only that stack's footprint.
-The documented ephemeral form shall likewise name each wanted SDK as a
-sibling package of the same invocation —
-`npx -y -p @sublang/playbook -p <sdk> playbook` — because npm's exec
-tree is reached by no install command at all: a global SDK install is
-not on that tree's directory-ancestor walk.
-The absence of a wanted SDK shall never surface as a mid-turn
-adapter failure; it is gated ahead of any agent call by
-[[playbook-cli-39](playbook-cli.md#playbook-cli-39)].
+The published `@sublang/playbook` package shall declare Cligent as an ordinary runtime dependency whose minimum admitted release ordinarily supplies both Claude Agent SDK and Codex SDK, so installing Playbook alone acquires both through the adapter owner ([DR-110](../decisions/110-managed-artifact-environments.md)).
+The package shall declare neither SDK in its ordinary, optional or peer runtime dependencies, retain both as development conformance targets, and keep runtime versions, native executable resolution, compatibility floors and repairs owned by Cligent.
+The documented global and ephemeral commands shall require only `npm install -g @sublang/playbook` or `npx -y @sublang/playbook` for SDK delivery, distinguishing installation from authentication and host support; SLC shall not become a Playbook runtime dependency.
+The existing pre-Agent readiness checks shall still reject damaged, missing, incompatible or unsupported runtime installations [[playbook-cli-40](playbook-cli.md#playbook-cli-40)] rather than assuming SDK presence proves provider access.
 
 #### release-14
 
 Where the published `@sublang/playbook` `package.json` declares
 `@sublang/cligent` per [[release-12](#release-12)], the declared
-version specifier shall be a caret SemVer range, not a moving
-registry dist-tag such as `latest`.
+version specifier shall be a stable caret SemVer range or the exact coordinated candidate version under [[release-48](#release-48)], never a moving registry dist-tag such as `latest`.
 The declared range shall admit cligent's tmux-play dynamic
 visible-player surface used by the Playbook Captain shell, first
 available in `@sublang/cligent` 0.13.0, and shall admit the explicit
@@ -362,7 +323,7 @@ A breaking change to that subpath's exported names or shapes shall be released u
 
 #### release-28
 
-Before tagging a release, the developer/agent shall run the local
+Before tagging a stable release, the developer/agent shall run the local
 `pnpm smoke:release` gate. It shall spend no model call, read no
 credential, and create no tmux session, so it is reproducible on any
 maintainer machine; it shall require network access to the npm registry,
@@ -375,17 +336,8 @@ step below holds of the packed candidate:
 
 1. **Pack.** `npm pack` produces the tarball `npm publish` would upload
    ([[release-7](#release-7)]).
-2. **Lean global shape.** Installing that tarball *alone* into a throwaway
-   npm prefix nests `@sublang/cligent` inside the installed
-   `@sublang/playbook` tree, leaves no `@anthropic-ai` or `@openai`
-   directory anywhere in the installed closure, and reports every adapter
-   **unavailable** when probed from `@sublang/cligent`'s own installed
-   location ([[release-12](#release-12)],
-   [[release-13](release.md#release-13)]).
-3. **Opted-in global shape.** Installing that tarball plus each adapter SDK
-   named as its own top-level install root reports every adapter
-   **available** when probed from that same location
-   ([DR-026](../decisions/026-optional-adapter-sdks.md) §3).
+2. **Complete global shape.** Installing the tarball alone into a throwaway npm prefix supplies both included SDKs through the installed Cligent tree, with readiness and SDK-owned executable identity checked from that tree on supported hosts [[release-12](#release-12)], [[release-13](#release-13)].
+3. **Nested and exec shapes.** A nested-strategy consumer and an ephemeral invocation naming only the candidate likewise resolve both SDKs through their own installed Cligent; unrelated sibling SDKs cannot substitute, and damaged-install controls produce the real pre-Agent repair diagnostic [[release-13](#release-13)].
 4. **Installed CLI.** The installed `playbook` executable prints its top-level and `run` usage, resolved config path, continuation and uncertain-recovery grammar, and for `--list` names the `code`, `review`, `decide`, `dev`, `branch`, `pr`, and `inspect` entries of a config enabling the bundled registries ([[release-20](#release-20)]).
 5. **Hermetic shared-Captain and player-ledger run.** A bare fixture repository with no `package.json`, lockfile, or `node_modules` at any level shall hold one configured thin registry importing `xstate` and `@sublang/playbook/xstate-runtime` whose work is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md) script actor and one explicit-role registry whose two sequential roles share one segmented player id while a third role binds an equal-configured distinct segmented id ([[playbook-captain-26](playbook-captain.md#playbook-captain-26)], [[playbook-cli-4](playbook-cli.md#playbook-cli-4)]).
    Neither engine import shall resolve from the fixture before launch.
@@ -403,7 +355,7 @@ step below holds of the packed candidate:
    Two successor processes selecting the exact advertised reconciliation and abandonment controls shall start no player or judge and make no repository change; reconciliation shall preserve the parked evidence, while abandonment shall preserve the same final settlement evidence, leave the root absent from retained generations, and return the session to chat ([[playbook-runtime-79](playbook-runtime.md#playbook-runtime-79)], [[playbook-captain-56](playbook-captain.md#playbook-captain-56)], [[playbook-captain-58](playbook-captain.md#playbook-captain-58)]).
 7. **Compiled runtime integrity.** The installed Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT playbook subpaths import and construct runtimes carrying the declared contract surface; Captain, CODE, REVIEW, DEV, BRANCH, PR, and INSPECT expose retained-snapshot adoption while DECIDE, whose machine declares a parallel state, omits it ([[playbook-runtime-61](playbook-runtime.md#playbook-runtime-61)]).
 8. **Compiled-artifact fidelity.** Every packed file other than the manifest is byte-identical to the repository's own, and the committed Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT artifact-conformance suites pass with their source/GEARS/FSM, transition, prompt, and topology checks — PR's script-state check among them — named among those that ran.
-9. **Nested cligent floor.** The nested installed `@sublang/cligent` shall satisfy the caret range the packed manifest declares and expose the complete enumerated release-floor capability set through its root and `@sublang/cligent/tmux-play` public specifiers resolved from that nested copy ([[release-14](#release-14)]).
+9. **Nested cligent floor.** The nested installed `@sublang/cligent` shall satisfy the stable caret range or exact coordinated candidate version the packed manifest declares and expose the complete enumerated release-floor capability set through its root and `@sublang/cligent/tmux-play` public specifiers resolved from that nested copy ([[release-14](#release-14)]).
    The guard shall verify callable `defaultAgentModels` returns both official Codex model fields, adapter-scoped `isUltracodeSupported` distinguishes Claude from Codex, and both literal `ultracode` booleans survive the public config loader.
    It shall prove the runtime presence and exact call signatures of `launchManagedTmuxPlay` and `runManagedTmuxPlaySession`, plus the exact usable type and optionality of `CaptainContext.emitReply`, `CaptainRunResult.resumeToken`, the exact optional literal `CaptainRunResult.errorCode` and `PlayerRunResult.errorCode`, `Captain.prepareDispose`, the player and Captain call-option parameters, each continuation and complete-setting option, readonly `Attachment[]` and its public attachment shape on both call-option types, complete settings including optional readonly string-array `skills`, optional boolean `nativeSkills`, optional boolean `browser`, and exact immutable stdio/HTTP `McpServers`, and every tuning selection including optional boolean `AgentCallSettings.fastMode` and `AgentCallSettings.ultracode`, optional string `AgentCallSettings.subagentModel`, and optional effort `AgentCallSettings.subagentEffort`, the root `assertFastModeSupported` and `assertSubagentModelSupported` types and callable runtime exports whose supported-versus-unsupported results agree with Cligent's own public `FAST_MODE_SUPPORT` and `SUBAGENT_MODEL_SUPPORT` descriptors ([DR-075](../decisions/075-subagent-model-is-tuning.md), [DR-076](../decisions/076-subagents-delegate-by-default.md)), the root `getNativeSkillSupport` type and callable runtime export whose `disableSupported` answers agree with Cligent's public `NATIVE_SKILL_SUPPORT` descriptors ([DR-093](../decisions/093-captain-control-turns-native-skills-off.md)), the typed settings rejection and predicate, the required work-directory cleanup-authority member on both managed launch context and direct session options, both managed attach activation members, and the prepared attach parameter.
    It shall additionally pass a segmented player id such as `dev.coder` through the real public config loader unchanged.
@@ -437,7 +389,7 @@ suite's real model calls.
 
 #### release-24
 
-Before tagging a release, the developer/agent shall run
+Before tagging a stable release, the developer/agent shall run
 `pnpm test:acceptance` locally. This live acceptance suite shall pack and
 install the candidate package once and create isolated fresh git repositories.
 It shall run the installed executable's headless shared-Captain path with real Claude and Codex adapters for bundled REVIEW, CODE, and DEV, using stdin as well as argument input, exact `{sessionId, reply}` JSON output, and no tmux-play session.
@@ -496,7 +448,7 @@ It shall give those processes one fresh owned npm cache, overriding inherited ca
 
 #### release-10
 
-Before tagging a release, the developer/agent shall verify, in this order:
+Before tagging a stable release, the developer/agent shall verify, in this order:
 
 - [ ] All tests pass (`pnpm test` from the repo root).
 - [ ] The local model-free release smoke passes (`pnpm smoke:release`;
@@ -532,58 +484,39 @@ Before releasing bounded session persistence, the maintainer shall verify that t
 Upgrade instructions shall require stopping every writer that shares the store, upgrading all hosts before new writes, and explicitly migrating selected monolithic sessions with retained original inputs; older writers and direct file readers are incompatible with the new physical format.
 The release shall state that the per-file bound does not limit total retained disk usage or the memory needed to hydrate logical recovery and replay.
 
+#### release-46
+
+The packed package shall export JavaScript and declarations for the shared artifact-environment service [[artifact-environment-1](artifact-environment.md#artifact-environment-1)], require managed-bundle global installation and loading acceptance through both front ends [[artifact-environment-3](artifact-environment.md#artifact-environment-3)], [[artifact-environment-5](artifact-environment.md#artifact-environment-5)], [[artifact-environment-7](artifact-environment.md#artifact-environment-7)], and retain the legacy artifact provisioning and separate credentialed live acceptance gates [[release-24](#release-24)], without treating a deterministic SDK load check as a real provider call.
+
+### release-48
+
+When a same-repository branch candidate is published for pre-merge delivery acceptance, the publisher shall use a distinct candidate lane under [DR-110](../decisions/110-managed-artifact-environments.md):
+
+- a unique SemVer `MAJOR.MINOR.PATCH-rc.N` package version, a matching immutable candidate source/tag identity, passing checks for that exact branch/PR head, and no requirement that the candidate already be merged into `main`;
+- an explicit non-`latest` npm dist-tag, provenance, public scoped-package access and the existing trusted OIDC publication authority, with no stable-tag publication or stable GitHub release as a side effect;
+- ordinary build, package, dependency-audit and credential-free gates retained, with the stable-only `main` and final stable preparation-record requirements confined to stable publication;
+- coordinated candidate dependencies naming the exact intended Cligent/Playbook candidate versions where needed, recorded separately from stable caret-range policy, with no checkout path, workspace link or manual SDK installation in the registry consumer;
+- a durable record of source head, PR, version, dependency candidate set, tarball integrity and actual registry installation results; source or packaged-code changes require a new candidate and affected verification;
+- formal stable publication remains a later, separately gated operation, and acceptance does not require moving `latest` before merge.
+
 ## Verification
 
 ### Install Closure Coverage
 
 #### release-13
 
+Where the publishable tarball is available, when package smoke installs it alone into an isolated global prefix, a nested-strategy consumer and an ephemeral npm exec tree, the suite shall verify the complete production install contract [[release-12](#release-12)]:
 
-The smoke test shall install the publishable tarball (`npm pack`)
-globally into a throwaway prefix in both documented shapes and
-shall probe each adapter from `@sublang/cligent`'s installed
-location — the module scope the adapter will itself import from at
-run time — rather than from the prefix root or a project-local
-install, either of which passes even when the SDK is unreachable
-to cligent (verifying [[release-12](#release-12)]).
-
-The smoke test shall fail unless, with **the tarball alone**:
-
-- `@sublang/cligent` is nested inside the installed
-  `@sublang/playbook` module tree;
-- no `@anthropic-ai` or `@openai` directory exists anywhere in the
-  installed closure; and
-- every adapter reports **unavailable** when probed.
-
-The smoke test shall further fail unless, with **the tarball plus
-each adapter SDK named as its own top-level install root**, every
-adapter reports **available** when probed from that same location.
-
-The smoke test shall additionally cover **the ephemeral exec tree**
-(`npm exec` / `npx`), probing from `@sublang/cligent`'s location
-inside that tree — where npm hoists it flat rather than nesting it:
-
-- with the tarball as the only package, every adapter shall report
-  **unavailable**, because no install command reaches an exec tree;
-- with the tarball plus each adapter SDK named as sibling packages
-  of one exec invocation, every adapter shall report **available**;
-- with the tarball plus only one SDK, the installed executable's own
-  gate shall block and print a re-run naming **every** lineup SDK —
-  the supplied one included — and no placeholder argument, because
-  each distinct package set materializes a distinct tree and a
-  missing-only re-run alternates between partial trees forever.
-
-The lean shape pins the footprint contract; the opted-in shape
-pins the resolution contract behind the documented install command;
-the exec shapes pin the documented `npx` form.
-A shape that hoists the SDK flat — an in-repository or
-project-local install — satisfies both probes regardless and shall
-not be substituted for any case.
+- Claude and Codex SDKs are present and loadable from the actual installed Cligent dependency tree, without a separately installed SDK, checkout, development tree or unrelated global root;
+- Cligent's own native lookup and readiness verdict agree with the installed SDK-owned executable identity on each tested supported native host;
+- an unrelated or incompatible SDK in a sibling root cannot shadow Cligent's selected dependency;
+- removal or damage of an included SDK in a fault fixture fails before an Agent call with a remedy targeting the tree the adapter actually uses, while missing authentication remains separately reported;
+- the remaining optional-adapter installation contracts remain unchanged, and no installed Playbook dependency introduces SLC.
 
 #### release-19
 
 The test suite shall fail unless `package.json` declares
-`@sublang/cligent` with a caret SemVer range whose floor meets the
+`@sublang/cligent` with the stable caret range or exact coordinated candidate specifier whose floor meets the
 [[release-14](#release-14)] floor and — unless the
 [[release-11](release.md#release-11)] local-development
 override is active, which rewrites both the recorded specifier and
@@ -623,17 +556,17 @@ unless all of the following hold of it:
   that travels with the package: an archive beneath the package root,
   never a linked directory and never a path climbing out of it;
 - `@sublang/cligent` satisfies [[release-14](release.md#release-14)]
-  in the committed pair itself — a caret range in the committed
+  in the committed pair itself — its permitted stable caret range or exact coordinated candidate in the committed
   manifest and a concrete resolved version in the committed importer —
   with no local-development exemption, that exemption belonging to a
   working copy mid-development and release-11 forbidding the state it
   exempts from ever reaching a commit;
-- every committed resolution falls inside the caret range its own
+- every committed resolution satisfies the permitted specifier its own
   manifest entry declares, release-14 having the pin refreshed within
   that range, and an overridden dependency excepted as the override's
   to decide. Range membership follows SemVer, under which a prerelease
   falls inside a range only where that range carries a prerelease on
-  the same version — so a stable caret admits none.
+  the same version — so a stable caret admits none; an exact coordinated candidate admits only that identical version under [[release-48](#release-48)].
 
 The last three clauses are what internal agreement alone cannot supply,
 and they are the ones no install failure will report. A manifest and a
@@ -672,17 +605,7 @@ are stated here rather than left to the install.
 
 #### release-27
 
-
-The test suite shall fail unless, for each adapter SDK wired by the
-bundled production config, `package.json` lists it under
-`devDependencies` and under none of `dependencies`,
-`optionalDependencies`, `peerDependencies`, or `peerDependenciesMeta`.
-Absence, not identity: cligent's own optional-peer declaration is the
-single range npm checks, so a restated range here is a second copy
-that can only drift — the earlier identity requirement froze at
-cligent's old floor the first time cligent's moved — and its absence
-is what keeps a cligent floor move from forcing a release of this
-package ([DR-027](../decisions/027-runtime-compatibility-from-cligent.md)) (verifying [[release-12](#release-12)]).
+When the packed manifest and production dependency closure are inspected, the suite shall verify that Playbook contains no duplicate SDK runtime ranges, its admitted Cligent floor supplies both included SDKs, both remain development conformance targets, and installing Playbook alone supplies the documented runtime closure without adding SLC [[release-12](#release-12)].
 
 #### release-23
 
@@ -799,11 +722,7 @@ execution contracts in [[release-12](#release-12)] and [[release-24](#release-24
 It shall fail — preserving the temporary root and naming the failing step —
 unless all of the following hold:
 
-- the two global install shapes probe every adapter from
-  `@sublang/cligent`'s own installed location, **unavailable** for the
-  tarball alone and **available** with each SDK named as its own top-level
-  install root, and the lean closure carries no `@anthropic-ai` or
-  `@openai` directory at any depth;
+- the global, nested and ephemeral install shapes supply both included SDKs through Cligent, while sibling-root and damaged-install controls retain the ownership and pre-Agent readiness contract [[release-12](#release-12)];
 - the installed executable answers top-level and `run` help with the fresh, continuation, and uncertain-recovery grammar, and `--list` names the CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT registries;
 - the hermetic fixture resolves neither engine import before launch, and a subprocess driver using the packed launcher's injected deterministic adapter drives its configured slash command through the compiled Captain with no tmux;
 - the first process provisions the fixture exactly once into the isolated prefix and returns only `{sessionId, reply}` after durable hand-off, a second process continues the same id from stdin with the stored Captain continuation and frozen working directory without replay or provisioning, and two further processes run one explicit-role fixture against that same id before and after compatible current retuning;
@@ -813,7 +732,7 @@ unless all of the following hold:
 - the retuned process applies the current Captain, player, and role model, effort, and absent, literal-false, or literal-true fast-mode values to the retained tokens, including explicit provider-default model and effort requests, while the stored structural projection, working directory, settled effects, public id, and repository remain unchanged (verifying [[release-28](#release-28)]);
 - two fresh packed-CLI configs apply literal-false and literal-true fast mode to a role backed by an unsupported adapter, and both fail before session-store access, registry preparation, registry import, adapter-SDK readiness, Captain-runtime creation, or host-runtime creation (verifying [[release-28](#release-28)]);
 - the installed Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT playbook subpaths construct, Captain, CODE, REVIEW, DEV, BRANCH, PR, and INSPECT expose retained-snapshot adoption while DECIDE, whose machine declares a parallel state, omits it ([[release-28](#release-28)]), every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
-- the nested installed `@sublang/cligent` satisfies the packed manifest's caret range; is reached through its root and `@sublang/cligent/tmux-play` public specifiers resolved from that nested copy; exposes the managed launch and direct-session runtime values and signatures plus the enumerated Captain lifecycle, context call, continuation, readonly native attachment, live approval callback and exact native/envelope/decision shape, complete skills/native-skills/browser/MCP setting, optional boolean `AgentCallSettings.ultracode`, fast-mode, subagent-model, and subagent-effort capability, typed-rejection, managed work-directory cleanup-authority, attachment activation, and synchronous native-hand-off release-floor members at the exact optionality and callable type Playbook relies on; exports callable `defaultAgentModels` and `isUltracodeSupported` with correct model-pair and adapter semantics, preserves both configured `ultracode` booleans, exports callable root fast-mode and subagent-model assertions and a native-skill support lookup whose results agree with Cligent's own public support descriptors; accepts and preserves a segmented player id such as `dev.coder` through its real config loader; resolves an empty roster to the Boss-only layout and initializes its public runtime core with an empty Captain player manifest; and carries full model and effort tuning selections that distinguish every concrete shell value from an explicit provider-default request (verifying [[release-14](#release-14)]); and
+- the nested installed `@sublang/cligent` satisfies the packed manifest's permitted stable caret range or exact coordinated candidate version; is reached through its root and `@sublang/cligent/tmux-play` public specifiers resolved from that nested copy; exposes the managed launch and direct-session runtime values and signatures plus the enumerated Captain lifecycle, context call, continuation, readonly native attachment, live approval callback and exact native/envelope/decision shape, complete skills/native-skills/browser/MCP setting, optional boolean `AgentCallSettings.ultracode`, fast-mode, subagent-model, and subagent-effort capability, typed-rejection, managed work-directory cleanup-authority, attachment activation, and synchronous native-hand-off release-floor members at the exact optionality and callable type Playbook relies on; exports callable `defaultAgentModels` and `isUltracodeSupported` with correct model-pair and adapter semantics, preserves both configured `ultracode` booleans, exports callable root fast-mode and subagent-model assertions and a native-skill support lookup whose results agree with Cligent's own public support descriptors; accepts and preserves a segmented player id such as `dev.coder` through its real config loader; resolves an empty roster to the Boss-only layout and initializes its public runtime core with an empty Captain player manifest; and carries full model and effort tuning selections that distinguish every concrete shell value from an explicit provider-default request (verifying [[release-14](#release-14)]); and
 - one deterministic Codex-shaped call through that nested installed runtime preserves complete commentary and final-response `text` messages as exactly two lines when terminal `done` supplies no result (verifying [[release-14](#release-14)] and [[release-28](#release-28)]); and
 - an external package declaring only `@sublang/playbook` type-checks with `skipLibCheck: false` against the packed self-contained session-store declaration and, through that facade alone, opens a store, lists and reads only the exact token-free summary of a CLI-written token-free manifest, acquires its lease, appends and reads stream entries with readability advancing ahead of durability, independently follows the complete append with no false durability or completeness fields, receives equalized final status from release, satisfies the frozen envelope, sequence, and readable-prefix contract, carries no resume token, and migrates supported legacy data only through the explicit source-retaining migrator (verifying [[release-33](#release-33)] and [[release-28](#release-28)]); and
 - an external package declaring only `@sublang/playbook` type-checks with `skipLibCheck: false` against the packed self-contained host-capabilities declaration and, through that facade alone, constructs live capabilities on a fresh Git worktree, drives one exclusive governed commit with a mid-completion correction-budget spend, receives its `one-descendant-commit` receipt and OID with the spent budget settled on the boundary, classifies one `unchanged` operation, agrees with the module observation and classification functions, obtains rejecting fail-closed capabilities, and leaves the worktree with one descendant commit, a clean status, and no active claim (verifying [[release-34](#release-34)] and [[release-28](#release-28)]).
@@ -938,6 +857,14 @@ Where a release candidate carries a versioned changelog and package manifest, wh
 - the changelog follows Keep a Changelog, contains the tagged version's dated notes, and uses the required heading order [[release-3](#release-3)], [[release-4](#release-4)], and [[release-5](#release-5)];
 - the workflow performs the ordered frozen install, build, compiled-sibling check, test, release-note extraction, publish, and GitHub Release steps [[release-7](#release-7)]; and
 - publishing uses OIDC trusted publishing with provenance and public access, with no static npm token [[release-8](#release-8)] and [[release-9](#release-9)].
+
+#### release-47
+
+When release smoke imports the candidate's new public subpath and drives managed and legacy filesystem registry fixtures through both installed front ends, the suite shall verify the exported service and complete managed-environment gate remain required alongside legacy and live acceptance [[release-46](#release-46)].
+
+### release-49
+
+When candidate publication and exact-version clean-prefix installation are exercised through the actual configured publisher, the system suite shall verify source/PR identity, candidate version and tag, trusted publication, intended transitive candidate acquisition, retained stable-lane restrictions and no mutation of `latest`, retaining failed and skipped publication evidence rather than claiming an unperformed install [[release-48](#release-48)].
 
 ## References
 

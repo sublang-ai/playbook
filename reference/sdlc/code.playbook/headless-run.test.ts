@@ -2152,7 +2152,7 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(out.stdout).toBe('');
     expect(FakeAdapter.calls).toEqual([]);
     expect(out.stderr).toContain(
-      `playbook run --json --verbose --no-provision --with ${first} ` +
+      `playbook.js run --json --verbose --no-provision --with ${first} ` +
         `--with=${second} -- '${input}'`,
     );
     expect(parseRunArgs(['--with', '--'])).toMatchObject({

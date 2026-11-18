@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "19.0.1",
+  "version": "19.1.0-rc.8",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT workflows driven by GEARS specs.",
   "license": "Apache-2.0",
@@ -177,7 +177,16 @@
     "reference/sdlc/inspect.playbook/inspect.playbook.d.ts",
     "reference/sdlc/inspect.playbook/inspect.registry.ts",
     "reference/sdlc/inspect.playbook/inspect.registry.js",
-    "reference/sdlc/inspect.playbook/inspect.registry.d.ts"
+    "reference/sdlc/inspect.playbook/inspect.registry.d.ts",
+    "src/artifact-environment.ts",
+    "src/artifact-environment.js",
+    "src/artifact-environment.d.ts",
+    "src/fresh-artifact.ts",
+    "src/fresh-artifact.js",
+    "src/fresh-artifact.d.ts",
+    "src/artifact-files.ts",
+    "src/artifact-files.js",
+    "src/artifact-files.d.ts"
   ],
   "bin": {
     "playbook": "reference/sdlc/code.playbook/bin/playbook.js"
@@ -279,6 +288,10 @@
     "./inspect/registry": {
       "types": "./reference/sdlc/inspect.playbook/inspect.registry.d.ts",
       "default": "./reference/sdlc/inspect.playbook/inspect.registry.js"
+    },
+    "./artifact-environment": {
+      "types": "./src/artifact-environment.d.ts",
+      "default": "./src/artifact-environment.js"
     }
   },
   "scripts": {
@@ -295,11 +308,12 @@
     "provenance": true
   },
   "dependencies": {
-    "@sublang/cligent": "^0.39.0",
+    "@sublang/cligent": "0.40.0-rc.3",
     "@sublang/spex": "^3.0.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "@babel/parser": "^7.29.7"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.325",

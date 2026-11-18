@@ -9,6 +9,8 @@ Accepted.
 Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR remains the accepted long-term direction, but it no longer gates dropping the project-local install and `npx` consumption story — this record's provisioning mechanism is the chosen near-term gate, delivered as a 3.x minor.
 Amended by [DR-031](031-shared-captain-session-front-ends.md): provisioning now applies to configured filesystem `playbooks.<id>.from` modules through the launch path shared by interactive and headless Captain sessions, not a positional direct-run module.
 
+Amended by [DR-110](110-managed-artifact-environments.md): extend environment preparation to external compilers and managed manifests, while retaining this legacy no-manifest provisioning path.
+
 ## Context
 
 - A compiled thin artifact is code: its FSM imports `xstate` and its runtime module imports `@sublang/playbook/xstate-runtime`, both resolved by Node walking up from the **artifact's** directory.
