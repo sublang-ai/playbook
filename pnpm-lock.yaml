@@ -12,8 +12,8 @@ importers:
         specifier: ^7.29.7
         version: 7.29.14
       '@sublang/cligent':
-        specifier: 0.40.0-rc.3
-        version: 0.40.0-rc.3(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))
+        specifier: 0.40.0
+        version: 0.40.0(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))
       '@sublang/spex':
         specifier: ^3.0.0
         version: 3.0.0
@@ -570,8 +570,8 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==, tarball: https://registry.npmjs.org/@stablelib/base64/-/base64-1.0.1.tgz}
 
-  '@sublang/cligent@0.40.0-rc.3':
-    resolution: {integrity: sha512-rKbgzJC9d5Cxsc8//zFnrSt/S6b8o5fuGkLrnlEwoKRSdXLQVEnK/K4zWHQfKWnLXCcH9WuN29TbvmrHqfDxOA==}
+  '@sublang/cligent@0.40.0':
+    resolution: {integrity: sha512-MCbCwCi3KrRmLc2P+Tlt7PjN89DE0b6UIPjnt12Hc9iMHgLv+5iNWdAVDsQ2rkANRlW5MVg2BUJHoPzKiIVQLg==}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:
@@ -1815,7 +1815,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@sublang/cligent@0.40.0-rc.3(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))':
+  '@sublang/cligent@0.40.0(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))':
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.6.6)
       '@anthropic-ai/claude-agent-sdk': 0.3.325(@anthropic-ai/sdk@0.96.0(zod@4.6.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.6))(zod@4.6.6)

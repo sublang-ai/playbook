@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [19.1.0] - 2026-11-18
+
+### Added
+
+- Register an existing SLC JavaScript entry with `playbook add`. A fresh headless run of its slash command gives the new workflow a dedicated Captain and role bindings on the requested adapter and model.
+- Prepare and validate workflow-owned artifact environments for SLC, including canonical JavaScript entries, native Windows junctions, and runtime identity checks.
+
+### Changed
+
+- Depend on Cligent 0.40.0 with the Claude and Codex SDK dependency trees included. Compiler definitions use compiler-owned checks and explicit Source return contracts.
+
+### Fixed
+
+- Preserve a successful workflow's single validated text output in its dedicated headless reply and report adapter errors on stderr.
+- Repair damaged included SDKs through the installed Cligent owner and keep the original command and arguments.
+- Keep native CommonJS dependencies on their own revision across Node 25 and 26, preserving cycles and live earlier revisions.
+
 ## [19.1.0-rc.8] - 2026-11-18
 
 ### Added
@@ -1177,7 +1194,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.1.0-rc.8...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.1.0...HEAD
+[19.1.0]: https://github.com/sublang-ai/playbook/compare/v19.0.1...v19.1.0
 [19.1.0-rc.8]: https://github.com/sublang-ai/playbook/compare/v19.0.1...v19.1.0-rc.8
 [19.0.1]: https://github.com/sublang-ai/playbook/compare/v19.0.0...v19.0.1
 [19.0.0]: https://github.com/sublang-ai/playbook/compare/v18.3.1...v19.0.0
