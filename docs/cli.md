@@ -33,6 +33,27 @@ nearer damaged package. Follow the reported installation-specific repair.
 Both front ends refuse unavailable or unsupported selected runtimes before
 business execution, with installed/required identity where available.
 
+## Register a local workflow
+
+```sh
+playbook add "./orders and reports/flow.mjs" --agent codex --model gpt-6.2-sol
+playbook --list
+playbook run "/flow /absolute/path/to/orders.csv"
+```
+
+Run `playbook add` with the JavaScript entry emitted by SLC. A relative path
+is resolved from the current directory and saved as an absolute path in the
+[primary config](configuration.md). The workflow supplies its own id,
+command, and role ids. Each role gets a dedicated player.
+
+`--agent` and `--model` configure the new workflow's dedicated Captain and each of its execution roles. A fresh `playbook run "/flow …"` uses that Captain for the session, including review of the results, and uses those role bindings for `flow`. The existing shared Captain, players, and other workflows are preserved.
+Registration validates the catalog without launching a workflow or calling
+a model. Agent login and SDK readiness are checked when starting a run. Repeating the same registration reports that it already exists.
+Conflicts and invalid entries leave the config unchanged.
+If the selected workflow succeeds with a single printable text result, the
+reply includes that result on its own line. Provider errors during the run
+report the adapter's reason on stderr.
+
 ## Interactive
 
 ```sh

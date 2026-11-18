@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "19.1.0-rc.8",
+  "version": "19.1.0",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, DECIDE, DEV, BRANCH, PR, and INSPECT workflows driven by GEARS specs.",
   "license": "Apache-2.0",
@@ -78,6 +78,9 @@
     "reference/sdlc/code.playbook/code.registry.js",
     "reference/sdlc/code.playbook/code.registry.d.ts",
     "reference/sdlc/code.playbook/playbook-captain.ts",
+    "reference/sdlc/code.playbook/registered-command.ts",
+    "reference/sdlc/code.playbook/registered-command.js",
+    "reference/sdlc/code.playbook/registered-command.d.ts",
     "reference/sdlc/code.playbook/playbook-captain.js",
     "reference/sdlc/code.playbook/ultracode.js",
     "reference/sdlc/code.playbook/ultracode.d.ts",
@@ -93,6 +96,7 @@
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
+    "reference/sdlc/code.playbook/bin/add.js",
     "reference/sdlc/code.playbook/bin/launch-config.js",
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/interactive-session.js",
@@ -308,7 +312,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@sublang/cligent": "0.40.0-rc.3",
+    "@sublang/cligent": "^0.40.0",
     "@sublang/spex": "^3.0.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",

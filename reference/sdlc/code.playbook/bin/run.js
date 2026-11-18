@@ -18,6 +18,7 @@ import {
   assertSubagentModelSupported,
 } from "@sublang/cligent";
 import { ultracodeForCall } from "../ultracode.js";
+import { parseRegisteredCommand } from "../registered-command.js";
 import { createTmuxPlayRuntime } from "@sublang/cligent/tmux-play";
 import {
   assertPlaybookEffectLedger,
@@ -46,6 +47,7 @@ import {
   relocateLegacyUserConfig,
   resolveFormerUserConfigPaths,
   resolveUserConfigPath,
+  scopedPlayerIds,
   snapshotRegistryEntry,
   suppliedModulesFromFlags,
 } from "./launch-config.js";
@@ -411,7 +413,7 @@ export async function runPlaybookRun(options = {}) {
     for (const line of configNotices) await writeStream(stderr, line);
 
     try {
-      const current = executionConfigFromPlan(plan);
+      const current = executionConfigFromPlan(continuing ? plan : selectWorkflowExecution(plan, input));
       if (continuing) {
         config = await validateFrozenExecutionConfig(
           priorRecord.structuralProjection,
@@ -828,6 +830,14 @@ export async function driveHeadlessCaptainTurn({
                 replies.push(record.text);
               } else if (record.type === "captain_status") {
                 await writeStream(stderr, `${record.message}\n`);
+              } else if (config.scopedWorkflowId !== undefined &&
+                (record.type === "player_event" || record.type === "captain_event") &&
+                record.event?.type === "error" &&
+                typeof record.event.payload?.message === "string"
+              ) {
+                const actor = record.type === "player_event" ? record.playerId : "Captain";
+                const reason = record.event.payload.message.replace(/[\p{Cc}\u2028\u2029]/gu, " ");
+                await writeStream(stderr, `playbook run: ${actor} (${record.event.agent}): ${reason}\n`);
               } else if (verbose && record.type === "captain_telemetry") {
                 await writeStream(stderr, `\u00b7 ${record.topic}\n`);
               }
@@ -1154,6 +1164,7 @@ export async function createCaptainSessionHost({
     else await forwardRecord(record);
   } }];
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
+    presentTerminalOutputFor: config.scopedWorkflowId,
     onTurnAttachments: (references) => { presentationAttachments = references; },
     beginPreparationMedia: (runtimeSessionId) => mediaProjector.beginPreparation(runtimeSessionId),
     abortPreparation: (reason) => host?.abortActiveTurn(typeof reason === 'string' ? reason : 'Captain preparation exceeded its 150-second limit'),
@@ -1348,9 +1359,22 @@ function captainHostBoundary(shell, restoreSnapshot, sessionLease, onInterrupted
 
 // Host-neutral execution-only projection. It is detached from the frozen
 // launch plan and intentionally excludes layout, theme, and notifications.
+function selectWorkflowExecution(plan, input) {
+  const parsed = parseRegisteredCommand(input);
+  if (parsed === undefined) return plan;
+  const selected = Object.values(plan.catalog).find(({ command }) => command === parsed.command);
+  if (selected?.executionCaptain === undefined) return plan;
+  return {
+    ...plan,
+    scopedWorkflowId: selected.id,
+    captain: selected.executionCaptain,
+  };
+}
+
 export function executionConfigFromPlan(plan) {
   return validateCaptainSessionExecutionProjection({
     schemaVersion: 2,
+    ...(plan.scopedWorkflowId === undefined ? {} : { scopedWorkflowId: plan.scopedWorkflowId }),
     captain: plan.captain,
     players: plan.players.map(({ id, agent }) => ({ id, ...agent })),
     catalog: Object.fromEntries(
@@ -1500,10 +1524,11 @@ function assertFrozenTuningSupported(config) {
 }
 
 function adaptersFromExecutionConfig(config) {
+  const selected = scopedPlayerIds(config.catalog, config.scopedWorkflowId);
   return [
     ...new Set([
       config.captain.adapter,
-      ...config.players.map((player) => player.adapter),
+      ...config.players.filter(({ id }) => selected === undefined || selected.has(id)).map(({ adapter }) => adapter),
     ]),
   ];
 }

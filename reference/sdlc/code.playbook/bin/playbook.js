@@ -87,6 +87,14 @@ export async function runPlaybookCli(options = {}) {
   const userConfigPath =
     options.userConfigPath ?? resolveUserConfigPath(env, home);
 
+  if (argv[0] === "add") {
+    const { runPlaybookAdd } = await import("./add.js");
+    return runPlaybookAdd({
+      argv: argv.slice(1), cwd: options.cwd ?? process.cwd(),
+      configPath: userConfigPath, env, homeDir: home, stdout, stderr,
+    });
+  }
+
   if (argv[0] === "migrate-session") {
     try {
       const { withPaths, rest } = extractWithFlags(argv.slice(1));
@@ -767,6 +775,7 @@ export async function runPlaybookCliEntry(options = {}) {
 
 function isManagedInteractiveInvocation(argv) {
   return (
+    argv[0] !== "add" &&
     !argv.includes("--help") &&
     !argv.includes("-h") &&
     !argv.includes("--list") &&
@@ -960,6 +969,8 @@ function helpText({
     "  playbook --theme-diagnostics [--with <path>]...",
     "           [--module <id>=<specifier>]... [--cwd <path>]",
     "  playbook --config <path> [tmux-play arguments...]",
+    "  playbook add <entry.mjs> --agent <adapter> --model <name>",
+    "           Register a local workflow. Both flags apply only to its role bindings.",
     "  playbook run [--with <path>]... [--module <id>=<specifier>]...",
     "               [--no-provision] [--json] [--verbose] [--] [input]",
     "  playbook run (--continue | --session <id>) [reply]",

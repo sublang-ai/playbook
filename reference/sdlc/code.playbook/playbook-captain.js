@@ -7,6 +7,7 @@ import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
 import { getNativeSkillSupport } from '@sublang/cligent';
 import { ultracodeForCall } from './ultracode.js';
+import { parseRegisteredCommand } from './registered-command.js';
 export { isUltracodeSupported } from './ultracode.js';
 import { assertPlaybookFailureCause } from '@sublang/playbook/runtime';
 import { assertPlaybookRuntimeSnapshot, assertPlaybookEffectLedger, emptyPlaybookEffectLedger, hiddenControlEnvelope, isPlaybookEffectLedgerMonotonicExtension, normalizeError, parseJudgeJson, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
@@ -101,12 +102,6 @@ const GIVE_UP_ACTION_ID = 'give-up';
 // Boss rather than sparing Boss a relay.
 const BOSS_QUESTION_OUTCOME = 'needsBossReply';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING = 'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
-function parseRegisteredCommand(prompt) {
-    const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
-    if (!match)
-        return undefined;
-    return { command: match[1], text: (match[2] ?? '').trim() };
-}
 // CAPTAIN-9: every session-Captain call is hidden control work. The runtime
 // prompt is preserved verbatim and the shell appends the labeled blocks the
 // compiled prompt references; the runtime composes no digest itself.
@@ -2819,6 +2814,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const resolveAttachments = deps.resolveAttachments;
     const beginPreparationMedia = deps.beginPreparationMedia;
     const onTurnAttachments = deps.onTurnAttachments;
+    const presentTerminalOutputFor = deps.presentTerminalOutputFor;
     let nextTurnAttachments = [];
     let pendingAttachments = [];
     const mergeAttachments = (...groups) => [...new Map(groups.flat().map((reference) => [reference.assetId, reference])).values()];
@@ -4798,9 +4794,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             else {
                 // CAPTAIN-20: the root is still alive here, so this is the one
                 // authoritative boundary that can retain the Boss-facing meaning its
-                // runtime publishes before disposal removes the frame. The opaque run
-                // output remains runtime-to-runtime data and never becomes Captain
-                // evidence (CAPPLAY-10).
+                // runtime publishes before disposal removes the frame. Raw output
+                // does not enter the result-phase prompt (CAPPLAY-10).
                 const description = result.stateDescription ?? result.terminal?.description ?? leafStateDescription(frame);
                 activeTurn?.settlementFacts.push(rootCompletionFact(frame, { ...result, ...(description === undefined ? {} : { stateDescription: description }) }));
                 // DR-107: beside the failure terminal's authored meaning, what the
@@ -4810,7 +4805,20 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     activeTurn?.settlementFacts.push(scriptFact);
                 recordTerminalRetention(frame, result);
                 const retention = pendingRetentionUpdates.get(frame.entry.id)?.kind === 'clear' ? 'clear' : 'keep';
+                let terminalText;
+                if (activeTurn && frame.entry.id === presentTerminalOutputFor && result.terminal?.kind === 'success') {
+                    const output = result.output;
+                    const values = output !== null && typeof output === 'object' && !Array.isArray(output)
+                        ? Object.values(output) : [output];
+                    const [text] = values;
+                    if (values.length === 1 && typeof text === 'string' && text.trim() &&
+                        !/[\p{Cc}\u2028\u2029]/u.test(text) && replyRejection(text) === undefined) {
+                        terminalText = text;
+                    }
+                }
                 await runEffect(() => disposeStack('final'));
+                if (activeTurn && terminalText !== undefined)
+                    activeTurn.terminalText = terminalText;
                 try {
                     await saveProgress(undefined, { id: randomUUID(), kind: 'completion', stateId: result.state.stateId ?? result.terminal?.stateId ?? 'completed', runtimeSessionId: frame.sessionId, playbookId: frame.entry.id, result: snapshotJsonValue({ state: result.state, retention, ...(description === undefined ? {} : { description }), ...(result.terminal === undefined ? {} : { terminalOutcome: result.terminal }) }) }, false);
                 }
@@ -5474,9 +5482,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const suffix = turn === undefined
             ? undefined
             : presentationSuffix(turn, assembleTurnReport(turn, settlement.stated ?? []));
-        const visibleText = suffix === undefined || settlement.text.includes(suffix)
+        const summary = suffix === undefined || settlement.text.includes(suffix)
             ? settlement.text
             : `${settlement.text.trimEnd()}\n\n${suffix}`;
+        const terminalText = turn?.terminalText;
+        const visibleText = terminalText === undefined || summary.split(/\r?\n/u).includes(terminalText)
+            ? summary : `${summary.trimEnd()}\n\n${terminalText}`;
         appendJournal('reply', visibleText);
         try {
             await trackTurnCall(settlement.context.emitReply(visibleText));

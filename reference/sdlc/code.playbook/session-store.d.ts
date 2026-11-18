@@ -115,12 +115,14 @@ export type SessionRetentionUpdate =
 
 export interface SessionExecutionProjection {
   readonly schemaVersion: 2;
+  readonly scopedWorkflowId?: string;
   readonly captain: Readonly<Record<string, any>>;
   readonly players: readonly Readonly<Record<string, any>>[];
   readonly catalog: Readonly<Record<string, any>>;
 }
 export interface SessionStructuralProjection {
   readonly schemaVersion: 1;
+  readonly scopedWorkflowId?: string;
   readonly captain: Readonly<Record<string, any>>;
   readonly players: readonly Readonly<Record<string, any>>[];
   readonly catalog: Readonly<Record<string, any>>;

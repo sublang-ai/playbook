@@ -35,7 +35,7 @@ $EDITOR "${SPEX_HOME:-$HOME/.spex}/config/playbook.config.yaml"
 The config is top-level (no `config:` wrapper): a `captain` agent, one flat
 `players` map of stable Captain-session agents, a `playbooks` map of enabled
 workflows and their explicit role bindings, an optional `sessions` storage
-locator, and optional `layout` / `notifications` / `theme`. The Captain runs
+locator, an optional `workflowCaptains` map for dedicated headless sessions, and optional `layout` / `notifications` / `theme`. The Captain runs
 hidden control and judge calls and writes the replies you see in the Captain
 pane or on headless stdout. The three presentation fields apply only to
 interactive tmux; headless runs ignore them.
@@ -467,11 +467,12 @@ rather than having role or player identity guessed.
 
 ## External playbooks
 
-`slc playbook my-workflow.md` emits `my-workflow.ts` beside its artifact
-directory. That file already default-exports the registry manifest Playbook
-requires: `id`, `command`, `intent`, `requiredRoleIds`, `validateOptions`,
-and `createRuntime`. Enable it under `playbooks`, bind every role listed in
-its `requiredRoleIds`, and invoke its effective slash command through Captain:
+`slc playbook my-workflow.md` emits `my-workflow.mjs` beside its artifact
+directory. Register it with
+`playbook add ./my-workflow.mjs --agent codex --model gpt-6.2-sol`.
+The command uses the entry's declared id, command and roles and preserves
+the shared Captain. It writes the dedicated agent block under `workflowCaptains.<workflow-id>`. An explicit headless run of its slash command starts a session using that Captain and the workflow's bound players. Nested calls still use the called workflow's existing role bindings. Fresh sessions for other workflows use their own configured Captain or the top-level `captain`. For custom workflow options or handpicked role bindings,
+configure the registry under `playbooks`:
 
 ```yaml
 players:
@@ -479,7 +480,7 @@ players:
 
 playbooks:
   my-workflow:
-    from: /absolute/path/to/my-workflow.ts
+    from: /absolute/path/to/my-workflow.mjs
     roles:
       worker: my.worker
 ```
@@ -488,7 +489,7 @@ playbooks:
 playbook run "/my-workflow perform the task"
 ```
 
-Importing a `.ts` registry uses Node's native type stripping, available
+Importing a legacy `.ts` registry uses Node's native type stripping, available
 unflagged on Node 22.18+ and 23.6+; on the older Node versions this
 package supports (>= 20.6), compile the registry and point `from` at the
 emitted `.js` module instead.

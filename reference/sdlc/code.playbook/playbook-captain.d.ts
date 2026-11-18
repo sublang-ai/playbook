@@ -68,6 +68,7 @@ export interface InterruptedReport {
     unresolvedEffects?: readonly PlaybookCaptainUnresolvedEffect[];
 }
 export interface PlaybookCaptainDeps {
+    presentTerminalOutputFor?: string;
     onTurnAttachments?: (references: readonly SessionAssetRef[]) => void;
     beginPreparationMedia?: (runtimeSessionId: string) => () => void;
     resolveAttachments?: (references: readonly SessionAssetRef[], signal: AbortSignal) => Promise<readonly Attachment[]>;

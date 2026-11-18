@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies the generic `playbook` launcher and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store, replay stream, and worktree host capabilities they publish for other hosts, and integration verification.
+This package specifies the generic `playbook` launcher, local `playbook add` registration, and non-interactive `playbook run` command, their configuration and provisioning behavior, the shared session store, replay stream, and worktree host capabilities they publish for other hosts, and integration verification.
 
 ## External Behavior
 
@@ -14,10 +14,31 @@ This package specifies the generic `playbook` launcher and non-interactive `play
 #### playbook-cli-1
 
 Where `@sublang/playbook` is installed, the package shall expose a `playbook` executable.
-When the user invokes `playbook` without `--config`, `--help`, `-h`, `--list`, or `--theme-diagnostics`, the command shall resolve its top-level config (seeding it when absent per [[playbook-cli-3](#playbook-cli-3)]), compose the Captain projection of [[playbook-cli-8](#playbook-cli-8)], run the launcher-owned readiness gate of [[playbook-cli-12](#playbook-cli-12)], and, when readiness passes, prepare and attach the gated managed tmux-play presenter ([[release-14](release.md#release-14)]) of [[playbook-cli-49](#playbook-cli-49)], consuming launcher-owned session, working-directory, provisioning, and overlay arguments rather than forwarding them.
+When the user invokes the interactive form of `playbook` without `--config`, `--help`, `-h`, `--list`, or `--theme-diagnostics`, the command shall resolve its top-level config (seeding it when absent per [[playbook-cli-3](#playbook-cli-3)]), compose the Captain projection of [[playbook-cli-8](#playbook-cli-8)], run the launcher-owned readiness gate of [[playbook-cli-12](#playbook-cli-12)], and, when readiness passes, prepare and attach the gated managed tmux-play presenter ([[release-14](release.md#release-14)]) of [[playbook-cli-49](#playbook-cli-49)], consuming launcher-owned session, working-directory, provisioning, and overlay arguments rather than forwarding them.
 The managed grammar shall accept only optional repeated `--with <path>`, optional repeated `--module <id>=<specifier>` under [[playbook-cli-96](#playbook-cli-96)], optional `--no-provision`, optional `--cwd <path>` on a fresh launch, and one optional `--session <id>` selector, and shall reject unknown tmux-play options rather than forwarding them across the managed durability boundary.
 When the user invokes `--theme-diagnostics` without `--config`, the command shall perform the same shared-config composition and readiness gate, launch the stock tmux-play diagnostic subprocess ([[release-14](release.md#release-14)]) with the composed config and inherited streams, consume launcher-owned overlay, supplied-module, and provisioning arguments, and forward the remaining diagnostic arguments verbatim.
 When the user supplies `--config <path>`, the command shall launch the stock tmux-play subprocess ([[release-14](release.md#release-14)]) with that path and inherited streams, bypass config seeding, composition, readiness, durable-session preparation, and managed attachment, reject every managed selector, overlay, or supplied module, and add no second config argument.
+
+#### playbook-cli-105
+
+When the user invokes `playbook add <entry.mjs> --agent <adapter> --model <name>`, the command shall resolve a local entry path relative to the invocation directory, use the established filesystem registry preparation and schema validation [[playbook-cli-46](#playbook-cli-46)], and use the entry's id, default command and exact declared role ids without constructing a runtime or making an Agent call.
+The entry command shall match the Captain's explicit slash-command grammar [[playbook-captain-2](playbook-captain.md#playbook-captain-2)].
+When the user requests `playbook add --help`, the command shall explain the grammar and that the two flags configure the new workflow's dedicated Captain and role bindings, without reading or writing configuration.
+
+#### playbook-cli-106
+
+When a new registration passes catalog validation, the command shall write its absolute entry path and declared command with an independent entry under `workflowCaptains.<id>` and a distinct new player per declared role, configure the dedicated Captain and those players with the selected adapter and model, and preserve every existing workflow, player and shared Captain setting in the primary config [[playbook-cli-3](#playbook-cli-3)].
+Registration shall preserve canonical local role ids verbatim, including non-ASCII ids, while generating independent player ids that satisfy the launcher grammar [[playbook-cli-4](#playbook-cli-4)].
+Where no primary configuration or former configuration is present, the command shall use the unmodified starter template as its base and publish it together with the successful registration.
+Where only a former configuration exists, the command shall report its path and how to use the existing configured-launch relocation [[playbook-cli-85](#playbook-cli-85)] before registration.
+Registration shall leave SDK and credential readiness to the ordinary run-time gate [[playbook-cli-40](#playbook-cli-40)].
+The resulting catalog shall expose the registered command to `playbook --list` [[playbook-cli-5](#playbook-cli-5)] and `playbook run` [[playbook-cli-18](#playbook-cli-18)].
+
+#### playbook-cli-107
+
+When registration encounters an already registered id with the same canonical entry, effective command, role set, dedicated Captain, and role adapter and model settings, the command shall report that it is already registered and exit successfully without rewriting the config.
+When an entry or argument is invalid, an id or effective command conflicts, or the config changed during registration, the command shall report the cause and exit nonzero without changing existing config bytes.
+When publishing a new or updated config, the command shall make complete contents visible atomically and shall refuse to overwrite an intervening registration.
 
 #### playbook-cli-2
 
@@ -58,8 +79,9 @@ Where either front end has accepted a syntactically valid configured invocation 
 
 Where the user authors the top-level generic config, the config shall keep tmux-play host fields at the top level and shall not wrap `playbooks`, `players`, `captain`, `layout`, `notifications`, or `theme` in a `config:` key.
 The config shall declare concrete session players under one flat top-level `players` map and enabled playbooks under one top-level `playbooks` map, while retaining no top-level `profiles` map ([DR-032](../decisions/032-explicit-roles-session-players.md)).
-The only accepted top-level keys shall be `captain`, `players`, `playbooks`, `skills`, `sessions`, `layout`, `notifications`, and `theme`; the retired `run` key shall receive the migration diagnostic of [[playbook-cli-28](#playbook-cli-28)], and every other key shall be rejected before preparation or import.
+The only accepted top-level keys shall be `captain`, `players`, `playbooks`, `workflowCaptains`, `skills`, `sessions`, `layout`, `notifications`, and `theme`; the retired `run` key shall receive the migration diagnostic of [[playbook-cli-28](#playbook-cli-28)], and every other key shall be rejected before preparation or import.
 Within a `playbooks.<id>` block, `from`, `command`, and `roles` shall be launcher-owned keys and every other key shall be that playbook's option slice; `from` is the explicit registry module specifier unless the launch supplies that playbook's module under [[playbook-cli-94](#playbook-cli-94)], `command` optionally overrides the playbook's default slash command, and the `<id>` key shall be the enabled playbook's own id, matching the registry module's manifest `id` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
+The optional `workflowCaptains` map shall use enabled workflow ids as keys and explicit adapter and model strings as values under their corresponding agent fields.
 The enabled playbook id, effective command, player id, and local role id shall not equal the reserved internal name `captain`.
 A player id shall match `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*`; dots shall remain literal characters rather than config hierarchy.
 Interactive and headless host projections shall preserve that exact id under [[playbook-cli-8](#playbook-cli-8)] and shall reject a host implementation that cannot represent the segmented grammar rather than mangle it.
@@ -131,6 +153,12 @@ The durable session shall impose no age, turn-count, completed-root-count, or mo
 #### playbook-cli-18
 
 When the user invokes `playbook run [input]` without a continuation selector, the command shall create one logical session over the same configured compiled Captain, catalog, nested engagement stack, and players as interactive `playbook` ([[playbook-cli-20](#playbook-cli-20)]).
+When a fresh headless input explicitly names a registered command whose workflow declares a dedicated Captain under `workflowCaptains`, the command shall open a session with that dedicated Captain for all control calls and result assessments, and shall check readiness only for that Captain and the selected workflow's bound players.
+The dedicated session shall retain the configured catalog and bindings so an explicitly called nested workflow can use its existing players.
+When the selected root reaches a successful terminal with exactly one printable text output that passes the Captain reply validation, the headless reply shall preserve that text as a standalone line if the Captain's reply did not already do so.
+When an adapter reports a provider error in a dedicated headless run, the command shall surface its reported cause on stderr independently of the closing reply.
+The scope and agent identities shall persist in the session projection; reopening shall use the scoped Captain with the existing compatibility and tuning rules.
+When an invocation has no such selection, it shall retain the shared Captain behavior.
 The command shall accept exactly zero or one positional value: a present value is the exact Boss text, while zero values reads stdin completely as UTF-8 text and submits that verbatim stream as one Boss turn.
 The command shall use whitespace only to reject empty input and shall never trim or otherwise rewrite accepted argv or stdin text.
 The command shall drain omitted positional input from stdin before config preparation, registry import, credential readiness, or SDK readiness, so a producer such as `spex scaffold --update` cannot deadlock behind a full pipe.
@@ -490,6 +518,7 @@ The canonical record shall use exactly the shared manifest fields and state vari
 The required `effectLedger` shall be the exact schema-version-1 value of [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)]; a settled record shall require it to equal its schema-version-4 shell snapshot member, while an uncertain record shall require it to be a monotonic extension of the immutable pre-turn shell-snapshot checkpoint, admit boundaries from the current or an earlier attempt only, require every current-attempt-number boundary to carry the marker's attempt id, and require each earlier attempt number to carry one stable UUID distinct from every other attempt.
 The required `unresolvedEffects` shall be the exact ordered bounded list of [[playbook-captain-58](playbook-captain.md#playbook-captain-58)] and shall obey the persistence, abandonment, and recovery invariants of [[playbook-cli-71](#playbook-cli-71)].
 After the former-default cutover [[session-storage-1](session-storage.md#session-storage-1)], ordinary selection within the chosen directory shall perform no inferred executable migration of record schemas `2`–`6`; explicit migration follows the shared migrator [[session-storage-10](session-storage.md#session-storage-10)]; the earlier schema-`5` shape shall use its closed key set without `unresolvedEffects` or abandonment members, the later shape shall use the canonical closed members now carried by schema `6`, and either fully validated shape may be classified as nonresumable for implicit selection or unrelated fresh discovery, while explicit selection and every direct pre-ledger shell or runtime snapshot shall reject before registry import, runtime construction, source-state restoration, or governed work rather than fabricate or infer a current record boundary.
+A session opened for a dedicated workflow Captain under [[playbook-cli-18](#playbook-cli-18)] shall carry its scoped workflow id in both projections and shall require that workflow to appear in the catalog.
 The structural projection shall be schema version `1` and shall retain exactly the normalized Captain and referenced-player adapter, instruction, and permission envelopes plus the complete catalog while omitting only model, effort, fast mode, Ultracode, subagent model, and subagent effort; the last-applied and attempted execution projections shall be schema version `2` and shall retain those same envelopes with every model and effort represented explicitly as a tagged concrete value or `provider-default` selection and each effective fast mode, Ultracode, subagent model, and subagent effort retained as an optional own boolean or string whose absence is the canonical provider default ([DR-075](../decisions/075-subagent-model-is-tuning.md), [DR-076](../decisions/076-subagents-delegate-by-default.md)).
 Each projection's catalog entry shall retain exactly `id`, canonical prepared `from`, registry-authored `manifestCommand`, effective `command`, `intent`, artifact schema `3` under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], required roles, concurrent role sets, exact role bindings, and the configured-only plain-JSON launcher option slice; `hostCapabilities` shall reject rather than participate in structural identity, execution identity, or continuation equality, and each execution role binding shall add its own complete tagged model and effort selections plus optional effective fast mode, Ultracode, subagent model, and subagent effort to the structural player id.
 The live schema-3 capability and its atomic write-ahead adapter shall exist only behind the current lease-owning host boundary, shall be rebuilt after each process's authoritative compatibility checks, and shall never become a member of a settled or uncertain record, its projections, its shell snapshot, or its retained generations; only its detached acknowledged ledger data and canonical identities may occupy the exact versioned ledger members ([[playbook-captain-5](playbook-captain.md#playbook-captain-5)]).
@@ -1534,3 +1563,10 @@ When integration tests normalize, project, and reopen independent Ultracode tuni
 #### playbook-cli-104
 
 When integration tests seed with a separate model environment, the suite shall verify adapter credentials remain independent, omitted model-home scope reads no user settings, and explicit local-user and approved seat scopes suppress Codex defaults on a private route (verifying [[playbook-cli-100](#playbook-cli-100)]).
+
+#### playbook-cli-108
+
+When the packed Playbook CLI is installed and exercised through its npm command entry on macOS, native Windows and Linux, the acceptance suite shall verify registration of an existing SLC order-check entry, listing its declared command and immediately running it on the sample CSV with the shared Captain on an unavailable Claude configuration and real Codex `gpt-6.2-sol` as both the role and result-assessing Captain [[playbook-cli-105](#playbook-cli-105)], [[playbook-cli-106](#playbook-cli-106)], [[playbook-cli-107](#playbook-cli-107)].
+Each run shall report `PAID_COUNT=2 PAID_TOTAL_CENTS=3500` and its evidence shall identify the adapter and model actually used for both calls.
+The suite shall verify a relative path containing spaces and Chinese characters, repeated registration, an id collision, an effective-command collision and an invalid entry, preserving the existing catalog, players and Captain on success and the original config bytes on failure.
+The metadata cases shall cover both runtime profile kinds, differing workflow ids and commands, zero or several roles, non-ASCII role ids, declared concurrent roles, and invalid manifest fields under the shared registry contract [[playbook-cli-46](#playbook-cli-46)].
