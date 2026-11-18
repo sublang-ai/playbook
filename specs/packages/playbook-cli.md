@@ -155,6 +155,8 @@ The durable session shall impose no age, turn-count, completed-root-count, or mo
 When the user invokes `playbook run [input]` without a continuation selector, the command shall create one logical session over the same configured compiled Captain, catalog, nested engagement stack, and players as interactive `playbook` ([[playbook-cli-20](#playbook-cli-20)]).
 When a fresh headless input explicitly names a registered command whose workflow declares a dedicated Captain under `workflowCaptains`, the command shall open a session with that dedicated Captain for all control calls and result assessments, and shall check readiness only for that Captain and the selected workflow's bound players.
 The dedicated session shall retain the configured catalog and bindings so an explicitly called nested workflow can use its existing players.
+When the selected root reaches a successful terminal with exactly one printable text output, the headless reply shall preserve that text as a standalone line if the Captain's reply did not already do so.
+When an adapter reports a provider error in a dedicated headless run, the command shall surface its reported cause on stderr independently of the closing reply.
 The scope and agent identities shall persist in the session projection; reopening shall use the scoped Captain with the existing compatibility and tuning rules.
 When an invocation has no such selection, it shall retain the shared Captain behavior.
 The command shall accept exactly zero or one positional value: a present value is the exact Boss text, while zero values reads stdin completely as UTF-8 text and submits that verbatim stream as one Boss turn.

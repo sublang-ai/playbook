@@ -1470,9 +1470,28 @@ playbooks:
         probed.push(adapter);
         return adapter === 'codex';
       },
+      entryTransform: (entry: ReturnType<typeof nestedEntries>['review']) => ({
+        ...entry,
+        createRuntime() {
+          const runtime = entry.createRuntime();
+          return {
+            ...runtime,
+            async handleBossInput(input: Parameters<PlaybookRuntime['handleBossInput']>[0]) {
+              const result = await runtime.handleBossInput(input);
+              if (result.outcome !== 'terminal') return result;
+              return {
+                ...result,
+                terminal: { stateId: 'done', kind: 'success' },
+                output: { summary: 'PAID_COUNT=2 PAID_TOTAL_CENTS=3500' },
+              };
+            },
+          };
+        },
+      }),
     };
     const first = await headlessHarness(['run', '/review orders.csv'], options);
     expect(first.result.code, first.stderr).toBe(0);
+    expect(first.stdout).toContain('\nPAID_COUNT=2 PAID_TOTAL_CENTS=3500\n');
     expect(first.events).toEqual(['review:orders.csv']);
     expect(first.result.config).toMatchObject({
       scopedWorkflowId: 'review',
@@ -1497,6 +1516,25 @@ playbooks:
     const shared = await headlessHarness(['run', '/code orders.csv'], options);
     expect(shared.result.code).toBe(1);
     expect(shared.stderr).toContain('claude');
+
+    const providerReason = 'Fixture provider: login expired. Run codex login.';
+    class ExpiredLoginAdapter extends FakeAdapter {
+      async *run(prompt: string, options?: AgentOptions): AsyncGenerator<AgentEvent> {
+        if (prompt !== 'review-coder') {
+          yield* super.run(prompt, options);
+          return;
+        }
+        yield createEvent('error', 'codex', {
+          code: 'PROVIDER_ERROR', message: providerReason, recoverable: false,
+        });
+        yield createEvent('done', 'codex', { status: 'error', usage: { toolUses: 0 }, durationMs: 1 });
+      }
+    }
+    const expired = await headlessHarness(['run', '/review orders.csv'], {
+      ...options,
+      adapterImports: { ...options.adapterImports, codex: async () => ExpiredLoginAdapter },
+    });
+    expect(expired.stderr).toContain(`flow.worker (codex): ${providerReason}`);
   });
 
   it('runs configured CODE through nested REVIEW on the real headless host', async () => {

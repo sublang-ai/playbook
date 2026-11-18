@@ -50,6 +50,9 @@ command, and role ids. Each role gets a dedicated player.
 Registration validates the catalog without launching a workflow or calling
 a model. Agent login and SDK readiness are checked when starting a run. Repeating the same registration reports that it already exists.
 Conflicts and invalid entries leave the config unchanged.
+If the selected workflow succeeds with a single printable text result, the
+reply includes that result on its own line. Provider errors during the run
+report the adapter's reason on stderr.
 
 ## Interactive
 

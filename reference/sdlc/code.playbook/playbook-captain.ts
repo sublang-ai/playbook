@@ -150,6 +150,7 @@ export interface InterruptedReport {
 }
 
 export interface PlaybookCaptainDeps {
+  presentTerminalOutputFor?: string;
   onTurnAttachments?: (references: readonly SessionAssetRef[]) => void;
   beginPreparationMedia?: (runtimeSessionId: string) => () => void;
   resolveAttachments?: (references: readonly SessionAssetRef[], signal: AbortSignal) => Promise<readonly Attachment[]>;
@@ -716,6 +717,7 @@ interface ActiveTurnSummary {
 
 /** The shell state of one Boss turn (DR-029). */
 interface ActiveTurn {
+  terminalText?: string;
   readonly workerReports: Map<string, string>;
   readonly workerStepStarts: Map<string, ReadonlySet<string>>;
   readonly workerCalls: Map<string, { frame: EngagementFrame; callId: string; roleId: string; playerId: string; stateId: string; finalText: string }>;
@@ -4822,6 +4824,7 @@ export function createPlaybookCaptainShell(
   const resolveAttachments = deps.resolveAttachments;
   const beginPreparationMedia = deps.beginPreparationMedia;
   const onTurnAttachments = deps.onTurnAttachments;
+  const presentTerminalOutputFor = deps.presentTerminalOutputFor;
   let nextTurnAttachments: readonly SessionAssetRef[] = [];
   let pendingAttachments: readonly SessionAssetRef[] = [];
   const mergeAttachments = (...groups: readonly (readonly SessionAssetRef[])[]) => [...new Map(groups.flat().map((reference) => [reference.assetId, reference])).values()];
@@ -7308,9 +7311,8 @@ export function createPlaybookCaptainShell(
       } else {
         // CAPTAIN-20: the root is still alive here, so this is the one
         // authoritative boundary that can retain the Boss-facing meaning its
-        // runtime publishes before disposal removes the frame. The opaque run
-        // output remains runtime-to-runtime data and never becomes Captain
-        // evidence (CAPPLAY-10).
+        // runtime publishes before disposal removes the frame. Raw output
+        // does not enter the result-phase prompt (CAPPLAY-10).
         const description = result.stateDescription ?? result.terminal?.description ?? leafStateDescription(frame);
         activeTurn?.settlementFacts.push(rootCompletionFact(frame, { ...result, ...(description === undefined ? {} : { stateDescription: description }) }));
         // DR-107: beside the failure terminal's authored meaning, what the
@@ -7320,6 +7322,16 @@ export function createPlaybookCaptainShell(
         recordTerminalRetention(frame, result);
         const retention = pendingRetentionUpdates.get(frame.entry.id)?.kind === 'clear' ? 'clear' : 'keep';
         await runEffect(() => disposeStack('final'));
+        if (activeTurn && frame.entry.id === presentTerminalOutputFor && result.terminal?.kind === 'success') {
+          const output = result.output;
+          const values = output !== null && typeof output === 'object' && !Array.isArray(output)
+            ? Object.values(output) : [output];
+          const [text] = values;
+          if (values.length === 1 && typeof text === 'string' && text.trim() &&
+              !/[\p{Cc}\u2028\u2029]/u.test(text)) {
+            activeTurn.terminalText = text;
+          }
+        }
         try { await saveProgress(undefined, { id: randomUUID(), kind: 'completion', stateId: result.state.stateId ?? result.terminal?.stateId ?? 'completed', runtimeSessionId: frame.sessionId, playbookId: frame.entry.id, result: snapshotJsonValue({ state: result.state, retention, ...(description === undefined ? {} : { description }), ...(result.terminal === undefined ? {} : { terminalOutcome: result.terminal }) }) }, false); }
         catch { /* The last acknowledged step result remains available. */ }
       }
@@ -8100,10 +8112,13 @@ export function createPlaybookCaptainShell(
             turn,
             assembleTurnReport(turn, settlement.stated ?? []),
           );
-    const visibleText =
+    const summary =
       suffix === undefined || settlement.text.includes(suffix)
         ? settlement.text
         : `${settlement.text.trimEnd()}\n\n${suffix}`;
+    const terminalText = turn?.terminalText;
+    const visibleText = terminalText === undefined || summary.split('\n').includes(terminalText)
+      ? summary : `${summary.trimEnd()}\n\n${terminalText}`;
     appendJournal('reply', visibleText);
     try {
       await trackTurnCall(settlement.context.emitReply(visibleText));

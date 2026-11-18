@@ -830,6 +830,14 @@ export async function driveHeadlessCaptainTurn({
                 replies.push(record.text);
               } else if (record.type === "captain_status") {
                 await writeStream(stderr, `${record.message}\n`);
+              } else if (config.scopedWorkflowId !== undefined &&
+                (record.type === "player_event" || record.type === "captain_event") &&
+                record.event?.type === "error" &&
+                typeof record.event.payload?.message === "string"
+              ) {
+                const actor = record.type === "player_event" ? record.playerId : "Captain";
+                const reason = record.event.payload.message.replace(/[\p{Cc}\u2028\u2029]/gu, " ");
+                await writeStream(stderr, `playbook run: ${actor} (${record.event.agent}): ${reason}\n`);
               } else if (verbose && record.type === "captain_telemetry") {
                 await writeStream(stderr, `\u00b7 ${record.topic}\n`);
               }
@@ -1156,6 +1164,7 @@ export async function createCaptainSessionHost({
     else await forwardRecord(record);
   } }];
   const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
+    presentTerminalOutputFor: config.scopedWorkflowId,
     onTurnAttachments: (references) => { presentationAttachments = references; },
     beginPreparationMedia: (runtimeSessionId) => mediaProjector.beginPreparation(runtimeSessionId),
     abortPreparation: (reason) => host?.abortActiveTurn(typeof reason === 'string' ? reason : 'Captain preparation exceeded its 150-second limit'),
