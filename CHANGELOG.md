@@ -10,19 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [19.1.0-rc.7] - 2026-11-18
-
-### Fixed
-
-- Repair damaged included SDKs through the actual running Cligent owner and keep the original installed command and arguments. Update CLI help and real global/nested/ephemeral installation gates to the included-SDK contract.
-
-## [19.1.0-rc.6] - 2026-11-18
-
-### Changed
-
-- Pin the coordinated Cligent 0.40.0-rc.3 candidate for public-registry installation acceptance. Runtime behavior is unchanged.
-
-## [19.1.0-rc.5] - 2026-11-18
+## [19.1.0-rc.8] - 2026-11-18
 
 ### Added
 
@@ -30,9 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Include Cligent 0.40.0-rc.1 with both Claude and Codex SDK dependency trees. Compiler definitions use compiler-owned checks and explicit Source return contracts.
+- Include the coordinated public Cligent 0.40.0-rc.3 candidate with both Claude and Codex SDK dependency trees. Compiler definitions use compiler-owned checks and explicit Source return contracts.
 
 ### Fixed
+
+- Repair damaged included SDKs through the actual running Cligent owner and keep the original installed command and arguments. Update CLI help and real global/nested/ephemeral installation gates to the included-SDK contract.
 
 - Keep native CommonJS `module.require` dependencies on their own revision across Node 25 and 26, preserving real Module objects, cycles and live earlier revisions.
 
@@ -1183,9 +1173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.1.0-rc.7...HEAD
-[19.1.0-rc.7]: https://github.com/sublang-ai/playbook/compare/v19.0.0...v19.1.0-rc.7
-[19.1.0-rc.6]: https://github.com/sublang-ai/playbook/compare/v19.0.0...v19.1.0-rc.6
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v19.1.0-rc.8...HEAD
+[19.1.0-rc.8]: https://github.com/sublang-ai/playbook/compare/v19.0.0...v19.1.0-rc.8
 [19.0.0]: https://github.com/sublang-ai/playbook/compare/v18.3.1...v19.0.0
 [18.3.1]: https://github.com/sublang-ai/playbook/compare/v18.3.0...v18.3.1
 [18.3.0]: https://github.com/sublang-ai/playbook/compare/v18.2.0...v18.3.0
