@@ -10,8 +10,9 @@
 // error, which is what this probe provides for both the interactive
 // launcher and `run`.
 
-import { readFileSync } from 'node:fs';
-import { sep } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { classifyRuntime } from '@sublang/cligent';
@@ -163,6 +164,23 @@ function selfPackageSpec() {
   return '@sublang/playbook';
 }
 
+function includedRuntimeOwner() {
+  const require = createRequire(import.meta.url);
+  for (const base of require.resolve.paths('@sublang/cligent') ?? []) {
+    try {
+      const root = realpathSync(join(base, '@sublang/cligent'));
+      const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+      if (manifest.name === '@sublang/cligent') {
+        const packages = new Set(['claude', 'codex'].flatMap(adapter =>
+          runtimeTargetsFor(adapter).filter(target => target.kind === 'peer' &&
+            manifest.dependencies?.[target.package]).map(target => target.package)));
+        return { root, packages };
+      }
+    } catch { /* Continue to the owning package boundary. */ }
+  }
+  return { packages: new Set() };
+}
+
 // One clause describing a runtime verdict. `unsupported` carries versions,
 // because "not installed" for a runtime that is installed sends the user
 // hunting for something already present (PBCLI-40).
@@ -186,6 +204,9 @@ function describeVerdict(verdict) {
 export function adapterSdkFailureLines(unusableAdapters, options = {}) {
   if (unusableAdapters.length === 0) return [];
   const ephemeralNpx = options.ephemeralNpx ?? detectEphemeralNpxInstall();
+  const included = includedRuntimeOwner();
+  const includedFault = unusableAdapters.some(({ verdicts }) =>
+    verdicts.some(v => v.target.kind === 'peer' && included.packages.has(v.target.package)));
   const lines = [
     `Adapter runtimes not usable: ${unusableAdapters
       .map(
@@ -205,22 +226,26 @@ export function adapterSdkFailureLines(unusableAdapters, options = {}) {
   );
   const peerInstalls = unusableAdapters.flatMap(({ verdicts }) =>
     verdicts
-      .filter((v) => v.target.kind === 'peer')
+      .filter((v) => v.target.kind === 'peer' && !included.packages.has(v.target.package))
       .map((v) => `npm install -g ${v.repair.spec}`),
   );
-  if (ephemeralNpx) {
-    const sdks =
+  if (includedFault) lines.push(
+    '  Repair the included SDKs in this running Cligent installation:',
+    `    node ${shellQuote(join(included.root, 'bin', 'repair-included-runtimes.mjs'))}`,
+  );
+  if (ephemeralNpx && (!includedFault || peerInstalls.length > 0)) {
+    const sdks = (
       options.requiredSdks ??
       unusableAdapters.flatMap(({ verdicts }) =>
         verdicts
           .filter((v) => v.target.kind === 'peer')
           .map((v) => v.repair.spec),
-      );
+      )).filter(spec => ![...included.packages].some(name => spec.startsWith(name + '@')));
     const args = (options.invocation ?? [])
       .map((arg) => ` ${shellQuote(arg)}`)
       .join('');
     lines.push(
-      '  This npx / npm exec run is ephemeral: no npm install reaches its tree.',
+      '  Optional SDKs in an npx / npm exec run require an explicit package set.',
     );
     if (cliInstalls.length > 0) {
       // Prerequisites first: the re-run probes the CLI again, so following
@@ -241,6 +266,11 @@ export function adapterSdkFailureLines(unusableAdapters, options = {}) {
       ...peerInstalls.map((command) => `  ${command}`),
       ...cliInstalls.map((command) => `  ${command}`),
     );
+    if (includedFault) {
+      const args = (options.invocation ?? []).map(arg => ` ${shellQuote(arg)}`).join('');
+      lines.push('  After repair, re-run the same installed command:',
+        `    node ${shellQuote(fileURLToPath(new URL('./playbook.js', import.meta.url)))}${args}`);
+    }
   }
   lines.push('');
   return lines;

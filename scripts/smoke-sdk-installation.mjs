@@ -31,6 +31,42 @@ export function verifySdkInstallShapes(tarball, root, existingGlobalPrefix, shar
     writeFileSync(join(owner, 'smoke-adapters.mjs'), readFileSync(join(scriptRoot, 'smoke-adapters.mjs')));
     return JSON.parse(run('node', ['./smoke-adapters.mjs', expectation, allowedRoot], owner));
   }
+  function frontendFault(playbookRoot, cligentRoot, adapter) {
+    const home = join(root, 'fault-home-' + adapter);
+    mkdirSync(join(home, '.spex/config'), { recursive: true });
+    writeFileSync(join(home, '.spex/config/playbook.config.yaml'), JSON.stringify({
+      captain: { adapter: 'claude', model: 'claude-fable-5-2' },
+      players: {
+        'sdk.coder': { adapter: 'claude', model: 'claude-fable-5-2' },
+        'sdk.reviewer': { adapter: 'codex', model: 'gpt-6.1-sol' },
+      },
+      playbooks: {
+        code: { from: '@sublang/playbook/code/registry', roles: { coder: 'sdk.coder' } },
+        review: { from: '@sublang/playbook/review/registry', roles: { coder: 'sdk.coder', reviewer: 'sdk.reviewer' } },
+      },
+    }));
+    const driver = join(playbookRoot, '.sdk-fault-guard.mjs');
+    writeFileSync(driver, `
+import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
+let launches = 0, stderr = '';
+const home = ${JSON.stringify(home)};
+const result = await runPlaybookCli({ argv: [], homeDir: home,
+  env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home + '/.config',
+    ANTHROPIC_API_KEY: 'sdk-smoke-unused', OPENAI_API_KEY: 'sdk-smoke-unused', CODEX_API_KEY: 'sdk-smoke-unused' },
+  stdout: { write() { return true; } }, stderr: { write(text) { stderr += text; return true; } },
+  spawn() { launches++; throw Error('PRE_AGENT_BOUNDARY_CROSSED'); },
+});
+console.log(JSON.stringify({ code: result.code, launches, stderr }));
+if (!result.code || result.code === 127 || launches !== 0) throw Error('Installed readiness gate did not stop before Agent launch');
+if (!stderr.includes(${JSON.stringify(join(realpathSync(cligentRoot), 'bin/repair-included-runtimes.mjs'))}))
+  throw Error('Installed readiness diagnostic did not target its Cligent owner');
+if (stderr.includes('npm install -g @anthropic-ai/claude-agent-sdk') || stderr.includes('npm install -g @openai/codex-sdk'))
+  throw Error('Installed help still advertises an ineffective sibling SDK install');
+if (!stderr.includes(${JSON.stringify(join(realpathSync(playbookRoot), 'reference/sdlc/code.playbook/bin/playbook.js'))}))
+  throw Error('Installed repair did not preserve the same runnable frontend');
+`);
+    return JSON.parse(run('node', [driver]));
+  }
   const globalPrefix = existingGlobalPrefix ?? join(root, 'global');
   if (!existingGlobalPrefix) run('npm', ['install', '-g', '--prefix', globalPrefix,
     '--no-audit', '--no-fund', '--prefer-offline', tarball]);
@@ -54,7 +90,10 @@ export function verifySdkInstallShapes(tarball, root, existingGlobalPrefix, shar
   const nestedReport = probe(nestedOwner, nested);
   for (const item of nestedReport.records) {
     const held = item.sdkRoot + '.smoke-held'; renameSync(item.sdkRoot, held);
-    try { probe(nestedOwner, nested, 'missing-' + item.id); }
+    try {
+      probe(nestedOwner, nested, 'missing-' + item.id);
+      frontendFault(join(nested, 'node_modules/@sublang/playbook'), nestedOwner, item.id);
+    }
     finally { renameSync(held, item.sdkRoot); }
   }
   probe(nestedOwner, nested);
