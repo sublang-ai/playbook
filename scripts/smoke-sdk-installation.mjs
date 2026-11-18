@@ -9,13 +9,36 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
-export function verifySdkInstallShapes(tarball, root, existingGlobalPrefix, sharedCache = join(root, 'npm-cache')) {
+export function sdkFaultDriverSource(home, playbookRoot, cligentRoot) {
+  return `
+import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
+let launches = 0, stderr = '';
+const home = ${JSON.stringify(home)};
+const result = await runPlaybookCli({ argv: [], homeDir: home,
+  env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home + '/.config',
+    ANTHROPIC_API_KEY: 'sdk-smoke-unused', OPENAI_API_KEY: 'sdk-smoke-unused', CODEX_API_KEY: 'sdk-smoke-unused' },
+  stdout: { write() { return true; } }, stderr: { write(text) { stderr += text; return true; } },
+  spawn() { launches++; throw Error('PRE_AGENT_BOUNDARY_CROSSED'); },
+  launchManagedTmuxPlay() { launches++; throw Error('PRE_AGENT_BOUNDARY_CROSSED'); },
+});
+console.log(JSON.stringify({ code: result.code, launches, stderr }));
+if (!result.code || result.code === 127 || launches !== 0) throw Error('Installed readiness gate did not stop before Agent launch');
+if (!stderr.includes(${JSON.stringify(join(realpathSync(cligentRoot), 'bin/repair-included-runtimes.mjs'))}))
+  throw Error('Installed readiness diagnostic did not target its Cligent owner');
+if (stderr.includes('npm install -g @anthropic-ai/claude-agent-sdk') || stderr.includes('npm install -g @openai/codex-sdk'))
+  throw Error('Installed help still advertises an ineffective sibling SDK install');
+if (!stderr.includes(${JSON.stringify(join(realpathSync(playbookRoot), 'reference/sdlc/code.playbook/bin/playbook.js'))}))
+  throw Error('Installed repair did not preserve the same runnable frontend');
+`;
+}
+
+export function verifySdkInstallShapes(tarball, root, existingGlobalPrefix, sharedCache = join(root, 'npm-cache'), environment = process.env) {
   mkdirSync(root, { recursive: true });
   let sequence = 0;
   function run(command, args, cwd = root) {
     const start = Date.now();
     console.log(`[SDK installation ${sequence + 1}] ${command} ${args.join(' ')}`);
-    const env = { ...process.env, NODE_PATH: '', npm_config_fund: 'false', npm_config_cache: sharedCache };
+    const env = { ...environment, NODE_PATH: '', npm_config_fund: 'false', npm_config_cache: sharedCache };
     delete env.npm_config_prefix;
     delete env.NPM_CONFIG_PREFIX;
     const result = spawnSync(command, args, { cwd, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024,
@@ -46,25 +69,7 @@ export function verifySdkInstallShapes(tarball, root, existingGlobalPrefix, shar
       },
     }));
     const driver = join(playbookRoot, '.sdk-fault-guard.mjs');
-    writeFileSync(driver, `
-import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
-let launches = 0, stderr = '';
-const home = ${JSON.stringify(home)};
-const result = await runPlaybookCli({ argv: [], homeDir: home,
-  env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home + '/.config',
-    ANTHROPIC_API_KEY: 'sdk-smoke-unused', OPENAI_API_KEY: 'sdk-smoke-unused', CODEX_API_KEY: 'sdk-smoke-unused' },
-  stdout: { write() { return true; } }, stderr: { write(text) { stderr += text; return true; } },
-  spawn() { launches++; throw Error('PRE_AGENT_BOUNDARY_CROSSED'); },
-});
-console.log(JSON.stringify({ code: result.code, launches, stderr }));
-if (!result.code || result.code === 127 || launches !== 0) throw Error('Installed readiness gate did not stop before Agent launch');
-if (!stderr.includes(${JSON.stringify(join(realpathSync(cligentRoot), 'bin/repair-included-runtimes.mjs'))}))
-  throw Error('Installed readiness diagnostic did not target its Cligent owner');
-if (stderr.includes('npm install -g @anthropic-ai/claude-agent-sdk') || stderr.includes('npm install -g @openai/codex-sdk'))
-  throw Error('Installed help still advertises an ineffective sibling SDK install');
-if (!stderr.includes(${JSON.stringify(join(realpathSync(playbookRoot), 'reference/sdlc/code.playbook/bin/playbook.js'))}))
-  throw Error('Installed repair did not preserve the same runnable frontend');
-`);
+    writeFileSync(driver, sdkFaultDriverSource(home, playbookRoot, cligentRoot));
     return JSON.parse(run('node', [driver]));
   }
   const globalPrefix = existingGlobalPrefix ?? join(root, 'global');

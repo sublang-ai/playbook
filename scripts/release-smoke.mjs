@@ -1631,7 +1631,7 @@ function stepLean(root, state) {
 }
 
 function stepOptedIn(root, state) {
-  return verifySdkInstallShapes(state.tarball, join(root, 'sdk-shapes'), state.leanPrefix, isolatedNpmCache);
+  return verifySdkInstallShapes(state.tarball, join(root, 'sdk-shapes'), state.leanPrefix, isolatedNpmCache, smokeEnv());
 }
 
 // Step 4 — the installed executable's own non-launching surfaces.
