@@ -398,7 +398,7 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
     try {
       // A schema-9 append is synced, with any new segment's name, before it
       // is acknowledged, so its checkpoint only fixes the bound prefix.
-      if (logFormat) { await assertOwner(); durableBinding = log.binding(); }
+      if (logFormat) { await assertOwner(); await log.verify(); durableBinding = log.binding(); }
       else { await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner(); }
       lastDurableSeq = lastReadableSeq;
       if (prefix !== null) prefix.durable = { seq: lastDurableSeq, sha256: prefix.hash.copy().digest('hex') };

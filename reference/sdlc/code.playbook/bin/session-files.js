@@ -405,6 +405,13 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
         if (open.bytes >= SEGMENT_SEAL_BYTES) await seal();
       },
       seal,
+      // A checkpoint's proof that the open segment is still the file this
+      // writer appended to: same identity and length, without reading it.
+      async verify() {
+        if (open === null) return;
+        const current = await fs.lstat(join(replayDir, open.name));
+        if (!sameFileIdentity(current, open.identity) || current.size !== open.bytes || current.isSymbolicLink()) throw new Error('session replay segment changed outside its writer');
+      },
       binding: () => ({ sealed: sealed.map((entry) => ({ ...entry })), open: open === null ? null : { name: open.name, byteLength: open.bytes, sha256: open.hash.copy().digest('hex') } }),
       referencedBlobs: () => new Set(referenced),
       async close() { await handle?.close(); handle = undefined; },

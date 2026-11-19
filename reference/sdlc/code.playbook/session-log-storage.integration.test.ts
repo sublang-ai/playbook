@@ -344,12 +344,14 @@ describe('schema-9 cost independent of session length (DR-111)', () => {
     return { writes, replayDir, assetsDir: join(sessionsDir, `${id}.assets`) };
   }
 
-  it('makes the same file operations per progress write at 200 and 600 records, touching no segment or asset', async () => {
+  it('makes the same file operations per progress write at 200 and 600 records, reading no segment or asset', async () => {
     const short = await progressWrites(200);
     const long = await progressWrites(600);
     for (const run of [short, long]) {
       for (const calls of run.writes) {
-        expect(calls.filter(({ path }) => path.startsWith(run.replayDir) || path.startsWith(run.assetsDir))).toEqual([]);
+        // The open segment's identity is checked by one lstat; nothing is read.
+        expect(calls.filter(({ op, path }) => path.startsWith(run.replayDir) && op !== 'lstat')).toEqual([]);
+        expect(calls.filter(({ path }) => path.startsWith(run.assetsDir))).toEqual([]);
       }
     }
     expect(long.writes.map((calls) => calls.length)).toEqual(short.writes.map((calls) => calls.length));
