@@ -1,0 +1,16 @@
+{
+ "schemaVersion": 7,
+ "kind": "captain-session",
+ "sessionId": "8a000000-0000-4000-8000-000000000003",
+ "state": "history-only",
+ "reason": "legacy schema 3 has no supported recovery",
+ "cwd": "/fixture/project",
+ "createdAt": "2026-10-01T00:00:00.000Z",
+ "updatedAt": "2026-10-01T00:00:01.000Z",
+ "replay": {
+  "seq": 2,
+  "sha256": "5e794c5e209ef113b895bf7afcd4dd59701b4ef282cdf1d3c4ed426edc561be8",
+  "incomplete": false
+ },
+ "contextSeq": null
+}

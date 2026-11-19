@@ -5,6 +5,7 @@
 
 Sessions in the two physical formats earlier than schema 9 ([DR-111](../../../../../specs/decisions/111-a-session-is-a-manifest-and-a-replay-log.md)), written by the Playbook 19.1.0 store before its writers were removed.
 They are the inputs of the conversion command's tests; tests copy them before use and never change them in place.
+`expected/` holds what that store read from each: the logical manifest and the exact replay bytes, the conversion's required output.
 
 | Session | Format | Contents |
 | --- | --- | --- |

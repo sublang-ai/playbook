@@ -1,0 +1,2 @@
+{"v":1,"seq":1,"record":{"type":"turn_started","timestamp":1,"turnId":1,"turn":{"id":1,"prompt":"old"}}}
+{"v":1,"seq":2,"record":{"type":"captain_reply","timestamp":2,"turnId":1,"text":"old reply"}}

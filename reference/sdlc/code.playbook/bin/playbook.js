@@ -95,6 +95,40 @@ export async function runPlaybookCli(options = {}) {
     });
   }
 
+  // DR-111: the manual conversion of schema 7 and 8 sessions to schema 9;
+  // only this command loads the conversion module.
+  if (argv[0] === "sessions" && argv[1] === "upgrade") {
+    const usage = "Usage: playbook sessions upgrade [<dir>] [--recursive] [--dry-run] [--with <path>]...\n";
+    try {
+      const { withPaths, rest } = extractWithFlags(argv.slice(2));
+      if (rest.length === 1 && ["--help", "-h"].includes(rest[0])) {
+        stdout.write(usage);
+        stdout.write("  Converts sessions saved by earlier versions in place and keeps their\n  former files in .legacy-sessions/ beside each sessions directory.\n  Quit every app and host using these sessions first.\n");
+        return { code: 0 };
+      }
+      const flags = new Set(rest.filter((value) => value.startsWith("-")));
+      const positional = rest.filter((value) => !value.startsWith("-"));
+      const unknown = [...flags].filter((flag) => !["--recursive", "--dry-run"].includes(flag));
+      if (unknown.length > 0 || positional.length > 1) throw new Error(`unexpected arguments ${JSON.stringify([...unknown, ...positional.slice(1)])}\n${usage}`);
+      const root = positional[0] !== undefined
+        ? resolve(options.cwd ?? process.cwd(), positional[0])
+        : options.sessionStore?.sessionsDir ?? resolveLaunchSessionsDir({
+          userConfigPath, overlayPaths: withPaths, env, homeDir: home,
+          ...(options.sessionsDir !== undefined ? { sessionsDir: options.sessionsDir } : {}),
+          preparePrimary: false,
+        });
+      const { upgradeSessions, formatUpgradeReport } = await import("./session-upgrade.js");
+      const dryRun = flags.has("--dry-run");
+      const results = await upgradeSessions({ root, recursive: flags.has("--recursive"), dryRun, storeOptions: { env, homeDir: home } });
+      const report = formatUpgradeReport(results, { dryRun });
+      stdout.write(report.text);
+      return { code: report.failed > 0 ? COMPOSITION_FAILURE_EXIT_CODE : 0 };
+    } catch (error) {
+      stderr.write(`playbook sessions upgrade: ${errorMessage(error)}\n`);
+      return { code: COMPOSITION_FAILURE_EXIT_CODE };
+    }
+  }
+
   if (argv[0] === "migrate-session") {
     try {
       const { withPaths, rest } = extractWithFlags(argv.slice(1));
@@ -977,6 +1011,7 @@ function helpText({
     "  playbook run --session <id> --retry-uncertain",
     "  playbook run --session <id> --discard-uncertain",
     "  playbook migrate-session <id> [--with <path>]...",
+    "  playbook sessions upgrade [<dir>] [--recursive] [--dry-run] [--with <path>]...",
     "  playbook --help",
     "",
     `Default config: ${userConfigPath}`,
