@@ -6,7 +6,7 @@
 ## Status
 
 Proposed (2026-11-19), after long sessions spent minutes at every host start, turn opening and Git sync on the per-file cost of the bounded chunk layout [[1]] [[2]].
-Amends [DR-094](094-bounded-session-persistence.md): replaces its chunked physical representation and its reading and conversion of earlier physical formats; its logical recovery contract, durable dependency publication, exact replay bytes, per-file bound and quota decisions stand.
+Amends [DR-094](094-bounded-session-persistence.md): replaces its chunked physical representation, and moves the conversion of earlier physical formats out of the store into a separate command; its logical recovery contract, durable dependency publication, exact replay bytes, per-file bound and quota decisions stand.
 Amends [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a reader's verified boundary becomes a byte offset in the replay log instead of a chain head.
 Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its representation only: the writer's verified prefix is the replay log it verified and appended, with no chain to walk.
 
@@ -25,7 +25,8 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
   - `validate` in 0.06 s and lease acquisition in 0.06 s on Windows;
   - a publication flat at about 20 ms;
   - an append at 1.1 ms on Windows and 4.0 ms on macOS with a sync per append.
-- Few sessions exist in earlier physical formats, and keeping their readers and conversion would keep two layouts and their cost in every host.
+- Few sessions exist in earlier physical formats.
+- Reading them at run time would keep two layouts and their cost in every host, while their owners still need a way to keep them.
 
 ## Decision
 
@@ -51,8 +52,17 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
   - the cumulative digest at the bound sequence.
 - A reader that verified a prefix continues from its byte offset and verifies only the bytes after it.
 - Each file the store opens is checked once against the private-entry rules; on Windows that is one owner and descriptor read per file.
-- The store does not read, convert or migrate the schema 7 monolithic or schema 8 chunked formats.
-  - It reports such a session as an unsupported version and leaves its files unchanged.
+- At run time the store reads only schema 9.
+  - It reports a session in the schema 7 monolithic or schema 8 chunked format as an unsupported version and leaves its files unchanged.
+- A separate command, run by hand and never loaded by the store at run time, converts schema 7 and schema 8 sessions to schema 9:
+  - it takes one sessions directory, or, with a recursive option, a directory under which it finds every sessions directory without following links;
+  - it skips a session already in schema 9, in an unknown format or held by a lease, and reports every session's outcome;
+  - it verifies the former representation completely and writes the new one under the session's lease;
+  - it switches only after the new manifest's logical content, the replay's exact bytes and its cumulative digest equal the former ones;
+  - it moves the former files into a `.legacy-sessions/` directory beside that sessions directory, outside the portable session namespace;
+  - it rebinds the session's provider hints to the new manifest;
+  - an interrupted conversion leaves the former session unchanged and can run again.
+- The command remains at least until the next major release, when its removal is reconsidered.
 
 ## Consequences
 
@@ -62,13 +72,16 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
   - Because the log is append-only, the replay prefix the previous manifest binds stays readable.
 - On Windows, replacing the manifest fails while another process holds it open without delete sharing; the writer retries within its operation and otherwise fails the publication, keeping the previous manifest.
 - Blobs that no manifest references are removed only by the lease holder at settlement.
-- Sessions saved by earlier versions are not readable by this version; an embedding host decides how to present them, and an earlier version still reads them.
+- Until converted, sessions saved by earlier versions are not readable by this version.
+  - An embedding host decides how to present them; the conversion command, or an earlier version, makes them readable.
+- The conversion command keeps read-only decoders for schema 7 and schema 8, tested against fixtures generated before the earlier writers are removed.
 - The specs change with this decision:
   - session-persistence is rewritten for the new representation;
-  - session-storage-1 (locations), session-storage-10 and session-persistence-5 (legacy migration), and session-storage-12 and session-storage-19 (deletion and export inventory) change;
+  - session-storage-1 (locations), session-storage-12 and session-storage-19 (deletion and export inventory) change;
+  - session-storage-10 and session-persistence-5 (legacy migration) become the conversion command's rules;
   - session-assets gains a writer-kept inventory;
   - playbook-cli-82 and playbook-cli-83 change their verified boundary from a chain head to a byte offset.
-- Embedding hosts adopt the layout together with this release: their sync units, private-file rules and any import of earlier formats.
+- Embedding hosts adopt the layout together with this release: their sync units, private-file rules, the exclusion of `.legacy-sessions/` from sync, and the removal of any import of earlier formats.
 
 ## References
 
