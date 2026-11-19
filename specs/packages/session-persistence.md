@@ -78,7 +78,8 @@ The lease writer shall be constructed from a complete verified read of the log [
 
 - its sealed segments' names, lengths and digests and its open segment's name, identity, length and running digest, so a checkpoint binds the durable prefix without reading a segment;
 - a verified prefix: a running SHA-256 of the exact envelope bytes it verified and appended, the digest at its latest successful checkpoint, and the context records among those envelopes [[session-storage-5](session-storage.md#session-storage-5)], from which recovery publication and context recording take the applicable context and the durable prefix's digest [[session-storage-4](session-storage.md#session-storage-4)]; where it holds none, because its initialization failed or its replay latched [[playbook-cli-76](playbook-cli.md#playbook-cli-76)], they read the complete log instead;
-- the blob parts its log references.
+- the blob parts its log references;
+- the latest envelopes it appended, up to 8 MiB of their lines, from which it answers a lease-bound read [[playbook-cli-76](playbook-cli.md#playbook-cli-76)] of a suffix that starts within them without opening a segment, until its replay latches.
 
 At each checkpoint it shall verify, by one status read and no content read, that its open segment is still the file it appends to at the length it wrote; a replaced or changed segment latches replay [[playbook-cli-76](playbook-cli.md#playbook-cli-76)].
 
@@ -98,7 +99,7 @@ When integration tests place schema 2–8 sessions and unknown roots beside sche
 
 ### session-persistence-13
 
-When integration tests make consecutive progress writes on real sessions of 200 and 600 records holding twenty assets, they shall verify, through injected filesystem operations, that each write opens and reads no segment or asset file and makes the same number of filesystem operations at both lengths, and that validation opens the manifest file and each segment once [[session-persistence-11](#session-persistence-11)] [[session-persistence-12](#session-persistence-12)].
+When integration tests make consecutive progress writes on real sessions of 200 and 600 records holding twenty assets, they shall verify, through injected filesystem operations, that each write opens and reads no segment or asset file and makes the same number of filesystem operations at both lengths, that validation opens the manifest file and each segment once [[session-persistence-11](#session-persistence-11)] [[session-persistence-12](#session-persistence-12)], and that a lease-bound read of the suffix the lease appended opens no segment while a read starting earlier does, each returning what an independent reader returns [[session-persistence-12](#session-persistence-12)].
 
 ### session-persistence-14
 

@@ -406,6 +406,34 @@ describe('schema-9 cost independent of session length (DR-111)', () => {
     }
   }, 60_000);
 
+  it('answers a lease read of what the lease appended without opening a segment, and earlier reads from the log', async () => {
+    const { id, sessionsDir, replayDir } = await longSession(50);
+    const { calls, fsOps } = recordingFs();
+    const store = createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps });
+    const lease = await store.acquire(id);
+    const start = (await lease.readStream()).lastReadableSeq;
+    for (let write = 1; write <= 3; write++) {
+      await lease.append({ type: 'player_event', timestamp: write }, 'coder');
+      calls.length = 0;
+      const next = await lease.readStream({ afterSeq: start + write - 1 });
+      expect(next.entries.map(({ seq, record }: any) => [seq, record.timestamp])).toEqual([[start + write, write]]);
+      expect(calls.filter(({ op, path }) => op === 'open' && path.startsWith(replayDir))).toEqual([]);
+    }
+    const suffix = await lease.readStream({ afterSeq: start });
+    // A caller changing what it read changes no later read.
+    suffix.entries[0].record.timestamp = -1;
+    expect((await lease.readStream({ afterSeq: start })).entries[0].record.timestamp).toBe(1);
+    suffix.entries[0].record.timestamp = 1;
+    calls.length = 0;
+    const earlier = await lease.readStream({ afterSeq: start - 1 });
+    expect(calls.some(({ op, path }) => op === 'open' && path.startsWith(replayDir))).toBe(true);
+    // Both answers equal what an independent reader of the log returns.
+    const independent = createSessionStore({ sessionsDir, hostname: 'session-log-follower' });
+    expect(suffix.entries).toEqual((await independent.readStream(id, { afterSeq: start })).entries);
+    expect(earlier.entries).toEqual((await independent.readStream(id, { afterSeq: start - 1 })).entries);
+    await lease.release();
+  }, 60_000);
+
   it('rejects a log rolled back below a live follower position while a new store accepts the retained prefix', async () => {
     const { id, sessionsDir, replayDir } = await longSession(20);
     const follower = createSessionStore({ sessionsDir, hostname: 'session-log-follower' });

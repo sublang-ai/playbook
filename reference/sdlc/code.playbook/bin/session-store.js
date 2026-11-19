@@ -168,6 +168,8 @@ const DEFAULT_FS_OPERATIONS = Object.freeze({
   unlink,
 });
 const EMPTY_REPLAY_PREFIX_DIGEST = createHash('sha256').digest('hex');
+// A lease writer keeps at most this much of what it appended for its reads.
+const MAX_KEPT_APPENDED_BYTES = 8 * 1024 * 1024;
 
 class ReplaySnapshotChangedError extends Error {
   constructor(message) {
@@ -329,6 +331,13 @@ async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner
   // DR-111: the log writer and the log prefix its durable sequence binds;
   // without a writer the manifest keeps binding its earlier prefix.
   let log = null, durableBinding;
+  // DR-111: the envelopes this writer appended are exactly the log's suffix
+  // after `appendedFrom`, so the lease-bound read of that suffix the host's
+  // observer makes after each record opens no file: on Windows, opening a
+  // segment just appended to costs a fresh antivirus scan of the whole file.
+  // A latch or a request below the kept suffix reads the log instead.
+  const appended = [], appendedSizes = [];
+  let appendedFrom = null, appendedBytes = 0;
   let tail = Promise.resolve();
   const enqueue = (operation) => { const result = tail.then(operation); tail = result.catch(() => {}); return result; };
   const status = () => Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
@@ -348,6 +357,7 @@ async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner
     log = await files.createLogWriter({ read, sealedNames: new Set((binding?.sealed ?? []).map(({ name }) => name)) });
     durableBinding = log.binding();
     lastReadableSeq = lastDurableSeq = history.lastReadableSeq;
+    appendedFrom = lastReadableSeq;
     const hash = createHash('sha256').update(bytes);
     prefix = {
       hash, durable: { seq: lastDurableSeq, sha256: hash.copy().digest('hex') },
@@ -369,6 +379,16 @@ async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner
       prefix.hash.update(line);
     } catch { prefix = null; }
   };
+  const keepAppended = (line, seq) => {
+    try { appended.push(parseReplayEnvelope(line.subarray(0, -1), seq)); }
+    catch { appended.length = appendedSizes.length = appendedBytes = 0; appendedFrom = seq; return; }
+    appendedSizes.push(line.length);
+    appendedBytes += line.length;
+    while (appendedBytes > MAX_KEPT_APPENDED_BYTES && appended.length > 0) {
+      appendedFrom = appended.shift().seq;
+      appendedBytes -= appendedSizes.shift();
+    }
+  };
   const append = (record, role) => {
     if (closed) return Promise.reject(new Error('replay append admission is closed for release'));
     if (incomplete || lastReadableSeq === null) return Promise.resolve();
@@ -388,8 +408,16 @@ async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner
         await log.append(line, seq);
         lastReadableSeq = seq;
         extendPrefix(line, sanitized, seq);
+        keepAppended(line, seq);
       } catch (cause) { await latch(); throw cause; }
     });
+  };
+  // The requested `afterSeq` when the kept suffix answers it, else undefined.
+  const keptReadFrom = (options) => {
+    if (incomplete || appendedFrom === null) return undefined;
+    let afterSeq;
+    try { afterSeq = validateReplayReadOptions(options); } catch { return undefined; }
+    return afterSeq >= appendedFrom && afterSeq <= lastReadableSeq ? afterSeq : undefined;
   };
   const checkpointNow = async () => {
     if (incomplete || lastReadableSeq === null) return;
@@ -410,6 +438,12 @@ async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner
       return enqueue(async () => {
         await assertOwner();
         if (lastReadableSeq === null) throw new Error('replay stream is unavailable for this lease');
+        const afterSeq = keptReadFrom(options);
+        if (afterSeq !== undefined) {
+          // Each read returns its own entries, as a read of the log does.
+          const entries = appended.filter(({ seq }) => seq > afterSeq).map((entry) => structuredClone(entry));
+          return freezeReplayLeaseReadResult(entries, lastReadableSeq, lastDurableSeq, incomplete);
+        }
         const result = await readStream(options);
         lastReadableSeq = result.lastReadableSeq;
         return freezeReplayLeaseReadResult(result.entries, lastReadableSeq, lastDurableSeq, incomplete);
