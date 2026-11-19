@@ -284,17 +284,14 @@ describe('schema-9 publication and crash safety (DR-111)', () => {
   it.each(['before', 'after'])('keeps a complete manifest when publication stops %s its rename', async (when) => {
     let target = '';
     let failures = 0;
+    // The publication stops at its rename: before it, or after it took
+    // effect and before anything later (the directory sync is a no-op on
+    // Windows, so it cannot carry the injection there).
     const fsOps = {
       async rename(from: string, to: string) {
-        if (to === target && when === 'before' && failures++ === 0) throw Object.assign(new Error('injected crash before rename'), { code: 'EIO' });
-        return fs.rename(from, to);
-      },
-      async open(path: string, flags: any, mode?: number) {
-        const handle = await fs.open(path, flags, mode);
-        if (when !== 'after' || path !== dirname(target) || target === '' || failures !== 0) return handle;
-        failures++;
-        await handle.close();
-        throw Object.assign(new Error('injected crash after rename'), { code: 'EIO' });
+        if (to !== target || failures++ !== 0) return fs.rename(from, to);
+        if (when === 'after') await fs.rename(from, to);
+        throw Object.assign(new Error(`injected crash ${when} rename`), { code: 'EIO' });
       },
     };
     const { store, id, lease, file } = await fixture(fsOps);

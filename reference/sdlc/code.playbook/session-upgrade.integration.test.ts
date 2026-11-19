@@ -94,7 +94,10 @@ describe('session conversion (DR-111)', () => {
     expect(hints).toEqual({ ...hintsBefore, checkpointSha256: digest(await fs.readFile(join(sessionsDir, `${ids.settled8}.json`))) });
     const lease = await store.acquire(ids.settled8);
     expect(await lease.consumeHints()).toMatchObject({ players: { 'dev.coder': 'player-token-2' }, captain: { kind: 'pinned', token: 'captain-token-2' } });
-    expect((await lease.assertContinuable()).resumable).toBe(true);
+    // The fixtures were recorded with POSIX working directories, which are
+    // not native on Windows, so there only that reason may remain.
+    if (process.platform === 'win32') await expect(lease.assertContinuable()).rejects.toThrow(/^recorded working directory is not native; checkpoint relocation is unsupported$/);
+    else expect((await lease.assertContinuable()).resumable).toBe(true);
     await lease.append({ type: 'after_conversion', timestamp: 1 });
     await lease.release();
     // The torn final line no checkpoint covered is repaired by the next lease.
@@ -111,7 +114,8 @@ describe('session conversion (DR-111)', () => {
     for (const path of wanted) await copySessions(path);
     for (const skipped of ['.git', 'node_modules', '.legacy-sessions']) await copySessions(join(base, skipped, 'x', 'sessions'));
     await copySessions(join(base, 'outside', 'sessions'));
-    await fs.symlink(join(base, 'outside'), join(base, 'link'));
+    // A junction is Windows' directory link that needs no symlink privilege.
+    await fs.symlink(join(base, 'outside'), join(base, 'link'), process.platform === 'win32' ? 'junction' : undefined);
     await copySessions(join(base, 'named-otherwise'));
     await fs.mkdir(join(base, 'empty', 'sessions'), { recursive: true });
     await fs.rm(join(base, 'outside'), { recursive: true });
