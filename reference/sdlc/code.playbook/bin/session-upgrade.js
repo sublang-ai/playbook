@@ -10,7 +10,7 @@ import { constants } from 'node:fs';
 import * as nativeFs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { assertPrivateEntry, mkdirPrivate, renameWithRetry, sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
+import { assertPrivateEntry, mkdirPrivate, needsTightening, renameWithRetry, sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
 import { createSessionFiles, SESSION_STORAGE_VERSION } from './session-files.js';
 import { validateSessionHints, validateSessionManifest } from './portable-codec.js';
 import { createCaptainSessionStore, SESSION_ID_PATTERN } from './session-store.js';
@@ -180,12 +180,16 @@ function checkpointPrefix(replay, seq) {
   return replay.subarray(0, end);
 }
 
-// Tighten-only preparation of the former files, as opening them did.
+// Tighten-only preparation of the former files, as opening them did. Only
+// an entry with excess POSIX bits is opened to tighten it; every file is
+// admitted again when it is read, and on Windows nothing is tightened, so
+// there a file costs no descriptor read here.
 async function prepareFormerFiles(sessionsDir, sessionId, fs) {
   const tighten = async (path, directory) => {
     let stat;
     try { stat = await fs.lstat(path); } catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
-    await tightenPrivateEntry(path, stat, directory, fs, 'former session preparation');
+    if (needsTightening(stat, directory)) await tightenPrivateEntry(path, stat, directory, fs, 'former session preparation');
+    else if (directory) assertPrivateEntry(stat, true, 'former session preparation', path);
     return true;
   };
   for (const suffix of ['.json', '.records.jsonl', '.replay.json', '.hints.json']) await tighten(join(sessionsDir, `${sessionId}${suffix}`), false);
