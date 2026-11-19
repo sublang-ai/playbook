@@ -6,10 +6,12 @@ import * as fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionStore, projectCaptainSessionStructure } from './session-store.js';
+import { createSessionStore as createStore, projectCaptainSessionStructure } from './session-store.js';
 import { createBoundedReplay } from './bin/session-replay.js';
 import { MAX_SESSION_CHUNK_BYTES } from './bin/session-chunks.js';
 
+// Schema 8 (chunks) and its migration: kept until DR-111 removes them.
+const createSessionStore = (options: Record<string, any> = {}) => createStore({ storageVersion: 8, ...options });
 const roots: string[] = [];
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });

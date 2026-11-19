@@ -120,6 +120,7 @@ if (phase === 'start') {
 const store = createSessionStore({ sessionsDir: join(dir, 'sessions'), fsOps: { async rename(from, to) {
   let point = phase === 'start' && scenario.includes('rename') && String(from).endsWith('.tmp')
     ? JSON.parse(await readFile(from, 'utf8')) : undefined;
+  if (point?.schemaVersion === 9) point = point.manifest;
   if (point?.schemaVersion === 8) point = await decodeStoredManifest(JSON.stringify(point), createSessionChunks({ directory: join(dir, 'sessions', `${point.sessionId}.chunks`) }), point.sessionId);
   const savingResult = point?.uncertain?.progress?.steps.some((step) => step.result !== undefined);
   if (savingResult && scenario === 'script-before-rename') kill();

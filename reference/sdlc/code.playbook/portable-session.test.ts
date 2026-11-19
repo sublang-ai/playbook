@@ -8,10 +8,12 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
+import { createSessionStore as createStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
+// Schema 8 (chunks) and its migrations: kept until DR-111 removes them.
+const createSessionStore = (options: Record<string, any> = {}) => createStore({ storageVersion: 8, ...options });
 import { discardSessionUncertain, openSessionHost } from './session-host.js';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
-import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, removeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
+import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, removeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence-v8.js';
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, {recursive:true,force:true}))); });

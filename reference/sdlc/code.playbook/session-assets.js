@@ -3,7 +3,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdirPrivate, privatePermissions } from './bin/private-paths.js';
+import { assertPrivateEntry, mkdirPrivate, needsTightening, ownerAccessPresent, syncDirectory as syncPrivateDirectory } from './bin/private-paths.js';
 import { link, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
@@ -65,22 +65,22 @@ export async function externalizeAgentEvent(store, event) {
 function assertOwner(stat, label) {
   if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error(`${label} is not owned by the current user`);
 }
+// The store's private-entry admission (session-storage-26 on Windows),
+// comparing only the ordinary 0777 bits on POSIX (session-assets-3).
 function assertDirectory(stat, path) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
   assertOwner(stat, 'asset owner directory');
-  if (process.platform === 'win32' ? !privatePermissions(stat, 0o700, path) : (stat.mode & 0o777) !== 0o700) throw new Error('asset owner directory must have private 0700 permissions');
+  try { assertPrivateEntry(stat, true, 'asset owner directory', path, { mask: 0o777 }); }
+  catch { throw new Error('asset owner directory must have private 0700 permissions'); }
 }
 function assertFile(stat, label, path) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error(`${label} must be a single-link regular file`);
   assertOwner(stat, label);
-  if (process.platform === 'win32' ? !privatePermissions(stat, 0o600, path) : (stat.mode & 0o777) !== 0o600) throw new Error(`${label} must have private 0600 permissions`);
+  try { assertPrivateEntry(stat, false, label, path, { mask: 0o777 }); }
+  catch { throw new Error(`${label} must have private 0600 permissions`); }
 }
 function sameFile(a, b) { return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs; }
-async function syncDirectory(directory) {
-  if (process.platform === 'win32') return;
-  const handle = await open(directory, constants.O_RDONLY | noFollow);
-  try { assertDirectory(await handle.stat(), directory); await handle.sync(); } finally { await handle.close(); }
-}
+const syncDirectory = (directory) => syncPrivateDirectory(directory, { open });
 
 /** One immutable owner. A session host holds its ordinary lease around mutations. */
 export function createAssetStore(options) {
@@ -92,6 +92,9 @@ export function createAssetStore(options) {
   // only this leaf inside it (session-storage-11).
   const createAncestors = options.createAncestors ?? true;
   let importTail = Promise.resolve();
+  // DR-111: the writer-kept inventory, by asset ID, of verified descriptors:
+  // loaded once from a verified scan, then extended by this owner's imports.
+  let inventory;
   const ensureDirectory = async (create) => {
     if (create) {
       try { await mkdirPrivate(directory, { mkdir, lstat }, { recursive: createAncestors }); }
@@ -104,14 +107,15 @@ export function createAssetStore(options) {
     try { before = await lstat(directory); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
     if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('asset owner directory must be a real directory');
     assertOwner(before, 'asset owner directory');
-    if (process.platform !== 'win32' && (before.mode & 0o700) !== 0o700) throw new Error('asset owner directory has insufficient owner permissions');
+    if (!ownerAccessPresent(before, true)) throw new Error('asset owner directory has insufficient owner permissions');
     const directoryHandle = await open(directory, constants.O_RDONLY | noFollow);
     try {
       const opened = await directoryHandle.stat();
-      if (process.platform === 'win32') assertDirectory(opened, directory);
+      // A Windows entry is admitted by its descriptor and never tightened.
+      if (!needsTightening(opened, true, 0o777)) assertDirectory(opened, directory);
       if (opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('asset owner directory changed during preparation');
       // fchmod always moves ctime, which verified readers pin: change only modes that differ.
-      if (process.platform !== 'win32' && (opened.mode & 0o777) !== 0o700) await directoryHandle.chmod(0o700);
+      if (needsTightening(opened, true, 0o777)) await directoryHandle.chmod(0o700);
       for (const name of await readdir(directory)) {
         // Foreign names (Finder or editor files) are neither assets nor ours to modify.
         if (!/^(?:[0-9a-f]{64}(?:\.json)?|\.import-[0-9a-f-]+\.tmp)$/.test(name)) continue;
@@ -119,12 +123,12 @@ export function createAssetStore(options) {
         const stat = await lstat(path);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('asset entry must be a single-link regular file');
         assertOwner(stat, 'asset entry');
-        if (process.platform !== 'win32' && (stat.mode & 0o600) !== 0o600) throw new Error('asset entry has insufficient owner permissions');
+        if (!ownerAccessPresent(stat, false)) throw new Error('asset entry has insufficient owner permissions');
         const handle = await open(path, constants.O_RDONLY | noFollow);
         try {
           const pinned = await handle.stat();
           if (!sameFile(stat, pinned)) throw new Error('asset entry changed during preparation');
-          if (process.platform !== 'win32' && (pinned.mode & 0o777) !== 0o600) await handle.chmod(0o600);
+          if (needsTightening(pinned, false, 0o777)) await handle.chmod(0o600);
           assertFile(await handle.stat(), 'asset entry', path);
           const final = await lstat(path);
           if (final.dev !== pinned.dev || final.ino !== pinned.ino || final.nlink !== 1) throw new Error('asset entry changed during preparation');
@@ -210,6 +214,22 @@ export function createAssetStore(options) {
       close: () => enqueue(async () => { if (!closed) { closed = true; await handle.close(); } }),
     });
   };
+  // Every verified asset's stored descriptor, in digest order.
+  const scan = async () => {
+    try { await ensureDirectory(false); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const entries = await readdir(directory);
+    const result = [];
+    for (const name of entries.sort()) {
+      // Descriptors, import temporaries and foreign files are not enumerated.
+      if (!/^[0-9a-f]{64}$/.test(name)) continue;
+      if (!entries.includes(`${name}.json`)) { const orphan = await checkedOpen(name, 'unreferenced asset content'); await orphan.handle.close(); continue; }
+      const reader = await openAsset(`sha256:${name}`); await reader.close();
+      result.push(reader.reference);
+    }
+    // A descriptor without its content is corruption, not an empty asset set.
+    for (const name of entries.filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry))) if (!entries.includes(name.slice(0, -5))) throw new Error('asset descriptor has no content file');
+    return result;
+  };
   const readAsset = async (reference, options = {}) => {
     const reader = await openAsset(reference, options);
     try { return await reader.read({ offset: 0, length: reader.reference.byteLength, signal: options.signal }); }
@@ -274,7 +294,11 @@ export function createAssetStore(options) {
         await output.writeFile(`${JSON.stringify(reference)}\n`, 'utf8'); await output.sync(); await output.close(); output = undefined;
         await publishFile(metadataTemp, join(directory, `${hash}.json`)); metadataTemp = undefined;
         await syncDirectory(directory);
-        const verified = await openAsset(reference, { signal: input.signal }); await verified.close();
+        // Verify the stored content through its stored descriptor, which an
+        // earlier import of the same bytes may have named differently.
+        const verified = await openAsset(reference.assetId, { signal: input.signal }); await verified.close();
+        if (verified.reference.byteLength !== reference.byteLength) throw new Error('asset descriptor disagrees with its imported content');
+        inventory?.set(reference.assetId, verified.reference);
         return reference;
       } finally {
         await source?.close(); await output?.close();
@@ -291,20 +315,19 @@ export function createAssetStore(options) {
       return Object.freeze({ path: join(directory, checkedId(reader.reference.assetId)), mimeType: reader.reference.mimeType });
     },
     copyAsset: async (source, reference, options = {}) => importAsset({ bytes: await source.readAsset(reference, options), mimeType: reference.mimeType, ...(reference.name === undefined ? {} : { name: reference.name }), signal: options.signal }),
-    listAssets: async () => {
-      try { await ensureDirectory(false); } catch (error) { if (error.code === 'ENOENT') return Object.freeze([]); throw error; }
-      const entries = await readdir(directory);
-      const result = [];
-      for (const name of entries.sort()) {
-        // Descriptors, import temporaries and foreign files are not enumerated.
-        if (!/^[0-9a-f]{64}$/.test(name)) continue;
-        if (!entries.includes(`${name}.json`)) { const orphan = await checkedOpen(name, 'unreferenced asset content'); await orphan.handle.close(); continue; }
-        const reader = await openAsset(`sha256:${name}`); await reader.close();
-        result.push(Object.freeze({ assetId: reader.reference.assetId, path: name, metadataPath: `${name}.json`, byteLength: reader.reference.byteLength }));
-      }
-      // A descriptor without its content is corruption, not an empty asset set.
-      for (const name of entries.filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry))) if (!entries.includes(name.slice(0, -5))) throw new Error('asset descriptor has no content file');
-      return Object.freeze(result);
+    listAssets: async () => Object.freeze((await scan()).map((descriptor) => {
+      const name = descriptor.assetId.slice(7);
+      return Object.freeze({ assetId: descriptor.assetId, path: name, metadataPath: `${name}.json`, byteLength: descriptor.byteLength });
+    })),
+    // Verifies every asset once and keeps the result for this owner's writer.
+    loadInventory: async () => {
+      const descriptors = await scan();
+      inventory = new Map(descriptors.map((descriptor) => [descriptor.assetId, descriptor]));
+      return store.inventoryEntries();
+    },
+    inventoryEntries: () => {
+      if (inventory === undefined) throw new Error('asset inventory is not loaded');
+      return Object.freeze([...inventory.values()].sort((left, right) => (left.assetId < right.assetId ? -1 : left.assetId > right.assetId ? 1 : 0)));
     },
   });
   return store;

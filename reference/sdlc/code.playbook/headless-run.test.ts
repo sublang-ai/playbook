@@ -3851,7 +3851,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           if (
             from.endsWith('.tmp') &&
             to === recordPath &&
-            JSON.parse(await readFile(from, 'utf8')).state === 'settled'
+            JSON.parse(await readFile(from, 'utf8')).manifest?.state === 'settled'
           ) {
             throw new Error('synthetic settlement rename failure');
           }

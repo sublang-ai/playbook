@@ -5,6 +5,7 @@ import { writeFileSync, type StatOptions } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
 import { readFixtureManifest, decodeFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile } from './test-support/session-persistence.js';
+import * as schema8 from './test-support/session-persistence-v8.js';
 import { createBoundedReplay } from './bin/session-replay.js';
 import { createSessionChunks } from './bin/session-chunks.js';
 import {
@@ -748,6 +749,10 @@ function fixedStore(
   });
 }
 
+function fixedStoreV8(sessionsDir: string, ownerToken: string, options: Record<string, unknown> = {}) {
+  return fixedStore(sessionsDir, ownerToken, { storageVersion: 8, ...options });
+}
+
 function adoptionSessionId(index: number) {
   return `91000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 }
@@ -757,6 +762,14 @@ function adoptionLeaseToken(index: number) {
 }
 
 function sequencedStore(
+  sessionsDir: string,
+  tokenStart = 1,
+  options: Record<string, unknown> = {},
+) {
+  return sequencedStoreAt(sessionsDir, tokenStart, options);
+}
+
+function sequencedStoreAt(
   sessionsDir: string,
   tokenStart = 1,
   options: Record<string, unknown> = {},
@@ -3597,8 +3610,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const replay = await readFixtureReplay(join(sessionsDir, `${legacyId}.replay.json`));
     await writeFile(legacyPath, JSON.stringify(manifest), { mode: 0o600 });
     await writeFile(join(sessionsDir, `${legacyId}.records.jsonl`), replay, { mode: 0o600 });
-    await unlink(join(sessionsDir, `${legacyId}.replay.json`));
-    await rm(join(sessionsDir, `${legacyId}.chunks`), { recursive: true });
+    await rm(join(sessionsDir, `${legacyId}.replay`), { recursive: true });
     const legacyBytes = await readFile(legacyPath);
     const olderBytes = await readFile(olderPath);
     const store = sequencedStore(sessionsDir, 70);
@@ -5707,6 +5719,15 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
 });
 
 describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
+  // Schema 8 (chunks): these cases keep that format's coverage until DR-111
+  // removes it; the schema-9 log carries its own cases.
+  const fixedStore = (sessionsDir: string, ownerToken: string, options: Record<string, unknown> = {}) =>
+    fixedStoreV8(sessionsDir, ownerToken, options);
+  const readFixtureReplay = schema8.readFixtureReplay;
+  const writeFixtureReplay = schema8.writeFixtureReplay;
+  const sequencedStore = (sessionsDir: string, tokenStart = 1, options: Record<string, unknown> = {}) =>
+    sequencedStoreAt(sessionsDir, tokenStart, { storageVersion: 8, ...options });
+
   function boundedStreamPath(sessionsDir: string) {
     return join(sessionsDir, `${sessionId}.replay.json`);
   }
@@ -6306,6 +6327,15 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
 });
 
 describe('bounded follower cursor (PBCLI-80, SP-9)', () => {
+  // Schema 8 (chunks): these cases keep that format's coverage until DR-111
+  // removes it; the schema-9 log carries its own cases.
+  const fixedStore = (sessionsDir: string, ownerToken: string, options: Record<string, unknown> = {}) =>
+    fixedStoreV8(sessionsDir, ownerToken, options);
+  const readFixtureReplay = schema8.readFixtureReplay;
+  const writeFixtureReplay = schema8.writeFixtureReplay;
+  const sequencedStore = (sessionsDir: string, tokenStart = 1, options: Record<string, unknown> = {}) =>
+    sequencedStoreAt(sessionsDir, tokenStart, { storageVersion: 8, ...options });
+
   // Every chunk read lstats its path, even on a verified-cache hit, so this
   // count bounds the chain a read walked regardless of the chunk cache.
   function chunkLstatFs() {
@@ -6483,6 +6513,15 @@ describe('bounded follower cursor (PBCLI-80, SP-9)', () => {
 });
 
 describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
+  // Schema 8 (chunks): these cases keep that format's coverage until DR-111
+  // removes it; the schema-9 log carries its own cases.
+  const fixedStore = (sessionsDir: string, ownerToken: string, options: Record<string, unknown> = {}) =>
+    fixedStoreV8(sessionsDir, ownerToken, options);
+  const readFixtureReplay = schema8.readFixtureReplay;
+  const writeFixtureReplay = schema8.writeFixtureReplay;
+  const sequencedStore = (sessionsDir: string, tokenStart = 1, options: Record<string, unknown> = {}) =>
+    sequencedStoreAt(sessionsDir, tokenStart, { storageVersion: 8, ...options });
+
   const rootPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay.json`);
   const chunksDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.chunks`);
   const recordPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.json`);

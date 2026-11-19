@@ -51,9 +51,10 @@ import {
   lazyMachineIdentity,
   resolveMachineIdentity,
 } from './machine-identity.js';
-import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate, privatePermissions } from './private-paths.js';
+import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate, privatePermissions, renameWithRetry } from './private-paths.js';
 import { createSessionChunks } from './session-chunks.js';
 import { createBoundedReplay } from './session-replay.js';
+import { createSessionFiles, EMPTY_LOG_BINDING, SESSION_STORAGE_VERSION as LOG_STORAGE_VERSION } from './session-files.js';
 import { decodeStoredManifest, encodeStoredManifest, SESSION_STORAGE_VERSION } from './storage-manifest.js';
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
@@ -308,19 +309,30 @@ export function sanitizeReplayRecord(value) {
 // appends, and keeps replay durability fail-soft beside canonical settlement.
 // Bounded physical replay preserves the public readable/durable distinction.
 // A failed append latches history incompleteness; recovery writes remain open.
-async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, readStream, chunks }) {
+async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, readStream, chunks, files, storageVersion, binding }) {
   const sessionId = basename(path, '.records.jsonl');
-  const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, assertOwner, chunks });
+  const logFormat = storageVersion === LOG_STORAGE_VERSION;
+  const backend = logFormat ? undefined : await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, assertOwner, chunks });
   let lastReadableSeq = null, lastDurableSeq = null, incomplete = true, closed = false;
   // DR-109: the verified prefix is what this writer verified at initialization
   // and appended since: a running SHA-256 of the exact envelope bytes, the
   // digest at the durable sequence, and the context records. It answers a
   // checkpoint without rereading the chain; a latch discards it for the lease.
   let prefix = null;
+  // DR-111: the schema-9 log writer and the log prefix its durable sequence
+  // binds; without a writer the manifest keeps binding its earlier prefix.
+  let log = null, durableBinding;
   let tail = Promise.resolve();
   const enqueue = (operation) => { const result = tail.then(operation); tail = result.catch(() => {}); return result; };
   const status = () => Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
   const refresh = async () => {
+    if (logFormat) {
+      await assertPrivateDirectory(sessionsDir, fs);
+      const read = await files.readLog(binding === undefined ? {} : { binding });
+      const history = parseSessionHistory(read.lines);
+      if (read.damage !== undefined || history.incomplete) throw new Error('session replay log is damaged');
+      return { bytes: read.lines, history, read };
+    }
     const snapshot = await backend.readSnapshot();
     const history = parseSessionHistory(snapshot.bytes);
     if (history.incomplete || history.pendingTail) throw new Error('bounded replay is incomplete');
@@ -328,7 +340,14 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
   };
   try {
     await assertOwner();
-    const { bytes, history } = await refresh();
+    const { bytes, history, read } = await refresh();
+    if (logFormat) {
+      // The manifest's bound prefix must verify before this writer extends
+      // it; an unfinished final line beyond it is an unacknowledged append.
+      if (read.bound !== undefined && !read.bound.ok) throw new Error(read.bound.reason);
+      log = await files.createLogWriter({ read, sealedNames: new Set((binding?.sealed ?? []).map(({ name }) => name)) });
+      durableBinding = log.binding();
+    }
     lastReadableSeq = lastDurableSeq = history.lastReadableSeq;
     const hash = createHash('sha256').update(bytes);
     prefix = {
@@ -367,7 +386,8 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
         if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) throw new Error('replay stream sequence exhausted its safe integer range');
         const seq = lastReadableSeq + 1;
         const line = Buffer.from(`${JSON.stringify({v: RECORDS_STREAM_VERSION, seq, ...(role === undefined ? {} : {role}), record: sanitized})}\n`);
-        await backend.appendBytes(line);
+        if (logFormat) await log.append(line, seq);
+        else await backend.appendBytes(line);
         lastReadableSeq = seq;
         extendPrefix(line, sanitized, seq);
       } catch (cause) { await latch(); throw cause; }
@@ -376,7 +396,10 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
   const checkpointNow = async () => {
     if (incomplete || lastReadableSeq === null) return;
     try {
-      await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner();
+      // A schema-9 append is synced, with any new segment's name, before it
+      // is acknowledged, so its checkpoint only fixes the bound prefix.
+      if (logFormat) { await assertOwner(); durableBinding = log.binding(); }
+      else { await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner(); }
       lastDurableSeq = lastReadableSeq;
       if (prefix !== null) prefix.durable = { seq: lastDurableSeq, sha256: prefix.hash.copy().digest('hex') };
     } catch { await latch(); }
@@ -397,9 +420,18 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
     // The verified prefix's facts, or null where this writer holds none.
     verifiedPrefix: () => (incomplete || prefix === null ? null
       : Object.freeze({ durable: Object.freeze({ ...prefix.durable }), contexts: Object.freeze([...prefix.contexts]) })),
+    // The log prefix the durable sequence binds, or undefined where none is
+    // known (an earlier format, or no trustworthy boundary).
+    durableLog: () => (logFormat && lastDurableSeq !== null && durableBinding !== undefined
+      ? { seq: lastDurableSeq, binding: structuredClone(durableBinding) } : undefined),
+    // DR-111: turn settlement seals the open segment; it never changes again.
+    seal: () => enqueue(async () => { if (log !== null && !incomplete) { try { await log.seal(); } catch { await latch(); } } }),
+    referencedBlobs: () => log?.referencedBlobs() ?? new Set(),
+    removeUnreferencedBlobs: (referenced) => enqueue(async () => { if (log !== null) await files.removeUnreferencedBlobs(referenced); }),
+    closeLog: () => enqueue(async () => { await log?.close(); }),
     checkpoint: () => enqueue(checkpointNow),
     closeAppendAdmission: () => { closed = true; },
-    prepareRelease: () => enqueue(checkpointNow),
+    prepareRelease: () => enqueue(async () => { await checkpointNow(); await log?.close(); }),
   });
 }
 
@@ -451,6 +483,35 @@ export function createCaptainSessionStore(options = {}) {
     if (!chunkStores.has(sessionId)) chunkStores.set(sessionId, createSessionChunks({ directory: join(sessionsDir, `${sessionId}.chunks`), fsOps: fs }));
     return chunkStores.get(sessionId);
   };
+  // DR-111: new sessions are written in schema 9. Schema 8 remains readable
+  // and writable for sessions already in it until the conversion command
+  // replaces it; `storageVersion: 8` is a test-only way to create one.
+  const defaultStorageVersion = options.storageVersion ?? LOG_STORAGE_VERSION;
+  if (![SESSION_STORAGE_VERSION, LOG_STORAGE_VERSION].includes(defaultStorageVersion)) throw new TypeError('Captain session storage version must be 8 or 9');
+  const fileStores = new Map();
+  const filesFor = (sessionId) => {
+    assertSessionId(sessionId);
+    if (!fileStores.has(sessionId)) fileStores.set(sessionId, createSessionFiles({ sessionsDir, sessionId, fsOps: fs }));
+    return fileStores.get(sessionId);
+  };
+  // The logical value of a stored root and the physical facts beside it.
+  const decodeStoredRoot = async (text, sessionId) => {
+    const storageVersion = JSON.parse(text)?.schemaVersion;
+    if (storageVersion === LOG_STORAGE_VERSION) {
+      const decoded = await filesFor(sessionId).decodeManifest(Buffer.from(text, 'utf8'));
+      return { value: decoded.manifest, storageVersion, log: decoded.log, parts: decoded.parts };
+    }
+    return { value: await decodeStoredManifest(text, chunksFor(sessionId), sessionId), storageVersion };
+  };
+  // A session's physical format: its root's, or for a root not yet
+  // published, the replay files present, or the store's default.
+  const storageVersionOf = async (sessionId, stored) => {
+    if (stored !== undefined) return stored.schemaVersion;
+    if (await filesFor(sessionId).hasLog()) return LOG_STORAGE_VERSION;
+    try { await fs.lstat(join(sessionsDir, `${sessionId}.replay.json`)); return SESSION_STORAGE_VERSION; }
+    catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+    return defaultStorageVersion;
+  };
   const assetStores = new Map();
   const assetStoreFor = (sessionId) => {
     assertSessionId(sessionId);
@@ -496,7 +557,15 @@ export function createCaptainSessionStore(options = {}) {
     return join(sessionsDir, `.${sessionId}.lock.retired.${ownerToken}`);
   };
 
-  const readRecord = async (sessionId, { missing = 'error', requirePortable = false } = {}) => {
+  // DR-111: a manifest replaced while it is read was read whole, but read
+  // again so a reader returns the current one; the retry is bounded.
+  const readRecord = async (sessionId, options) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await readRecordOnce(sessionId, options); }
+      catch (cause) { if (attempt >= 3 || !isPrivateFileChange(cause)) throw cause; }
+    }
+  };
+  const readRecordOnce = async (sessionId, { missing = 'error', requirePortable = false } = {}) => {
     const path = recordPathFor(sessionId);
     let text;
     try {
@@ -509,16 +578,17 @@ export function createCaptainSessionStore(options = {}) {
       }
       throw new Error(
         `cannot read Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${errorMessage(cause)}`,
+        { cause },
       );
     }
     let value;
     let storageVersion;
     try {
-      storageVersion = JSON.parse(text)?.schemaVersion;
-      value = await decodeStoredManifest(text, chunksFor(sessionId), sessionId);
+      ({ value, storageVersion } = await decodeStoredRoot(text, sessionId));
     } catch (cause) {
       throw new Error(
         `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} is not valid JSON: ${errorMessage(cause)}`,
+        { cause },
       );
     }
     let record;
@@ -530,7 +600,7 @@ export function createCaptainSessionStore(options = {}) {
       record = value.schemaVersion === SESSION_MANIFEST_VERSION
         ? recoveryFromManifest(value)
         : validateCaptainSessionRecord(value);
-      if (requirePortable && storageVersion !== SESSION_STORAGE_VERSION) {
+      if (requirePortable && storageVersion !== SESSION_STORAGE_VERSION && storageVersion !== LOG_STORAGE_VERSION) {
         throw new CaptainSessionRecordNonresumableError(storageVersion, `storage schema ${storageVersion} requires explicit migration; run playbook migrate-session ${sessionId}`, captainSessionOrderingBoundary(record));
       }
     } catch (cause) {
@@ -577,13 +647,18 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const readStoredManifest = async (sessionId) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await readStoredManifestOnce(sessionId); }
+      catch (cause) { if (attempt >= 3 || !isPrivateFileChange(cause)) throw cause; }
+    }
+  };
+  const readStoredManifestOnce = async (sessionId) => {
     let bytes;
     try { await assertPrivateDirectory(sessionsDir, fs); bytes = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record'); }
     catch (cause) { if (cause?.code === 'ENOENT') throw new CaptainSessionNotFoundError(sessionId, recordPathFor(sessionId)); throw cause; }
-    const value = await decodeStoredManifest(bytes, chunksFor(sessionId), sessionId);
+    const { value, storageVersion, log } = await decodeStoredRoot(bytes, sessionId);
     if (value.sessionId !== sessionId) throw new Error('session manifest identity does not match its filename');
-    return { manifest: value.schemaVersion === 7 ? validateSessionManifest(value) : value,
-      storageVersion: JSON.parse(bytes).schemaVersion };
+    return { manifest: value.schemaVersion === 7 ? validateSessionManifest(value) : value, storageVersion, log };
   };
   const readManifest = async (sessionId) => (await readStoredManifest(sessionId)).manifest;
   const prepare = async () => {
@@ -592,10 +667,26 @@ export function createCaptainSessionStore(options = {}) {
     for (const name of names) {
       if (name.endsWith('.assets') && SESSION_ID_PATTERN.test(name.slice(0, -7))) await assetStoreFor(name.slice(0, -7)).prepare();
       if (name.endsWith('.chunks') && SESSION_ID_PATTERN.test(name.slice(0, -7))) await chunksFor(name.slice(0, -7)).prepare();
+      for (const suffix of ['.replay', '.blobs']) {
+        if (name.endsWith(suffix) && SESSION_ID_PATTERN.test(name.slice(0, -suffix.length))) await filesFor(name.slice(0, -suffix.length)).prepare();
+      }
     }
+  };
+  // DR-111: a schema-9 history is the log's complete lines, any unfinished
+  // final line, and the first damaged boundary; with the manifest's binding
+  // it also reports whether the bound prefix verifies.
+  const readLogHistory = async (sessionId, { afterSeq = 0, binding } = {}) => {
+    if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('history afterSeq must be a nonnegative safe integer');
+    await assertPrivateDirectory(sessionsDir, fs);
+    const read = await filesFor(sessionId).readLog(binding === undefined ? {} : { binding });
+    const history = parseSessionHistory(Buffer.concat([read.lines, read.partial]), afterSeq);
+    const damaged = read.damage !== undefined && history.damage === undefined
+      ? { incomplete: true, pendingTail: false, damage: { seq: history.lastReadableSeq + 1, offset: read.damage.offset, reason: read.damage.reason } } : {};
+    return Object.freeze({ ...history, ...damaged, missing: read.absent === true, ...(read.bound ? { bound: read.bound } : {}) });
   };
   const readHistory = async (sessionId, options = {}) => {
     assertSessionId(sessionId);
+    if (await filesFor(sessionId).hasLog()) return readLogHistory(sessionId, { afterSeq: options.afterSeq ?? 0 });
     const history = await readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, chunks: chunksFor(sessionId), afterSeq: options.afterSeq ?? 0 });
     if (!history.missing) return history;
     let legacy;
@@ -636,13 +727,18 @@ export function createCaptainSessionStore(options = {}) {
     }
   };
   const validate = async (sessionId, context = {}) => {
-    const { manifest, storageVersion } = await readStoredManifest(sessionId);
-    const history = await readHistory(sessionId);
+    const { manifest, storageVersion, log } = await readStoredManifest(sessionId);
+    const history = storageVersion === LOG_STORAGE_VERSION
+      ? await readLogHistory(sessionId, { binding: log })
+      : await readHistory(sessionId);
     const reasons = [];
     if (storageVersion === 7) reasons.push(`storage schema 7 requires explicit migration; run playbook migrate-session ${sessionId}`);
     let integrityValid = !history.missing && !history.incomplete;
     if (history.missing) reasons.push('session replay file is missing');
     if (history.pendingTail) reasons.push('session replay has an unfinished final record');
+    // DR-111: the manifest binds its prefix segment by segment.
+    if (history.bound !== undefined && !history.bound.ok) { integrityValid = false; reasons.push(`session replay log differs from its manifest: ${history.bound.reason}`); }
+    else if (history.bound !== undefined && history.bound.lines !== manifest.replay?.seq) { integrityValid = false; reasons.push('session replay log binding differs from its checkpoint sequence'); }
     if (manifest.schemaVersion !== 7) {
       if ([2, 3, 4, 5, 6].includes(manifest.schemaVersion)) {
         try { validateCaptainSessionRecord(manifest); }
@@ -697,7 +793,7 @@ export function createCaptainSessionStore(options = {}) {
         path: recordsPathFor(sessionId),
         afterSeq,
         cursor: replayReadCursors.get(sessionId),
-        fs, chunks: chunksFor(sessionId),
+        fs, chunks: chunksFor(sessionId), files: filesFor(sessionId),
       }),
     );
     const drained = operation.then(
@@ -895,9 +991,11 @@ export function createCaptainSessionStore(options = {}) {
     recordValue,
     { noReplace, onPublished, portable = false },
   ) => {
-    const record = portable
-      ? validateSessionManifest(recordValue)
-      : await portableWriters.get(recordValue.sessionId)?.checkpoint(recordValue);
+    const writer = portable ? undefined : portableWriters.get(recordValue.sessionId);
+    const checkpointed = portable
+      ? { manifest: validateSessionManifest(recordValue) }
+      : await writer?.checkpoint(recordValue);
+    const record = checkpointed?.manifest;
     if (record === undefined) throw new Error('session persistence requires its owning lifecycle');
     const destination = recordPathFor(record.sessionId);
     await ensurePrivateDirectory(sessionsDir, fs, mayCreateDirectory);
@@ -912,7 +1010,12 @@ export function createCaptainSessionStore(options = {}) {
       await assertPrivateRegularPath(destination, 0o600, fs, 'record');
     }
 
-    const encoded = await encodeStoredManifest(record, chunksFor(record.sessionId));
+    // DR-111: a schema-9 manifest is the logical manifest whole, with the
+    // log prefix its checkpoint binds; any blob parts are durable first.
+    const prepared = writer?.storageVersion === LOG_STORAGE_VERSION
+      ? await filesFor(record.sessionId).prepareManifest(record, checkpointed.log)
+      : { bytes: await encodeStoredManifest(record, chunksFor(record.sessionId)), parts: [] };
+    const encoded = prepared.bytes;
     const tempId = createTempId();
     assertUuid(tempId, 'Captain session temporary id');
     const temporary = join(
@@ -957,13 +1060,13 @@ export function createCaptainSessionStore(options = {}) {
           // Leave only this unpredictable store-owned temp path behind.
         }
       } else {
-        await fs.rename(temporary, destination);
+        await renameWithRetry(temporary, destination, fs);
         ownsTemporary = false;
         published = true;
         onPublished?.();
       }
       await syncDirectory(sessionsDir, fs);
-      portableWriters.get(record.sessionId)?.published(record);
+      writer?.published(record, { log: checkpointed.log, parts: prepared.parts });
       return record;
     } catch (cause) {
       try {
@@ -1007,6 +1110,8 @@ export function createCaptainSessionStore(options = {}) {
       catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
     }
     await chunksFor(sessionId).delete();
+    await filesFor(sessionId).remove();
+    await assetStoreFor(sessionId).loadInventory();
     const manifestPath = recordPathFor(sessionId);
     try { await assertPrivateRegularPath(manifestPath, 0o600, fs, 'session file'); await fs.unlink(manifestPath); await syncDirectory(sessionsDir, fs); }
     catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
@@ -1299,6 +1404,7 @@ export function createCaptainSessionStore(options = {}) {
     await assetStoreFor(sessionId).prepare();
     try { await fs.lstat(join(sessionsDir, `${sessionId}.chunks`)); await chunksFor(sessionId).prepare(); }
     catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+    await filesFor(sessionId).prepare();
     let stored;
     if (!management) {
       try { stored = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record')); }
@@ -1371,6 +1477,10 @@ export function createCaptainSessionStore(options = {}) {
         // Mirrors the reader's choice: a monolithic manifest's history is not
         // the bounded chain this lease's writer verifies and extends.
         boundedHistory: ![2, 3, 4, 5, 6, 7].includes(stored?.schemaVersion),
+        storageVersion: await storageVersionOf(sessionId, stored),
+        files: filesFor(sessionId),
+        readStoredManifest,
+        decodeStoredRoot,
         replayPath: recordsPathFor(sessionId),
         replayFs: fs,
         readReplayStream: (options) => readStream(sessionId, options),
@@ -1766,9 +1876,18 @@ export function createCaptainSessionStore(options = {}) {
       try {
       manifestText = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record');
       const stored = JSON.parse(manifestText);
-      const manifest = validateSessionManifest(await decodeStoredManifest(manifestText, chunksFor(sessionId), sessionId));
-      let replayBytes, replayRoot, replayFiles = [];
-      if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
+      const decoded = await decodeStoredRoot(manifestText, sessionId);
+      const manifest = validateSessionManifest(decoded.value);
+      let replayBytes, replayRoot, replayFiles = [], logFiles;
+      if (stored.schemaVersion === LOG_STORAGE_VERSION) {
+        // DR-111: the bundle is the manifest, every segment and the blob
+        // parts referenced; the bound prefix verifies segment by segment.
+        await assertPrivateDirectory(sessionsDir, fs);
+        const read = await filesFor(sessionId).readLog({ binding: decoded.log });
+        if (read.damage !== undefined || !read.bound.ok || read.bound.lines !== manifest.replay.seq) throw new Error('session bundle replay checkpoint is incomplete or corrupt');
+        replayBytes = read.lines;
+        logFiles = filesFor(sessionId).inventory(Buffer.from(manifestText, 'utf8'), decoded.parts, read);
+      } else if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
         const backend = await createBoundedReplay({sessionId, sessionsDir, fsOps: fs, chunks: chunksFor(sessionId)});
         const snapshot = await backend.readSnapshot();
         if (snapshot.root === null) throw new Error('session bundle replay root is missing');
@@ -1788,7 +1907,8 @@ export function createCaptainSessionStore(options = {}) {
       const assets = [];
       const files = new Map([[`${sessionId}.json`, Buffer.byteLength(manifestText)]]);
       if (stored.schemaVersion === SESSION_STORAGE_VERSION) await chunksFor(sessionId).validateNamespace();
-      if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
+      if (logFiles !== undefined) for (const entry of logFiles) files.set(entry.path, entry.byteLength);
+      else if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
         for (const entry of await chunksFor(sessionId).walk(stored.root)) files.set(`${sessionId}.chunks/${entry.path}`, entry.byteLength);
         for (const entry of replayFiles) files.set(entry.path, entry.byteLength);
       } else files.set(`${sessionId}.records.jsonl`, replayBytes.length);
@@ -1856,6 +1976,7 @@ async function readReplayStream({
   cursor,
   fs,
   chunks,
+  files,
 }) {
   let forceFullRead = false;
   let snapshot;
@@ -1867,7 +1988,7 @@ async function readReplayStream({
         afterSeq,
         cursor,
         forceFullRead,
-        fs, chunks,
+        fs, chunks, files,
       });
       break;
     } catch (cause) {
@@ -1934,6 +2055,9 @@ async function readReplayStream({
     // A bounded head is cached only when the verified chain ends on the
     // complete line the cursor stops at; a torn tail caches no head.
     ...(snapshot.head && completeOffset === snapshot.totalBytes ? { head: snapshot.head } : {}),
+    // DR-111: a log reader continues from the byte position after the last
+    // complete line it verified.
+    ...(snapshot.position ? { position: snapshot.position } : {}),
   };
   const entries = parsed.entries.filter((entry) => entry.seq > afterSeq);
   return {
@@ -1950,12 +2074,35 @@ async function readReplaySnapshot({
   forceFullRead,
   fs,
   chunks,
+  files,
 }) {
   try {
     await assertPrivateDirectory(sessionsDir, fs);
   } catch (cause) {
     if (cause?.code === 'ENOENT') return { absent: true };
     throw cause;
+  }
+
+  // DR-111: a schema-9 log needs no manifest; a reader that verified a
+  // prefix continues from its position and verifies only what follows.
+  if (files !== undefined && await files.hasLog()) {
+    const incrementalWanted = !forceFullRead && cursor !== undefined && cursor.reusable &&
+      cursor.position !== undefined && afterSeq >= cursor.sequence;
+    let read;
+    try {
+      read = incrementalWanted ? await files.readLog({ from: { ...cursor.position, seq: cursor.sequence } }) : await files.readLog();
+      if (read.reset) {
+        cursor.reusable = false;
+        read = await files.readLog();
+      }
+    } catch (cause) {
+      if (cause?.privateFileChanged) throw new ReplaySnapshotChangedError(cause.message);
+      throw cause;
+    }
+    if (read.absent) return { absent: true };
+    if (read.damage !== undefined) throw new Error(`replay stream is damaged: ${read.damage.reason}`);
+    const incremental = incrementalWanted && cursor.reusable;
+    return { absent: false, bytes: read.lines, identity: { dev: 0, ino: 0 }, incremental, startOffset: 0, position: read.end };
   }
 
   // During explicit migration the old root remains authoritative until the
@@ -2444,6 +2591,10 @@ async function createLease({
   owner,
   sessionsDir,
   boundedHistory,
+  storageVersion,
+  files,
+  readStoredManifest,
+  decodeStoredRoot,
   replayPath,
   replayFs,
   readReplayStream,
@@ -2500,6 +2651,18 @@ async function createLease({
     return check.finally(() => ownerChecks.delete(check));
   };
 
+  let contextSeq;
+  let previousManifest;
+  // DR-111: the log prefix the published manifest binds, and the blob parts
+  // its spilled values use.
+  let previousLog;
+  let publishedParts = [];
+  let acknowledgedHints = { players: {} };
+  try {
+    const stored = await readStoredManifest(sessionId);
+    previousManifest = stored.manifest; previousLog = stored.log; contextSeq = previousManifest.contextSeq;
+  } catch { /* Unsupported recovery still permits leased migration/deletion. */ }
+
   const replayWriter = await createLeaseReplayWriter({
     sessionsDir,
     path: replayPath,
@@ -2507,13 +2670,13 @@ async function createLease({
     assertOwner: assertOwnerUnchecked,
     readStream: readReplayStream,
     chunks,
+    files,
+    storageVersion,
+    binding: previousLog,
   });
-
-  let contextSeq;
-  let previousManifest;
-  let acknowledgedHints = { players: {} };
-  try { previousManifest = await readManifest(sessionId); contextSeq = previousManifest.contextSeq; }
-  catch { /* Unsupported recovery still permits leased migration/deletion. */ }
+  // DR-111: the writer keeps the asset inventory it verified here and the
+  // imports it made since, so a publication reads no asset.
+  await assetStore.loadInventory();
 
   // DR-109: the writer's verified prefix answers both history questions a
   // checkpoint asks, the applicable context and the durable prefix's digest,
@@ -2558,25 +2721,36 @@ async function createLease({
     const seq = history.digests[durableSeq] === undefined ? previousManifest?.replay?.seq ?? 0 : durableSeq;
     const digest = history.digests[seq] ?? previousManifest?.replay?.sha256 ?? EMPTY_REPLAY_SHA256;
     const replay = { seq, sha256: digest, incomplete: previousManifest?.replay?.incomplete === true || status.incomplete || history.incomplete || history.digests[seq] === undefined };
-    const entries = await assetStore.listAssets();
-    const assets = entries.length === 0 ? undefined : { version: 1, entries: await Promise.all(entries.map(({ assetId }) => assetStore.describeAsset(assetId))) };
+    const entries = assetStore.inventoryEntries();
+    const assets = entries.length === 0 ? undefined : { version: 1, entries };
     const manifest = manifestFromRecovery(recovery, replay, contextSeq, assets);
-    return manifest;
+    if (storageVersion !== LOG_STORAGE_VERSION) return { manifest };
+    // The log prefix this checkpoint's sequence binds: the writer's durable
+    // prefix, or else the one the published manifest already binds.
+    const durableLog = replayWriter.durableLog();
+    const log = durableLog !== undefined && durableLog.seq === seq ? durableLog.binding
+      : previousLog !== undefined && seq === (previousManifest?.replay?.seq ?? 0) ? previousLog
+        : seq === 0 ? EMPTY_LOG_BINDING : undefined;
+    if (log === undefined) throw new Error('session checkpoint has no bound replay log prefix');
+    return { manifest, log };
   };
-  portableWriters.set(sessionId, { checkpoint, sync: replayWriter.checkpoint, published: (manifest) => { previousManifest = manifest; } });
+  portableWriters.set(sessionId, { storageVersion, checkpoint, sync: replayWriter.checkpoint, published: (manifest, physical) => {
+    previousManifest = manifest;
+    if (physical?.log !== undefined) { previousLog = physical.log; publishedParts = physical.parts; }
+  } });
 
   const hintsPath = join(sessionsDir, `${sessionId}.hints.json`);
   const readHints = async () => {
     try {
       const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
-      const manifest = validateSessionManifest(await decodeStoredManifest(bytes, chunks, sessionId));
+      const manifest = validateSessionManifest((await decodeStoredRoot(bytes, sessionId)).value);
       const hints = JSON.parse(await readPrivateRegularFile(hintsPath, 0o600, replayFs, 'hints'));
       return validateSessionHints(hints, bytes, manifest);
     } catch { return { players: {} }; }
   };
   const writeHints = async (hints) => {
     const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
-    const manifest = validateSessionManifest(await decodeStoredManifest(bytes, chunks, sessionId));
+    const manifest = validateSessionManifest((await decodeStoredRoot(bytes, sessionId)).value);
     const value = { v: 1, sessionId, checkpointSha256: sha256(bytes), players: hints.players, ...(hints.captain ? { captain: hints.captain } : {}) };
     validateSessionHints(value, bytes, manifest);
     await writePrivateJson(hintsPath, value, replayFs);
@@ -2613,6 +2787,12 @@ async function createLease({
   const finishSettlement = async (record) => {
     await replayWriter.checkpoint();
     try { await writeHints(acknowledgedHints); } catch { /* Hints are optional; missing hints start fresh. */ }
+    // DR-111: only the lease holder, at settlement, removes blob parts that
+    // neither the published manifest nor the log references.
+    if (storageVersion === LOG_STORAGE_VERSION) {
+      try { await replayWriter.removeUnreferencedBlobs(new Set([...replayWriter.referencedBlobs(), ...publishedParts.map(({ sha256: digest }) => digest)])); }
+      catch { /* An unreferenced part costs space only; a later settlement retries. */ }
+    }
     return validateCaptainSessionRecord(projectRecovery(record));
   };
 
@@ -2945,6 +3125,7 @@ async function createLease({
       const current = await readRecord(sessionId, { missing: 'undefined' });
       if (!isDeepStrictEqual(current, expected)) return false;
       await assertOwnerUnchecked();
+      await replayWriter.closeLog();
       await deleteRecord(sessionId);
       await assertOwnerUnchecked();
       return true;
@@ -3408,6 +3589,7 @@ async function createLease({
           },
         });
         await assertOwnerUnchecked();
+        await replayWriter.seal();
         await writeRecord(record, { noReplace: false });
         await assertOwnerUnchecked();
         return finishSettlement(record);
@@ -3466,6 +3648,8 @@ async function createLease({
           : {}),
       });
       await assertOwnerUnchecked();
+      // DR-111: turn settlement seals the open replay segment.
+      await replayWriter.seal();
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
       return finishSettlement(record);
@@ -3602,6 +3786,7 @@ async function createLease({
       }
       await assertOwnerUnchecked();
       if (prior.uncertain.baseUpdatedAt === null) {
+        await replayWriter.closeLog();
         await deleteRecord(sessionId);
         await assertOwnerUnchecked();
         return undefined;
@@ -6464,6 +6649,10 @@ function nextTimestamp(value, previous) {
   return new Date(Date.parse(previous) + 1).toISOString();
 }
 
+function isPrivateFileChange(cause) {
+  return cause?.privateFileChanged === true || cause?.cause?.privateFileChanged === true;
+}
+
 function privateFileChanged(label, boundary) {
   return Object.assign(new Error(`${label} changed during ${boundary}`), { privateFileChanged: true });
 }
@@ -6479,13 +6668,19 @@ async function readPrivateRegularFile(path, mode, fs, label, raw = false) {
     if (!stat.isFile()) {
       throw new Error(`${label} path is not a regular file`);
     }
-    if (!privatePermissions(stat, mode, path)) {
+    // DR-111: the path check above admitted this entry, the one owner and
+    // descriptor read on Windows; the opened handle need only be that entry.
+    if (process.platform !== 'win32' && !privatePermissions(stat, mode, path)) {
       throw new Error(`${label} permissions must be ${octal(mode)}`);
     }
     if (!sameFileIdentity(before, stat)) throw privateFileChanged(label, 'open');
     const bytes = await handle.readFile();
     const after = await handle.stat();
-    const current = await assertPrivateRegularPath(path, mode, fs, label);
+    const current = await fs.lstat(path);
+    if (current.isSymbolicLink() || !current.isFile()) throw privateFileChanged(label, 'read');
+    if (process.platform !== 'win32' && !privatePermissions(current, mode, path)) {
+      throw new Error(`${label} permissions must be ${octal(mode)}`);
+    }
     if (!sameFileIdentity(after, current) || after.size !== stat.size) throw privateFileChanged(label, 'read');
     return raw ? bytes : new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } finally {
