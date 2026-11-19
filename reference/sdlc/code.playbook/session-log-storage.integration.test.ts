@@ -165,6 +165,24 @@ describe('schema-9 session layout (DR-111)', () => {
     await assertBoundedPrivateFiles(sessionsDir, id);
   }, 60_000);
 
+  it('keeps the asset inventory in the writer, listing stored descriptors without opening an asset (session-assets-13)', async () => {
+    const { store, id, lease, sessionsDir } = await fixture();
+    const first = await lease.importAsset({ bytes: Buffer.from('same bytes'), mimeType: 'text/plain', name: 'first.txt' });
+    const again = await lease.importAsset({ bytes: Buffer.from('same bytes'), mimeType: 'text/markdown', name: 'second.md' });
+    const other = await lease.importAsset({ bytes: Buffer.from('other bytes'), mimeType: 'text/plain' });
+    expect(again).toMatchObject({ assetId: first.assetId, name: 'second.md' });
+    await lease.beginTurn({ input: 'with assets', attemptId: randomUUID(), attemptedExecutionProjection: executionProjection() });
+    await lease.release();
+    const { calls, fsOps } = recordingFs();
+    const writer = await createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps }).acquire(id);
+    calls.length = 0;
+    await writer.recordProgress({ snapshot: null });
+    expect(calls.filter(({ path }) => path.includes(`${id}.assets`))).toEqual([]);
+    await writer.release();
+    const expected = [first, other].sort((left, right) => (left.assetId < right.assetId ? -1 : 1));
+    expect((await store.readManifest(id)).assets.entries).toEqual(expected);
+  });
+
   it('deletes the owned representation, hints and assets while preserving another session', async () => {
     const { store, id, lease, sessionsDir } = await fixture();
     await lease.importAsset({ bytes: Buffer.from('asset'), mimeType: 'text/plain' });
