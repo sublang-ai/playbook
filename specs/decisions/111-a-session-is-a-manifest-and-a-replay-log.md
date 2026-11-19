@@ -41,6 +41,7 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
 - The writer seals its open segment at a size bound and at turn settlement; a sealed segment never changes.
 - The manifest binds replay by today's `{seq, sha256, incomplete}`, plus each sealed segment's name, length and digest and the open segment's bound prefix length and digest.
 - An append is written and synced before it is acknowledged, as today.
+  - An unfinished final line beyond the manifest's bound prefix is an append a crash left unacknowledged: the next lease truncates the open segment to its last complete line before appending, and a reader without the lease waits for the line to complete.
 - A publication syncs the open segment, writes the manifest to a temporary file, syncs it, renames it over `<sessionId>.json` under the lease and syncs the directory.
   - It retains no superseded manifest.
 - The writer keeps the asset inventory it imported, and publication uses it without re-reading assets.
@@ -54,7 +55,8 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
 - Each file the store opens is checked once against the private-entry rules; on Windows that is one owner and descriptor read per file.
 - At run time the store reads only schema 9.
   - It reports a session in the schema 7 monolithic or schema 8 chunked format as an unsupported version and leaves its files unchanged.
-- A separate command, run by hand and never loaded by the store at run time, converts schema 7 and schema 8 sessions to schema 9:
+  - Earlier records (schemas 2–6 and desktop sidecars) are unsupported likewise, and hosts no longer migrate the former `${XDG_STATE_HOME:-~/.local/state}/playbook/sessions` default at start; an earlier version migrates them first.
+- A separate command, `playbook sessions upgrade`, run by hand and never loaded by the store at run time, converts schema 7 and schema 8 sessions to schema 9, replacing `playbook migrate-session`:
   - it takes one sessions directory, or, with a recursive option, a directory under which it finds every sessions directory without following links;
   - it skips a session already in schema 9, in an unknown format or held by a lease, and reports every session's outcome;
   - it verifies the former representation completely and writes the new one under the session's lease;
@@ -78,9 +80,10 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
 - The specs change with this decision:
   - session-persistence is rewritten for the new representation;
   - session-storage-1 (locations), session-storage-12 and session-storage-19 (deletion and export inventory) change;
-  - session-storage-10 and session-persistence-5 (legacy migration) become the conversion command's rules;
+  - session-storage-10 and session-persistence-5 (legacy migration) become the conversion command's rules, and playbook-cli-92 its command;
+  - session-storage-1 drops the former-default cutover, and session-storage-3 the read-only projection of legacy journals;
   - session-assets gains a writer-kept inventory;
-  - playbook-cli-82 and playbook-cli-83 change their verified boundary from a chain head to a byte offset.
+  - playbook-cli-82 and playbook-cli-83 change their verified boundary from a chain head to a byte offset, and playbook-cli-83 repairs a torn final line beyond the bound prefix.
 - Embedding hosts adopt the layout together with this release: their sync units, private-file rules, the exclusion of `.legacy-sessions/` from sync, and the removal of any import of earlier formats.
 
 ## References
