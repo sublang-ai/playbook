@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
-import { createBoundedReplay } from './bin/session-replay.js';
+import { writeFixtureReplay } from './test-support/session-persistence.js';
 import {
   createCaptainSessionStore,
   sanitizeReplayRecord,
@@ -40,8 +40,7 @@ async function unavailableReplayFixture() {
   const sessionsDir = join(root, 'sessions');
   await mkdir(sessionsDir, { mode: 0o700 });
   await chmod(sessionsDir, 0o700);
-  const replay = await createBoundedReplay({ sessionsDir, sessionId });
-  await replay.initializeBytes(Buffer.from('{"v":1,"seq":1,"record":[]}\n'));
+  await writeFixtureReplay(join(sessionsDir, `${sessionId}.replay.json`), '{"v":1,"seq":1,"record":[]}\n');
   const store = createCaptainSessionStore({ sessionsDir, hostname: 'replay-observer-test' });
   return { store, lease: await store.acquire(sessionId) };
 }

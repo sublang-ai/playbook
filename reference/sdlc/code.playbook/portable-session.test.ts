@@ -8,12 +8,10 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionStore as createStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
-// Schema 8 (chunks) and its migrations: kept until DR-111 removes them.
-const createSessionStore = (options: Record<string, any> = {}) => createStore({ storageVersion: 8, ...options });
+import { createSessionStore, openSessionStore, projectCaptainSessionStructure, validateSessionManifest, validateSessionContext } from './session-store.js';
 import { discardSessionUncertain, openSessionHost } from './session-host.js';
 import { createReplayRecordObserver } from './bin/replay-observer.js';
-import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, removeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence-v8.js';
+import { readFixtureManifest, readFixtureReplay, writeFixtureReplay, removeFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, {recursive:true,force:true}))); });
@@ -23,16 +21,6 @@ async function fixture() {
  const id = randomUUID(); const lease = await store.acquire(id);
  await lease.initializeSettledWithPredecessor(freshBoundary() as any);
  return { root, store, id, lease, file:join(store.sessionsDir, `${id}.json`), stream:join(store.sessionsDir,`${id}.replay.json`) };
-}
-async function legacyDefaultFixture() {
- const source=await fixture();await source.lease.append({type:'legacy_notice',timestamp:7,text:'complete replay survives cutover'});
- const record=await source.lease.read();await source.lease.release();
- const sourceBytes=JSON.stringify(record);await writeFile(source.file,sourceBytes);
- const replayBytes=await readFixtureReplay(source.stream);const xdg=join(source.root,'xdg');const sourceDir=join(xdg,'playbook','sessions');
- await mkdir(dirname(sourceDir),{recursive:true});await rename(source.store.sessionsDir,sourceDir);
- const home=join(source.root,'home');const sessionsDir=join(home,'.spex','sessions');
- const options={sessionsDir,env:{XDG_STATE_HOME:xdg},homeDir:home};
- return {...source,sourceDir,sourcePath:join(sourceDir,`${source.id}.json`),sourceReplay:join(sourceDir,`${source.id}.records.jsonl`),sourceBytes,replayBytes,options,target:createSessionStore(options)};
 }
 function executionProjection(
   options: {
@@ -243,34 +231,6 @@ describe('shared portable session lifecycle', () => {
   expect(result.history.entries[1]!.record).toEqual(record);
   expect(await readFixtureReplay(stream)).toEqual(bytes);expect(await readFile(file)).toEqual(manifestBytes);
  });
- it('sanitizes legacy provider events while retaining original replay and clean line bytes',async()=>{
-  const {root,store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();
-  await writeFile(file,JSON.stringify(legacy));
-  const original=Buffer.concat([await readFixtureReplay(stream),Buffer.from(' {"seq":2,"v":1,"record":{"type":"player_event","event":{"session_id":"secret-provider-legacy","payload":{"nativeSessionId":"secret-provider-native","thread":{"id":"secret-provider-thread"}},"type":"init"}}}\n {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n')]);
-  await writeFixtureReplay(stream,original);
-  const result=await store.migrate(id);expect(result.migrated).toBe(true);
-  const migrated=await readFixtureReplay(stream,'utf8');expect(migrated).not.toContain('secret-provider-');
-  expect(migrated).toContain(' {"seq":3,"v":1,"record":{"type":"future","sessionId":"logical-history"}}\n');
-  expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(original);
-  expect((await store.validate(id)).integrityValid).toBe(true);
-  expect((await store.readHistory(id)).entries[1]!.record).toEqual({type:'player_event',event:{payload:{thread:{}},type:'init'}});
- });
- it('writes schema8 roots over exact schema7 recovery and byte-identical replay context', async () => {
-  const {store,id,lease,file,stream}=await fixture();
-  await lease.append({type:'captain_reply',timestamp:1,text:'hello'});
-  const prior=await lease.read(); const attemptId=randomUUID();
-  await lease.beginTurn({input:'next',attemptId,attemptedExecutionProjection:prior!.lastAppliedExecutionProjection});
-  const manifest=await readFixtureManifest(file);
-  expect(manifest.schemaVersion).toBe(7);expect(JSON.parse(await readFile(file,'utf8')).schemaVersion).toBe(8);
-  expect(manifest.replay.sha256).toBe(createHash('sha256').update(await readFixtureReplay(stream)).digest('hex'));
-  const history=await store.readHistory(id);
-  expect(history.entries[0].record.type).toBe('session_context');
-  expect(history.entries[1].record.contextSeq).toBe(1);
-  expect(manifest.contextSeq).toBe(1);
-  expect((await store.validate(id)).resumable).toBe(true);
-  expect(()=>validateSessionManifest({...manifest,extra:true})).toThrow();
-  await lease.release();
- });
  it('keeps later presentation outside the saved replay checkpoint',async()=>{
   const {store,id,lease,file,stream}=await fixture();const checkpointBytes=await readFile(file);const prefix=await readFixtureReplay(stream);
   const checkpoint=(await readFixtureManifest(file)).replay;
@@ -360,13 +320,17 @@ describe('shared portable session lifecycle', () => {
   const {store,id,lease,file,stream}=await fixture();await lease.release();
   await writeFile(file,'{"schemaVersion":99}');await writeFixtureReplay(stream,'opaque unsafe history');const bytes=await readFixtureReplay(stream);
   const management=await store.acquireManagement(id);await expect(store.acquireManagement(id)).rejects.toMatchObject({code:'PLAYBOOK_SESSION_LEASE_ACTIVE'});await management.release();
-  expect(await readFixtureReplay(stream)).toEqual(bytes);await store.delete(id);
+  expect(await readFixtureReplay(stream)).toEqual(bytes);
+  // An unknown physical format is never deleted: its files are not ours to name.
+  await expect(store.delete(id)).rejects.toThrow(/storage schema 99 is unsupported/);
+  expect(await readFile(file,'utf8')).toBe('{"schemaVersion":99}');expect(await readFixtureReplay(stream)).toEqual(bytes);
   const missing=await store.acquireManagement(randomUUID());await missing.release();
  });
  it('keeps unknown manifests inspectable without interpreting or rewriting recovery',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();
   const unknown={schemaVersion:99,sessionId:id,recovery:{future:true}};
-  const bytes=JSON.stringify(unknown);await writeFile(file,bytes);const replayBytes=await readFixtureReplay(stream);
+  // A later logical version inside the schema-9 manifest file.
+  const bytes=JSON.stringify({...JSON.parse(await readFile(file,'utf8')),manifest:unknown});await writeFile(file,bytes);const replayBytes=await readFixtureReplay(stream);
   const validation=await store.validate(id);
   expect(validation.manifest).toEqual(unknown);expect(validation.resumable).toBe(false);
   expect(validation.reasons).toEqual(['unsupported session schema 99']);
@@ -380,7 +344,7 @@ describe('shared portable session lifecycle', () => {
  });
  it('tightens a real Git checkout created under umask022 without changing bytes',async()=>{
   const {store,id,lease,root,file,stream}=await fixture();await lease.release();
-  execFileSync('git',['init','-q',root]);execFileSync('git',['-C',root,'add','sessions/'+id+'.json','sessions/'+id+'.replay.json','sessions/'+id+'.chunks']);
+  execFileSync('git',['init','-q',root]);execFileSync('git',['-C',root,'add','sessions/'+id+'.json','sessions/'+id+'.replay']);
   execFileSync('git',['-C',root,'-c','commit.gpgsign=false','-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','fixture']);
   const before=[await readFile(file),await readFixtureReplay(stream)];await rm(file);await removeFixtureReplay(stream);
   execFileSync('sh',['-c','umask 022; git checkout -- sessions'],{cwd:root});await chmod(store.sessionsDir,0o755);
@@ -401,51 +365,6 @@ describe('shared portable session lifecycle', () => {
   await unlink(twin);expect(await readFile(file)).toEqual(bytes);
   expect((await opened.list()).sessions).toHaveLength(1);
  });
- it('migrates validated schema6 through retained exact inputs and is idempotent',async()=>{
-  const {store,id,lease,file,stream,root}=await fixture();const legacy=await lease.read();await lease.release();
-  const source=JSON.stringify(legacy);await writeFile(file,source);await removeFixtureReplay(stream);
-  const migrated=await store.migrate(id);expect(migrated.manifest.schemaVersion).toBe(7);expect(migrated.manifest.state).toBe('settled');
-  expect(await readFile(join(root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
-  expect((await store.migrate(id)).migrated).toBe(false);expect((await store.validate(id)).resumable).toBe(true);
- });
- it('moves the former default with its complete replay and retained original bytes',async()=>{
-  const f=await legacyDefaultFixture();
-  // PBCLI-97: the machine identity beside the former sessions location is never a migration input.
-  const identityPath=join(dirname(f.sourceDir),'machine-id');const identityBytes=`machine-id:v1:${randomUUID()}\n`;await writeFile(identityPath,identityBytes,{mode:0o600});
-  const report=await f.target.migrateLegacyDefault();
-  expect(report).toEqual({sourceDir:f.sourceDir,migrated:[f.id],skipped:[]});
-  expect(await readFile(identityPath,'utf8')).toBe(identityBytes);expect(await readdir(dirname(f.sourceDir))).toContain('sessions');
-  const manifest=await f.target.readManifest(f.id);expect(manifest.schemaVersion).toBe(7);
-  expect((await f.target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFixtureReplay(join(f.target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
-  const inputs=join(dirname(f.target.sessionsDir),'local','migrations',f.id,'inputs');
-  expect(await readFile(join(inputs,'0'),'utf8')).toBe(f.sourceBytes);expect(await readFile(join(inputs,'1'))).toEqual(f.replayBytes);
-  await expect(readFile(f.sourcePath)).rejects.toMatchObject({code:'ENOENT'});await expect(readFile(f.sourceReplay)).rejects.toMatchObject({code:'ENOENT'});
-  const targetBytes=await readFile(join(f.target.sessionsDir,`${f.id}.json`));
-  expect((await f.target.migrateLegacyDefault()).migrated).toEqual([]);expect(await readFile(join(f.target.sessionsDir,`${f.id}.json`))).toEqual(targetBytes);
-  expect((await f.target.migrate(f.id,{sourcePath:f.sourcePath})).migrated).toBe(false);expect(await readFile(join(f.target.sessionsDir,`${f.id}.json`))).toEqual(targetBytes);
- });
- it('retains old-default inputs when source ownership or the destination blocks migration',async()=>{
-  const f=await legacyDefaultFixture();const source=createSessionStore({sessionsDir:f.sourceDir,env:f.options.env,homeDir:f.options.homeDir});const sourceLease=await source.acquireManagement(f.id);
-  await expect(f.target.migrateLegacyDefault()).rejects.toThrow('ownership is active');await sourceLease.release();
-  const destinationLease=await f.target.acquireManagement(f.id);await expect(f.target.migrateLegacyDefault()).rejects.toMatchObject({code:'PLAYBOOK_SESSION_LEASE_ACTIVE'});await destinationLease.release();
-  const destination=join(f.target.sessionsDir,`${f.id}.json`);await writeFile(destination,'unrelated destination',{mode:0o600});
-  await expect(f.target.migrateLegacyDefault()).rejects.toThrow('destination manifest diverged');
-  expect(await readFile(destination,'utf8')).toBe('unrelated destination');expect(await readFile(f.sourcePath,'utf8')).toBe(f.sourceBytes);expect(await readFile(f.sourceReplay)).toEqual(f.replayBytes);
- });
- it.each(['destination-publication','source-cleanup'])('retries a cross-directory migration interrupted during %s',async(phase)=>{
-  const f=await legacyDefaultFixture();let fail=true;const destination=join(f.target.sessionsDir,`${f.id}.json`);
-  const target=createSessionStore({...f.options,fsOps:{async rename(from,to){if(phase==='destination-publication'&&fail&&to===destination){fail=false;throw new Error('publication interrupted');}return rename(from,to);},async unlink(path){if(phase==='source-cleanup'&&fail&&path===f.sourcePath){fail=false;throw new Error('cleanup interrupted');}return unlink(path);}}});
-  await expect(target.migrateLegacyDefault()).rejects.toThrow(/interrupted/);expect(await readFile(f.sourcePath,'utf8')).toBe(f.sourceBytes);
-  const report=await f.target.migrateLegacyDefault();expect(report.migrated).toEqual([f.id]);expect((await f.target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFixtureReplay(join(f.target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,f.replayBytes.length)).toEqual(f.replayBytes);
-  await expect(readFile(f.sourcePath)).rejects.toMatchObject({code:'ENOENT'});
- });
- it('reports unsupported old-default inputs unchanged and leaves absent defaults absent',async()=>{
-  const f=await legacyDefaultFixture();const id=randomUUID();const path=join(f.sourceDir,`${id}.json`);const bytes=JSON.stringify({schemaVersion:99,sessionId:id});await writeFile(path,bytes,{mode:0o600});
-  const result=await f.target.migrateLegacyDefault();expect(result.migrated).toEqual([f.id]);expect(result.skipped).toEqual([{sessionId:id,reason:'unsupported legacy schema 99'}]);expect(await readFile(path,'utf8')).toBe(bytes);
-  const missing=join(f.root,'missing-home');const other=createSessionStore({homeDir:missing,env:{}});expect((await other.migrateLegacyDefault()).migrated).toEqual([]);await expect(stat(missing)).rejects.toMatchObject({code:'ENOENT'});
- });
  it('reads foreign-platform checkpoints as intact history and refuses native continuation',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();const base=await readFixtureManifest(file);const replay=await readFixtureReplay(stream);
   for(const cwd of ['/another/device/project',String.raw`C:\Users\owner\project`,String.raw`\\server\share\project`]){
@@ -453,55 +372,14 @@ describe('shared portable session lifecycle', () => {
   }
   for(const cwd of ['relative',String.raw`C:relative`,String.raw`\rooted`,String.raw`C:\a\..\b`,'/a/../b'])expect(()=>validateSessionManifest({...base,cwd})).toThrow('identity');
  });
- it('migrates desktop sidecars as history only without inventing recovery',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'desktop-migrate-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});await mkdir(store.sessionsDir,{mode:0o700});const id=randomUUID();
-  const sidecar=join(store.sessionsDir,`${id}.spex.json`);const source=JSON.stringify({v:1,id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[]});await writeFile(sidecar,source,{mode:0o600});
-  const result=await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});expect(result.manifest.state).toBe('history-only');expect((await store.validate(id)).resumable).toBe(false);await expect(readFile(sidecar)).rejects.toMatchObject({code:'ENOENT'});
- });
- it.each([false, true])('tightens legacy desktop inputs before migration (external=%s)',async(external)=>{
-  const root=await mkdtemp(join(tmpdir(),'desktop-modes-'));roots.push(root);
-  const target=join(root,'target');const sourceDir=external?join(root,'source'):target;
-  await mkdir(sourceDir,{mode:0o755});const store=createSessionStore({sessionsDir:target});const id=randomUUID();
-  const sidecar=join(sourceDir,`${id}.spex.json`);const stream=join(sourceDir,`${id}.records.jsonl`);
-  const source=JSON.stringify({v:1,session:{id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[]}});
-  const replay=JSON.stringify({v:1,seq:1,record:{type:'captain_reply',timestamp:2,text:'desktop history'}})+'\n';
-  await writeFile(sidecar,source,{mode:0o644});await writeFixtureReplay(stream,replay,{mode:0o644});await chmod(sourceDir,0o755);
-  const result=await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});expect(result.manifest.state).toBe('history-only');
-  expect((await stat(sourceDir)).mode&0o777).toBe(0o700);expect((await stat(join(target,`${id}.json`))).mode&0o777).toBe(0o600);
-  expect(await readFile(join(root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
-  expect(await readFile(join(root,'local','migrations',id,'inputs','1'),'utf8')).toBe(replay);
-  expect(await readFixtureReplay(join(target,`${id}.replay.json`),'utf8')).toBe(replay);
- });
- it.each(['symlink','hardlink','owner-read-only'])('refuses unsafe %s desktop migration sources',async(kind)=>{
-  const root=await mkdtemp(join(tmpdir(),'desktop-unsafe-'));roots.push(root);const sessionsDir=join(root,'sessions');await mkdir(sessionsDir,{mode:0o700});
-  const store=createSessionStore({sessionsDir});const id=randomUUID();const original=join(root,'original');const sidecar=join(sessionsDir,`${id}.spex.json`);
-  const source=JSON.stringify({v:1,id,createdAt:1,endedAt:2});await writeFile(original,source,{mode:0o600});
-  if(kind==='symlink')await symlink(original,sidecar);else if(kind==='hardlink')await link(original,sidecar);else await writeFile(sidecar,source,{mode:0o400});
-  await expect(store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()})).rejects.toThrow('permission preparation refuses');
-  expect(await readFile(original,'utf8')).toBe(source);expect(await readFile(sidecar,'utf8')).toBe(source);
-  await expect(readFile(join(sessionsDir,`${id}.json`))).rejects.toMatchObject({code:'ENOENT'});
- });
- it.each([false,true])('retains a valid unterminated legacy replay record (external=%s)',async(external)=>{
-  const f=await fixture();const legacy=await f.lease.read();await f.lease.release();await writeFile(f.file,JSON.stringify(legacy));
-  const prefix=await readFixtureReplay(f.stream);const tail=JSON.stringify({v:1,seq:2,record:{type:'captain_reply',timestamp:7,text:'last complete record'}});
-  const original=Buffer.concat([prefix,Buffer.from(tail)]);await writeFixtureReplay(f.stream,original);
-  const target=external?createSessionStore({sessionsDir:join(f.root,'destination')}):f.store;
-  const result=await target.migrate(f.id,{sourcePath:f.file});expect(result.manifest.state).toBe('settled');expect((await target.validate(f.id)).resumable).toBe(true);
-  const replay=await readFixtureReplay(join(target.sessionsDir,`${f.id}.replay.json`));expect(replay.subarray(0,original.length+1)).toEqual(Buffer.concat([original,Buffer.from('\n')]));
-  expect(await readFile(join(f.root,'local','migrations',f.id,'inputs','1'))).toEqual(original);
-  expect((await target.readHistory(f.id)).entries[1].record.text).toBe('last complete record');
- });
- it('skips history-only and unmigrated schema6 during discovery and fresh adoption',async()=>{
+ it('skips unsupported earlier records during discovery and fresh adoption',async()=>{
   const f=await fixture();const legacy=await f.lease.read();await f.lease.release();
   const legacyId=randomUUID();await writeFile(join(f.store.sessionsDir,`${legacyId}.json`),JSON.stringify({...legacy,sessionId:legacyId}),{mode:0o600});
-  const historyId=randomUUID();const source=join(f.store.sessionsDir,`${historyId}.spex.json`);
-  await writeFile(source,JSON.stringify({v:1,id:historyId,createdAt:Date.now()+1000,endedAt:Date.now()+2000}),{mode:0o644});
-  await f.store.migrate(historyId,{sourcePath:source,cwd:process.cwd()});
   const skipped:any[]=[];expect((await f.store.latest({onLegacyRecord:r=>{skipped.push(r);}})).sessionId).toBe(f.id);
-  expect(skipped.find(r=>r.sessionId===legacyId).reason).toContain('requires explicit migration');
-  expect(skipped.find(r=>r.sessionId===historyId).reason).toContain('lacks complete durable recovery');
+  expect(skipped.find(r=>r.sessionId===legacyId).reason).toContain('session storage schema 6 is unsupported');
   const next=await f.store.acquire(randomUUID());const record=await next.initializeSettledWithPredecessor(freshBoundary() as any);expect(record.state).toBe('settled');await next.release();
   await f.store.delete(f.id);await f.store.delete(record.sessionId);await expect(f.store.latest()).rejects.toThrow('no resumable Captain session exists');
+  await expect(f.store.delete(legacyId)).rejects.toThrow(/unsupported/);
  });
  it.each(['digest','incomplete','context','path'])('refuses %s before embedding host imports or reconciliation',async(kind)=>{
   const f=await fixture();await f.lease.release();const manifest=await readFixtureManifest(f.file);
@@ -519,36 +397,6 @@ describe('shared portable session lifecycle', () => {
   const {store,id,lease}=await fixture();const context:any=structuredClone((await store.readHistory(id)).entries[0].record);
   context.graphs[0].graph={initial:'a',nodes:[{id:'a',kind:'state',tags:[]},{id:'b',kind:'final',tags:[]}],edges:[{id:'ab',from:'a',to:'b',event:''}]};expect(validateSessionContext(context)).toEqual(context);
   context.graphs[0].graph.nodes[0].parent='a';expect(()=>validateSessionContext(context)).toThrow(/cyclic/);context.contextVersion=2;expect(()=>validateSessionContext(context)).toThrow();await lease.release();
- });
- it('recovers a migration interrupted between replay and manifest publication', async () => {
-  const {store,id,lease,file,stream,root}=await fixture();
-  const legacy=await lease.read();await lease.release();
-  const original=JSON.stringify(legacy);await writeFile(file,original);const originalReplay=await readFixtureReplay(stream);
-  let fail=true;
-  const interrupted=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async rename(from,to){if(fail&&to===file){fail=false;throw new Error('manifest publication interrupted');}return rename(from,to);}}});
-  await expect(interrupted.migrate(id)).rejects.toThrow('manifest publication interrupted');
-  expect(await readFile(file,'utf8')).toBe(original);
-  expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(originalReplay);
-  const stagedReplay=await readFixtureReplay(stream);
-  await store.migrate(id);
-  expect(await readFixtureReplay(stream)).toEqual(stagedReplay);
-  expect((await store.validate(id)).resumable).toBe(true);
- });
- it('refuses divergent migration output and preserves malformed source bytes',async()=>{
-  const {store,id,lease,file,stream}=await fixture();const legacy=await lease.read();await lease.release();await writeFile(file,JSON.stringify(legacy));
-  const interrupted=createSessionStore({sessionsDir:store.sessionsDir,fsOps:{async rename(from,to){if(to===file)throw new Error('stop publication');return rename(from,to);}}});
-  await expect(interrupted.migrate(id)).rejects.toThrow('stop publication');
-  const changed=Buffer.from('divergent replay\n');await writeFixtureReplay(stream,changed);
-  await expect(store.migrate(id)).rejects.toThrow('diverged');expect(await readFixtureReplay(stream)).toEqual(changed);
-  const malformed='{"schemaVersion":6,"broken":true}';await writeFile(file,malformed);
-  await expect(store.migrate(id)).rejects.toThrow();expect(await readFile(file,'utf8')).toBe(malformed);
- });
- it('retains damaged legacy replay verbatim while publishing readable history only',async()=>{
-  const {store,id,lease,file,stream,root}=await fixture();const legacy=await lease.read();await lease.release();await writeFile(file,JSON.stringify(legacy));
-  const prefix=await readFixtureReplay(stream);const damaged=Buffer.concat([prefix,Buffer.from([0xff,0x0a])]);await writeFixtureReplay(stream,damaged);
-  const migrated=await store.migrate(id);expect(migrated.manifest.state).toBe('history-only');expect(migrated.manifest.replay.incomplete).toBe(true);
-  expect(await readFile(join(root,'local','migrations',id,'inputs','1'))).toEqual(damaged);
-  expect(await readFixtureReplay(stream)).toEqual(prefix);
  });
  it('keeps the manifest until interrupted deletion can finish',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();const hint=join(store.sessionsDir,`${id}.hints.json`);await writeFile(hint,'{}',{mode:0o600});
@@ -573,19 +421,6 @@ describe('shared portable session lifecycle', () => {
   entry.record.contextVersion=1;entry.record.captainId=randomUUID();await publish();const mismatch=await store.validate(id);expect(mismatch.integrityValid).toBe(false);expect(mismatch.reasons).toContain('required session context differs from checkpoint recovery');
  });
 
- it('projects a validated legacy journal without creating replay authority',async()=>{
-  const {store,id,lease,file,stream}=await fixture();const legacy:any=structuredClone(await lease.read());await lease.release();
-  legacy.snapshot=shellSnapshot(executionProjection(),2);
-  legacy.snapshot.journal=[{seq:1,turnId:1,kind:'boss',payload:'first'},{seq:2,turnId:1,kind:'reply',payload:'first reply'},{seq:3,turnId:2,kind:'boss',payload:'second'},{seq:4,turnId:2,kind:'reply',payload:'second reply'}];legacy.snapshot.sequences.journal=4;
-  const bytes=JSON.stringify(legacy);await writeFile(file,bytes);await removeFixtureReplay(stream);
-  const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.missing).toBe(true);expect(history.entries.map(e=>e.record.type)).toEqual(['turn_started','captain_reply','turn_finished','turn_started','captain_reply','turn_finished']);
-  expect(await readFile(file,'utf8')).toBe(bytes);await expect(readFixtureReplay(stream)).rejects.toMatchObject({code:'ENOENT'});expect((await store.validate(id)).resumable).toBe(false);
- });
-
- it('presents legacy journal-only records without granting recovery',async()=>{
-  const {store,id,lease,file,stream}=await fixture();await lease.release();const legacy={schemaVersion:3,kind:'captain-session',sessionId:id,updatedAt:new Date(0).toISOString(),snapshot:{journal:[{turnId:1,kind:'boss',payload:'old request'},{turnId:1,kind:'reply',payload:'old reply'},{turnId:'invalid',kind:'boss',payload:'skip'}]}};
-  await writeFile(file,JSON.stringify(legacy));await removeFixtureReplay(stream);const history=await store.readHistory(id);expect(history.synthetic).toBe(true);expect(history.entries).toHaveLength(3);await expect(store.read(id)).rejects.toThrow();
- });
  it('temporarily refuses an unfinished replay tail without saving damage',async()=>{
   const {store,id,lease,file,stream}=await fixture();await lease.release();const before=await readFile(file);const entry=JSON.stringify({v:1,seq:2,record:{opaque:true}});await writeFixtureReplay(stream,(await readFixtureReplay(stream,'utf8'))+entry);
   const pending=await store.validate(id);expect(pending.integrityValid).toBe(true);expect(pending.resumable).toBe(false);expect(pending.history.pendingTail).toBe(true);expect(await readFile(file)).toEqual(before);
@@ -601,65 +436,12 @@ describe('shared portable session lifecycle', () => {
   expect(delivered.map(entry=>entry.seq)).toEqual([2,3,4]);expect(delivered.map(entry=>entry.record.type)).toEqual(['continuity_reset','captain_reply','host_notice']);await lease.release();
  });
 
- it('keeps migrated journal history visible and retains opaque entries',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'desktop-journal-migration-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});await mkdir(store.sessionsDir,{mode:0o700});const id=randomUUID();const sidecar=join(store.sessionsDir,`${id}.spex.json`);
-  const journal=[{seq:1,turnId:1,kind:'boss',payload:'historic request'},{seq:2,turnId:1,kind:'reply',payload:'historic reply'},{seq:3,turnId:1,kind:'action',payload:{details:'original action'}}];
-  await writeFile(sidecar,JSON.stringify({v:1,id,projectId:randomUUID(),createdAt:1,endedAt:2,live:false,players:[],initialVisible:[],snapshot:{v:1,shell:{journal}}}),{mode:0o600});
-  await store.migrate(id,{sourcePath:sidecar,cwd:process.cwd()});const history=await store.readHistory(id);expect(history.entries.slice(0,3).map(e=>e.record.type)).toEqual(['turn_started','captain_reply','turn_finished']);expect(history.entries.filter(e=>e.record.type==='legacy_journal').map(e=>e.record.entry)).toEqual(journal);expect((await store.readManifest(id)).state).toBe('history-only');
- });
-
  it('replays saved graph and configuration with the project module absent',async()=>{
   const root=await mkdtemp(join(tmpdir(),'portable-graph-history-'));roots.push(root);const store=createSessionStore({sessionsDir:join(root,'sessions')});const id=randomUUID();const execution=executionProjection();execution.catalog.code.from='file:///unavailable/project/code.registry.mjs';
   const lease=await store.acquire(id);await lease.initializeSettledWithPredecessor(freshBoundary(execution) as any);
   const context:any=structuredClone((await store.readHistory(id)).entries[0].record);context.graphs[0].graph={initial:'start',nodes:[{id:'start',kind:'state',tags:['working'],role:'coder'},{id:'done',kind:'final',tags:[]}],edges:[{id:'finish',from:'start',to:'done',event:'DONE'}]};
   const contextSeq=await lease.recordContext(context);await lease.beginTurn({input:'show graph',attemptId:randomUUID(),attemptedExecutionProjection:execution});await lease.append({type:'state_entered',timestamp:3,stateId:'start'});await lease.release();
   const history=await store.readHistory(id);expect(history.entries.find(entry=>entry.seq===contextSeq)?.record).toEqual(context);expect(history.entries.at(-1)?.record.contextSeq).toBe(contextSeq);expect((await store.validate(id)).resumable).toBe(true);
- });
-
- it.each([false,true])('preflights refused desktop sources without accumulating leases (external=%s)',async(external)=>{
-  const root=await mkdtemp(join(tmpdir(),'migration-refusal-'));roots.push(root);
-  const sessionsDir=join(root,'target');const sourceDir=external?join(root,'source'):sessionsDir;
-  await mkdir(sessionsDir,{mode:0o700});if(external)await mkdir(sourceDir,{mode:0o700});
-  const id=randomUUID();const sourcePath=join(sourceDir,`${id}.spex.json`);
-  const valid={v:1,id,createdAt:1,endedAt:2,players:[],initialVisible:[]};
-  const guards=async(dir:string)=>(await readdir(dir)).filter(name=>name.startsWith(`.${id}.lock`)).sort();
-  for(const input of [{bytes:'{bad JSON',cwd:process.cwd()},{bytes:JSON.stringify({...valid,v:99}),cwd:process.cwd()},{bytes:JSON.stringify(valid),cwd:undefined}]){
-   await writeFile(sourcePath,input.bytes,{mode:0o600});
-   for(let restart=0;restart<3;restart++){
-    const store=createSessionStore({sessionsDir});
-    await expect(store.migrate(id,{sourcePath,...(input.cwd?{cwd:input.cwd}:{})})).rejects.toThrow();
-    expect(await readFile(sourcePath,'utf8')).toBe(input.bytes);
-    expect(await guards(sessionsDir)).toEqual([]);expect(await guards(sourceDir)).toEqual([]);
-   }
-  }
-  // Supplying newly available context is sufficient; no refusal memo to clear.
-  const store=createSessionStore({sessionsDir});
-  const migrated=await store.migrate(id,{sourcePath,cwd:process.cwd()});expect(migrated.manifest.state).toBe('history-only');
-  expect(await guards(sessionsDir)).toHaveLength(1);if(external)expect(await guards(sourceDir)).toHaveLength(1);
-  const before=await guards(sessionsDir);expect(await readFile(join(sessionsDir,`${id}.json`),'utf8')).toContain('history-only');
-  await expect(readFile(sourcePath)).rejects.toMatchObject({code:'ENOENT'});
-  expect(await guards(sessionsDir)).toEqual(before);
- });
-
- it('revalidates migration source after acquiring ownership and retries repaired bytes',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'migration-preflight-race-'));roots.push(root);
-  const sessionsDir=join(root,'sessions');await mkdir(sessionsDir,{mode:0o700});
-  const id=randomUUID();const sourcePath=join(sessionsDir,`${id}.spex.json`);
-  const valid=JSON.stringify({v:1,id,createdAt:1,endedAt:2,players:[],initialVisible:[]});
-  const invalid=JSON.stringify({v:99,id,createdAt:1});await writeFile(sourcePath,valid,{mode:0o600});
-  let replace=true;
-  const store=createSessionStore({sessionsDir,fsOps:{rename:async(from:string,to:string)=>{
-   await rename(from,to);
-   if(replace&&to===join(sessionsDir,`.${id}.lock`)){replace=false;await writeFile(sourcePath,invalid);}
-  }}});
-  await expect(store.migrate(id,{sourcePath,cwd:process.cwd()})).rejects.toThrow('invalid legacy desktop');
-  await expect(readFile(join(sessionsDir,`${id}.json`))).rejects.toMatchObject({code:'ENOENT'});
-  const guards=async()=>(await readdir(sessionsDir)).filter(name=>name.startsWith(`.${id}.lock`)).sort();
-  const refused=await guards();expect(refused).toHaveLength(1);
-  for(let restart=0;restart<3;restart++)await expect(createSessionStore({sessionsDir}).migrate(id,{sourcePath,cwd:process.cwd()})).rejects.toThrow('invalid legacy desktop');
-  expect(await guards()).toEqual(refused);expect(await readFile(sourcePath,'utf8')).toBe(invalid);
-  await writeFile(sourcePath,valid);expect((await createSessionStore({sessionsDir}).migrate(id,{sourcePath,cwd:process.cwd()})).migrated).toBe(true);
-  expect(await guards()).toHaveLength(2);
  });
 
 });
@@ -743,7 +525,6 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
   for(const operation of ['acquire','acquireManagement','delete'] as const){
    await expect(strict[operation](id)).rejects.toThrow(/may not create it/);await absent(clone);
   }
-  await expect(strict.migrate(id)).rejects.toThrow();await absent(clone);
   const lease=await createSessionStore({sessionsDir}).acquire(id);
   expect((await stat(sessionsDir)).mode&0o777).toBe(0o700);
   await lease.initializeSettledWithPredecessor(freshBoundary() as any);await lease.release();
@@ -755,9 +536,6 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
   await again.discard({attemptId});await again.release();
   expect((await strict.validate(id)).resumable).toBe(true);
   const management=await strict.acquireManagement(id);await management.release();
-  // A migration source store it opens inherits the policy.
-  const gone=join(root,'gone');
-  await expect(strict.migrate(id,{sourcePath:join(gone,'sessions',`${id}.json`)})).rejects.toThrow(/may not create it/);await absent(gone);
   await strict.delete(id);
   expect((await readdir(sessionsDir)).filter((name)=>name.startsWith(id))).toEqual([]);
  });
@@ -785,30 +563,6 @@ describe('host-prepared sessions directories (session-storage-14)', () => {
   await mkdir(sessionsDir,{recursive:true,mode:0o700});await chmod(sessionsDir,0o700);
   const retried:any=await store[operation](id);await retried?.release();
   expect((await readdir(sessionsDir)).filter((name)=>name.startsWith(`.${id}.lock.retired.`))).toHaveLength(1);
- });
-
- it('refuses a migration into a missing directory and releases its source lease',async()=>{
-  const f=await legacyDefaultFixture();const strict=createSessionStore({...f.options,createSessionsDir:false});
-  await expect(strict.migrateLegacyDefault()).rejects.toThrow(/may not create it/);
-  await absent(join(f.root,'home'));expect(await readFile(f.sourcePath,'utf8')).toBe(f.sourceBytes);
-  expect(await createSessionStore({sessionsDir:f.sourceDir}).readLeaseState(f.id)).toBe('idle');
-  await mkdir(f.options.sessionsDir,{recursive:true,mode:0o700});await chmod(f.options.sessionsDir,0o700);
-  expect((await strict.migrateLegacyDefault()).migrated).toEqual([f.id]);
-  expect((await strict.validate(f.id)).resumable).toBe(true);
- });
-
- it('reports a mid-migration refusal to recreate the backup parent past the failed lease release',async()=>{
-  const {root,store,id,lease,file}=await fixture();const legacy=await lease.read();await lease.release();
-  const original=JSON.stringify(legacy);await writeFile(file,original);
-  const inputs=join(root,'local','migrations',id,'inputs');const moved=`${root}.moved`;roots.push(moved);let vanished=false;
-  const strict=createSessionStore({sessionsDir:store.sessionsDir,createSessionsDir:false,fsOps:{async lstat(path:any,options?:StatOptions){
-   if(!vanished&&path===inputs){vanished=true;await rename(root,moved);}
-   return lstat(path,options);
-  }}});
-  const failure=await strict.migrate(id).then(()=>undefined,(error)=>error);
-  expect(vanished).toBe(true);expect(failure).toBeInstanceOf(AggregateError);
-  expect(failure.errors[0].message).toMatch(/may not create it/);expect(failure.errors).toHaveLength(2);
-  await absent(root);await rename(moved,root);expect(await readFile(file,'utf8')).toBe(original);
  });
 
  it('reports a deletion failure past the failed lease release once the directory disappears',async()=>{

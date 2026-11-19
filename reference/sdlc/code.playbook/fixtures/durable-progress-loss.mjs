@@ -4,8 +4,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFile, readFile, writeFile, rename } from 'node:fs/promises';
-import { createSessionChunks } from '../bin/session-chunks.js';
-import { decodeStoredManifest } from '../bin/storage-manifest.js';
 import { join } from 'node:path';
 import { assign, createMachine } from 'xstate';
 import { createEvent } from '@sublang/cligent';
@@ -121,7 +119,6 @@ const store = createSessionStore({ sessionsDir: join(dir, 'sessions'), fsOps: { 
   let point = phase === 'start' && scenario.includes('rename') && String(from).endsWith('.tmp')
     ? JSON.parse(await readFile(from, 'utf8')) : undefined;
   if (point?.schemaVersion === 9) point = point.manifest;
-  if (point?.schemaVersion === 8) point = await decodeStoredManifest(JSON.stringify(point), createSessionChunks({ directory: join(dir, 'sessions', `${point.sessionId}.chunks`) }), point.sessionId);
   const savingResult = point?.uncertain?.progress?.steps.some((step) => step.result !== undefined);
   if (savingResult && scenario === 'script-before-rename') kill();
   await rename(from, to);

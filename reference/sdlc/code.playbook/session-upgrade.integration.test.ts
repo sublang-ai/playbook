@@ -189,7 +189,8 @@ describe('session conversion (DR-111)', () => {
     const stored = JSON.parse(await fs.readFile(join(sessionsDir, `${ids.settled8}.json`), 'utf8'));
     expect(stored.schemaVersion).toBe(when === 'before-switch' ? 8 : 9);
     const store = createSessionStore({ sessionsDir });
-    if (when === 'before-switch') expect((await store.validate(ids.settled8)).integrityValid).toBe(true);
+    // Before the switch the former session is untouched, still unsupported.
+    if (when === 'before-switch') await expect(store.validate(ids.settled8)).rejects.toThrow(/storage schema 8 is unsupported/);
     const results = await upgradeSessions({ root: sessionsDir });
     expect(results[0].sessions.find((session: any) => session.sessionId === ids.settled8)).toMatchObject({ outcome: 'converted', ...(when === 'after-switch' ? { reason: 'finished an interrupted conversion' } : {}) });
     for (const suffix of ['replay.json', 'chunks']) await expect(fs.lstat(join(sessionsDir, `${ids.settled8}.${suffix}`))).rejects.toMatchObject({ code: 'ENOENT' });

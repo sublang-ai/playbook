@@ -252,9 +252,15 @@ async function convertSession({ sessionsDir, sessionId, store, fs, dryRun }) {
   const backup = join(dirname(sessionsDir), LEGACY_DIRECTORY, sessionId);
   const receiptPath = join(backup, 'receipt.json');
   const rootPath = join(sessionsDir, `${sessionId}.json`);
+  // Classification only reads the root: a checkout may have left it with
+  // wider permissions, which preparation under the lease tightens before
+  // any read that authorizes a write.
   let rootBytes;
-  try { rootBytes = await readPrivateFile(rootPath, 'session root', fs); }
-  catch (error) { return { sessionId, outcome: 'failed', reason: message(error) }; }
+  try {
+    const stat = await fs.lstat(rootPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('session root is not a regular file');
+    rootBytes = await fs.readFile(rootPath);
+  } catch (error) { return { sessionId, outcome: 'failed', reason: message(error) }; }
   let schemaVersion;
   try { schemaVersion = parseJson(rootBytes)?.schemaVersion; } catch { schemaVersion = undefined; }
   const result = (outcome, reason) => ({ sessionId, format: schemaVersion, outcome, ...(reason === undefined ? {} : { reason }) });

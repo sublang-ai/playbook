@@ -9,7 +9,6 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createSessionFiles, MAX_SESSION_FILE_BYTES, segmentName } from '../bin/session-files.js';
-import * as schema8 from './session-persistence-v8.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 function locations(input: string) {
@@ -48,9 +47,6 @@ function bindingFor(list: { name: string; bytes: Buffer }[], seq: number) {
 }
 export async function decodeFixtureManifest(bytes: string | Uint8Array, file: string) {
   const { files } = locations(file);
-  // Sessions an explicit migration writes are still schema 8 until DR-111
-  // moves that migration to the conversion command.
-  if (JSON.parse(Buffer.from(bytes).toString('utf8'))?.schemaVersion === 8) return schema8.decodeFixtureManifest(bytes, file);
   return (await files.decodeManifest(Buffer.from(bytes))).manifest;
 }
 export async function readFixtureManifest(file: string) {
@@ -60,7 +56,6 @@ export async function readFixtureReplay(path: string, encoding?: 'utf8'): Promis
   const f = locations(path);
   let bytes: Buffer;
   if (await exists(f.replayDir)) { const read = await f.files.readLog(); bytes = Buffer.concat([read.lines, read.partial]); }
-  else if (await exists(join(f.sessionsDir, `${f.id}.replay.json`))) return schema8.readFixtureReplay(join(f.sessionsDir, `${f.id}.replay.json`), encoding);
   else bytes = await fs.readFile(f.legacy);
   return encoding ? bytes.toString(encoding) : bytes;
 }
@@ -110,4 +105,17 @@ export async function writeFixtureFile(path: any, input: any, options?: any) {
   try { log = bindingFor(list, value.replay?.seq ?? 0); } catch { log = { sealed: [], open: null }; }
   const encoded = await f.files.prepareManifest(value, log);
   return fs.writeFile(path, encoded.bytes, options);
+}
+// A portable session for a validated recovery record: its execution context
+// as the log's one record, and the schema-9 manifest checkpointing it.
+export async function writeRecoveryFixture(sessionsDir: string, recovery: any) {
+  const { contextFromRecovery, manifestFromRecovery } = await import('../bin/portable-codec.js');
+  const context = contextFromRecovery(recovery);
+  context.timestamp = Date.parse(recovery.updatedAt);
+  const stream = `${JSON.stringify({ v: 1, seq: 1, record: context })}\n`;
+  await writeFixtureReplay(join(sessionsDir, `${recovery.sessionId}.replay.json`), stream);
+  const manifest = manifestFromRecovery(recovery, { seq: 1, sha256: digest(Buffer.from(stream)), incomplete: false }, 1);
+  const path = join(sessionsDir, `${recovery.sessionId}.json`);
+  await writeFixtureFile(path, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+  return path;
 }

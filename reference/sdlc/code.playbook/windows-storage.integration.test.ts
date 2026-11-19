@@ -9,8 +9,7 @@ import { createRequire } from 'node:module';
 import { resolveMachineIdentity } from './machine-identity.js';
 import { machineIdentityPath, resolveMachineIdentity as readMachineIdentity } from './bin/machine-identity.js';
 import { createCaptainSessionStore } from './bin/session-store.js';
-import { createSessionChunks } from './bin/session-chunks.js';
-import { createBoundedReplay } from './bin/session-replay.js';
+import { createSessionFiles } from './bin/session-files.js';
 import { mkdirPrivate } from './bin/private-paths.js';
 import { createAssetStore } from './session-assets.js';
 import { executionProjection, freshBoundary, shellSnapshot } from './test-support/session-boundary.js';
@@ -45,10 +44,11 @@ describe.skipIf(process.platform !== 'win32')('native Windows private session st
       const store = createCaptainSessionStore({ sessionsDir, env });
       const sessionId = '94000000-0000-4000-8000-000000000001';
       for (let n = 0; n < 2; n++) { const lease = await store.acquire(sessionId); await lease.release(); }
-      const chunks = createSessionChunks({ directory: join(sessionsDir, 'fixture.chunks') });
-      const value = { evidence: 'unchanged bytes', items: [1, 2, 3] };
-      const ref = await chunks.writeJson(value);
-      expect(await chunks.readJson(ref)).toEqual(value);
+      // A blob part over the per-file bound's share of a manifest round-trips.
+      const sessionFiles = createSessionFiles({ sessionsDir, sessionId });
+      const large = { schemaVersion: 7, evidence: 'x'.repeat(9 * 1024 * 1024) };
+      const encoded = await sessionFiles.prepareManifest(large, { sealed: [], open: null });
+      expect((await sessionFiles.decodeManifest(encoded.bytes)).manifest).toEqual(large);
       const assets = createAssetStore({ directory: join(root, 'assets') });
       const asset = await assets.importAsset({ bytes: Buffer.from('fixture evidence'), mimeType: 'text/plain' });
       const reader = await assets.openAsset(asset);
@@ -69,17 +69,28 @@ describe.skipIf(process.platform !== 'win32')('native Windows private session st
       expect(await fs.readFile(file)).toEqual(before);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   }, 120000);
-  it('publishes and prepares bounded replay with directory identity checks', async () => {
+  it('appends, seals and prepares a segment log with private checks (DR-111)', async () => {
     const root = await fs.mkdtemp(join(tmpdir(), 'playbook-windows-replay-'));
     try {
       const sessionsDir = join(root, 'sessions');
       await mkdirPrivate(sessionsDir, fs);
-      const replay = await createBoundedReplay({ sessionId: '94000000-0000-4000-8000-000000000002', sessionsDir });
-      await replay.initializeBytes(Buffer.from('one\n'));
-      await replay.appendBytes(Buffer.from('two\n'));
-      await replay.prepare();
-      expect((await replay.readBytes()).toString()).toBe('one\ntwo\n');
-      expect(await replay.checkpoint()).toEqual({ byteLength: 8 });
+      const sessionId = '94000000-0000-4000-8000-000000000002';
+      const store = createCaptainSessionStore({ sessionsDir });
+      const lease = await store.acquire(sessionId);
+      await lease.initializeSettledWithPredecessor(freshBoundary() as any);
+      await lease.append({ type: 'one', timestamp: 1 });
+      const attemptId = '94000000-0000-4000-8000-0000000000a2';
+      await lease.beginTurn({ input: 'two', attemptId, attemptedExecutionProjection: executionProjection() });
+      await lease.settle({ attemptId, snapshot: shellSnapshot(1, 'two'), unresolvedEffects: [] });
+      await lease.append({ type: 'two', timestamp: 2 });
+      await lease.release();
+      await store.prepare();
+      const files = createSessionFiles({ sessionsDir, sessionId });
+      await files.prepare();
+      const read = await files.readLog();
+      expect(read.segments.length).toBe(2);
+      expect(read.lines.toString()).toContain('"type":"two"');
+      expect((await store.validate(sessionId)).integrityValid).toBe(true);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   }, 120000);
   it('admits read grants on a schema-9 manifest and segment and refuses a modify grant (DR-111)', async () => {
@@ -148,17 +159,16 @@ describe.skipIf(process.platform !== 'win32')('native Windows private session st
       const sessionsDir = join(root, 'sessions');
       await mkdirPrivate(sessionsDir, fs);
       const sessionId = '94000000-0000-4000-8000-000000000003';
-      const replay = await createBoundedReplay({ sessionId, sessionsDir });
-      await replay.initializeBytes(Buffer.from('one\n'));
-      const sessionFile = join(sessionsDir, `${sessionId}.replay.json`);
+      const writer = await createCaptainSessionStore({ sessionsDir, env }).acquire(sessionId);
+      await writer.initializeSettledWithPredecessor(freshBoundary() as any);
+      await writer.release();
+      const sessionFile = join(sessionsDir, `${sessionId}.json`);
       grant(sessionsDir, '(OI)(CI)(RX)');
       grant(sessionFile, '(RX)');
       const store = createCaptainSessionStore({ sessionsDir, env });
       const lease = await store.acquire(sessionId);
       await lease.release();
-      const reopened = await createBoundedReplay({ sessionId, sessionsDir });
-      await reopened.prepare();
-      expect((await reopened.readBytes()).toString()).toBe('one\n');
+      expect((await store.validate(sessionId)).integrityValid).toBe(true);
 
       const before = await fs.readFile(sessionFile);
       grant(sessionFile, '(M)');

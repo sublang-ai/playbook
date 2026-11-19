@@ -161,6 +161,10 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
         offset += bytesRead;
       }
       if (!growing && (await handle.stat()).size !== opened.size) throw changed(`${label} changed while reading`);
+      // A reader never combines generations: the path must still name the
+      // entry it read, no shorter than the snapshot taken.
+      const after = await fs.lstat(path);
+      if (!sameFileIdentity(after, opened) || after.size < opened.size) throw changed(`${label} was replaced or truncated while reading`);
       return { bytes, stat: opened };
     } finally { await handle.close(); }
   };
