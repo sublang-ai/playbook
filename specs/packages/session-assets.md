@@ -48,6 +48,10 @@ The stable media URI form shall be `playbook-asset:<assetId>`, resolved only thr
 When a host ingests a native agent event through the public facade, the facade shall persist valid base64 media, including whitespace-wrapped data with MIME case and parameters normalized to the bare lowercase media type, as an immutable asset, return its reference beside the event with its source replaced by the stable asset URI and its MIME replaced by the normalized asset MIME, and preserve remote URI media without fetching it.
 The facade shall externalize tool-result output whose UTF-8 JSON exceeds 4096 bytes as an exact `application/json` asset reference, infer no media from Markdown or local paths, and reject failed persistence so the host can report unavailable content without replaying the original large payload.
 
+### session-assets-12
+
+Where an owner's writer loads its inventory, the facade shall verify every asset once and keep its stored descriptors, extending them with the stored descriptor of each later import through that owner, so a checkpoint lists the owner's complete assets [[session-storage-18](session-storage.md#session-storage-18)] without opening an asset file ([DR-111](../decisions/111-a-session-is-a-manifest-and-a-replay-log.md)).
+
 ## Verification
 
 ### session-assets-10
@@ -66,6 +70,10 @@ When integration tests present malformed references, unsafe filesystem entries a
 ### session-assets-8
 
 When a consumer compiles against the packaged asset and session presentation exports and round-trips attachment-only input and evidence records through JSON, it shall verify exact empty text, complete attachment metadata, origin information and stable asset URI resolution [[session-assets-5](#session-assets-5)].
+
+### session-assets-13
+
+When integration tests import assets under a real session lease, among them identical bytes under another name, and publish progress, they shall verify that each checkpoint lists exactly the stored descriptors, the first name kept for the repeated bytes, while opening no asset file [[session-assets-12](#session-assets-12)].
 
 ### session-assets-11
 

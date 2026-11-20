@@ -28,7 +28,7 @@ import {
   unlink,
 } from 'node:fs/promises';
 import { homedir, hostname as systemHostname } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedEffort } from '@sublang/cligent';
@@ -51,10 +51,8 @@ import {
   lazyMachineIdentity,
   resolveMachineIdentity,
 } from './machine-identity.js';
-import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate, privatePermissions } from './private-paths.js';
-import { createSessionChunks } from './session-chunks.js';
-import { createBoundedReplay } from './session-replay.js';
-import { decodeStoredManifest, encodeStoredManifest, SESSION_STORAGE_VERSION } from './storage-manifest.js';
+import { sameFileIdentity, syncDirectory, tightenPrivateEntry, mkdirPrivate, privatePermissions, renameWithRetry } from './private-paths.js';
+import { createSessionFiles, EMPTY_LOG_BINDING, SESSION_STORAGE_VERSION } from './session-files.js';
 
 export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 6;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
@@ -170,7 +168,8 @@ const DEFAULT_FS_OPERATIONS = Object.freeze({
   unlink,
 });
 const EMPTY_REPLAY_PREFIX_DIGEST = createHash('sha256').digest('hex');
-const REPLAY_READ_CHUNK_SIZE = 64 * 1024;
+// A lease writer keeps at most this much of what it appended for its reads.
+const MAX_KEPT_APPENDED_BYTES = 8 * 1024 * 1024;
 
 class ReplaySnapshotChangedError extends Error {
   constructor(message) {
@@ -194,6 +193,20 @@ class CaptainSessionRecordNonresumableError extends
     super(schemaVersion, message, cause);
     this.name = 'CaptainSessionRecordNonresumableError';
     this.orderingBoundary = orderingBoundary;
+  }
+}
+
+// DR-111: a session in an earlier format — schema 7 or 8 storage, or a
+// schema 2-6 record — is known and reported unsupported; any other value is
+// an unknown format, which listing treats as invalid.
+class UnsupportedSessionStorageError extends Error {
+  constructor(storageVersion) {
+    const earlier = [2, 3, 4, 5, 6, 7, 8].includes(storageVersion);
+    super(`session storage schema ${storageVersion} is unsupported${earlier ? `; ${[7, 8].includes(storageVersion)
+      ? 'convert it with `playbook sessions upgrade`' : 'an earlier Playbook version can migrate it'}` : ''}`);
+    this.name = 'UnsupportedSessionStorageError';
+    this.storageVersion = storageVersion;
+    this.earlier = earlier;
   }
 }
 
@@ -308,28 +321,43 @@ export function sanitizeReplayRecord(value) {
 // appends, and keeps replay durability fail-soft beside canonical settlement.
 // Bounded physical replay preserves the public readable/durable distinction.
 // A failed append latches history incompleteness; recovery writes remain open.
-async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, readStream, chunks }) {
-  const sessionId = basename(path, '.records.jsonl');
-  const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, assertOwner, chunks });
+async function createLeaseReplayWriter({ sessionId, sessionsDir, fs, assertOwner, readStream, files, binding }) {
   let lastReadableSeq = null, lastDurableSeq = null, incomplete = true, closed = false;
   // DR-109: the verified prefix is what this writer verified at initialization
   // and appended since: a running SHA-256 of the exact envelope bytes, the
   // digest at the durable sequence, and the context records. It answers a
-  // checkpoint without rereading the chain; a latch discards it for the lease.
+  // checkpoint without rereading the log; a latch discards it for the lease.
   let prefix = null;
+  // DR-111: the log writer and the log prefix its durable sequence binds;
+  // without a writer the manifest keeps binding its earlier prefix.
+  let log = null, durableBinding;
+  // DR-111: the envelopes this writer appended are exactly the log's suffix
+  // after `appendedFrom`, so the lease-bound read of that suffix the host's
+  // observer makes after each record opens no file: on Windows, opening a
+  // segment just appended to costs a fresh antivirus scan of the whole file.
+  // A latch or a request below the kept suffix reads the log instead.
+  const appended = [], appendedSizes = [];
+  let appendedFrom = null, appendedBytes = 0;
   let tail = Promise.resolve();
   const enqueue = (operation) => { const result = tail.then(operation); tail = result.catch(() => {}); return result; };
   const status = () => Object.freeze({ lastReadableSeq, lastDurableSeq, incomplete });
   const refresh = async () => {
-    const snapshot = await backend.readSnapshot();
-    const history = parseSessionHistory(snapshot.bytes);
-    if (history.incomplete || history.pendingTail) throw new Error('bounded replay is incomplete');
-    return { bytes: snapshot.bytes, history };
+    await assertPrivateDirectory(sessionsDir, fs);
+    const read = await files.readLog(binding === undefined ? {} : { binding });
+    const history = parseSessionHistory(read.lines);
+    if (read.damage !== undefined || history.incomplete) throw new Error('session replay log is damaged');
+    return { bytes: read.lines, history, read };
   };
   try {
     await assertOwner();
-    const { bytes, history } = await refresh();
+    const { bytes, history, read } = await refresh();
+    // The manifest's bound prefix must verify before this writer extends
+    // it; an unfinished final line beyond it is an unacknowledged append.
+    if (read.bound !== undefined && !read.bound.ok) throw new Error(read.bound.reason);
+    log = await files.createLogWriter({ read, sealedNames: new Set((binding?.sealed ?? []).map(({ name }) => name)) });
+    durableBinding = log.binding();
     lastReadableSeq = lastDurableSeq = history.lastReadableSeq;
+    appendedFrom = lastReadableSeq;
     const hash = createHash('sha256').update(bytes);
     prefix = {
       hash, durable: { seq: lastDurableSeq, sha256: hash.copy().digest('hex') },
@@ -351,6 +379,16 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
       prefix.hash.update(line);
     } catch { prefix = null; }
   };
+  const keepAppended = (line, seq) => {
+    try { appended.push(parseReplayEnvelope(line.subarray(0, -1), seq)); }
+    catch { appended.length = appendedSizes.length = appendedBytes = 0; appendedFrom = seq; return; }
+    appendedSizes.push(line.length);
+    appendedBytes += line.length;
+    while (appendedBytes > MAX_KEPT_APPENDED_BYTES && appended.length > 0) {
+      appendedFrom = appended.shift().seq;
+      appendedBytes -= appendedSizes.shift();
+    }
+  };
   const append = (record, role) => {
     if (closed) return Promise.reject(new Error('replay append admission is closed for release'));
     if (incomplete || lastReadableSeq === null) return Promise.resolve();
@@ -367,16 +405,28 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
         if (lastReadableSeq >= Number.MAX_SAFE_INTEGER) throw new Error('replay stream sequence exhausted its safe integer range');
         const seq = lastReadableSeq + 1;
         const line = Buffer.from(`${JSON.stringify({v: RECORDS_STREAM_VERSION, seq, ...(role === undefined ? {} : {role}), record: sanitized})}\n`);
-        await backend.appendBytes(line);
+        await log.append(line, seq);
         lastReadableSeq = seq;
         extendPrefix(line, sanitized, seq);
+        keepAppended(line, seq);
       } catch (cause) { await latch(); throw cause; }
     });
+  };
+  // The requested `afterSeq` when the kept suffix answers it, else undefined.
+  const keptReadFrom = (options) => {
+    if (incomplete || appendedFrom === null) return undefined;
+    let afterSeq;
+    try { afterSeq = validateReplayReadOptions(options); } catch { return undefined; }
+    return afterSeq >= appendedFrom && afterSeq <= lastReadableSeq ? afterSeq : undefined;
   };
   const checkpointNow = async () => {
     if (incomplete || lastReadableSeq === null) return;
     try {
-      await assertOwner(); await backend.checkpoint({trustPublished: true}); await assertOwner();
+      // An append is synced, with any new segment's name, before it is
+      // acknowledged, so a checkpoint only fixes the bound prefix.
+      await assertOwner();
+      await log.verify();
+      durableBinding = log.binding();
       lastDurableSeq = lastReadableSeq;
       if (prefix !== null) prefix.durable = { seq: lastDurableSeq, sha256: prefix.hash.copy().digest('hex') };
     } catch { await latch(); }
@@ -388,6 +438,12 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
       return enqueue(async () => {
         await assertOwner();
         if (lastReadableSeq === null) throw new Error('replay stream is unavailable for this lease');
+        const afterSeq = keptReadFrom(options);
+        if (afterSeq !== undefined) {
+          // Each read returns its own entries, as a read of the log does.
+          const entries = appended.filter(({ seq }) => seq > afterSeq).map((entry) => structuredClone(entry));
+          return freezeReplayLeaseReadResult(entries, lastReadableSeq, lastDurableSeq, incomplete);
+        }
         const result = await readStream(options);
         lastReadableSeq = result.lastReadableSeq;
         return freezeReplayLeaseReadResult(result.entries, lastReadableSeq, lastDurableSeq, incomplete);
@@ -397,9 +453,18 @@ async function createLeaseReplayWriter({ sessionsDir, path, fs, assertOwner, rea
     // The verified prefix's facts, or null where this writer holds none.
     verifiedPrefix: () => (incomplete || prefix === null ? null
       : Object.freeze({ durable: Object.freeze({ ...prefix.durable }), contexts: Object.freeze([...prefix.contexts]) })),
+    // The log prefix the durable sequence binds, or undefined where no
+    // trustworthy boundary was established.
+    durableLog: () => (lastDurableSeq !== null && durableBinding !== undefined
+      ? { seq: lastDurableSeq, binding: structuredClone(durableBinding) } : undefined),
+    // DR-111: turn settlement seals the open segment; it never changes again.
+    seal: () => enqueue(async () => { if (log !== null && !incomplete) { try { await log.seal(); } catch { await latch(); } } }),
+    referencedBlobs: () => log?.referencedBlobs() ?? new Set(),
+    removeUnreferencedBlobs: (referenced) => enqueue(async () => { if (log !== null) await files.removeUnreferencedBlobs(referenced); }),
+    closeLog: () => enqueue(async () => { await log?.close(); }),
     checkpoint: () => enqueue(checkpointNow),
     closeAppendAdmission: () => { closed = true; },
-    prepareRelease: () => enqueue(checkpointNow),
+    prepareRelease: () => enqueue(async () => { await checkpointNow(); await log?.close(); }),
   });
 }
 
@@ -443,13 +508,19 @@ export function createCaptainSessionStore(options = {}) {
   const replayReadCursors = new Map();
   const replayReadQueues = new Map();
   const portableWriters = new Map();
-  const chunkStores = new Map();
-  const chunksFor = (sessionId) => {
+  const fileStores = new Map();
+  const filesFor = (sessionId) => {
     assertSessionId(sessionId);
-    // Chunk provisioning creates only this owned child; the codec verifies
-    // the existing sessions parent and never creates it or its ancestors.
-    if (!chunkStores.has(sessionId)) chunkStores.set(sessionId, createSessionChunks({ directory: join(sessionsDir, `${sessionId}.chunks`), fsOps: fs }));
-    return chunkStores.get(sessionId);
+    if (!fileStores.has(sessionId)) fileStores.set(sessionId, createSessionFiles({ sessionsDir, sessionId, fsOps: fs }));
+    return fileStores.get(sessionId);
+  };
+  // DR-111: the store reads only schema 9; an earlier physical format is
+  // reported unsupported and left unchanged for the conversion command.
+  const decodeStoredRoot = async (text, sessionId) => {
+    const storageVersion = JSON.parse(text)?.schemaVersion;
+    if (storageVersion !== SESSION_STORAGE_VERSION) throw new UnsupportedSessionStorageError(storageVersion);
+    const decoded = await filesFor(sessionId).decodeManifest(Buffer.from(text, 'utf8'));
+    return { value: decoded.manifest, storageVersion, log: decoded.log, parts: decoded.parts };
   };
   const assetStores = new Map();
   const assetStoreFor = (sessionId) => {
@@ -482,10 +553,6 @@ export function createCaptainSessionStore(options = {}) {
     assertSessionId(sessionId);
     return join(sessionsDir, `${sessionId}.json`);
   };
-  const recordsPathFor = (sessionId) => {
-    assertSessionId(sessionId);
-    return join(sessionsDir, `${sessionId}.records.jsonl`);
-  };
   const leasePathFor = (sessionId) => {
     assertSessionId(sessionId);
     return join(sessionsDir, `.${sessionId}.lock`);
@@ -496,7 +563,15 @@ export function createCaptainSessionStore(options = {}) {
     return join(sessionsDir, `.${sessionId}.lock.retired.${ownerToken}`);
   };
 
-  const readRecord = async (sessionId, { missing = 'error', requirePortable = false } = {}) => {
+  // DR-111: a manifest replaced while it is read was read whole, but read
+  // again so a reader returns the current one; the retry is bounded.
+  const readRecord = async (sessionId, options) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await readRecordOnce(sessionId, options); }
+      catch (cause) { if (attempt >= 3 || !isPrivateFileChange(cause)) throw cause; }
+    }
+  };
+  const readRecordOnce = async (sessionId, { missing = 'error' } = {}) => {
     const path = recordPathFor(sessionId);
     let text;
     try {
@@ -509,16 +584,25 @@ export function createCaptainSessionStore(options = {}) {
       }
       throw new Error(
         `cannot read Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${errorMessage(cause)}`,
+        { cause },
       );
     }
     let value;
     let storageVersion;
     try {
-      storageVersion = JSON.parse(text)?.schemaVersion;
-      value = await decodeStoredManifest(text, chunksFor(sessionId), sessionId);
+      ({ value, storageVersion } = await decodeStoredRoot(text, sessionId));
     } catch (cause) {
+      if (cause instanceof UnsupportedSessionStorageError) {
+        const message = `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${cause.message}`;
+        // An earlier-format root with a well-formed summary is reported and
+        // keeps its place in the predecessor order; any other is invalid.
+        const boundary = cause.earlier ? earlierOrderingBoundary(text, sessionId) : undefined;
+        if (boundary !== undefined) throw new CaptainSessionRecordNonresumableError(cause.storageVersion, message, boundary, cause);
+        throw new Error(message, { cause });
+      }
       throw new Error(
         `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} is not valid JSON: ${errorMessage(cause)}`,
+        { cause },
       );
     }
     let record;
@@ -530,9 +614,6 @@ export function createCaptainSessionStore(options = {}) {
       record = value.schemaVersion === SESSION_MANIFEST_VERSION
         ? recoveryFromManifest(value)
         : validateCaptainSessionRecord(value);
-      if (requirePortable && storageVersion !== SESSION_STORAGE_VERSION) {
-        throw new CaptainSessionRecordNonresumableError(storageVersion, `storage schema ${storageVersion} requires explicit migration; run playbook migrate-session ${sessionId}`, captainSessionOrderingBoundary(record));
-      }
     } catch (cause) {
       const context =
         `Captain session ${JSON.stringify(sessionId)} at ` +
@@ -577,13 +658,18 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const readStoredManifest = async (sessionId) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await readStoredManifestOnce(sessionId); }
+      catch (cause) { if (attempt >= 3 || !isPrivateFileChange(cause)) throw cause; }
+    }
+  };
+  const readStoredManifestOnce = async (sessionId) => {
     let bytes;
     try { await assertPrivateDirectory(sessionsDir, fs); bytes = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record'); }
     catch (cause) { if (cause?.code === 'ENOENT') throw new CaptainSessionNotFoundError(sessionId, recordPathFor(sessionId)); throw cause; }
-    const value = await decodeStoredManifest(bytes, chunksFor(sessionId), sessionId);
+    const { value, log } = await decodeStoredRoot(bytes, sessionId);
     if (value.sessionId !== sessionId) throw new Error('session manifest identity does not match its filename');
-    return { manifest: value.schemaVersion === 7 ? validateSessionManifest(value) : value,
-      storageVersion: JSON.parse(bytes).schemaVersion };
+    return { manifest: value.schemaVersion === 7 ? validateSessionManifest(value) : value, log };
   };
   const readManifest = async (sessionId) => (await readStoredManifest(sessionId)).manifest;
   const prepare = async () => {
@@ -591,20 +677,26 @@ export function createCaptainSessionStore(options = {}) {
     let names; try { names = await fs.readdir(sessionsDir); } catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
     for (const name of names) {
       if (name.endsWith('.assets') && SESSION_ID_PATTERN.test(name.slice(0, -7))) await assetStoreFor(name.slice(0, -7)).prepare();
-      if (name.endsWith('.chunks') && SESSION_ID_PATTERN.test(name.slice(0, -7))) await chunksFor(name.slice(0, -7)).prepare();
+      for (const suffix of ['.replay', '.blobs']) {
+        if (name.endsWith(suffix) && SESSION_ID_PATTERN.test(name.slice(0, -suffix.length))) await filesFor(name.slice(0, -suffix.length)).prepare();
+      }
     }
+  };
+  // DR-111: a history is the log's complete lines, any unfinished final
+  // line, and the first damaged boundary; with the manifest's binding it
+  // also reports whether the bound prefix verifies.
+  const readLogHistory = async (sessionId, { afterSeq = 0, binding } = {}) => {
+    if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('history afterSeq must be a nonnegative safe integer');
+    await assertPrivateDirectory(sessionsDir, fs);
+    const read = await filesFor(sessionId).readLog(binding === undefined ? {} : { binding });
+    const history = parseSessionHistory(Buffer.concat([read.lines, read.partial]), afterSeq);
+    const damaged = read.damage !== undefined && history.damage === undefined
+      ? { incomplete: true, pendingTail: false, damage: { seq: history.lastReadableSeq + 1, offset: read.damage.offset, reason: read.damage.reason } } : {};
+    return Object.freeze({ ...history, ...damaged, missing: read.absent === true, ...(read.bound ? { bound: read.bound } : {}) });
   };
   const readHistory = async (sessionId, options = {}) => {
     assertSessionId(sessionId);
-    const history = await readSessionHistory({ sessionsDir, path: recordsPathFor(sessionId), fs, chunks: chunksFor(sessionId), afterSeq: options.afterSeq ?? 0 });
-    if (!history.missing) return history;
-    let legacy;
-    try {
-      legacy = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'legacy record'));
-      if (![2, 3, 4, 5, 6].includes(legacy.schemaVersion)) return history;
-      if (legacy.kind !== CAPTAIN_SESSION_RECORD_KIND || legacy.sessionId !== sessionId || !Array.isArray(legacy.snapshot?.journal) || !Number.isFinite(Date.parse(legacy.updatedAt))) return history;
-    } catch { return history; }
-    return legacyJournalHistory(legacy, options.afterSeq ?? 0, history);
+    return readLogHistory(sessionId, { afterSeq: options.afterSeq ?? 0 });
   };
   // Only our typed reference locations participate; opaque tool/text data is history.
   const assertAssetInventory = (manifest, entries) => {
@@ -636,21 +728,17 @@ export function createCaptainSessionStore(options = {}) {
     }
   };
   const validate = async (sessionId, context = {}) => {
-    const { manifest, storageVersion } = await readStoredManifest(sessionId);
-    const history = await readHistory(sessionId);
+    const { manifest, log } = await readStoredManifest(sessionId);
+    const history = await readLogHistory(sessionId, { binding: log });
     const reasons = [];
-    if (storageVersion === 7) reasons.push(`storage schema 7 requires explicit migration; run playbook migrate-session ${sessionId}`);
     let integrityValid = !history.missing && !history.incomplete;
     if (history.missing) reasons.push('session replay file is missing');
     if (history.pendingTail) reasons.push('session replay has an unfinished final record');
-    if (manifest.schemaVersion !== 7) {
-      if ([2, 3, 4, 5, 6].includes(manifest.schemaVersion)) {
-        try { validateCaptainSessionRecord(manifest); }
-        catch (cause) { if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause; reasons.push(cause.message); }
-        reasons.push(`schema ${manifest.schemaVersion} requires explicit migration; run playbook migrate-session ${sessionId}`);
-      } else reasons.push(`unsupported session schema ${manifest.schemaVersion}`);
-    }
+    // DR-111: the manifest binds its prefix segment by segment.
+    if (!history.bound.ok) { integrityValid = false; reasons.push(`session replay log differs from its manifest: ${history.bound.reason}`); }
+    if (manifest.schemaVersion !== 7) reasons.push(`unsupported session schema ${manifest.schemaVersion}`);
     else {
+      if (history.bound.ok && history.bound.lines !== manifest.replay.seq) { integrityValid = false; reasons.push('session replay log binding differs from its checkpoint sequence'); }
       if (history.entries.some(({ record }) => !isDeepStrictEqual(record, sanitizeReplayRecord(record)))) {
         integrityValid = false;
         reasons.push('session replay contains provider continuation fields');
@@ -694,10 +782,9 @@ export function createCaptainSessionStore(options = {}) {
     const operation = previous.then(() =>
       readReplayStream({
         sessionsDir,
-        path: recordsPathFor(sessionId),
         afterSeq,
         cursor: replayReadCursors.get(sessionId),
-        fs, chunks: chunksFor(sessionId),
+        fs, files: filesFor(sessionId),
       }),
     );
     const drained = operation.then(
@@ -774,7 +861,7 @@ export function createCaptainSessionStore(options = {}) {
       // Canonically named records are store-owned. Corruption must not make
       // --continue silently select an older logical session.
       try {
-        candidates.push(await readRecord(sessionId, { requirePortable: true }));
+        candidates.push(await readRecord(sessionId));
       } catch (error) {
         if (error instanceof CaptainSessionRecordNonresumableError) {
           if (error.orderingBoundary) await onLegacyOrderingBoundary?.(error.orderingBoundary);
@@ -783,7 +870,7 @@ export function createCaptainSessionStore(options = {}) {
               sessionId,
               path: recordPathFor(sessionId),
               schemaVersion: error.schemaVersion,
-              ...(error.schemaVersion >= 6 ? { reason: error.cause?.message ?? error.message } : {}),
+              reason: error.cause?.message ?? error.message,
             }),
           );
           continue;
@@ -893,11 +980,11 @@ export function createCaptainSessionStore(options = {}) {
 
   const writeRecord = async (
     recordValue,
-    { noReplace, onPublished, portable = false },
+    { noReplace, onPublished },
   ) => {
-    const record = portable
-      ? validateSessionManifest(recordValue)
-      : await portableWriters.get(recordValue.sessionId)?.checkpoint(recordValue);
+    const writer = portableWriters.get(recordValue.sessionId);
+    const checkpointed = await writer?.checkpoint(recordValue);
+    const record = checkpointed?.manifest;
     if (record === undefined) throw new Error('session persistence requires its owning lifecycle');
     const destination = recordPathFor(record.sessionId);
     await ensurePrivateDirectory(sessionsDir, fs, mayCreateDirectory);
@@ -912,7 +999,10 @@ export function createCaptainSessionStore(options = {}) {
       await assertPrivateRegularPath(destination, 0o600, fs, 'record');
     }
 
-    const encoded = await encodeStoredManifest(record, chunksFor(record.sessionId));
+    // DR-111: the manifest file holds the logical manifest whole, with the
+    // log prefix its checkpoint binds; any blob parts are durable first.
+    const prepared = await filesFor(record.sessionId).prepareManifest(record, checkpointed.log);
+    const encoded = prepared.bytes;
     const tempId = createTempId();
     assertUuid(tempId, 'Captain session temporary id');
     const temporary = join(
@@ -957,13 +1047,13 @@ export function createCaptainSessionStore(options = {}) {
           // Leave only this unpredictable store-owned temp path behind.
         }
       } else {
-        await fs.rename(temporary, destination);
+        await renameWithRetry(temporary, destination, fs);
         ownsTemporary = false;
         published = true;
         onPublished?.();
       }
       await syncDirectory(sessionsDir, fs);
-      portableWriters.get(record.sessionId)?.published(record);
+      writer.published(record, { log: checkpointed.log, parts: prepared.parts });
       return record;
     } catch (cause) {
       try {
@@ -983,6 +1073,12 @@ export function createCaptainSessionStore(options = {}) {
   };
 
   const deleteRecord = async (sessionId) => {
+    // DR-111: a session in an earlier physical format stays unchanged; the
+    // conversion command, or an earlier version, owns its files.
+    let stored;
+    try { stored = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'session file')); }
+    catch (cause) { if (cause?.code !== 'ENOENT' && !(cause instanceof SyntaxError)) throw cause; }
+    if (stored !== undefined && stored?.schemaVersion !== SESSION_STORAGE_VERSION) throw new UnsupportedSessionStorageError(stored?.schemaVersion);
     const assetsDirectory = join(sessionsDir, `${sessionId}.assets`);
     try {
       await assertPrivateDirectory(assetsDirectory, fs);
@@ -1001,12 +1097,11 @@ export function createCaptainSessionStore(options = {}) {
       catch (cause) { if (cause?.code !== 'ENOTEMPTY' && cause?.code !== 'EEXIST') throw cause; }
       await syncDirectory(sessionsDir, fs);
     } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-    for (const suffix of ['.hints.json', '.spex.json', '.records.jsonl', '.replay.json']) {
-      const path = join(sessionsDir, `${sessionId}${suffix}`);
-      try { await assertPrivateRegularPath(path, 0o600, fs, 'session file'); await fs.unlink(path); await syncDirectory(sessionsDir, fs); }
-      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-    }
-    await chunksFor(sessionId).delete();
+    const hintsPath = join(sessionsDir, `${sessionId}.hints.json`);
+    try { await assertPrivateRegularPath(hintsPath, 0o600, fs, 'session file'); await fs.unlink(hintsPath); await syncDirectory(sessionsDir, fs); }
+    catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
+    await filesFor(sessionId).remove();
+    await assetStoreFor(sessionId).loadInventory();
     const manifestPath = recordPathFor(sessionId);
     try { await assertPrivateRegularPath(manifestPath, 0o600, fs, 'session file'); await fs.unlink(manifestPath); await syncDirectory(sessionsDir, fs); }
     catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
@@ -1297,17 +1392,13 @@ export function createCaptainSessionStore(options = {}) {
     assertSessionId(sessionId);
     await prepareSessionPermissions(sessionsDir, fs, sessionId);
     await assetStoreFor(sessionId).prepare();
-    try { await fs.lstat(join(sessionsDir, `${sessionId}.chunks`)); await chunksFor(sessionId).prepare(); }
-    catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-    let stored;
+    await filesFor(sessionId).prepare();
     if (!management) {
+      // DR-111: an earlier physical format refuses before any lease residue.
+      let stored;
       try { stored = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record')); }
       catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      if (stored?.schemaVersion === 7) throw new Error(`session ${sessionId} requires bounded storage migration; run playbook migrate-session ${sessionId}`);
-      if (stored === undefined) {
-        try { await fs.lstat(recordsPathFor(sessionId)); throw new Error(`session ${sessionId} has legacy replay requiring explicit migration`); }
-        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      }
+      if (stored !== undefined && stored?.schemaVersion !== SESSION_STORAGE_VERSION) throw new UnsupportedSessionStorageError(stored?.schemaVersion);
     }
     let stage;
     let stagePublished = false;
@@ -1337,18 +1428,6 @@ export function createCaptainSessionStore(options = {}) {
       await publishLeaseStage(sessionId, stage, () => {
         stagePublished = true;
       });
-      let chunkDirectory;
-      try { chunkDirectory = await fs.lstat(join(sessionsDir, `${sessionId}.chunks`)); }
-      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      if (chunkDirectory) {
-        const assertPublishedOwner = async () => {
-          const current = await readLeaseOwner(sessionId);
-          if (current.ownerToken !== stage.owner.ownerToken) throw new Error('session ownership changed before chunk recovery');
-        };
-        await assertPublishedOwner();
-        await chunksFor(sessionId).prepare({ recoverInterrupted: true });
-        await assertPublishedOwner();
-      }
       if (management) {
         let released = false;
         const assertOwner = async () => {
@@ -1368,10 +1447,9 @@ export function createCaptainSessionStore(options = {}) {
         sessionId,
         owner: stage.owner,
         sessionsDir,
-        // Mirrors the reader's choice: a monolithic manifest's history is not
-        // the bounded chain this lease's writer verifies and extends.
-        boundedHistory: ![2, 3, 4, 5, 6, 7].includes(stored?.schemaVersion),
-        replayPath: recordsPathFor(sessionId),
+        files: filesFor(sessionId),
+        readStoredManifest,
+        decodeStoredRoot,
         replayFs: fs,
         readReplayStream: (options) => readStream(sessionId, options),
         readRecord,
@@ -1380,7 +1458,6 @@ export function createCaptainSessionStore(options = {}) {
         validateSession: validate,
         portableWriters,
         assetStore: assetStoreFor(sessionId),
-        chunks: chunksFor(sessionId),
         writeRecord,
         syncRecordDirectory: () => syncDirectory(sessionsDir, fs),
         deleteRecord,
@@ -1418,339 +1495,6 @@ export function createCaptainSessionStore(options = {}) {
     }
   };
 
-  const retainedMigrationInputs = async (receipt, sessionId, sourcePath, inputsDir) => {
-    const replayPath = join(dirname(sourcePath), `${sessionId}.records.jsonl`);
-    if (receipt?.v !== 1 || receipt.id !== sessionId || !Array.isArray(receipt.inputs) ||
-        ![1, 2].includes(receipt.inputs.length) || receipt.inputs[0]?.path !== sourcePath ||
-        receipt.inputs.length === 2 && receipt.inputs[1]?.path !== replayPath) throw new Error('migration receipt differs from its original source');
-    const retained = [];
-    for (const [index, input] of receipt.inputs.entries()) {
-      const bytes = await readPrivateRegularFile(join(inputsDir, String(index)), 0o600, fs, 'retained migration input', true);
-      if (typeof input.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(input.sha256) || sha256(bytes) !== input.sha256) throw new Error('retained migration input differs');
-      retained.push(bytes);
-    }
-    return retained;
-  };
-
-  const migrateBounded = async (sessionId, migration) => {
-    // Unchanged format/cwd refusals must create no ownership or derived
-    // directories. Acquisition is followed by authoritative validation again.
-    validateSessionManifest(await readManifest(sessionId));
-    const lease = await acquire(sessionId, true);
-    let failure;
-    try {
-      await lease.assertOwner();
-      const source = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'migration source', true);
-      const raw = JSON.parse(source);
-      const backup = join(migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId), 'bounded');
-      const receiptPath = join(backup, 'receipt.json');
-      let receipt;
-      try { receipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt')); }
-      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      if (raw.schemaVersion === SESSION_STORAGE_VERSION) {
-        const current = await validate(sessionId);
-        if (!current.integrityValid) throw new Error('completed bounded migration failed validation');
-        const originalBackup = migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId);
-        const originalReceiptPath = join(originalBackup, 'receipt.json');
-        let originalReceipt;
-        try { originalReceipt = JSON.parse(await readPrivateRegularFile(originalReceiptPath, 0o600, fs, 'original migration receipt')); }
-        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-        if (originalReceipt?.complete === false) {
-          if (originalReceipt.v !== 1 || originalReceipt.id !== sessionId ||
-              !Array.isArray(originalReceipt.inputs) || ![1, 2].includes(originalReceipt.inputs.length) ||
-              originalReceipt.inputs[0]?.path !== recordPathFor(sessionId) ||
-              !/^[0-9a-f]{64}$/.test(originalReceipt.publishedRootSha256) ||
-              originalReceipt.publishedRootSha256 !== sha256(source)) {
-            throw new Error('incomplete original migration cannot prove its published root; retry with its original source');
-          }
-          const [retainedSource, retainedReplay] = await retainedMigrationInputs(originalReceipt, sessionId, recordPathFor(sessionId), join(originalBackup, 'inputs'));
-          const old = JSON.parse(retainedSource);
-          if (![2, 3, 4, 5, 6].includes(old.schemaVersion) || old.sessionId !== sessionId) throw new Error('retained original migration source differs');
-          try { validateCaptainSessionRecord(old); }
-          catch (cause) { if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause; }
-          await lease.assertOwner();
-          if (!(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'published migration root', true)).equals(source)) throw new Error('published migration root changed during completion');
-          try {
-            const legacy = await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'remaining original migration replay', true);
-            if (retainedReplay === undefined || !legacy.equals(retainedReplay)) throw new Error('legacy replay differs from retained original migration input');
-            await fs.unlink(recordsPathFor(sessionId)); await syncDirectory(sessionsDir, fs);
-          } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-          await writePrivateJson(originalReceiptPath, {...originalReceipt, complete: true}, fs);
-        }
-        if (receipt?.complete === false) {
-          const retained = await readPrivateRegularFile(join(backup, 'replay'), 0o600, fs, 'retained replay', true);
-          const retainedManifest = await readPrivateRegularFile(join(backup, 'manifest'), 0o600, fs, 'retained manifest', true);
-          if (receipt.sessionId !== sessionId || sha256(retained) !== receipt.replaySha256 ||
-              sha256(retainedManifest) !== receipt.manifestSha256 ||
-              !/^[0-9a-f]{64}$/.test(receipt.publishedRootSha256) ||
-              sha256(source) !== receipt.publishedRootSha256) throw new Error('bounded migration receipt differs');
-          try {
-            const legacy = await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'legacy replay', true);
-            if (!legacy.equals(retained)) throw new Error('legacy replay changed after migration');
-            await fs.unlink(recordsPathFor(sessionId)); await syncDirectory(sessionsDir, fs);
-          } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-          await writePrivateJson(receiptPath, {...receipt, complete: true}, fs);
-        }
-        return {manifest: current.manifest, migrated: false, reasons: current.reasons};
-      }
-      const manifest = validateSessionManifest(raw);
-      const current = await validate(sessionId);
-      if (!current.integrityValid) throw new Error('legacy bundle is incomplete or corrupt; bounded migration refused');
-      const replay = await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'migration replay', true);
-      const history = parseSessionHistory(replay);
-      let convertedReplay = replay;
-      if (history.pendingTail) {
-        const prefix = replay.subarray(0, history.completeBytes);
-        try {
-          const entry = parseReplayEnvelope(replay.subarray(history.completeBytes), history.lastReadableSeq + 1);
-          const record = sanitizeReplayRecord(entry.record);
-          convertedReplay = isDeepStrictEqual(record, entry.record)
-            ? Buffer.concat([replay, Buffer.from('\n')])
-            : Buffer.concat([prefix, Buffer.from(`${JSON.stringify({...entry, record})}\n`)]);
-        } catch { convertedReplay = prefix; }
-      }
-      await ensurePrivateDirectory(backup, fs, mayCreateDirectory);
-      for (const [name, bytes] of [['manifest', source], ['replay', replay]]) {
-        const path = join(backup, name);
-        try { if (!(await readPrivateRegularFile(path, 0o600, fs, 'retained migration input', true)).equals(bytes)) throw new Error('retained bounded migration input differs'); }
-        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; await writePrivateBytes(path, bytes, fs); }
-      }
-      const encoded = await encodeStoredManifest(manifest, chunksFor(sessionId));
-      const expected = {v: 1, sessionId, manifestSha256: sha256(source), replaySha256: sha256(replay), publishedRootSha256: sha256(encoded), complete: false};
-      if (receipt && (receipt.sessionId !== sessionId || receipt.manifestSha256 !== expected.manifestSha256 || receipt.replaySha256 !== expected.replaySha256)) throw new Error('bounded migration receipt differs');
-      await writePrivateJson(receiptPath, expected, fs);
-      const backend = await createBoundedReplay({sessionId, sessionsDir, fsOps: fs, assertOwner: lease.assertOwner, chunks: chunksFor(sessionId)});
-      const snapshot = await backend.readSnapshot();
-      if (snapshot.root === null) await backend.initializeBytes(convertedReplay);
-      else if (!snapshot.bytes.equals(convertedReplay)) throw new Error('bounded migration replay differs');
-      await lease.assertOwner();
-      await writeRecord(manifest, {portable: true, noReplace: false});
-      const published = await validate(sessionId);
-      if (!published.integrityValid) throw new Error('published bounded migration failed validation');
-      await lease.assertOwner();
-      if (!(await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'migration replay', true)).equals(replay)) throw new Error('legacy replay changed during migration');
-      await fs.unlink(recordsPathFor(sessionId)); await syncDirectory(sessionsDir, fs);
-      await writePrivateJson(receiptPath, {...expected, complete: true}, fs);
-      return {manifest, migrated: true, reasons: published.reasons};
-    } catch (cause) { failure = {cause}; throw cause; }
-    finally { await releaseInOrder([lease], failure, 'cannot finish bounded session migration'); }
-  };
-
-  const migrate = async (sessionId, migration = {}) => {
-    assertSessionId(sessionId);
-    await prepareSessionPermissions(sessionsDir, fs, sessionId, true);
-    if (migration.sourcePath === undefined || migration.sourcePath === recordPathFor(sessionId)) {
-      const candidate = JSON.parse(await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'migration source'));
-      if (candidate.schemaVersion === 7 || candidate.schemaVersion === SESSION_STORAGE_VERSION) return migrateBounded(sessionId, migration);
-    }
-    const sourcePath = migration.sourcePath ?? recordPathFor(sessionId);
-    const sidecar = sourcePath.endsWith('.spex.json');
-    const sourceDir = dirname(sourcePath);
-    const sourceReplayPath = join(sourceDir, `${sessionId}.records.jsonl`);
-    const external = sourceDir !== sessionsDir;
-    if (!isAbsolute(sourcePath) || sourcePath !== join(sourceDir, `${sessionId}${sidecar ? '.spex' : ''}.json`)) throw new Error('migration source must be the canonical session file');
-    const backupDir = migration.backupDir ?? join(dirname(sessionsDir), 'local', 'migrations', sessionId);
-    const inputsDir = join(backupDir, 'inputs');
-    const receiptPath = join(backupDir, 'receipt.json');
-    const decodeSource = (sourceBytes) => {
-      const source = JSON.parse(sourceBytes);
-      if (!sidecar && (source.schemaVersion === 7 || source.schemaVersion === SESSION_STORAGE_VERSION)) {
-        if (external) throw new Error('source is already portable; select its complete bundle instead of legacy migration');
-        return { source };
-      }
-      let recovery, metadata;
-      if (sidecar) {
-        const value = source.session ?? source;
-        if (source.v !== 1 || value.id !== sessionId || !Number.isFinite(value.createdAt) || typeof migration.cwd !== 'string' || !isAbsolute(migration.cwd) || resolve(migration.cwd) !== migration.cwd) throw new Error('invalid legacy desktop sidecar or missing normalized cwd');
-        metadata = { cwd: migration.cwd, createdAt: new Date(value.createdAt).toISOString(), updatedAt: new Date(value.endedAt ?? value.createdAt).toISOString(), reason: 'legacy desktop history lacks complete durable recovery', journal: value.snapshot?.shell?.journal ?? [] };
-      } else {
-        if (source.sessionId !== sessionId) throw new Error('migration session identity mismatch');
-        try { recovery = validateCaptainSessionRecord(source); }
-        catch (cause) {
-          if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause;
-          metadata = { cwd: source.cwd, createdAt: source.createdAt, updatedAt: source.updatedAt, reason: `legacy schema ${source.schemaVersion} has no supported recovery`, journal: source.snapshot?.journal ?? [] };
-        }
-        if (recovery && source.schemaVersion !== 6) throw new Error('only schema 6 supports executable migration');
-      }
-      return { source, recovery, metadata };
-    };
-    if (external) await prepareSessionPermissions(sourceDir, fs, sessionId, true);
-    // Refusal needs no ownership or persistent memo. Reread after acquiring
-    // the lease below; a preflight read never authorizes migration writes.
-    try { decodeSource(await readPrivateRegularFile(sourcePath, 0o600, fs, 'migration source')); }
-    catch (cause) { if (cause?.code !== 'ENOENT' || !sidecar && !external) throw cause; }
-    let sourceLease, lease, failure;
-    try {
-      if (external) {
-        const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, createSessionsDir, env, homeDir: home, fsOps: fs, resolveHostname: localIdentity, legacyHostname, pid: localPid, probeProcess });
-        sourceLease = await sourceStore.acquireManagement(sessionId);
-      }
-      lease = await acquire(sessionId, true);
-      await lease.assertOwner();
-      let sourceBytes;
-      try { sourceBytes = await readPrivateRegularFile(sourcePath, 0o600, fs, 'migration source'); }
-      catch (cause) {
-        if ((!sidecar && !external) || cause?.code !== 'ENOENT') throw cause;
-        let receipt;
-        if (external || sidecar) {
-          receipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt'));
-          const [retainedSource] = await retainedMigrationInputs(receipt, sessionId, sourcePath, inputsDir);
-          decodeSource(retainedSource.toString('utf8'));
-        }
-        const current = await validate(sessionId);
-        if (!current.integrityValid) throw new Error('completed migration destination failed validation');
-        if (receipt?.complete === false) {
-          const published = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'published migration root', true);
-          if (!/^[0-9a-f]{64}$/.test(receipt.publishedRootSha256) || sha256(published) !== receipt.publishedRootSha256) throw new Error('completed migration root differs from its receipt');
-          await lease.assertOwner();
-          await writePrivateJson(receiptPath, { ...receipt, complete: true }, fs);
-        }
-        return { manifest: current.manifest, migrated: false, reasons: current.reasons };
-      }
-      let { source, recovery, metadata } = decodeSource(sourceBytes);
-      if (!sidecar && source.schemaVersion === 7) {
-        const current = await validate(sessionId);
-        return { manifest: current.manifest, migrated: false, reasons: current.reasons };
-      }
-      const sourceSnapshot = await readReplaySnapshot({ sessionsDir: sourceDir, path: sourceReplayPath, fs, afterSeq: 0, forceFullRead: true });
-      const snapshot = external ? await readReplaySnapshot({ sessionsDir, path: recordsPathFor(sessionId), fs, afterSeq: 0, forceFullRead: true }) : sourceSnapshot;
-      const currentReplay = snapshot.absent ? undefined : snapshot.bytes;
-      let originalReplay = sourceSnapshot.absent ? undefined : sourceSnapshot.bytes;
-      let priorReceipt;
-      try { priorReceipt = JSON.parse(await readPrivateRegularFile(receiptPath, 0o600, fs, 'migration receipt')); }
-      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      if (priorReceipt !== undefined) {
-        if (priorReceipt.v !== 1 || priorReceipt.id !== sessionId || !Array.isArray(priorReceipt.inputs) || priorReceipt.inputs[0]?.path !== sourcePath || priorReceipt.inputs[0]?.sha256 !== sha256(Buffer.from(sourceBytes))) throw new Error('migration source differs from retained input');
-        const retainedSource = await readPrivateRegularFile(join(inputsDir, '0'), 0o600, fs, 'retained migration source');
-        if (retainedSource !== sourceBytes) throw new Error('migration retained source differs');
-        if (priorReceipt.inputs.length === 2) {
-          originalReplay = await readPrivateRegularFile(join(inputsDir, '1'), 0o600, fs, 'retained migration replay', true);
-          if (priorReceipt.inputs[1].path !== sourceReplayPath || sha256(originalReplay) !== priorReceipt.inputs[1].sha256) throw new Error('retained migration replay differs');
-        } else if (priorReceipt.inputs.length === 1) originalReplay = undefined;
-        else throw new Error('invalid migration inputs');
-      }
-      if (external && priorReceipt && !sourceSnapshot.absent && !sourceSnapshot.bytes.equals(originalReplay ?? Buffer.alloc(0))) throw new Error('migration source replay differs from retained input');
-      let replayBytes = originalReplay ?? Buffer.alloc(0);
-      if (originalReplay === undefined) {
-        const journal = metadata?.journal ?? recovery?.snapshot?.journal ?? [];
-        const updatedAt = source.updatedAt ?? metadata.updatedAt;
-        const projected = legacyJournalHistory({ updatedAt, snapshot: { journal } }, 0, {}).entries;
-        const records = [...projected.map(({ record }) => record), ...journal.map((entry) => ({ type: 'legacy_journal', timestamp: Date.parse(updatedAt), entry }))];
-        replayBytes = Buffer.from(records.map((record, index) => `${JSON.stringify({ v: 1, seq: index + 1, record: sanitizeReplayRecord(record) })}\n`).join(''));
-      }
-      let history = parseSessionHistory(replayBytes);
-      if (history.pendingTail) {
-        try {
-          parseReplayEnvelope(replayBytes.subarray(history.completeBytes), history.lastReadableSeq + 1);
-          replayBytes = Buffer.concat([replayBytes, Buffer.from('\n')]);
-          history = parseSessionHistory(replayBytes);
-        } catch { /* Preserve a torn or invalid tail in the retained input only. */ }
-      }
-      const completeReplay = replayBytes.subarray(0, history.completeBytes);
-      let offset = 0;
-      replayBytes = Buffer.concat(history.entries.map((entry) => {
-        const end = completeReplay.indexOf(0x0a, offset) + 1;
-        const line = completeReplay.subarray(offset, end);
-        offset = end;
-        const record = sanitizeReplayRecord(entry.record);
-        return isDeepStrictEqual(record, entry.record)
-          ? line : Buffer.from(`${JSON.stringify({ ...entry, record })}\n`);
-      }));
-      let manifest;
-      if (recovery && !history.incomplete && !history.pendingTail) {
-        const context = contextFromRecovery(recovery);
-        context.timestamp = Date.parse(recovery.updatedAt);
-        const contextSeq = history.lastReadableSeq + 1;
-        replayBytes = Buffer.concat([replayBytes, Buffer.from(`${JSON.stringify({v:1,seq:contextSeq,record:context})}\n`)]);
-        manifest = manifestFromRecovery(recovery, { seq: contextSeq, sha256: sha256(replayBytes), incomplete: false }, contextSeq);
-      } else {
-        if (recovery) metadata = { cwd: recovery.cwd, createdAt: recovery.createdAt, updatedAt: recovery.updatedAt, reason: 'legacy replay is incomplete' };
-        manifest = validateSessionManifest({ schemaVersion: 7, kind: 'captain-session', sessionId, state: 'history-only', cwd: metadata.cwd, createdAt: metadata.createdAt, updatedAt: metadata.updatedAt, reason: metadata.reason, replay: { seq: history.lastReadableSeq, sha256: sha256(replayBytes), incomplete: history.incomplete || history.pendingTail }, contextSeq: null });
-      }
-      if (priorReceipt && currentReplay !== undefined && !currentReplay.equals(originalReplay ?? Buffer.alloc(0)) && !currentReplay.equals(replayBytes)) throw new Error('migration destination replay diverged');
-      if (external && currentReplay !== undefined && !currentReplay.equals(replayBytes)) throw new Error('migration destination replay diverged');
-      if (sidecar || external) {
-        try {
-          const existing = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'migration destination');
-          let decoded;
-          try { decoded = await decodeStoredManifest(existing, chunksFor(sessionId), sessionId); }
-          catch { throw new Error('migration destination manifest diverged'); }
-          if (!isDeepStrictEqual(decoded, manifest)) throw new Error('migration destination manifest diverged');
-        } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      }
-      await ensurePrivateDirectory(inputsDir, fs, mayCreateDirectory);
-      const inputs = [{ path: sourcePath, bytes: Buffer.from(sourceBytes, 'utf8') }, ...(originalReplay === undefined ? [] : [{ path: sourceReplayPath, bytes: originalReplay }])];
-      for (const [index, input] of inputs.entries()) {
-        const path = join(inputsDir, String(index));
-        try {
-          const retained = await readPrivateRegularFile(path, 0o600, fs, 'retained migration source', true);
-          if (!retained.equals(input.bytes)) throw new Error('migration retained source differs');
-        } catch (cause) { if (cause?.code !== 'ENOENT') throw cause; await writePrivateBytes(path, input.bytes, fs); }
-      }
-      const receipt = { v: 1, id: sessionId, inputs: inputs.map(({ path, bytes }) => ({ path, sha256: sha256(bytes) })), complete: false };
-      await writePrivateJson(receiptPath, receipt, fs);
-      await lease.assertOwner();
-      const bounded = await createBoundedReplay({sessionId, sessionsDir, fsOps: fs, assertOwner: lease.assertOwner, chunks: chunksFor(sessionId)});
-      const priorBounded = await bounded.readSnapshot();
-      if (priorBounded.root === null) await bounded.initializeBytes(replayBytes);
-      else if (!priorBounded.bytes.equals(replayBytes)) throw new Error('migration destination bounded replay diverged');
-      const encoded = await encodeStoredManifest(manifest, chunksFor(sessionId));
-      // A retry after publication sees schema 8 instead of its legacy source.
-      // Bind that root before publishing so completion cannot retire unrelated
-      // active legacy bytes merely because a new-format root exists.
-      const publishedReceipt = { ...receipt, publishedRootSha256: sha256(encoded) };
-      await writePrivateJson(receiptPath, publishedReceipt, fs);
-      await lease.assertOwner();
-      await writePrivateBytes(recordPathFor(sessionId), encoded, fs);
-      const published = await validate(sessionId);
-      if (!published.integrityValid) throw new Error('published migration bundle failed validation');
-      // Original replay is retained in inputs before retiring its active name.
-      try { await assertPrivateRegularPath(recordsPathFor(sessionId), 0o600, fs, 'legacy replay'); await fs.unlink(recordsPathFor(sessionId)); await syncDirectory(sessionsDir, fs); }
-      catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      if (external) {
-        await sourceLease.assertOwner();
-        try { await assertPrivateRegularPath(sourceReplayPath, 0o600, fs, 'migration source replay'); await fs.unlink(sourceReplayPath); await syncDirectory(sourceDir, fs); }
-        catch (cause) { if (cause?.code !== 'ENOENT') throw cause; }
-      }
-      if (sidecar || external) { await fs.unlink(sourcePath); await syncDirectory(sourceDir, fs); }
-      await writePrivateJson(receiptPath, { ...publishedReceipt, complete: true }, fs);
-      return { manifest, migrated: true, reasons: [] };
-    } catch (cause) {
-      failure = { cause };
-      throw cause;
-    } finally {
-      await releaseInOrder([lease, sourceLease], failure, `cannot migrate Captain session ${JSON.stringify(sessionId)} without leaving ownership uncertain`);
-    }
-  };
-
-  const migrateLegacyDefault = async (migration = {}) => {
-    const sourceEnv = migration.env ?? env;
-    const sourceHome = migration.homeDir ?? home;
-    const sourceDir = join(sourceEnv.XDG_STATE_HOME || join(sourceHome, '.local', 'state'), 'playbook', 'sessions');
-    const result = { sourceDir, migrated: [], skipped: [] };
-    if (sourceDir === sessionsDir) return result;
-    const sourceStore = createCaptainSessionStore({ sessionsDir: sourceDir, createSessionsDir, env: sourceEnv, homeDir: sourceHome, fsOps: fs, resolveHostname: localIdentity, legacyHostname, pid: localPid, probeProcess });
-    await sourceStore.prepare();
-    try { await assertPrivateDirectory(sourceDir, fs); }
-    catch (cause) { if (cause?.code === 'ENOENT') return result; throw cause; }
-    const names = await fs.readdir(sourceDir);
-    const ids = [...new Set(names.map((name) => name.endsWith('.records.jsonl') ? name.slice(0, -14) : name.endsWith('.json') ? name.slice(0, -5) : '').filter((id) => SESSION_ID_PATTERN.test(id)))].sort();
-    for (const sessionId of ids) {
-      const state = await sourceStore.readLeaseState(sessionId);
-      if (state !== 'idle') throw new Error(`legacy session ${sessionId} ownership is ${state}; stop all old writers before migration`);
-      const sourcePath = join(sourceDir, `${sessionId}.json`);
-      try {
-        const source = JSON.parse(await readPrivateRegularFile(sourcePath, 0o600, fs, 'legacy default manifest'));
-        if (![2, 3, 4, 5, 6].includes(source.schemaVersion)) throw new Error(`unsupported legacy schema ${source.schemaVersion}`);
-        try { validateCaptainSessionRecord(source); }
-        catch (cause) { if (!(cause instanceof CaptainSessionRecordNonresumableError)) throw cause; }
-      } catch (cause) { result.skipped.push({ sessionId, reason: errorMessage(cause) }); continue; }
-      await migrate(sessionId, { sourcePath });
-      result.migrated.push(sessionId);
-    }
-    return result;
-  };
-
   const remove = async (sessionId) => {
     const lease = await acquire(sessionId, true);
     let failure;
@@ -1765,17 +1509,14 @@ export function createCaptainSessionStore(options = {}) {
       let manifestText;
       try {
       manifestText = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record');
-      const stored = JSON.parse(manifestText);
-      const manifest = validateSessionManifest(await decodeStoredManifest(manifestText, chunksFor(sessionId), sessionId));
-      let replayBytes, replayRoot, replayFiles = [];
-      if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
-        const backend = await createBoundedReplay({sessionId, sessionsDir, fsOps: fs, chunks: chunksFor(sessionId)});
-        const snapshot = await backend.readSnapshot();
-        if (snapshot.root === null) throw new Error('session bundle replay root is missing');
-        replayBytes = snapshot.bytes; replayRoot = snapshot.rootBytes;
-        replayFiles = await backend.collectFiles();
-        if (!(await backend.rootBytes())?.equals(replayRoot)) continue;
-      } else replayBytes = await readPrivateRegularFile(recordsPathFor(sessionId), 0o600, fs, 'replay stream', true);
+      const decoded = await decodeStoredRoot(manifestText, sessionId);
+      const manifest = validateSessionManifest(decoded.value);
+      // DR-111: the bundle is the manifest, every segment and the blob
+      // parts referenced; the bound prefix verifies segment by segment.
+      await assertPrivateDirectory(sessionsDir, fs);
+      const read = await filesFor(sessionId).readLog({ binding: decoded.log });
+      if (read.damage !== undefined || !read.bound.ok || read.bound.lines !== manifest.replay.seq) throw new Error('session bundle replay checkpoint is incomplete or corrupt');
+      const replayBytes = read.lines;
       let end = 0;
       for (let seq = 0; seq < manifest.replay.seq; seq++) {
         const next = replayBytes.indexOf(10, end);
@@ -1786,12 +1527,7 @@ export function createCaptainSessionStore(options = {}) {
       if (sha256(replay) !== manifest.replay.sha256 || manifest.replay.incomplete) throw new Error('session bundle replay checkpoint is incomplete or corrupt');
       assertAssetInventory(manifest, parseSessionHistory(replay).entries);
       const assets = [];
-      const files = new Map([[`${sessionId}.json`, Buffer.byteLength(manifestText)]]);
-      if (stored.schemaVersion === SESSION_STORAGE_VERSION) await chunksFor(sessionId).validateNamespace();
-      if (stored.schemaVersion === SESSION_STORAGE_VERSION) {
-        for (const entry of await chunksFor(sessionId).walk(stored.root)) files.set(`${sessionId}.chunks/${entry.path}`, entry.byteLength);
-        for (const entry of replayFiles) files.set(entry.path, entry.byteLength);
-      } else files.set(`${sessionId}.records.jsonl`, replayBytes.length);
+      const files = new Map(filesFor(sessionId).inventory(Buffer.from(manifestText, 'utf8'), decoded.parts, read).map(({ path, byteLength }) => [path, byteLength]));
       for (const reference of manifest.assets?.entries ?? []) {
         const reader = await assetStoreFor(sessionId).openAsset(reference); await reader.close();
         const hash = reference.assetId.slice(7);
@@ -1802,17 +1538,13 @@ export function createCaptainSessionStore(options = {}) {
         }
       }
       if (manifestText !== await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record')) continue;
-      if (replayRoot !== undefined) {
-        const backend = await createBoundedReplay({sessionId, sessionsDir, fsOps: fs});
-        if (!(await backend.rootBytes())?.equals(replayRoot)) continue;
-      }
       return Object.freeze({ sessionId, manifest: Buffer.from(manifestText, 'utf8'), replay,
         assets: Object.freeze(assets), files: Object.freeze([...files].map(([path, byteLength]) => Object.freeze({path, byteLength}))) });
       } catch (cause) {
-        if (cause?.privateFileChanged === true || cause?.replayRootRetry === true) continue;
-        // Explicit migration may retire a legacy dependency after this
-        // export pinned its old root. Retry only a proved root change;
-        // missing or corrupt dependencies of an unchanged root still fail.
+        if (cause?.privateFileChanged === true) continue;
+        // A settlement may remove blob parts after this export pinned the
+        // manifest that used them. Retry only a proved manifest change;
+        // missing or corrupt dependencies of an unchanged one still fail.
         if (manifestText !== undefined) {
           let current;
           try { current = await readPrivateRegularFile(recordPathFor(sessionId), 0o600, fs, 'record'); }
@@ -1832,8 +1564,6 @@ export function createCaptainSessionStore(options = {}) {
     describeAsset: (sessionId, assetId) => assetStoreFor(sessionId).describeAsset(assetId),
     exportBundle,
     prepare,
-    migrate,
-    migrateLegacyDefault,
     readManifest,
     readHistory,
     readLeaseState,
@@ -1851,11 +1581,10 @@ export function createCaptainSessionStore(options = {}) {
 
 async function readReplayStream({
   sessionsDir,
-  path,
   afterSeq,
   cursor,
   fs,
-  chunks,
+  files,
 }) {
   let forceFullRead = false;
   let snapshot;
@@ -1863,11 +1592,10 @@ async function readReplayStream({
     try {
       snapshot = await readReplaySnapshot({
         sessionsDir,
-        path,
         afterSeq,
         cursor,
         forceFullRead,
-        fs, chunks,
+        fs, files,
       });
       break;
     } catch (cause) {
@@ -1924,16 +1652,13 @@ async function readReplayStream({
     );
   }
 
-  const completeOffset = snapshot.startOffset + parsed.completeBytes;
+  // DR-111: the cursor is the log position after the last complete line
+  // this store verified; a later read continues from it.
   const nextCursor = {
-    identity: snapshot.identity,
-    offset: completeOffset,
+    position: snapshot.position,
     sequence: lastReadableSeq,
     digest: parsed.digest,
     reusable: true,
-    // A bounded head is cached only when the verified chain ends on the
-    // complete line the cursor stops at; a torn tail caches no head.
-    ...(snapshot.head && completeOffset === snapshot.totalBytes ? { head: snapshot.head } : {}),
   };
   const entries = parsed.entries.filter((entry) => entry.seq > afterSeq);
   return {
@@ -1944,12 +1669,11 @@ async function readReplayStream({
 
 async function readReplaySnapshot({
   sessionsDir,
-  path,
   afterSeq,
   cursor,
   forceFullRead,
   fs,
-  chunks,
+  files,
 }) {
   try {
     await assertPrivateDirectory(sessionsDir, fs);
@@ -1957,149 +1681,30 @@ async function readReplaySnapshot({
     if (cause?.code === 'ENOENT') return { absent: true };
     throw cause;
   }
-
-  // During explicit migration the old root remains authoritative until the
-  // new manifest publishes. New replay-only sessions have no manifest yet.
-  const sessionId = basename(path, '.records.jsonl');
-  let storedRoot;
-  try { storedRoot = JSON.parse(await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, fs, 'record')); }
-  catch (cause) { if (cause?.code !== 'ENOENT' && !(cause instanceof SyntaxError)) throw cause; }
-  if (storedRoot === undefined || ![2, 3, 4, 5, 6, 7].includes(storedRoot.schemaVersion)) {
-    const backend = await createBoundedReplay({ sessionId, sessionsDir, fsOps: fs, chunks });
-    // A cursor carries a head only when this store verified that chain
-    // completely and it ended on a complete line; only then may the walk stop there.
-    const bounded = !forceFullRead && cursor !== undefined && cursor.reusable &&
-      cursor.head !== undefined && afterSeq >= cursor.sequence;
-    const snapshot = await backend.readSnapshot(
-      bounded ? { after: { head: cursor.head, totalBytes: cursor.offset } } : {},
-    );
-    if (snapshot.root !== null) {
-      if (cursor !== undefined && snapshot.root.byteLength < cursor.offset) cursor.reusable = false;
-      return {
-        absent: false, bytes: snapshot.bytes, identity: {dev: 0, ino: 0},
-        incremental: snapshot.incremental, startOffset: snapshot.incremental ? cursor.offset : 0,
-        head: snapshot.root.head, totalBytes: snapshot.root.byteLength,
-      };
-    }
-    if (storedRoot?.schemaVersion === SESSION_STORAGE_VERSION) return { absent: true };
-  }
-
-  let pathStat;
+  // DR-111: the log needs no manifest; a reader that verified a prefix
+  // continues from its position and verifies only what follows.
+  const incrementalWanted = !forceFullRead && cursor !== undefined && cursor.reusable &&
+    cursor.position !== undefined && cursor.position !== null && afterSeq >= cursor.sequence;
+  let read;
   try {
-    pathStat = await assertPrivateRegularPath(path, 0o600, fs, 'replay stream');
+    read = incrementalWanted ? await files.readLog({ from: { ...cursor.position, seq: cursor.sequence } }) : await files.readLog();
+    if (read.reset) {
+      cursor.reusable = false;
+      read = await files.readLog();
+    }
   } catch (cause) {
-    if (cause?.code === 'ENOENT') return { absent: true };
+    if (cause?.privateFileChanged) throw new ReplaySnapshotChangedError(cause.message);
     throw cause;
   }
-
-  let handle;
-  try {
-    handle = await fs.open(
-      path,
-      constants.O_RDONLY |
-        (constants.O_NOFOLLOW ?? 0) |
-        (constants.O_NONBLOCK ?? 0),
-    );
-  } catch (cause) {
-    if (cause?.code === 'ENOENT') {
-      throw new ReplaySnapshotChangedError(
-        'replay stream disappeared while opening its snapshot',
-      );
-    }
-    throw cause;
+  // A cursor whose segment was replaced or truncated below its position
+  // never resumes: a later read validates from byte zero.
+  if (cursor?.position && !read.reset) {
+    const segment = read.absent ? undefined : read.segments.find(({ name }) => name === cursor.position.name);
+    if (segment === undefined ? !incrementalWanted : !sameFileIdentity(segment.identity, cursor.position.identity) || segment.size < cursor.position.offset) cursor.reusable = false;
   }
-
-  try {
-    const openedStat = await handle.stat();
-    assertPrivateRegularStat(openedStat, 0o600, 'replay stream', path);
-    if (!sameFileIdentity(pathStat, openedStat)) {
-      throw new ReplaySnapshotChangedError(
-        'replay stream was replaced while opening its snapshot',
-      );
-    }
-    const snapshotLength = requireReplayFileSize(openedStat.size);
-    const identity = replayFileIdentity(openedStat);
-    const cursorBoundaryChanged =
-      cursor !== undefined &&
-      (!sameReplayIdentity(cursor.identity, identity) ||
-        snapshotLength < cursor.offset);
-    if (cursorBoundaryChanged) cursor.reusable = false;
-    const incremental =
-      !forceFullRead &&
-      cursor !== undefined &&
-      cursor.reusable &&
-      sameReplayIdentity(cursor.identity, identity) &&
-      snapshotLength >= cursor.offset &&
-      afterSeq >= cursor.sequence;
-    const startOffset = incremental ? cursor.offset : 0;
-    const bytes = await readReplayRange(handle, startOffset, snapshotLength);
-
-    const finalHandleStat = await handle.stat();
-    assertPrivateRegularStat(finalHandleStat, 0o600, 'replay stream', path);
-    if (
-      !sameFileIdentity(openedStat, finalHandleStat) ||
-      requireReplayFileSize(finalHandleStat.size) < snapshotLength
-    ) {
-      throw new ReplaySnapshotChangedError(
-        'replay stream was truncated within its pinned snapshot',
-      );
-    }
-
-    let finalPathStat;
-    try {
-      finalPathStat = await assertPrivateRegularPath(
-        path,
-        0o600,
-        fs,
-        'replay stream',
-      );
-    } catch (cause) {
-      if (cause?.code === 'ENOENT') {
-        throw new ReplaySnapshotChangedError(
-          'replay stream disappeared within its pinned snapshot',
-        );
-      }
-      throw cause;
-    }
-    if (!sameFileIdentity(openedStat, finalPathStat)) {
-      throw new ReplaySnapshotChangedError(
-        'replay stream was replaced within its pinned snapshot',
-      );
-    }
-    await assertPrivateDirectory(sessionsDir, fs);
-
-    return {
-      absent: false,
-      bytes,
-      identity,
-      incremental,
-      startOffset,
-    };
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readReplayRange(handle, start, end) {
-  const buffer = Buffer.allocUnsafe(end - start);
-  let offset = 0;
-  while (offset < buffer.length) {
-    const length = Math.min(REPLAY_READ_CHUNK_SIZE, buffer.length - offset);
-    const result = await handle.read(buffer, offset, length, start + offset);
-    if (
-      result === null ||
-      typeof result !== 'object' ||
-      !Number.isSafeInteger(result.bytesRead) ||
-      result.bytesRead <= 0 ||
-      result.bytesRead > length
-    ) {
-      throw new ReplaySnapshotChangedError(
-        'replay stream ended before its pinned snapshot boundary',
-      );
-    }
-    offset += result.bytesRead;
-  }
-  return buffer;
+  if (read.absent) return { absent: true };
+  if (read.damage !== undefined) throw new Error(`replay stream is damaged: ${read.damage.reason}`);
+  return { absent: false, bytes: read.lines, incremental: incrementalWanted && cursor.reusable, position: read.end };
 }
 
 function parseReplayLines(bytes, initialSequence, initialDigest, observedSeq) {
@@ -2255,31 +1860,6 @@ function freezeReplayLeaseReadResult(
     lastDurableSeq,
     incomplete,
   });
-}
-
-function replayFileIdentity(stat) {
-  return Object.freeze({ dev: stat.dev, ino: stat.ino });
-}
-
-
-function sameReplayIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function requireReplayFileSize(value) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error('replay stream size must be a nonnegative safe integer');
-  }
-  return value;
-}
-
-function assertPrivateRegularStat(stat, mode, label, path) {
-  if (!stat.isFile()) {
-    throw new Error(`${label} path is not a regular file`);
-  }
-  if (!privatePermissions(stat, mode, path)) {
-    throw new Error(`${label} permissions must be ${octal(mode)}`);
-  }
 }
 
 function digestReplayEntry(previous, entry) {
@@ -2443,8 +2023,9 @@ async function createLease({
   sessionId,
   owner,
   sessionsDir,
-  boundedHistory,
-  replayPath,
+  files,
+  readStoredManifest,
+  decodeStoredRoot,
   replayFs,
   readReplayStream,
   readRecord,
@@ -2453,7 +2034,6 @@ async function createLease({
   validateSession,
   portableWriters,
   assetStore,
-  chunks,
   writeRecord,
   syncRecordDirectory,
   deleteRecord,
@@ -2500,25 +2080,35 @@ async function createLease({
     return check.finally(() => ownerChecks.delete(check));
   };
 
+  let contextSeq;
+  let previousManifest;
+  // DR-111: the log prefix the published manifest binds, and the blob parts
+  // its spilled values use.
+  let previousLog;
+  let publishedParts = [];
+  let acknowledgedHints = { players: {} };
+  try {
+    const stored = await readStoredManifest(sessionId);
+    previousManifest = stored.manifest; previousLog = stored.log; contextSeq = previousManifest.contextSeq;
+  } catch { /* Unsupported recovery still permits leased deletion. */ }
+
   const replayWriter = await createLeaseReplayWriter({
+    sessionId,
     sessionsDir,
-    path: replayPath,
     fs: replayFs,
     assertOwner: assertOwnerUnchecked,
     readStream: readReplayStream,
-    chunks,
+    files,
+    binding: previousLog,
   });
-
-  let contextSeq;
-  let previousManifest;
-  let acknowledgedHints = { players: {} };
-  try { previousManifest = await readManifest(sessionId); contextSeq = previousManifest.contextSeq; }
-  catch { /* Unsupported recovery still permits leased migration/deletion. */ }
+  // DR-111: the writer keeps the asset inventory it verified here and the
+  // imports it made since, so a publication reads no asset.
+  await assetStore.loadInventory();
 
   // DR-109: the writer's verified prefix answers both history questions a
   // checkpoint asks, the applicable context and the durable prefix's digest,
-  // without reading the chain; without one, the complete chain is read.
-  const verifiedPrefix = () => (boundedHistory ? replayWriter.verifiedPrefix() : null);
+  // without reading the log; without one, the complete log is read.
+  const verifiedPrefix = () => replayWriter.verifiedPrefix();
   const contextEntries = async () => verifiedPrefix()?.contexts ?? (await readHistory(sessionId)).entries;
 
   const recordContext = async (value) => {
@@ -2558,25 +2148,34 @@ async function createLease({
     const seq = history.digests[durableSeq] === undefined ? previousManifest?.replay?.seq ?? 0 : durableSeq;
     const digest = history.digests[seq] ?? previousManifest?.replay?.sha256 ?? EMPTY_REPLAY_SHA256;
     const replay = { seq, sha256: digest, incomplete: previousManifest?.replay?.incomplete === true || status.incomplete || history.incomplete || history.digests[seq] === undefined };
-    const entries = await assetStore.listAssets();
-    const assets = entries.length === 0 ? undefined : { version: 1, entries: await Promise.all(entries.map(({ assetId }) => assetStore.describeAsset(assetId))) };
+    const entries = assetStore.inventoryEntries();
+    const assets = entries.length === 0 ? undefined : { version: 1, entries };
     const manifest = manifestFromRecovery(recovery, replay, contextSeq, assets);
-    return manifest;
+    // The log prefix this checkpoint's sequence binds: the writer's durable
+    // prefix, or else the one the published manifest already binds.
+    const durableLog = replayWriter.durableLog();
+    const log = durableLog !== undefined && durableLog.seq === seq ? durableLog.binding
+      : previousLog !== undefined && seq === (previousManifest?.replay?.seq ?? 0) ? previousLog
+        : seq === 0 ? EMPTY_LOG_BINDING : undefined;
+    if (log === undefined) throw new Error('session checkpoint has no bound replay log prefix');
+    return { manifest, log };
   };
-  portableWriters.set(sessionId, { checkpoint, sync: replayWriter.checkpoint, published: (manifest) => { previousManifest = manifest; } });
+  portableWriters.set(sessionId, { checkpoint, sync: replayWriter.checkpoint, published: (manifest, physical) => {
+    previousManifest = manifest; previousLog = physical.log; publishedParts = physical.parts;
+  } });
 
   const hintsPath = join(sessionsDir, `${sessionId}.hints.json`);
   const readHints = async () => {
     try {
       const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
-      const manifest = validateSessionManifest(await decodeStoredManifest(bytes, chunks, sessionId));
+      const manifest = validateSessionManifest((await decodeStoredRoot(bytes, sessionId)).value);
       const hints = JSON.parse(await readPrivateRegularFile(hintsPath, 0o600, replayFs, 'hints'));
       return validateSessionHints(hints, bytes, manifest);
     } catch { return { players: {} }; }
   };
   const writeHints = async (hints) => {
     const bytes = await readPrivateRegularFile(join(sessionsDir, `${sessionId}.json`), 0o600, replayFs, 'record');
-    const manifest = validateSessionManifest(await decodeStoredManifest(bytes, chunks, sessionId));
+    const manifest = validateSessionManifest((await decodeStoredRoot(bytes, sessionId)).value);
     const value = { v: 1, sessionId, checkpointSha256: sha256(bytes), players: hints.players, ...(hints.captain ? { captain: hints.captain } : {}) };
     validateSessionHints(value, bytes, manifest);
     await writePrivateJson(hintsPath, value, replayFs);
@@ -2613,6 +2212,10 @@ async function createLease({
   const finishSettlement = async (record) => {
     await replayWriter.checkpoint();
     try { await writeHints(acknowledgedHints); } catch { /* Hints are optional; missing hints start fresh. */ }
+    // DR-111: only the lease holder, at settlement, removes blob parts that
+    // neither the published manifest nor the log references.
+    try { await replayWriter.removeUnreferencedBlobs(new Set([...replayWriter.referencedBlobs(), ...publishedParts.map(({ sha256: digest }) => digest)])); }
+    catch { /* An unreferenced part costs space only; a later settlement retries. */ }
     return validateCaptainSessionRecord(projectRecovery(record));
   };
 
@@ -2945,6 +2548,7 @@ async function createLease({
       const current = await readRecord(sessionId, { missing: 'undefined' });
       if (!isDeepStrictEqual(current, expected)) return false;
       await assertOwnerUnchecked();
+      await replayWriter.closeLog();
       await deleteRecord(sessionId);
       await assertOwnerUnchecked();
       return true;
@@ -3408,6 +3012,7 @@ async function createLease({
           },
         });
         await assertOwnerUnchecked();
+        await replayWriter.seal();
         await writeRecord(record, { noReplace: false });
         await assertOwnerUnchecked();
         return finishSettlement(record);
@@ -3466,6 +3071,8 @@ async function createLease({
           : {}),
       });
       await assertOwnerUnchecked();
+      // DR-111: turn settlement seals the open replay segment.
+      await replayWriter.seal();
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
       return finishSettlement(record);
@@ -3602,6 +3209,7 @@ async function createLease({
       }
       await assertOwnerUnchecked();
       if (prior.uncertain.baseUpdatedAt === null) {
+        await replayWriter.closeLog();
         await deleteRecord(sessionId);
         await assertOwnerUnchecked();
         return undefined;
@@ -3911,6 +3519,18 @@ export function validateCaptainSessionRecord(value) {
     );
   }
   return validateCanonicalCaptainSessionRecord(record);
+}
+
+// DR-111: an earlier-format session keeps its place in the same-directory
+// predecessor order by the summary its root states in plain JSON; a root
+// without a well-formed one has no known place.
+function earlierOrderingBoundary(text, sessionId) {
+  try {
+    const root = JSON.parse(text);
+    if (root?.sessionId !== sessionId || typeof root.state !== 'string' || typeof root.cwd !== 'string' || !isAbsolute(root.cwd)) return undefined;
+    canonicalTimestamp(root.updatedAt, 'updatedAt');
+    return captainSessionOrderingBoundary(root);
+  } catch { return undefined; }
 }
 
 function captainSessionOrderingBoundary(record) {
@@ -6464,6 +6084,10 @@ function nextTimestamp(value, previous) {
   return new Date(Date.parse(previous) + 1).toISOString();
 }
 
+function isPrivateFileChange(cause) {
+  return cause?.privateFileChanged === true || cause?.cause?.privateFileChanged === true;
+}
+
 function privateFileChanged(label, boundary) {
   return Object.assign(new Error(`${label} changed during ${boundary}`), { privateFileChanged: true });
 }
@@ -6479,13 +6103,19 @@ async function readPrivateRegularFile(path, mode, fs, label, raw = false) {
     if (!stat.isFile()) {
       throw new Error(`${label} path is not a regular file`);
     }
-    if (!privatePermissions(stat, mode, path)) {
+    // DR-111: the path check above admitted this entry, the one owner and
+    // descriptor read on Windows; the opened handle need only be that entry.
+    if (process.platform !== 'win32' && !privatePermissions(stat, mode, path)) {
       throw new Error(`${label} permissions must be ${octal(mode)}`);
     }
     if (!sameFileIdentity(before, stat)) throw privateFileChanged(label, 'open');
     const bytes = await handle.readFile();
     const after = await handle.stat();
-    const current = await assertPrivateRegularPath(path, mode, fs, label);
+    const current = await fs.lstat(path);
+    if (current.isSymbolicLink() || !current.isFile()) throw privateFileChanged(label, 'read');
+    if (process.platform !== 'win32' && !privatePermissions(current, mode, path)) {
+      throw new Error(`${label} permissions must be ${octal(mode)}`);
+    }
     if (!sameFileIdentity(after, current) || after.size !== stat.size) throw privateFileChanged(label, 'read');
     return raw ? bytes : new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } finally {
@@ -6619,7 +6249,7 @@ function errorMessage(error) {
 
 // Opening is the only permission preparation boundary. Strict readers never
 // change modes, and verified handles ensure tightening cannot follow links.
-async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId, includeSidecars = false) {
+async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId) {
   let initial;
   try { initial = await fs.lstat(sessionsDir); }
   catch (cause) { if (cause?.code === 'ENOENT') return; throw cause; }
@@ -6628,42 +6258,11 @@ async function prepareSessionPermissions(sessionsDir, fs, selectedSessionId, inc
   const tighten = (path, before, directory) => tightenPrivateEntry(path, before, directory, fs, 'session permission preparation');
   await tighten(sessionsDir, initial, true);
   for (const name of await fs.readdir(sessionsDir)) {
-    const eligible = /^[0-9a-f-]{36}\.(?:json|records\.jsonl|replay\.json|hints\.json)$/.test(name)
-      || (includeSidecars && /^[0-9a-f-]{36}\.spex\.json$/.test(name));
+    const eligible = /^[0-9a-f-]{36}\.(?:json|hints\.json)$/.test(name);
     if (!eligible || (selectedSessionId !== undefined && !name.startsWith(`${selectedSessionId}.`))) continue;
     const path = join(sessionsDir, name);
     await tighten(path, await fs.lstat(path), false);
   }
-}
-
-async function readSessionHistory({ sessionsDir, path, fs, chunks, afterSeq = 0 }) {
-  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('history afterSeq must be a nonnegative safe integer');
-  const snapshot = await readReplaySnapshot({ sessionsDir, path, fs, chunks, afterSeq: 0, forceFullRead: true });
-  const bytes = snapshot.absent ? Buffer.alloc(0) : snapshot.bytes;
-  return Object.freeze({ ...parseSessionHistory(bytes, afterSeq), missing: snapshot.absent === true });
-}
-
-
-function legacyJournalHistory(record, afterSeq, absentHistory) {
-  const entries = [];
-  const timestamp = Date.parse(record.updatedAt);
-  let activeTurn;
-  const emit = (event) => entries.push(Object.freeze({ v: 1, seq: entries.length + 1, record: Object.freeze(event) }));
-  const finish = () => {
-    if (activeTurn !== undefined) emit({ type: 'turn_finished', timestamp, turnId: activeTurn });
-    activeTurn = undefined;
-  };
-  for (const entry of record.snapshot?.journal ?? []) {
-    if (!Number.isSafeInteger(entry.turnId) || entry.turnId <= 0 || typeof entry.payload !== 'string') continue;
-    if (entry.kind === 'boss') {
-      finish(); activeTurn = entry.turnId;
-      emit({ type: 'turn_started', timestamp, turnId: entry.turnId, turn: { id: entry.turnId, prompt: entry.payload } });
-    } else if (entry.kind === 'reply' && entry.turnId === activeTurn) {
-      emit({ type: 'captain_reply', timestamp, turnId: entry.turnId, text: entry.payload });
-    }
-  }
-  finish();
-  return Object.freeze({ ...absentHistory, synthetic: true, lastReadableSeq: entries.length, entries: Object.freeze(entries.filter(({ seq }) => seq > afterSeq)) });
 }
 
 function parseSessionHistory(bytes, afterSeq = 0) {

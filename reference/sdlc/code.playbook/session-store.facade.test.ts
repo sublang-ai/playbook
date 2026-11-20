@@ -48,7 +48,7 @@ async function fixtureDir() {
 }
 
 function streamPath(sessionsDir: string, id = sessionId) {
-  return join(sessionsDir, `${id}.replay.json`);
+  return join(sessionsDir, `${id}.replay`, '000000000001.jsonl');
 }
 
 function deferred() {

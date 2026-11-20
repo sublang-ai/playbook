@@ -480,8 +480,8 @@ Before releasing the first version whose leases and claims carry the machine ide
 
 #### release-39
 
-Before releasing bounded session persistence, the maintainer shall verify that the CLI and supported Spex SDK use the schema-8 shared store and that both preserve complete session families through reads, migration, copy, Sync and deletion [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-5](session-persistence.md#session-persistence-5)] [[session-persistence-6](session-persistence.md#session-persistence-6)] [[session-persistence-7](session-persistence.md#session-persistence-7)].
-Upgrade instructions shall require stopping every writer that shares the store, upgrading all hosts before new writes, and explicitly migrating selected monolithic sessions with retained original inputs; older writers and direct file readers are incompatible with the new physical format.
+Before releasing a session storage format, the maintainer shall verify that the CLI and supported Spex SDK use the schema-9 shared store and that both preserve complete session families through reads, conversion, copy, Sync and deletion, with Sync excluding `.legacy-sessions/` [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-5](session-persistence.md#session-persistence-5)] [[session-persistence-6](session-persistence.md#session-persistence-6)] [[session-persistence-7](session-persistence.md#session-persistence-7)] [[session-storage-10](session-storage.md#session-storage-10)].
+Upgrade instructions shall require stopping every writer and app that shares the store, upgrading all hosts and synced devices before new writes, and converting earlier sessions with `playbook sessions upgrade`; older writers and direct file readers are incompatible with the new physical format, and a converted synced store shows the earlier files removed and the new ones added.
 The release shall state that the per-file bound does not limit total retained disk usage or the memory needed to hydrate logical recovery and replay.
 
 #### release-46

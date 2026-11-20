@@ -1,0 +1,2 @@
+# Session fixtures are exact bytes: digests bind them, so no line-ending conversion.
+* -text

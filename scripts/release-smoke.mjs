@@ -3197,13 +3197,14 @@ await rm(copied.directory, { recursive: true, force: true });
 assert.deepEqual(new Uint8Array(await store.readAsset(sessionId, sessionAsset)), original, 'session owns an independent copy');
 const bundle = await store.exportBundle(sessionId);
 const physicalManifest = JSON.parse(Buffer.from(bundle.manifest).toString('utf8'));
-assert.equal(physicalManifest.schemaVersion, 8);
+assert.equal(physicalManifest.schemaVersion, 9);
 assert.equal(physicalManifest.kind, 'captain-session-storage');
 const manifest = await store.readManifest(sessionId);
+assert.deepEqual(physicalManifest.manifest, manifest);
 assert.ok(manifest.assets.entries.some((entry) => entry.assetId === sessionAsset.assetId));
 assert.ok(bundle.files.some((entry) => entry.path === sessionId + '.json'));
-assert.ok(bundle.files.some((entry) => entry.path === sessionId + '.replay.json'));
-assert.ok(bundle.files.some((entry) => entry.path.startsWith(sessionId + '.chunks/')));
+assert.ok(bundle.files.some((entry) => entry.path.startsWith(sessionId + '.replay/')));
+assert.ok(!bundle.files.some((entry) => entry.path.startsWith(sessionId + '.chunks/')));
 for (const entry of bundle.files) {
   const stored = await stat(join(sessionsDir, entry.path));
   assert.equal(stored.size, entry.byteLength);
