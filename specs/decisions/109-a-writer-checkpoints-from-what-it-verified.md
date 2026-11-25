@@ -8,6 +8,7 @@
 Accepted (2026-11-17), after manifest writes in long chunked sessions slowed down as the sessions grew [[1]].
 Amends [DR-094](094-bounded-session-persistence.md) and [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md) in one rule: recovery publication under a lease may rest on that lease writer's verified prefix instead of verifying the complete replay chain.
 Every other DR-094 and DR-101 decision stands.
+Amended by [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) to express the writer's verified prefix in the segmented replay log.
 
 ## Context
 
