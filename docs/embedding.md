@@ -507,13 +507,14 @@ only when `isUncertainTurnDiscardable(record)` returns true: no abandonment, no 
 The store reads the schema-9 manifest file; do not parse it as a recovery
 snapshot. `exportBundle().manifest` contains its exact bytes, and
 `exportBundle().files` lists the session's portable files — the manifest, every
-replay segment and any blob part — relative to `sessionsDir`. Copy that closure as one session unit. The
+replay segment, referenced blob parts and asset files — relative to `sessionsDir`. Copy that closure as one session unit. The
 `replay` result remains its checkpoint-proven logical prefix.
 
-Every new storage root and chunk is at most 8 MiB; total retained disk usage and
-hydrated memory are not capped. Stop all old writers and upgrade the CLI and
-embedded host together before creating new sessions or migrating old ones.
-`migrate()` preserves original inputs before conversion. `delete()` removes the
+Each manifest, replay segment and blob part is at most 8 MiB. Total retained disk
+usage and hydrated memory can exceed that limit. Stop all old writers and upgrade
+the CLI and embedded hosts together before creating or converting sessions.
+`playbook sessions upgrade` preserves the original files in `.legacy-sessions/`.
+`delete()` removes the
 bundle under the shared lease, with the manifest last. Management needs no
 playbook module. A coordination-only `acquireManagement()` lease reserves even
 an absent ID and never checkpoints or rewrites selected bytes on release.

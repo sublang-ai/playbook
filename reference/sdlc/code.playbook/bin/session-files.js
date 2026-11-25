@@ -175,6 +175,7 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
     return read.bytes;
   };
   const readParts = async (parts) => {
+    await checkDirectory(blobsDir, 'session blob directory');
     const buffers = [];
     for (const part of parts) buffers.push(await readBlob(part));
     return Buffer.concat(buffers);
@@ -209,18 +210,29 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
     let bytes = Buffer.from(`${JSON.stringify(physical)}\n`);
     if (bytes.length <= MAX_SESSION_FILE_BYTES) return { bytes, blobs: [], parts: [] };
     const spilled = structuredClone(manifest);
-    const spills = [], blobs = [];
+    const spills = [], blobs = [], references = [];
+    const spillParts = (value) => partsOf(Buffer.from(JSON.stringify(value))).map((part) => {
+      const reference = { sha256: sha256(part), byteLength: part.length };
+      blobs.push(part);
+      references.push(reference);
+      return reference;
+    });
+    let sealedSize = Buffer.byteLength(JSON.stringify(physical.log.sealed));
     while (bytes.length > MAX_SESSION_FILE_BYTES) {
       const largest = largestSubtree(spilled);
-      if (largest === undefined) throw new Error('session manifest exceeds the per-file bound');
-      const content = Buffer.from(JSON.stringify(largest.value));
-      const parts = partsOf(content).map((part) => { blobs.push(part); return { sha256: sha256(part), byteLength: part.length }; });
-      const parent = largest.path.slice(0, -1).reduce((node, key) => node[key], spilled);
-      Object.defineProperty(parent, largest.path.at(-1), { value: null, enumerable: true, configurable: true, writable: true });
-      spills.push({ path: largest.path, parts });
-      bytes = Buffer.from(`${JSON.stringify({ ...physical, manifest: spilled, spills })}\n`);
+      if (sealedSize >= MIN_SPILL_BYTES && sealedSize > (largest?.size ?? 0)) {
+        physical.log.sealed = { parts: spillParts(physical.log.sealed) };
+        sealedSize = 0;
+      } else {
+        if (largest === undefined) throw new Error('session manifest exceeds the per-file bound');
+        const parts = spillParts(largest.value);
+        const parent = largest.path.slice(0, -1).reduce((node, key) => node[key], spilled);
+        Object.defineProperty(parent, largest.path.at(-1), { value: null, enumerable: true, configurable: true, writable: true });
+        spills.push({ path: largest.path, parts });
+      }
+      bytes = Buffer.from(`${JSON.stringify({ ...physical, manifest: spilled, ...(spills.length ? { spills } : {}) })}\n`);
     }
-    return { bytes, blobs, parts: spills.flatMap(({ parts }) => parts) };
+    return { bytes, blobs, parts: references };
   };
   // Writes the blob parts an encoded manifest needs; the caller then
   // publishes its bytes atomically.
@@ -237,16 +249,20 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
     if (!exactKeys(physical, ['schemaVersion', 'kind', 'sessionId', 'manifest', 'log'], ['spills']) ||
         physical.schemaVersion !== SESSION_STORAGE_VERSION || physical.kind !== SESSION_STORAGE_KIND ||
         physical.sessionId !== sessionId || !object(physical.manifest)) throw invalid('manifest file fields');
-    const log = validateLogBinding(physical.log);
     const spills = physical.spills === undefined ? [] : validateSpills(physical.spills);
     const manifest = physical.manifest;
-    for (const spill of spills) {
-      let value;
-      try { value = JSON.parse(utf8.decode(await readParts(spill.parts))); }
+    const readSpilledValue = async (parts) => {
+      try { return JSON.parse(utf8.decode(await readParts(parts))); }
       catch (cause) { if (cause?.code === 'ENOENT' || cause?.privateFileChanged) throw changed(`manifest spill is unavailable: ${cause.message}`); throw cause; }
-      placeSpill(manifest, spill.path, value);
+    };
+    let sealedParts = [];
+    if (exactKeys(physical.log?.sealed, ['parts'])) {
+      sealedParts = validateParts(physical.log.sealed.parts);
+      physical.log.sealed = await readSpilledValue(sealedParts);
     }
-    return { manifest, log, parts: spills.flatMap(({ parts }) => parts) };
+    const log = validateLogBinding(physical.log);
+    for (const spill of spills) placeSpill(manifest, spill.path, await readSpilledValue(spill.parts));
+    return { manifest, log, parts: [...sealedParts, ...spills.flatMap(({ parts }) => parts)] };
   };
   const readManifestFile = async () => (await readPrivate(manifestPath, 'session manifest')).bytes;
 
@@ -375,8 +391,14 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
         handle = created;
       } catch (error) { await created.close(); throw error; }
     };
+    const verify = async () => {
+      if (open === null) return;
+      const current = await fs.lstat(join(replayDir, open.name));
+      if (!sameFileIdentity(current, open.identity) || current.size !== open.bytes || current.isSymbolicLink()) throw new Error('session replay segment changed outside its writer');
+    };
     const seal = async () => {
       if (open === null) return;
+      await verify();
       await handle?.close(); handle = undefined;
       sealed.push({ name: open.name, byteLength: open.bytes, sha256: open.hash.copy().digest('hex') });
       open = null;
@@ -411,11 +433,7 @@ export function createSessionFiles({ sessionsDir, sessionId, fsOps }) {
       seal,
       // A checkpoint's proof that the open segment is still the file this
       // writer appended to: same identity and length, without reading it.
-      async verify() {
-        if (open === null) return;
-        const current = await fs.lstat(join(replayDir, open.name));
-        if (!sameFileIdentity(current, open.identity) || current.size !== open.bytes || current.isSymbolicLink()) throw new Error('session replay segment changed outside its writer');
-      },
+      verify,
       binding: () => ({ sealed: sealed.map((entry) => ({ ...entry })), open: open === null ? null : { name: open.name, byteLength: open.bytes, sha256: open.hash.copy().digest('hex') } }),
       referencedBlobs: () => new Set(referenced),
       async close() { await handle?.close(); handle = undefined; },

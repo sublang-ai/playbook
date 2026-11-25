@@ -79,7 +79,11 @@ function assertFile(stat, label, path) {
   try { assertPrivateEntry(stat, false, label, path, { mask: 0o777 }); }
   catch { throw new Error(`${label} must have private 0600 permissions`); }
 }
-function sameFile(a, b) { return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs; }
+function sameFile(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode &&
+    a.uid === b.uid && a.nlink === b.nlink && a.size === b.size &&
+    a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+}
 const syncDirectory = (directory) => syncPrivateDirectory(directory, { open });
 
 /** One immutable owner. A session host holds its ordinary lease around mutations. */
@@ -147,7 +151,8 @@ export function createAssetStore(options) {
     const handle = await open(path, constants.O_RDONLY | noFollow);
     try {
       const after = await handle.stat();
-      assertFile(after, label, path);
+      // The path's permission check also covers this handle once its identity
+      // and metadata match. A Windows ACL lookup on the path again adds no proof.
       if (!sameFile(before, after)) throw new Error(`${label} changed while opening`);
       return { handle, stat: after };
     } catch (error) { await handle.close(); throw error; }

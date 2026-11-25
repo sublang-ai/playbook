@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionStore } from './session-store.js';
 import { executionProjection, freshBoundary, shellSnapshot } from './test-support/session-boundary.js';
-import { MAX_SESSION_FILE_BYTES, SEGMENT_SEAL_BYTES } from './bin/session-files.js';
+import { createSessionFiles, MAX_SESSION_FILE_BYTES, segmentName, SEGMENT_SEAL_BYTES } from './bin/session-files.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });
@@ -62,6 +62,34 @@ function recordingFs() {
 }
 
 describe('schema-9 session layout (DR-111)', () => {
+  it('publishes and reloads a sealed-segment binding larger than one file', async () => {
+    const { store, sessionsDir, id, lease } = await fixture();
+    await lease.release();
+    const manifest = await store.readManifest(id);
+    const files = createSessionFiles({ sessionsDir, sessionId: id });
+    const sha256 = digest(Buffer.from('one record\n'));
+    const sealed = Array.from({ length: 75_000 }, (_, index) => ({
+      name: segmentName(index + 1), byteLength: 11, sha256,
+    }));
+    expect(Buffer.byteLength(JSON.stringify(sealed))).toBeGreaterThan(MAX_SESSION_FILE_BYTES);
+    const binding = { sealed, open: null };
+    const { bytes, parts } = await files.prepareManifest(manifest, binding);
+    await files.replaceManifest(bytes);
+    expect(bytes.length).toBeLessThanOrEqual(MAX_SESSION_FILE_BYTES);
+    expect(JSON.parse(bytes.toString()).log.sealed).toEqual({ parts });
+    expect(parts.length).toBeGreaterThan(1);
+    for (const part of parts) {
+      expect((await fs.stat(join(files.blobsDir, part.sha256))).size).toBe(part.byteLength);
+      expect(part.byteLength).toBeLessThanOrEqual(MAX_SESSION_FILE_BYTES);
+    }
+    const reopened = await files.decodeManifest(await files.readManifestFile());
+    expect(await store.readManifest(id)).toEqual(manifest);
+    expect(reopened.parts).toEqual(parts);
+    expect(JSON.stringify(reopened.log)).toBe(JSON.stringify(binding));
+    await fs.writeFile(join(files.blobsDir, parts[0].sha256), 'damaged');
+    await expect(files.decodeManifest(bytes)).rejects.toThrow(/differs from its reference/);
+  });
+
   it('writes one manifest file and an append-only segment log that bind each other', async () => {
     const { store, id, lease, file, replayDir, sessionsDir } = await fixture();
     const stored = await physical(file);
@@ -137,6 +165,11 @@ describe('schema-9 session layout (DR-111)', () => {
     expect(await copied.read(id)).toEqual(await store.read(id));
     expect((await copied.validate(id)).integrityValid).toBe(true);
     await assertBoundedPrivateFiles(sessionsDir, id);
+    if (process.platform !== 'win32') {
+      await fs.chmod(blobsDir, 0o755);
+      expect((await store.validate(id)).integrityValid).toBe(false);
+      await expect(store.exportBundle(id)).rejects.toThrow(/corrupt/);
+    }
   }, 30_000);
 
   it('spills manifest values over the per-file bound into blobs and removes them once unreferenced', async () => {
@@ -266,6 +299,94 @@ describe('schema-9 publication and crash safety (DR-111)', () => {
     expect((await fs.readFile(segment)).equals(damaged)).toBe(true);
   });
 
+  it('refuses export when an envelope after the checkpoint breaks the replay sequence', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    await lease.release();
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"v":1,"seq":42,"record":{}}\n');
+    expect((await store.validate(id)).integrityValid).toBe(false);
+    await expect(store.exportBundle(id)).rejects.toThrow(/corrupt/);
+  });
+
+  it.each(['seq', 'sha256'])('refuses replay repair when the manifest checkpoint %s disagrees with its bound log', async (field) => {
+    const { store, id, lease, file, replayDir } = await fixture();
+    await lease.release();
+    const stored = await physical(file);
+    if (field === 'seq') stored.manifest.replay.seq++;
+    else stored.manifest.replay.sha256 = '0'.repeat(64);
+    await fs.writeFile(file, JSON.stringify(stored));
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"torn"');
+    const bytes = await fs.readFile(segment);
+    const next = await store.acquire(id);
+    expect(next.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
+    await next.release();
+    expect(await fs.readFile(segment)).toEqual(bytes);
+    expect((await store.readManifest(id)).replay).toEqual({ ...stored.manifest.replay, incomplete: true });
+  });
+
+  it('latches a replaced open segment before a settlement seals it', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    const attemptId = randomUUID();
+    await lease.beginTurn({ input: 'next', attemptId, attemptedExecutionProjection: executionProjection() });
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    const replacement = `${segment}.replacement`;
+    await fs.writeFile(replacement, await fs.readFile(segment), { mode: 0o600 });
+    await fs.rename(replacement, segment);
+    await lease.settle({ attemptId, snapshot: shellSnapshot(1, 'next'), unresolvedEffects: [] });
+    expect((await store.readManifest(id)).replay.incomplete).toBe(true);
+    expect((await lease.release()).incomplete).toBe(true);
+  });
+
+  it('preserves a torn segment when the existing manifest cannot establish its bound', async () => {
+    const { store, id, lease, file, replayDir } = await fixture();
+    await lease.release();
+    const stored = await physical(file);
+    delete stored.log.open.sha256;
+    await fs.writeFile(file, JSON.stringify(stored));
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"torn"');
+    const bytes = await fs.readFile(segment);
+    await expect(store.acquire(id)).rejects.toThrow(/replay segment binding/);
+    expect(await fs.readFile(segment)).toEqual(bytes);
+  });
+
+  it('keeps blobs for an append admitted while settlement is finishing', async () => {
+    let hintsTemporary: string | undefined;
+    let appendAfterHints: (() => void) | undefined;
+    const { store, id, lease } = await fixture({
+      async rename(from: string, to: string) {
+        await fs.rename(from, to);
+        if (to.endsWith('.hints.json') && appendAfterHints) hintsTemporary = from;
+      },
+      async unlink(path: string) {
+        try { await fs.unlink(path); }
+        finally {
+          // The final hints cleanup admits an append just before settlement queues blob collection.
+          if (path === hintsTemporary) {
+            hintsTemporary = undefined;
+            appendAfterHints!();
+          }
+        }
+      },
+    });
+    const attemptId = randomUUID();
+    await lease.beginTurn({ input: 'next', attemptId, attemptedExecutionProjection: executionProjection() });
+    const text = 'x'.repeat(MAX_SESSION_FILE_BYTES);
+    let appended: Promise<unknown> | undefined;
+    appendAfterHints = () => {
+      appendAfterHints = undefined;
+      appended = lease.append({ type: 'late_append', text });
+    };
+    await lease.settle({ attemptId, snapshot: shellSnapshot(1, 'next'), unresolvedEffects: [] });
+    expect(appended).toBeDefined();
+    await appended;
+    await lease.release();
+    const history = await store.readHistory(id);
+    expect(history.incomplete).toBe(false);
+    expect(history.entries.at(-1).record.text === text).toBe(true);
+  });
+
   it('ignores a manifest temporary left by a crash before its rename', async () => {
     const { store, id, lease, sessionsDir, file } = await fixture();
     await lease.release();
@@ -279,6 +400,58 @@ describe('schema-9 publication and crash safety (DR-111)', () => {
     await next.release();
     expect((await fs.readFile(file)).equals(before)).toBe(false);
     expect((await store.validate(id)).integrityValid).toBe(true);
+  });
+
+  it('rejects an extra manifest link and recovers an interrupted initial publication during preparation', async () => {
+    const { store, id, lease, file, sessionsDir } = await fixture();
+    await lease.release();
+    const original = await fs.readFile(file);
+    const unrelated = join(sessionsDir, 'unrelated');
+    await fs.link(file, unrelated);
+    await expect(store.readManifest(id)).rejects.toThrow(/single-link/);
+    await expect(store.acquire(id)).rejects.toThrow(/links/);
+    expect(await fs.readFile(unrelated)).toEqual(original);
+    await fs.unlink(unrelated);
+    const temporary = join(sessionsDir, `.${id}.101.${randomUUID()}.tmp`);
+    await fs.link(file, temporary);
+    await expect(store.readManifest(id)).rejects.toThrow(/single-link/);
+    const next = await store.acquire(id);
+    expect(await fs.readFile(file)).toEqual(original);
+    expect((await fs.stat(file)).nlink).toBe(1);
+    await expect(fs.lstat(temporary)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    await next.release();
+  });
+
+  it('reports earlier storage before preparing its files or creating a management lease for deletion', async () => {
+    const touched: string[] = [];
+    const { store, id, lease, file, sessionsDir } = await fixture({
+      async mkdir(path: string, options: any) {
+        touched.push(path);
+        return fs.mkdir(path, options);
+      },
+      async rename(from: string, to: string) {
+        touched.push(to);
+        return fs.rename(from, to);
+      },
+    });
+    await lease.release();
+    await fs.writeFile(file, JSON.stringify({ schemaVersion: 8, sessionId: id }));
+    const hints = join(sessionsDir, `${id}.hints.json`);
+    await fs.writeFile(hints, '{}');
+    if (process.platform !== 'win32') {
+      await fs.chmod(file, 0o644);
+      await fs.chmod(hints, 0o644);
+    }
+    touched.length = 0;
+    await store.prepare();
+    await expect(store.acquire(id)).rejects.toThrow(/storage schema 8 is unsupported/);
+    await expect(store.delete(id)).rejects.toThrow(/storage schema 8 is unsupported/);
+    expect(touched).toEqual([]);
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(file)).mode & 0o777).toBe(0o644);
+      expect((await fs.stat(hints)).mode & 0o777).toBe(0o644);
+    }
   });
 
   it.each(['before', 'after'])('keeps a complete manifest when publication stops %s its rename', async (when) => {

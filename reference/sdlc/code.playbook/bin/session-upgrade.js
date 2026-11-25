@@ -5,15 +5,15 @@
 // chunked formats to schema 9. It runs by hand through `playbook sessions
 // upgrade`; the store never loads it. It keeps read-only decoders for the two
 // earlier formats and writes through the schema-9 file layer.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import * as nativeFs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { assertPrivateEntry, mkdirPrivate, needsTightening, renameWithRetry, sameFileIdentity, syncDirectory, tightenPrivateEntry } from './private-paths.js';
+import { assertPrivateEntry, mkdirPrivate, needsTightening, renameWithRetry, sameFileIdentity, syncDirectory, tightenPrivateEntry, verifyPrivateEntry } from './private-paths.js';
 import { createSessionFiles, SESSION_STORAGE_VERSION } from './session-files.js';
 import { validateSessionHints, validateSessionManifest } from './portable-codec.js';
-import { createCaptainSessionStore, SESSION_ID_PATTERN } from './session-store.js';
+import { createCaptainSessionStore, parseSessionHistory, SESSION_ID_PATTERN, validateSessionHistory } from './session-store.js';
 
 const ROOT_NAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -35,11 +35,14 @@ export async function findSessionsDirectories(root, { fsOps } = {}) {
   const found = [];
   const visit = async (directory) => {
     let entries;
-    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    try {
+      // Check the supplied root too: readdir follows a directory link.
+      if (!(await fs.lstat(directory)).isDirectory() || SKIPPED_DIRECTORIES.has(basename(directory))) return;
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    }
     catch (error) { if (['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR'].includes(error?.code)) return; throw error; }
     if (basename(directory) === 'sessions' && entries.some((entry) => entry.isFile() && ROOT_NAME.test(entry.name))) {
       found.push(directory);
-      return;
     }
     for (const entry of entries.sort((left, right) => (left.name < right.name ? -1 : 1))) {
       if (entry.isDirectory() && !entry.isSymbolicLink() && !SKIPPED_DIRECTORIES.has(entry.name)) await visit(join(directory, entry.name));
@@ -58,12 +61,10 @@ function legacyChunks(directory, fs) {
         value.byteLength > LEGACY_MAX_CHUNK_BYTES) throw corrupt('chunk reference');
     return value;
   };
-  const files = new Map();
   const readNode = async (ref) => {
     reference(ref);
     const bytes = await readPrivateFile(join(directory, ref.sha256), 'former session chunk', fs);
     if (bytes.length !== ref.byteLength || sha256(bytes) !== ref.sha256) throw corrupt(`chunk ${ref.sha256} differs from its reference`);
-    files.set(ref.sha256, bytes.length);
     return bytes;
   };
   const readBytes = async (ref, depth = 0) => {
@@ -102,7 +103,7 @@ function legacyChunks(directory, fs) {
     if (bytes[0] !== 3) throw corrupt('JSON node tag');
     return decode(parseJson(await readBytes(reference(parseJson(bytes.subarray(1))))), depth + 1);
   };
-  return { readJson, readBytes, reference, files };
+  return { readJson, readBytes, reference };
 }
 
 async function readPrivateFile(path, label, fs) {
@@ -122,7 +123,7 @@ async function exists(path, fs) {
 }
 
 // The complete former representation, verified: its logical manifest, the
-// exact replay bytes and the files that hold them.
+// exact replay bytes.
 async function readFormerSession(sessionsDir, sessionId, rootBytes, fs) {
   const stored = parseJson(rootBytes);
   if (stored?.schemaVersion === 7) {
@@ -130,7 +131,7 @@ async function readFormerSession(sessionsDir, sessionId, rootBytes, fs) {
     if (manifest.sessionId !== sessionId) throw corrupt('manifest identity');
     const replayPath = join(sessionsDir, `${sessionId}.records.jsonl`);
     const replay = (await exists(replayPath, fs)) ? await readPrivateFile(replayPath, 'former session replay', fs) : Buffer.alloc(0);
-    return { format: 7, manifest, replay, files: [`${sessionId}.json`, ...((await exists(replayPath, fs)) ? [`${sessionId}.records.jsonl`] : [])] };
+    return { format: 7, manifest, replay };
   }
   const fields = ['schemaVersion', 'kind', 'sessionId', 'cwd', 'state', 'createdAt', 'updatedAt', 'root'];
   if (!object(stored) || Object.keys(stored).length !== fields.length || fields.some((key) => !own(stored, key)) ||
@@ -164,20 +165,7 @@ async function readFormerSession(sessionsDir, sessionId, rootBytes, fs) {
     if (total !== 0) throw corrupt('replay chain length');
     replay = Buffer.concat(pieces.reverse());
   } else if (manifest.replay.seq > 0) throw corrupt('replay root is missing');
-  const files = [`${sessionId}.json`, ...((await exists(replayRootPath, fs)) ? [`${sessionId}.replay.json`] : []),
-    ...((await exists(join(sessionsDir, `${sessionId}.chunks`), fs)) ? [`${sessionId}.chunks`] : [])];
-  return { format: 8, manifest, replay, files };
-}
-
-// The checkpoint's replay prefix must be the exact bytes its digest names.
-function checkpointPrefix(replay, seq) {
-  let end = 0;
-  for (let index = 0; index < seq; index++) {
-    const newline = replay.indexOf(10, end);
-    if (newline < 0) throw corrupt('replay holds fewer records than its checkpoint');
-    end = newline + 1;
-  }
-  return replay.subarray(0, end);
+  return { format: 8, manifest, replay };
 }
 
 // Tighten-only preparation of the former files, as opening them did. Only
@@ -204,46 +192,74 @@ async function ensurePrivateDirectory(path, fs) {
   catch (error) { if (error?.code !== 'EEXIST') throw error; }
   const stat = await fs.lstat(path);
   assertPrivateEntry(stat, true, 'former session backup directory', path);
+  await syncDirectory(dirname(path), fs);
 }
 async function writePrivateBytes(path, bytes, fs) {
-  const temporary = `${path}.tmp`;
-  const handle = await fs.open(temporary, 'w', 0o600);
+  const directory = dirname(path);
+  assertPrivateEntry(await fs.lstat(directory), true, 'conversion directory', directory);
+  if (await exists(path, fs)) assertPrivateEntry(await fs.lstat(path), false, 'conversion file', path);
+  const temporary = join(directory, `.${randomUUID()}.tmp`);
+  const handle = await fs.open(temporary, 'wx', 0o600);
   try {
-    if (process.platform !== 'win32') await handle.chmod(0o600);
-    await handle.writeFile(bytes); await handle.sync();
-  } finally { await handle.close(); }
-  await renameWithRetry(temporary, path, fs);
-  await syncDirectory(dirname(path), fs);
+    try {
+      if (process.platform !== 'win32') await handle.chmod(0o600);
+      assertPrivateEntry(await handle.stat(), false, 'conversion temporary', temporary);
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally { await handle.close(); }
+    await renameWithRetry(temporary, path, fs);
+    await syncDirectory(directory, fs);
+  } finally {
+    try { await fs.unlink(temporary); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
 }
 
 // Rebinds the provider hints of the former root to the new manifest; hints
 // that do not match it are left as they are and start fresh conversations.
 async function rebindHints(sessionsDir, sessionId, formerRoot, manifest, nextManifestBytes, fs) {
   const path = join(sessionsDir, `${sessionId}.hints.json`);
+  let bytes;
+  try { bytes = await readPrivateFile(path, 'session hints', fs); }
+  catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
   let hints;
-  try { hints = validateSessionHints(parseJson(await readPrivateFile(path, 'session hints', fs)), formerRoot, manifest); }
+  try { hints = validateSessionHints(parseJson(bytes), formerRoot, manifest); }
   catch { return false; }
   await writePrivateBytes(path, Buffer.from(`${JSON.stringify({ ...hints, checkpointSha256: sha256(nextManifestBytes) })}\n`), fs);
   return true;
 }
 
-// Moves the former files beside the backup of the former root; a name
-// already moved is done.
-async function retireFormerFiles(sessionsDir, sessionId, backup, fs) {
-  let moved = false;
-  for (const name of [`${sessionId}.records.jsonl`, `${sessionId}.replay.json`, `${sessionId}.chunks`]) {
+function formerSidecars(sessionId, format) {
+  return format === 7 ? [`${sessionId}.records.jsonl`] : [`${sessionId}.replay.json`, `${sessionId}.chunks`];
+}
+
+// Moves the former files beside the saved root. A sidecar already moved is done.
+async function retireFormerFiles(sessionsDir, sessionId, format, backup, fs) {
+  for (const name of formerSidecars(sessionId, format)) {
     const source = join(sessionsDir, name);
     if (!(await exists(source, fs))) continue;
+    assertPrivateEntry(await fs.lstat(source), name.endsWith('.chunks'), 'former session entry', source);
     const target = join(backup, name);
     if (await exists(target, fs)) throw new Error(`backup already holds ${name}`);
     await fs.rename(source, target);
-    moved = true;
   }
-  if (moved) { await syncDirectory(sessionsDir, fs); await syncDirectory(backup, fs); }
+  // Also make a previous run's last rename durable before completing its receipt.
+  await syncDirectory(sessionsDir, fs);
+  await syncDirectory(backup, fs);
 }
 
 async function readReceipt(path, fs) {
-  try { return parseJson(await readPrivateFile(path, 'conversion receipt', fs)); }
+  try {
+    const backup = dirname(path);
+    for (const directory of [dirname(backup), backup]) {
+      assertPrivateEntry(await fs.lstat(directory), true, 'former session backup directory', directory);
+    }
+    const receipt = parseJson(await readPrivateFile(path, 'conversion receipt', fs));
+    if (receipt?.v !== 1 || receipt.sessionId !== basename(backup) || ![7, 8].includes(receipt.formerSchema) ||
+        !DIGEST.test(receipt.formerRootSha256) || !DIGEST.test(receipt.manifestSha256) || typeof receipt.complete !== 'boolean') {
+      throw new Error('invalid conversion receipt');
+    }
+    return receipt;
+  }
   catch (error) { if (error?.code === 'ENOENT') return undefined; throw error; }
 }
 
@@ -270,14 +286,25 @@ async function convertSession({ sessionsDir, sessionId, store, fs, dryRun }) {
   const result = (outcome, reason) => ({ sessionId, format: schemaVersion, outcome, ...(reason === undefined ? {} : { reason }) });
   let resuming = false;
   if (schemaVersion === SESSION_STORAGE_VERSION) {
-    const receipt = await readReceipt(receiptPath, fs).catch(() => undefined);
-    if (receipt?.complete !== false || receipt.manifestSha256 !== sha256(rootBytes)) return result('skipped', 'already schema 9');
+    let receipt;
+    try { receipt = await readReceipt(receiptPath, fs); }
+    catch (error) { return result('failed', message(error)); }
+    if (receipt?.complete !== false) return result('skipped', 'already schema 9');
+    if (receipt.manifestSha256 !== sha256(rootBytes)) return result('failed', 'session changed after its conversion switched');
     resuming = true;
   } else if (schemaVersion !== 7 && schemaVersion !== 8) {
     return result('skipped', `unknown format${schemaVersion === undefined ? '' : ` (schema ${schemaVersion})`}`);
   }
   if (dryRun) {
-    const state = await store.readLeaseState(sessionId);
+    let state = await store.readLeaseState(sessionId);
+    if (state === 'unknown') {
+      // A checkout's owner-accessible directory may need tightening before
+      // the strict store can inspect it. Preview an absent lease without chmod.
+      try {
+        verifyPrivateEntry(await fs.lstat(sessionsDir), true, 'sessions directory', process.getuid?.(), sessionsDir);
+        if (!(await exists(join(sessionsDir, `.${sessionId}.lock`), fs))) state = 'idle';
+      } catch (error) { return result('failed', message(error)); }
+    }
     return state === 'idle' ? result(resuming ? 'would-finish' : 'would-convert') : result('skipped', `held by a lease (${state})`);
   }
   let lease;
@@ -295,7 +322,7 @@ async function convertSession({ sessionsDir, sessionId, store, fs, dryRun }) {
       if (sha256(formerRoot) !== receipt.formerRootSha256) throw new Error('backup of the former root differs from its receipt');
       const current = await readPrivateFile(rootPath, 'session root', fs);
       if (sha256(current) !== receipt.manifestSha256) throw new Error('session changed after its conversion switched');
-      await retireFormerFiles(sessionsDir, sessionId, backup, fs);
+      await retireFormerFiles(sessionsDir, sessionId, receipt.formerSchema, backup, fs);
       const manifest = (await files.decodeManifest(current)).manifest;
       await rebindHints(sessionsDir, sessionId, formerRoot, manifest, current, fs);
       await writePrivateBytes(receiptPath, Buffer.from(`${JSON.stringify({ ...receipt, complete: true })}\n`), fs);
@@ -305,10 +332,12 @@ async function convertSession({ sessionsDir, sessionId, store, fs, dryRun }) {
       // Reread under the lease: only this read may authorize writes.
       const formerRoot = await readPrivateFile(rootPath, 'session root', fs);
       const former = await readFormerSession(sessionsDir, sessionId, formerRoot, fs);
-      const prefix = checkpointPrefix(former.replay, former.manifest.replay.seq);
-      if (sha256(prefix) !== former.manifest.replay.sha256) throw corrupt('replay checkpoint digest differs');
+      const history = parseSessionHistory(former.replay);
+      if (history.damage) throw corrupt(history.damage.reason);
+      if (history.digests[former.manifest.replay.seq] !== former.manifest.replay.sha256) throw corrupt('replay checkpoint digest differs');
       const receipt = await readReceipt(receiptPath, fs);
       if (receipt !== undefined && receipt.complete !== false) throw new Error(`${LEGACY_DIRECTORY}/${sessionId} already holds a completed conversion; move it aside to convert again`);
+      if (receipt && receipt.formerRootSha256 !== sha256(formerRoot)) throw new Error('backup belongs to a different former root');
       // Write and verify the new representation before anything switches.
       const binding = await files.writeLog(former.replay, former.manifest.replay.seq);
       const { bytes } = await files.prepareManifest(former.manifest, binding);
@@ -316,18 +345,32 @@ async function convertSession({ sessionsDir, sessionId, store, fs, dryRun }) {
       const read = await files.readLog({ binding: decoded.log });
       const logical = Buffer.concat([read.lines, read.partial]);
       if (!isDeepStrictEqual(decoded.manifest, former.manifest) || read.damage !== undefined || !read.bound.ok ||
-          read.bound.lines !== former.manifest.replay.seq || !logical.equals(former.replay) ||
-          sha256(checkpointPrefix(read.lines, former.manifest.replay.seq)) !== former.manifest.replay.sha256) {
+          !logical.equals(former.replay)) {
         throw new Error('converted session differs from its former representation');
       }
+      const validation = await validateSessionHistory({
+        sessionId, manifest: decoded.manifest, history: { ...history, missing: read.absent, bound: read.bound },
+        openAsset: (reference) => store.openAsset(sessionId, reference),
+      });
+      if (!validation.integrityValid) throw corrupt(validation.reasons.join('; '));
       await ensurePrivateDirectory(dirname(backup), fs);
       await ensurePrivateDirectory(backup, fs);
-      await writePrivateBytes(join(backup, `${sessionId}.json`), formerRoot, fs);
+      // Before cutover none of this session's sidecars have moved. A collision
+      // here would leave retirement permanently blocked after the switch.
+      for (const name of formerSidecars(sessionId, former.format)) {
+        if (await exists(join(backup, name), fs)) throw new Error(`backup already holds ${name}`);
+      }
+      const backupRoot = join(backup, `${sessionId}.json`);
+      if (await exists(backupRoot, fs)) {
+        if (!(await readPrivateFile(backupRoot, 'former session backup', fs)).equals(formerRoot)) throw new Error('backup belongs to a different former root');
+      } else {
+        await writePrivateBytes(backupRoot, formerRoot, fs);
+      }
       await writePrivateBytes(receiptPath, Buffer.from(`${JSON.stringify({ v: 1, sessionId, formerSchema: former.format, formerRootSha256: sha256(formerRoot), manifestSha256: sha256(bytes), complete: false })}\n`), fs);
       await lease.assertOwner();
       if (!(await readPrivateFile(rootPath, 'session root', fs)).equals(formerRoot)) throw new Error('session changed during its conversion');
       await files.replaceManifest(bytes);
-      await retireFormerFiles(sessionsDir, sessionId, backup, fs);
+      await retireFormerFiles(sessionsDir, sessionId, former.format, backup, fs);
       await rebindHints(sessionsDir, sessionId, formerRoot, former.manifest, bytes, fs);
       await writePrivateBytes(receiptPath, Buffer.from(`${JSON.stringify({ v: 1, sessionId, formerSchema: former.format, formerRootSha256: sha256(formerRoot), manifestSha256: sha256(bytes), complete: true })}\n`), fs);
       outcome = result('converted');

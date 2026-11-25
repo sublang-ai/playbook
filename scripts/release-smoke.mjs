@@ -197,14 +197,15 @@ function installedPackageRoot(prefix) {
 function readPackedSessionManifest(prefix, sessionsDir, sessionId) {
   const physicalPath = join(sessionsDir, `${sessionId}.json`);
   const physical = readJson(physicalPath);
-  const expectedKeys = ['createdAt', 'cwd', 'kind', 'root', 'schemaVersion', 'sessionId', 'state', 'updatedAt'];
+  const expectedKeys = ['kind', 'log', 'manifest', 'schemaVersion', 'sessionId'];
+  if (Object.hasOwn(physical, 'spills')) expectedKeys.push('spills');
   if (
-    physical.schemaVersion !== 8 ||
+    physical.schemaVersion !== 9 ||
     physical.kind !== 'captain-session-storage' ||
     physical.sessionId !== sessionId ||
     JSON.stringify(Object.keys(physical).sort()) !== JSON.stringify(expectedKeys) ||
     lstatSync(physicalPath).size > 8 * 1024 * 1024
-  ) fail('the installed CLI did not write a bounded schema-8 session root', JSON.stringify(physical));
+  ) fail('the installed CLI did not write a bounded schema-9 session manifest', physicalPath);
   const facade = pathToFileURL(join(installedPackageRoot(prefix), 'reference/sdlc/code.playbook/session-store.js')).href;
   const source = [
     `import { createSessionStore } from ${JSON.stringify(facade)};`,
@@ -3328,8 +3329,8 @@ const skipped = listed.skipped.find((entry) => entry.sessionId === oldSessionId)
 check(skipped !== undefined, 'schema-5 session was not reported as skipped');
 exactKeys(skipped, ['sessionId', 'reason'], 'skipped session');
 check(
-  skipped.reason.includes('5') && /schema|cutover|current/i.test(skipped.reason),
-  'schema-5 skip reason did not identify the cutover',
+  /schema 5 is unsupported/i.test(skipped.reason),
+  'schema-5 skip reason did not identify the unsupported storage version',
 );
 
 const direct = await store.read(sessionId);
@@ -3480,6 +3481,7 @@ try {
   await store.read(oldSessionId);
 } catch (error) {
   check(error instanceof Error, 'old-schema read rejected with a non-Error');
+  check(/schema 5 is unsupported/i.test(error.message), 'old-schema read did not report the unsupported version');
   check(
     !Object.hasOwn(error, 'code'),
     'old-schema rejection used a reserved facade code',

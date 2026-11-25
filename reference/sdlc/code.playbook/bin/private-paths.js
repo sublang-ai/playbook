@@ -65,11 +65,11 @@ export function sameFileIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.(), path) {
+export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.(), path, links = 1) {
   const required = directory ? 0o700 : 0o600;
   if (
     stat.isSymbolicLink() ||
-    (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) ||
+    (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== links) ||
     (uid !== undefined && stat.uid !== uid) ||
     (process.platform === 'win32' ? !privatePermissions(stat, required, path) : (stat.mode & required) !== required)
   ) {

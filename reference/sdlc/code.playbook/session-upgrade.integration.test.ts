@@ -116,6 +116,8 @@ describe('session conversion (DR-111)', () => {
     await copySessions(join(base, 'outside', 'sessions'));
     // A junction is Windows' directory link that needs no symlink privilege.
     await fs.symlink(join(base, 'outside'), join(base, 'link'), process.platform === 'win32' ? 'junction' : undefined);
+    await fs.symlink(join(base, 'a'), join(base, 'linked-root'), process.platform === 'win32' ? 'junction' : undefined);
+    expect(await findSessionsDirectories(join(base, 'linked-root'))).toEqual([]);
     await copySessions(join(base, 'named-otherwise'));
     await fs.mkdir(join(base, 'empty', 'sessions'), { recursive: true });
     await fs.rm(join(base, 'outside'), { recursive: true });
@@ -147,14 +149,56 @@ describe('session conversion (DR-111)', () => {
     expect(second[0].sessions.find((session: any) => session.sessionId === ids.settled8).reason).toBe('already schema 9');
   });
 
+  it('keeps a damaged earlier session in its original format', async () => {
+    const base = await root();
+    const sessionsDir = await copySessions(join(base, 'sessions'));
+    // The checkpoint stays byte-for-byte valid, but the replay tail contains a
+    // complete envelope that cannot follow it. A torn final line is recoverable.
+    await fs.appendFile(join(sessionsDir, `${ids.settled7}.records.jsonl`), '{"v":1,"seq":1,"record":{"type":"test"}}\n');
+    const assets = join(sessionsDir, `${ids.settled8}.assets`);
+    const content = (await fs.readdir(assets)).find((name) => !name.endsWith('.json'))!;
+    await fs.unlink(join(assets, content));
+
+    const results = await upgradeSessions({ root: sessionsDir });
+    for (const [id, format] of [[ids.settled7, 7], [ids.settled8, 8]] as const) {
+      expect(outcomes(results)[id]).toBe('failed');
+      expect(JSON.parse(await fs.readFile(join(sessionsDir, `${id}.json`), 'utf8')).schemaVersion).toBe(format);
+      await expect(fs.lstat(join(base, '.legacy-sessions', id))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(outcomes(results)[ids.uncertain8]).toBe('converted');
+  });
+
+  it('publishes through its own temporary files and retries a failed hint read after the switch', async () => {
+    const base = await root();
+    const sessionsDir = await copySessions(join(base, 'sessions'));
+    const hints = join(sessionsDir, `${ids.settled7}.hints.json`);
+    await fs.writeFile(`${hints}.tmp`, 'unrelated file', { mode: 0o600 });
+    const fsOps = { async open(path: string, flags: any, mode?: number) {
+      if (path === hints && JSON.parse(await fs.readFile(join(sessionsDir, `${ids.settled7}.json`), 'utf8')).schemaVersion === 9) {
+        throw Object.assign(new Error('interrupted hint read'), { code: 'EIO' });
+      }
+      return fs.open(path, flags, mode);
+    } };
+    const receipt = join(base, '.legacy-sessions', ids.settled7, 'receipt.json');
+    expect(outcomes(await upgradeSessions({ root: sessionsDir, fsOps }))[ids.settled7]).toBe('failed');
+    expect(JSON.parse(await fs.readFile(receipt, 'utf8')).complete).toBe(false);
+    expect(outcomes(await upgradeSessions({ root: sessionsDir }))[ids.settled7]).toBe('converted');
+    expect(JSON.parse(await fs.readFile(receipt, 'utf8')).complete).toBe(true);
+    expect(JSON.parse(await fs.readFile(hints, 'utf8')).checkpointSha256).toBe(digest(await fs.readFile(join(sessionsDir, `${ids.settled7}.json`))));
+    expect(await fs.readFile(`${hints}.tmp`, 'utf8')).toBe('unrelated file');
+  });
+
   it('lists what it would convert in a dry run and changes nothing', async () => {
     const base = await root();
     const sessionsDir = await copySessions(join(base, 'sessions'));
+    if (process.platform !== 'win32') await fs.chmod(sessionsDir, 0o755);
     const before = await tree(base);
+    const mode = (await fs.lstat(sessionsDir)).mode;
     const results = await upgradeSessions({ root: base, recursive: true, dryRun: true });
     expect(results.map(({ directory }: any) => directory)).toEqual([sessionsDir]);
     expect(outcomes(results)).toEqual(Object.fromEntries(Object.values(ids).map((id) => [id, 'would-convert'])));
     expect(await tree(base)).toEqual(before);
+    expect((await fs.lstat(sessionsDir)).mode).toBe(mode);
   });
 
   it('leaves the former session unchanged when the written representation does not verify', async () => {
@@ -215,6 +259,9 @@ describe('session conversion (DR-111)', () => {
     expect(JSON.parse(await fs.readFile(join(sessionsDir, `${ids.settled7}.json`), 'utf8')).schemaVersion).toBe(7);
     const receipt = join(base, '.legacy-sessions', ids.settled7, 'receipt.json');
     await fs.writeFile(receipt, JSON.stringify({ ...JSON.parse(await fs.readFile(receipt, 'utf8')), complete: false }));
+    const collision = await upgradeSessions({ root: sessionsDir });
+    expect(collision[0].sessions.find((session: any) => session.sessionId === ids.settled7)).toMatchObject({ outcome: 'failed', reason: expect.stringMatching(/backup already holds/) });
+    expect(JSON.parse(await fs.readFile(join(sessionsDir, `${ids.settled7}.json`), 'utf8')).schemaVersion).toBe(7);
     await fs.rm(join(base, '.legacy-sessions', ids.settled7, `${ids.settled7}.records.jsonl`));
     expect(outcomes(await upgradeSessions({ root: sessionsDir }))[ids.settled7]).toBe('converted');
   });

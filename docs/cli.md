@@ -320,8 +320,9 @@ Unsupported settings and ambiguous failures do not trigger that fallback
 Both front ends record observed host records in order through the shared store.
 A session is one schema-9 `<session-id>.json` manifest file and a replay log of
 append-only segments in `<session-id>.replay/`, sealed at 1 MiB and at each
-settled turn. Every file is at most 8 MiB; a value or record too large for one
-file is kept whole as parts in `<session-id>.blobs/`. Use `readHistory()` or
+settled turn. The manifest, segments and blob parts are each at most 8 MiB.
+Large values, segment lists and records can span multiple verified parts in
+`<session-id>.blobs/`. Attachments keep their configured size limit. Use `readHistory()` or
 `readStream()` rather than reading the segments. Logical replay still contains
 version-1 envelopes with contiguous writer-assigned sequences and optional
 local roles.
@@ -333,8 +334,8 @@ require installed modules. Provider continuation hints live separately in
 accepted only for the exact checkpoint that created it.
 
 The file bound does not cap total disk usage or in-memory session size.
-Superseded chunks are retained for safe concurrent reads and recovery; they are
-removed with the session. This release does not automatically prune evidence.
+At settlement the writer removes blob parts that the manifest and replay no
+longer reference. Sealed replay segments stay with the session.
 
 The manifest hashes its exact durable replay prefix. Missing or changed bytes,
 saved incompleteness, or unsupported required context block continuation while
@@ -347,8 +348,8 @@ history warning without authorizing a repeated action. Recovery and uncertainty
 remain durable; the incomplete marker persists across process restarts.
 Release retains the lease if that marker cannot be saved.
 
-Copy the complete file inventory from `exportBundle().files`, including chunks
-and assets. Do not copy hints or leases, or serialize the hydrated manifest
+Copy the complete file inventory from `exportBundle().files`, including replay
+segments, blob parts and assets. Do not copy hints or leases, or serialize the hydrated manifest
 back into one large file.
 Continuation also requires matching working-directory/module paths and
 compatible runtimes; changed paths allow history only. Prompts, replies and

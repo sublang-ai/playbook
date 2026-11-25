@@ -12,7 +12,7 @@ This package owns the physical representation of session recovery and replay —
 ### session-persistence-1
 
 When saving a session, the shared store shall write its complete logical manifest [[session-storage-2](session-storage.md#session-storage-2)] in one `<sessionId>.json` manifest file holding exactly `schemaVersion: 9`, `kind: "captain-session-storage"`, `sessionId`, `manifest` and `log`, plus `spills` only when a value spills [[session-persistence-2](#session-persistence-2)], where `log` binds the replay prefix its checkpoint proves [[session-persistence-3](#session-persistence-3)].
-The store shall keep replay in the session-owned `<sessionId>.replay/` log and blob parts in `<sessionId>.blobs/`, and bound every file it writes to 8 MiB.
+The store shall keep replay in the session-owned `<sessionId>.replay/` log and blob parts in `<sessionId>.blobs/`, and bound each manifest, replay segment and blob part to 8 MiB.
 
 ### session-persistence-2
 
@@ -31,13 +31,15 @@ The replay log shall hold the exact ordered envelope bytes [[session-storage-3](
 
 - a line is an envelope's exact bytes and its terminating LF, or, for an envelope whose line alone exceeds the per-file bound, exactly `{"parts":[...]}` and an LF, whose parts [[session-persistence-2](#session-persistence-2)] concatenate to the envelope without its LF;
 - the writer seals its open segment once it reaches 1 MiB, before a line would take it past the per-file bound, and at turn settlement; a sealed segment never changes, and a new lease appends to the last segment unless the manifest binds it sealed or it reached 1 MiB;
-- the manifest's `log` is exactly `{sealed, open}`: `sealed` lists the `{name, byteLength, sha256}` of each segment wholly inside the bound prefix, in order, and `open` is null or the `{name, byteLength, sha256}` of the prefix that ends the bound in the next segment, so the bound holds exactly the checkpoint's sequence of lines;
+- the manifest's `log` is exactly `{sealed, open}`: `sealed` lists the `{name, byteLength, sha256}` of each sealed segment in order, and `open` is null or the `{name, byteLength, sha256}` of the prefix that ends the bound in the next segment, so the bound holds exactly the checkpoint's sequence of lines;
+- when the manifest file exceeds its bound and the sealed list exceeds the largest remaining spillable manifest value, `sealed` holds `{parts}` whose verified, concatenated bytes are the compact JSON of that list, using the same bounded blob parts as manifest values [[session-persistence-2](#session-persistence-2)];
 - the checkpoint's cumulative digest [[session-storage-4](session-storage.md#session-storage-4)] covers the envelope bytes a reference line stands for.
 
 ### session-persistence-4
 
 When appending, the lease writer shall write the line to the open segment and sync it — and, for a new segment, sync the replay directory, and the sessions directory when it created that directory — before acknowledging the append [[session-storage-4](session-storage.md#session-storage-4)].
 When publishing a checkpoint, the store shall write the manifest file to an unpredictable same-directory `0600` temporary file, sync it, replace `<sessionId>.json` atomically under the owning lease, or publish a fresh session's with an atomic no-replace link, and sync the sessions directory, acknowledging only that completed publication and retaining no superseded manifest file [[session-storage-11](session-storage.md#session-storage-11)].
+When a fresh publication leaves its temporary name linked to the published manifest, preparation shall remove that name only after proving both are the same private regular file and its only two links.
 Where another process holds the manifest file open without delete sharing, the store shall retry the replacement briefly and otherwise fail the publication, keeping the previous manifest file.
 It shall apply the private-directory, current-owner, single-link and non-symlink rules to every file it writes [[session-storage-1](session-storage.md#session-storage-1)], including the caller's prohibition on creating a missing sessions directory [[session-storage-11](session-storage.md#session-storage-11)].
 
@@ -89,9 +91,11 @@ At each checkpoint it shall verify, by one status read and no content read, that
 
 When integration tests save, reopen and export real sessions whose replay seals at settlement and at the size bound, with an envelope and manifest values over the per-file bound, they shall verify the manifest file's exact fields and log binding [[session-persistence-1](#session-persistence-1)] [[session-persistence-3](#session-persistence-3)], sealed segments unchanged after sealing, equal hydrated recovery and exact replay bytes and digest [[session-persistence-11](#session-persistence-11)], blob parts removed once unreferenced [[session-persistence-2](#session-persistence-2)], a bundle inventory that restores an equal valid session in another directory [[session-persistence-6](#session-persistence-6)], and every file private and within 8 MiB [[session-persistence-4](#session-persistence-4)].
 
+When a sealed-segment list alone exceeds the per-file bound, the persistence suite shall publish and reload the bounded manifest and verify that its blob parts restore the complete ordered list and a damaged part prevents reopening [[session-persistence-3](#session-persistence-3)].
+
 ### session-persistence-9
 
-When integration tests interrupt publication and appends and damage the representation, they shall verify a reader concurrent with replacement reading a whole manifest, the previous manifest file kept when publication stops before its rename and the new one after it, a briefly held manifest replaced after retries and a persistently held one kept [[session-persistence-4](#session-persistence-4)], temporary residue ignored, refusal of a damaged bound prefix without changing its bytes, a segment corrupted during the writer's lease refused at the next open while the writer's checkpoint keeps the digest of the bytes it wrote, and a replaced open segment latching replay at the next checkpoint [[session-persistence-11](#session-persistence-11)] [[session-persistence-12](#session-persistence-12)].
+When integration tests interrupt publication and appends and damage the representation, they shall verify a reader concurrent with replacement reading a whole manifest, the previous manifest file kept when publication stops before its rename and the new one after it, a briefly held manifest replaced after retries and a persistently held one kept [[session-persistence-4](#session-persistence-4)], unpublished temporary residue ignored, preparation completing an interrupted no-replace publication while refusing an unrelated hard link, refusal of a damaged bound prefix without changing its bytes, a segment corrupted during the writer's lease refused at the next open while the writer's checkpoint keeps the digest of the bytes it wrote, and a replaced open segment latching replay at the next checkpoint [[session-persistence-11](#session-persistence-11)] [[session-persistence-12](#session-persistence-12)].
 
 ### session-persistence-10
 
