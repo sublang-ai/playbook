@@ -9,6 +9,7 @@ Accepted (2026-11-08), after long chunked sessions in the Spex app slowed down a
 Amends [DR-094](094-bounded-session-persistence.md) in one rule: a store need not verify the whole replay chain again when it reads a root that extends a head it has verified completely.
 Every other DR-094 decision stands.
 Amended by [DR-109](109-a-writer-checkpoints-from-what-it-verified.md): recovery publication under a lease rests on that lease writer's verified prefix.
+Amended by [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) to express the reader's verified boundary as a byte offset in the replay log.
 
 ## Context
 

@@ -5,7 +5,7 @@
 
 ## Status
 
-Proposed (2026-11-19), after long sessions spent minutes at every host start, turn opening and Git sync on the per-file cost of the bounded chunk layout [[1]] [[2]].
+Accepted (2026-11-25), after long sessions spent minutes at every host start, turn opening and Git sync on the per-file cost of the bounded chunk layout [[1]] [[2]].
 Amends [DR-094](094-bounded-session-persistence.md): replaces its chunked physical representation, and moves the conversion of earlier physical formats out of the store into a separate command; its logical recovery contract, durable dependency publication, exact replay bytes, per-file bound and quota decisions stand.
 Amends [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a reader's verified boundary becomes a byte offset in the replay log instead of a chain head.
 Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its representation only: the writer's verified prefix is the replay log it verified and appended, with no chain to walk.
@@ -33,13 +33,14 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
 - A session's physical representation (schema 9) consists of:
   - one manifest file, `<sessionId>.json`, holding the complete logical manifest;
   - an append-only replay log of segment files in `<sessionId>.replay/`;
-  - content-addressed blob files in `<sessionId>.blobs/`, only for immutable values that would otherwise take the manifest past the per-file bound;
+  - content-addressed blob parts in `<sessionId>.blobs/` for manifest values, sealed-segment descriptors or replay envelopes that would otherwise exceed the per-file bound;
   - the existing asset files.
-- Every file the store writes stays within 8 MiB.
+- Each manifest, replay segment and blob part stays within 8 MiB. Asset files keep their own configurable size limit [[session-assets-2](../packages/session-assets.md#session-assets-2)].
 - A replay segment holds whole envelopes in sequence, each as its exact bytes followed by a newline.
-  - An envelope that alone exceeds the bound is stored as a blob and referenced from its segment line.
+  - When an envelope and its terminating newline exceed the bound, its segment line references ordered blob parts that reconstruct the exact envelope bytes.
 - The writer seals its open segment at a size bound and at turn settlement; a sealed segment never changes.
 - The manifest binds replay by today's `{seq, sha256, incomplete}`, plus each sealed segment's name, length and digest and the open segment's bound prefix length and digest.
+  - The sealed-segment descriptors normally appear inline. If the list would overflow the manifest, the manifest binds the same ordered list through verified blob parts.
 - An append is written and synced before it is acknowledged, as today.
   - An unfinished final line beyond the manifest's bound prefix is an append a crash left unacknowledged: the next lease truncates the open segment to its last complete line before appending, and a reader without the lease waits for the line to complete.
 - A publication syncs the open segment, writes the manifest to a temporary file, syncs it, renames it over `<sessionId>.json` under the lease and syncs the directory.
@@ -63,17 +64,17 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
   - it switches only after the new manifest's logical content, the replay's exact bytes and its cumulative digest equal the former ones;
   - it moves the former files into a `.legacy-sessions/` directory beside that sessions directory, outside the portable session namespace;
   - it rebinds the session's provider hints to the new manifest;
-  - an interrupted conversion leaves the former session unchanged and can run again.
+  - an interruption before the switch leaves the former session usable. After the switch, rerunning the command completes retirement of the former files and rebinding of provider hints.
 - The command remains at least until the next major release, when its removal is reconsidered.
 
 ## Consequences
 
-- A session holds a handful of files, so reading costs time in proportion to its bytes rather than its records, and a publication costs time independent of the session's length.
+- A complete verification opens one file per segment or referenced part. A writer publishes the manifest using its verified replay binding without rereading the replay history.
 - A Git sync only adds sealed segments and blobs; between syncs the manifest and the open segment change, as the manifest root and replay root do today.
 - A concurrent reader sees the previous or the new manifest whole.
   - Because the log is append-only, the replay prefix the previous manifest binds stays readable.
 - On Windows, replacing the manifest fails while another process holds it open without delete sharing; the writer retries within its operation and otherwise fails the publication, keeping the previous manifest.
-- Blobs that no manifest references are removed only by the lease holder at settlement.
+- At settlement the lease holder may collect only blob parts unreferenced by both the published manifest and the replay log.
 - Until converted, sessions saved by earlier versions are not readable by this version.
   - An embedding host decides how to present them; the conversion command, or an earlier version, makes them readable.
 - The conversion command keeps read-only decoders for schema 7 and schema 8, tested against fixtures generated before the earlier writers are removed.
