@@ -9,6 +9,7 @@ Accepted (2026-10-22).
 Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
 Amended by [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a store's later monotonic reads verify only the nodes after a head it verified completely.
 Amended by [DR-109](109-a-writer-checkpoints-from-what-it-verified.md): recovery publication under a lease rests on that lease writer's verified prefix.
+Amended by [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) for the schema 9 manifest and replay log, with earlier formats converted by a separate command.
 Amends [DR-049](049-portable-session-contract.md).
 
 ## Context
