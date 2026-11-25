@@ -166,7 +166,6 @@ export async function runPlaybookRun(options = {}) {
   }
   const bootstrapConfigNotices = [];
   let resolvedSessionsDir;
-  let migrateDefaultStore = false;
   if (options.sessionStore === undefined) {
     try {
       resolvedSessionsDir = resolveLaunchSessionsDir({
@@ -178,7 +177,6 @@ export async function runPlaybookRun(options = {}) {
           ? { sessionsDir: options.sessionsDir }
           : {}),
         preparePrimary: !continuing,
-        onDefault: () => { migrateDefaultStore = !(typeof env.SPEX_HOME === 'string' && env.SPEX_HOME.trim() !== ''); },
         onNotice: (line) => bootstrapConfigNotices.push(line),
       });
       await assertCaptainSessionsDirectoryUsable(resolvedSessionsDir);
@@ -204,11 +202,6 @@ export async function runPlaybookRun(options = {}) {
           ? { createTempId: options.createSessionTempId }
           : {}),
       });
-    if (migrateDefaultStore) {
-      const migrated = await store.migrateLegacyDefault();
-      if (migrated.migrated.length > 0) await writeStream(stderr, `playbook run: migrated ${migrated.migrated.length} sessions from ${migrated.sourceDir}\n`);
-      for (const skipped of migrated.skipped) await writeStream(stderr, `playbook run: preserved legacy session ${skipped.sessionId} in ${migrated.sourceDir}: ${skipped.reason}\n`);
-    }
   } catch (error) {
     await writeStream(stderr, `playbook run: ${message(error)}\n`);
     return { code: EXIT.argument };
@@ -258,7 +251,7 @@ export async function runPlaybookRun(options = {}) {
       throwIfAborted(options.signal);
       lease = await store.acquire(sessionId);
       if (!args.discardUncertain) await lease.assertContinuable();
-      else if ((await lease.readManifest()).schemaVersion !== 7) throw new Error(`session requires explicit migration; run playbook migrate-session ${sessionId}`);
+      else if ((await lease.readManifest()).schemaVersion !== 7) throw new Error(`unsupported session schema ${(await lease.readManifest()).schemaVersion}`);
       replayChannel = createHeadlessReplayChannel({
         lease,
         sessionId,
@@ -1915,27 +1908,13 @@ async function reportUncertainSession(stderr, sessionId, hasRecordedWork = false
   );
 }
 
-function legacyCaptainSessionReason(schemaVersion) {
-  if (schemaVersion === 2) {
-    return "schema 2 has incompatible player identity";
-  }
-  if (schemaVersion === 3 || schemaVersion === 4) {
-    return `schema ${JSON.stringify(schemaVersion)} predates the artifact-schema-3 effect-authority cutover and is not resumable`;
-  }
-  if (schemaVersion === 5) {
-    return "schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable";
-  }
-  return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
-}
-
 export async function reportSkippedCaptainSession(
   stderr,
   commandName,
   kind,
   { sessionId, path, schemaVersion, reason },
 ) {
-  const explanation =
-    kind === "legacy" ? reason ?? legacyCaptainSessionReason(schemaVersion) : reason;
+  const explanation = reason ?? `schema ${JSON.stringify(schemaVersion)} is unsupported`;
   await writeStream(
     stderr,
     `${commandName}: skipping ${kind} Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} because ${explanation}; move it outside the sessions directory or remove it to silence this warning\n`,

@@ -60,6 +60,12 @@ is_excluded() {
     *.d.ts) return 0 ;;
   esac
 
+  # Session storage fixtures: exact recorded bytes — chunk nodes, asset
+  # content and JSON — with no comment syntax.
+  case "$f" in
+    */fixtures/legacy-sessions/sessions/*|*/fixtures/legacy-sessions/expected/*) return 0 ;;
+  esac
+
   # License / legal documents (per specs/packages/licensing.md §License
   # File Detection — includes dash-named variants like LICENSE-APACHE
   # alongside LICENSE.txt / LICENSE.md).

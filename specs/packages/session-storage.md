@@ -6,7 +6,7 @@
 ## Intent
 
 This package defines the portable session format, local provider hints and lifecycle shared by interactive CLI, headless CLI and embedding hosts under [DR-049](../decisions/049-portable-session-contract.md).
-A **session bundle** consists of its physical manifest and replay representation, the complete referenced immutable chunks, and its declared immutable asset files; all are required for portability.
+A **session bundle** consists of its manifest file, its replay log and the blob parts they reference, and its declared immutable asset files; all are required for portability.
 **Closed** JSON objects permit only the declared fields.
 History requires neither a provider conversation nor an application's project registry.
 
@@ -18,23 +18,22 @@ The session store shall use these locations and files for each session's canonic
 
 - the default is `sessions/` under Spex home, selected by nonempty `SPEX_HOME` or otherwise `~/.spex`;
 - the shared configuration's `sessions` value selects another directory; an explicitly injected store takes precedence over that value [[playbook-cli-78](playbook-cli.md#playbook-cli-78)];
-- before using the ordinary unoverridden `~/.spex/sessions`, hosts migrate the former `${XDG_STATE_HOME:-~/.local/state}/playbook/sessions` through the shared cutover; explicit `SPEX_HOME`, `sessions` or store selections bypass discovery.
+- hosts do not migrate the former `${XDG_STATE_HOME:-~/.local/state}/playbook/sessions` default, which stays unchanged ([DR-111](../decisions/111-a-session-is-a-manifest-and-a-replay-log.md)).
 
 | File | Contents | Portability |
 | --- | --- | --- |
-| `<id>.json` | Physical root of the logical manifest [[session-persistence-1](session-persistence.md#session-persistence-1)] | Portable |
-| `<id>.replay.json`, `<id>.chunks/` | Bounded replay root and immutable recovery/replay chunks [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-3](session-persistence.md#session-persistence-3)] | Portable |
-| `<id>.records.jsonl` | Legacy monolithic replay, retained until explicit migration [[session-persistence-5](session-persistence.md#session-persistence-5)] | Portable in legacy format |
+| `<id>.json` | Manifest file holding the logical manifest [[session-persistence-1](session-persistence.md#session-persistence-1)] | Portable |
+| `<id>.replay/`, `<id>.blobs/` | Replay log segments and blob parts [[session-persistence-2](session-persistence.md#session-persistence-2)] [[session-persistence-3](session-persistence.md#session-persistence-3)] | Portable |
 | `<id>.assets/` | Immutable content and descriptors [[session-storage-18](#session-storage-18)] | Portable |
 | `<id>.hints.json` | Provider hints [[session-storage-6](#session-storage-6)] | Local, ignored by Git |
 | `.<id>.lock/` and its staging/retired directories | Existing writer lease [[playbook-cli-23](playbook-cli.md#playbook-cli-23)] | Local, ignored by Git |
+| `.legacy-sessions/<id>/` beside the sessions directory | A converted session's former files [[session-storage-10](#session-storage-10)] | Local, outside the session namespace and sync |
 
 - on Windows, private entries retain opened-handle identity checks without directory `fchmod` or directory `fsync` and qualify only by the Windows private-entry admission [[session-storage-26](#session-storage-26)], refusing any other ACL without changing its contents or ownership;
 - manifests and hints use the same private regular-file and atomic writing rules as replay [[playbook-cli-74](playbook-cli.md#playbook-cli-74)]; opening prepares permissions before strict reads or granting a lease:
-  - on POSIX, only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, replay and hint files qualify; verified file handles restrict the directory first to `0700` and files to `0600`, removing permissions only;
+  - on POSIX, only the current-user-owned, non-symlink session directory and its current-user-owned single-link regular manifest, segment, blob and hint files and their directories qualify; verified file handles restrict directories to `0700` and files to `0600`, removing permissions only;
   - wrong ownership, links, special files, insufficient owner permissions or failed verification block opening, and a store that met a block prepares again at its next operation; preparation changes no content, ownership or lease metadata;
   - ordinary readers and leases retain their strict privacy checks; a private Git umask avoids exposure before opening.
-- the former-location cutover converts and removes session files only: the `playbook/` state directory it reads from and the machine identity file beside its `sessions/` [[playbook-cli-97](playbook-cli.md#playbook-cli-97)] stay in place and are never inputs.
 - all hosts record the normalized absolute working directory as `cwd`; the format needs no Spex project ID or registry access.
 
 ### session-storage-26
@@ -77,10 +76,9 @@ Every host shall preserve the frozen v1 replay envelope and removal of provider 
 
 - valid unknown kinds and headerless records count in sequence and digest checks;
 - only `v`, `seq`, optional string `role`, and object `record` are envelope fields; v1 does not require `type` or `timestamp` inside `record`;
-- portable validation rejects structured provider continuation fields; legacy history stays readable without rewriting its bytes;
+- portable validation rejects structured provider continuation fields; history recorded before that rule stays readable without rewriting its bytes;
 - presentation skips unsupported records without reporting damage; new context and reset kinds require their declared headers [[session-storage-5](#session-storage-5)] [[session-storage-8](#session-storage-8)];
 - the shared history reader returns the valid newline-terminated prefix and reports the first damaged boundary without modifying the file; an incomplete final line waits for completion;
-- absent legacy replay may be presented from supported legacy journal fields, validating Boss/reply entries and marking the result synthetic; this read-only projection proves no durable replay boundary;
 - new writers emit context records only after all host readers implement these rules.
 
 ### session-storage-4
@@ -93,7 +91,7 @@ When saving a session checkpoint, the shared lifecycle shall identify its exact 
 - replay is synced before publishing its checkpoint manifest; later presentation records cannot prove a newer recovery boundary;
 - replay failure preserves the last proven prefix and sets `incomplete:true` in the next durable manifest; recovery and uncertainty remain independently durable;
 - a digest mismatch, missing referenced history, saved incompleteness or unsupported required context blocks continuation while retaining readable history;
-- a new lease cannot clear saved incompleteness merely because the current bytes parse; only explicit validated migration or repair may establish a replacement checkpoint;
+- a new lease cannot clear saved incompleteness merely because the current bytes parse; only explicit validated repair may establish a replacement checkpoint;
 - releasing a lease saves any newly detected incompleteness first; a failed save reports failure and retains ownership until safe recovery or process death;
 - failure to save recovery before an external action blocks that action; failures after actions preserve uncertainty and never authorize repeating those actions.
 
@@ -173,21 +171,14 @@ When opening a portable checkpoint on another device, the lifecycle shall allow 
 
 ### session-storage-10
 
-When migrating a stopped legacy store, the shared migrator shall hold the session lease and preserve source bytes outside the portable session namespace before publishing a validated logical schema-7 bundle in bounded physical schema 8 [[session-persistence-5](session-persistence.md#session-persistence-5)]:
+When run by hand on one sessions directory, or recursively on a directory under which it finds every directory named `sessions` holding a `<uuid>.json` root without following links or entering `.git`, `node_modules` or `.legacy-sessions`, the conversion command shall convert each schema 7 monolithic and schema 8 chunked session to schema 9 and report every session's outcome:
 
-- source permission preparation uses the same verified tighten-only rules as opening, including legacy desktop sidecars [[session-storage-1](#session-storage-1)];
-- source-format and required working-directory checks precede lease acquisition, so unchanged refusals create no lease residue; publication requires rereading and revalidating the source under the lease, and changed source bytes or migration context may retry;
-- supported schema-6 recovery is validated with its legacy codec, then converted and revalidated with the current codec under the token-free rule [[session-storage-7](#session-storage-7)] without losing uncertainty, journals, counters, retained generations or effect evidence;
-- legacy tokens are discarded as usable hints, since the old format cannot prove the provider still matches that checkpoint; original inputs remain ignored;
-- a valid final replay envelope lacking only its LF gains that LF in the converted output; invalid or torn tails remain in the retained originals and cannot prove recovery;
-- replay uses the shared token-free projection; clean lines keep their exact bytes, changed lines receive new checkpoint digests, and ignored backups retain every original byte;
-- schema 2–5 and desktop sidecars lacking complete durable recovery produce history-only manifests, retaining their replay or history reconstructed from journals and explaining why recovery is unavailable;
-- missing historical context remains missing; current validated context may be appended for a supported checkpoint without assigning it to earlier events;
-- malformed inputs remain unchanged and are reported; divergent destination bytes block replacement; identical completed outputs make retries idempotent;
-- cross-directory migration also holds the source lease, reads the adjacent source replay, and removes source replay before the source manifest only after validated destination publication and source retention;
-- former-default discovery reports preserved unsupported inputs and blocks on active or unprovable ownership and destination collisions; a missing source directory is a no-op;
-- old writers stop permanently at migration; ordinary opening does not silently downgrade unsupported recovery or clear an incomplete marker;
-- no host tracks the migrated bundle in Git until token-free validation succeeds.
+- it skips a session already in schema 9, in another format or held by a lease, and in a dry run only lists what it would convert;
+- under the session's lease it tightens the former files' permissions by the opening rules [[session-storage-1](#session-storage-1)], verifies the former representation completely with read-only decoders — the schema 7 manifest beside `<id>.records.jsonl`, or the schema 8 root, chunks and replay chain — and verifies every complete replay envelope and its sequence [[session-storage-3](#session-storage-3)], the checkpoint's replay prefix digest [[session-storage-4](#session-storage-4)] and its referenced assets [[session-storage-18](#session-storage-18)];
+- it writes the schema-9 log and manifest file [[session-persistence-1](session-persistence.md#session-persistence-1)] [[session-persistence-3](session-persistence.md#session-persistence-3)] from the exact former replay bytes, an unfinished final line included, and switches by replacing `<id>.json` only once the new manifest's logical content, the log's exact bytes and the checkpoint digest equal the former ones;
+- before the switch it copies the former root into `.legacy-sessions/<id>/` beside the sessions directory with a receipt naming both roots' digests, and after it moves the remaining former files there and rebinds hints that matched the former root to the new manifest file [[session-storage-6](#session-storage-6)];
+- a failure before the switch leaves the former session unchanged, and running again rewrites its own residue or finishes a switched conversion from its receipt; it refuses to overwrite the backup of a completed conversion;
+- the store never loads it, and hosts using the sessions must stop first; it remains at least until the next major release ([DR-111](../decisions/111-a-session-is-a-manifest-and-a-replay-log.md)).
 
 ### session-storage-11
 
@@ -200,16 +191,16 @@ The published session API shall offer applications the same create, open, begin-
 - read-only owner checks may overlap each other and record writes, so concurrent players can check the same lease; release rejects new checks and drains admitted checks before retiring ownership;
 - existing summary and replay reads remain available and never expose provider hints;
 - read-only lease inspection reports `active` for a live owner on this machine, `idle` for no lease or a proven-dead owner on this machine, and `unknown` otherwise, reading the owner's machine as the lease does [[playbook-cli-23](playbook-cli.md#playbook-cli-23)]; this observation never grants mutation authority;
-- the lifecycle also exposes the shared read-only validator and explicit migration/deletion operations, so management does not require executable playbook modules;
+- the lifecycle also exposes the shared read-only validator and explicit deletion, so management does not require executable playbook modules;
 - the store factory's optional boolean `createSessionsDir` defaults to `true`, creating a missing sessions directory and its missing ancestors as private directories; `false` lets a host that prepared the directory forbid that:
-  - no preparation of a session payload, lease, asset or migration directory by that store, or by a migration source store it opens, creates its sessions directory or any ancestor of it; runtime and management acquisition, deletion, migration, and record and asset writes refuse while it is missing, including when it moves or disappears mid-operation, leaving the former path absent and reporting the refusal even if releasing an earlier lease then fails;
-  - lease staging and asset directories are still created singly inside the existing directory, under the unchanged privacy checks and lease rules [[playbook-cli-23](playbook-cli.md#playbook-cli-23)];
+  - no preparation of a session payload, lease, asset, replay or blob directory by that store creates its sessions directory or any ancestor of it; runtime and management acquisition, deletion, and record, replay and asset writes refuse while it is missing, including when it moves or disappears mid-operation, leaving the former path absent and reporting the refusal even if releasing an earlier lease then fails;
+  - lease staging, asset, replay and blob directories are still created singly inside the existing directory, under the unchanged privacy checks and lease rules [[playbook-cli-23](playbook-cli.md#playbook-cli-23)];
   - the machine identity keeps its own directory provisioning [[playbook-cli-97](playbook-cli.md#playbook-cli-97)], unaffected by this option even where that directory shares an ancestor with the sessions directory, so a process's first identity resolution may create that shared ancestor;
   - a refusal is not kept: the same store acquires normally once the directory exists again.
 
 ### session-storage-12
 
-When a host requests session deletion, the shared store shall acquire provable exclusive ownership and remove replay, local hints, active legacy sidecar and derived session state before removing the manifest last:
+When a host requests session deletion, the shared store shall acquire provable exclusive ownership and remove assets, local hints, the replay log and blob parts [[session-persistence-7](session-persistence.md#session-persistence-7)] before removing the manifest file last:
 
 - active or unprovable ownership blocks deletion; retired lease directories remain against delayed reclaimers;
 - interrupted cleanup is retryable, and partial bundles cannot continue;
@@ -246,7 +237,7 @@ When the controller is disposed, its approval scope shall abort pending callback
 
 ### session-storage-13
 
-The shared lifecycle shall use one version-aware codec for validation, projection, migration and hint attachment across all hosts, preserving unknown versions unchanged and rejecting mismatched recovery mirrors before external effects.
+The shared lifecycle shall use one version-aware codec for validation, projection and hint attachment across all hosts, preserving unknown versions unchanged and rejecting mismatched recovery mirrors before external effects.
 
 ## Verification
 
@@ -268,7 +259,7 @@ When the integration suite creates, continues and deletes sessions through inter
 - exact manifest fields for each state [[session-storage-2](#session-storage-2)];
 - shared lifecycle, leases and read-only active/idle/unknown observations without file changes [[session-storage-11](#session-storage-11)];
 - concurrent owner checks and release's admission barrier over the real store [[session-storage-11](#session-storage-11)];
-- a missing sessions directory and parent created by default yet refused with `createSessionsDir: false` by runtime and management acquisition, deletion, migration and a held lease's record and asset writes, a directory removed or moved during a held acquisition, deletion or migration left absent at its former path with the refusal reported past a failed lease release, and the same store acquiring once it is restored [[session-storage-11](#session-storage-11)];
+- a missing sessions directory and parent created by default yet refused with `createSessionsDir: false` by runtime and management acquisition, deletion and a held lease's record and asset writes, a directory removed or moved during a held acquisition or deletion left absent at its former path with the refusal reported past a failed lease release, and the same store acquiring once it is restored [[session-storage-11](#session-storage-11)];
 - interrupted deletion, safe retries and retained lease directories [[session-storage-12](#session-storage-12)];
 - one codec across hosts [[session-storage-13](#session-storage-13)].
 
@@ -290,10 +281,10 @@ When the integration suite checkpoints a session with current and retained playe
 
 ### session-storage-17
 
-When the integration suite migrates legacy CLI/desktop fixtures and opens their copied bundles in another storage directory, it shall verify:
+When the integration suite opens copied bundles in another storage directory and runs the conversion command on schema 7 and 8 fixtures the earlier writers produced, it shall verify:
 
 - history-only access for unsupported path changes, portable POSIX/Windows recorded paths, and reconciliation for matching native paths [[session-storage-9](#session-storage-9)];
-- safe `0644` desktop-source tightening, refusal of unsafe sources, retained complete unterminated records, preserved original bytes, version/format refusals without repeated lease residue, retry after source/context changes, lease-protected source revalidation, idempotent migrations, former-default discovery with override isolation, source/destination ownership and collisions, and no Git tracking until provider tokens have been removed [[session-storage-10](#session-storage-10)].
+- each converted session's logical manifest and exact replay bytes equal to what the earlier store read from its fixture, the former files byte-identical in `.legacy-sessions/`, rebound hints and a resumable continuation; recursive discovery past links and skipped directories; skips of converted, unknown and leased sessions; a dry run changing nothing; a damaged complete replay envelope, missing declared asset, or written representation that does not verify leaving the former root in place; runs interrupted before and after the switch or during hint rebinding completed when run again; unrelated temporary files preserved and colliding backups refused before the switch; and the configured directory converted through the executable [[session-storage-10](#session-storage-10)].
 
 ### session-storage-20
 

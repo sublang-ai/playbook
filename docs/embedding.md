@@ -202,10 +202,10 @@ not clear the session ledger.
 
 Runtime and complete shell snapshots are schema 4. The shared store projects
 provider continuations out of nested snapshots and writes logical schema-7
-manifests inside bounded physical schema-8 roots.
+manifests inside schema-9 manifest files.
 Local hints may rehydrate the current checkpoint; retained generations never
-restore provider tokens. Use the shared migrator for older records instead of
-guessing identity or effect evidence. On a compatible
+restore provider tokens. Convert earlier sessions with `playbook sessions upgrade`
+instead of guessing identity or effect evidence. On a compatible
 restore, rebuild
 `promptIdentity` from the current model selection (or adapter for an explicit
 provider-default selection) and rebuild live host capabilities under the
@@ -469,14 +469,11 @@ your config files
 `shared.readLeaseState(sessionId)` reports `active`, `idle` or `unknown` without
 changing files. Use it for presentation; mutations still require a lease.
 
-`shared.migrate(id, { sourcePath })` imports a legacy manifest and its adjacent
-replay while holding both stores' leases. `shared.migrateLegacyDefault()` imports
-the former XDG default and reports migrated and preserved unsupported IDs.
-Embedding applications select and migrate stores during startup;
-`openSessionHost()` does not discover old profiles. Stop old writers first.
-Automatic discovery belongs only to the ordinary
-`~/.spex/sessions` profile with no `SPEX_HOME` or `sessions` override; custom
-profiles require an explicit migration request.
+The store reads only schema-9 sessions. It lists a session saved in an earlier
+format as skipped with an unsupported reason and leaves its files unchanged;
+present it as you choose and point users to `playbook sessions upgrade`, which
+converts it by hand. Exclude `.legacy-sessions/`, where that command keeps the
+former files, from any sync. `openSessionHost()` does not discover old profiles.
 
 Captain may answer a player from the original task when it already answers the question. It reports what it reused, respects later Boss instructions and never sends that original answer twice automatically.
 
@@ -503,21 +500,21 @@ Explicit `mode:'retry'` and `retry()` remain supported. Module-free
 deletes a never-settled fresh session and resolves `undefined`,
 only when `isUncertainTurnDiscardable(record)` returns true: no abandonment, no recorded steps, and a ledger equal to the pre-turn snapshot. Use the same exported predicate to enable a Discard control.
 
-`readHistory()` returns readable history and a damaged boundary, including a
-clearly marked synthetic projection when a validated legacy journal has no
-stream. `validate()` separates byte integrity from resumability.
+`readHistory()` returns readable history and a damaged boundary.
+`validate()` separates byte integrity from resumability.
 `readManifest()` may return an older or unknown object; use
 `validateSessionManifest()` before interpreting logical schema-7 recovery.
-The store hydrates schema-8 roots transparently; do not parse the physical root
-as a recovery snapshot. `exportBundle().manifest` contains the exact physical
-root bytes, and `exportBundle().files` lists its verified portable file closure
-relative to `sessionsDir`. Copy that closure as one session unit. The
+The store reads the schema-9 manifest file; do not parse it as a recovery
+snapshot. `exportBundle().manifest` contains its exact bytes, and
+`exportBundle().files` lists the session's portable files — the manifest, every
+replay segment, referenced blob parts and asset files — relative to `sessionsDir`. Copy that closure as one session unit. The
 `replay` result remains its checkpoint-proven logical prefix.
 
-Every new storage root and chunk is at most 8 MiB; total retained disk usage and
-hydrated memory are not capped. Stop all old writers and upgrade the CLI and
-embedded host together before creating new sessions or migrating old ones.
-`migrate()` preserves original inputs before conversion. `delete()` removes the
+Each manifest, replay segment and blob part is at most 8 MiB. Total retained disk
+usage and hydrated memory can exceed that limit. Stop all old writers and upgrade
+the CLI and embedded hosts together before creating or converting sessions.
+`playbook sessions upgrade` preserves the original files in `.legacy-sessions/`.
+`delete()` removes the
 bundle under the shared lease, with the manifest last. Management needs no
 playbook module. A coordination-only `acquireManagement()` lease reserves even
 an absent ID and never checkpoints or rewrites selected bytes on release.

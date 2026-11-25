@@ -811,7 +811,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56/84)', () => {
     const runtime = await lifecycle.initializeRuntime(fixture.context);
     expect(installed).toEqual([{}]);
     const diagnostic =
-      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable; move it outside the sessions directory or remove it to silence this warning`;
+      `playbook: skipping legacy Captain session "${predecessorSessionId}" at "${predecessorPath}" because session storage schema 5 is unsupported; an earlier Playbook version can migrate it; move it outside the sessions directory or remove it to silence this warning`;
     const diagnosticText = diagnostics.join('');
     expect(diagnosticText).toContain(diagnostic);
     expect(diagnosticText.split(diagnostic)).toHaveLength(2);

@@ -1443,7 +1443,7 @@ async function readDurableSession(
   const sessionsDir = join(scenario.spexHome, 'sessions');
   const bytes = readFileSync(join(sessionsDir, `${sessionId}.json`));
   const physical = JSON.parse(bytes.toString('utf8'));
-  expect(physical).toMatchObject({ schemaVersion: 8, kind: 'captain-session-storage', sessionId });
+  expect(physical).toMatchObject({ schemaVersion: 9, kind: 'captain-session-storage', sessionId });
   expect(bytes.length).toBeLessThanOrEqual(8 * 1024 * 1024);
   // Resolve the public facade from the packed candidate, so repository-only
   // readers cannot make an incorrectly packaged installation pass this gate.

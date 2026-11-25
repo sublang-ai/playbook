@@ -165,7 +165,7 @@ meta.md       The spec of specs
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, the machine identity and its facade, the shared session store, replay stream, and worktree host-capabilities facade, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [session-assets.md](packages/session-assets.md) | Immutable owner assets and portable attachment/evidence contracts |
-| [session-persistence.md](packages/session-persistence.md) | Bounded physical session roots, chunks, replay, migration and export |
-| [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, migration and deletion |
+| [session-persistence.md](packages/session-persistence.md) | Session manifest file, segmented replay log and blob parts, earlier formats unsupported at run time, export and deletion |
+| [session-storage.md](packages/session-storage.md) | Shared session files, recovery, replay context, hints, conversion of earlier formats and deletion |
 | [recovery.md](packages/recovery.md) | Captain preparation and durable interrupted-step recovery |
 | [release.md](packages/release.md) | Versioning, package surfaces, the merge gate into `main`, release workflow, smoke, and live acceptance |

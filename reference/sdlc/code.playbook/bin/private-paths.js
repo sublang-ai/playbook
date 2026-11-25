@@ -65,16 +65,48 @@ export function sameFileIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.(), path) {
+export function verifyPrivateEntry(stat, directory, label, uid = process.getuid?.(), path, links = 1) {
   const required = directory ? 0o700 : 0o600;
   if (
     stat.isSymbolicLink() ||
-    (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) ||
+    (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== links) ||
     (uid !== undefined && stat.uid !== uid) ||
     (process.platform === 'win32' ? !privatePermissions(stat, required, path) : (stat.mode & required) !== required)
   ) {
     throw new Error(`${label} refuses unsafe ownership, links, type, or owner access`);
   }
+}
+
+// DR-111: the one admission of an entry a reader or writer opens — a real
+// directory, or a single-link regular file, owned by the current user with
+// private permissions — checked once per opened entry: on Windows that is one
+// owner-and-descriptor read. `mask` selects which POSIX permission bits
+// must equal the private mode; the asset facade compares only 0777.
+export function assertPrivateEntry(stat, directory, label, path, { uid = process.getuid?.(), mask = 0o7777 } = {}) {
+  if (
+    stat.isSymbolicLink() ||
+    (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) ||
+    (uid !== undefined && stat.uid !== uid)
+  ) {
+    throw new Error(`${label} refuses unsafe ownership, links, or type`);
+  }
+  const mode = directory ? 0o700 : 0o600;
+  if (process.platform === 'win32' ? !privatePermissions(stat, mode, path) : (Number(stat.mode) & mask) !== mode) {
+    throw new Error(`${label} permissions must be private`);
+  }
+}
+
+// Tighten-only preparation facts: POSIX entries need their owner bits and may
+// lose excess bits; a Windows entry is admitted by its descriptor instead and
+// is never changed.
+export function ownerAccessPresent(stat, directory) {
+  if (process.platform === 'win32') return true;
+  const required = directory ? 0o700 : 0o600;
+  return (Number(stat.mode) & required) === required;
+}
+
+export function needsTightening(stat, directory, mask = 0o7777) {
+  return process.platform !== 'win32' && (Number(stat.mode) & mask) !== (directory ? 0o700 : 0o600);
 }
 
 export async function tightenPrivateEntry(path, before, directory, fs, label) {
@@ -122,5 +154,19 @@ export async function syncDirectory(path, fs) {
     await directory.sync();
   } finally {
     await directory?.close();
+  }
+}
+
+// A Windows rename over a file fails while another process (Git, an
+// indexer, antivirus) holds the target open without delete sharing. Retry
+// briefly; a persistent failure leaves the previous file in place.
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+export async function renameWithRetry(from, to, fs, { attempts = 8, delayMs = 15 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await fs.rename(from, to); }
+    catch (error) {
+      if (!RENAME_RETRY_CODES.has(error?.code) || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
   }
 }

@@ -1,0 +1,620 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+// DR-111: a session is one manifest file and a segmented replay log, written
+// and read through the real shared lifecycle and store.
+import { createHash, randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createSessionStore } from './session-store.js';
+import { executionProjection, freshBoundary, shellSnapshot } from './test-support/session-boundary.js';
+import { createSessionFiles, MAX_SESSION_FILE_BYTES, segmentName, SEGMENT_SEAL_BYTES } from './bin/session-files.js';
+
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });
+const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+async function fixture(fsOps?: object) {
+  const root = await fs.mkdtemp(join(tmpdir(), 'session-log-store-')); roots.push(root);
+  const sessionsDir = join(root, 'sessions');
+  const store = createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps });
+  const id = randomUUID();
+  const lease = await store.acquire(id);
+  await lease.initializeSettledWithPredecessor(freshBoundary() as any);
+  return { root, sessionsDir, store, id, lease, file: join(sessionsDir, `${id}.json`), replayDir: join(sessionsDir, `${id}.replay`), blobsDir: join(sessionsDir, `${id}.blobs`) };
+}
+async function settleTurn(lease: any, turn: number, payload = 'next') {
+  const attemptId = randomUUID();
+  await lease.beginTurn({ input: payload, attemptId, attemptedExecutionProjection: executionProjection() });
+  await lease.settle({ attemptId, snapshot: shellSnapshot(turn, payload), unresolvedEffects: [] });
+}
+async function physical(file: string) { return JSON.parse(await fs.readFile(file, 'utf8')); }
+async function segmentNames(replayDir: string) { return (await fs.readdir(replayDir)).filter((name) => name.endsWith('.jsonl')).sort(); }
+async function logBytes(replayDir: string) {
+  return Buffer.concat(await Promise.all((await segmentNames(replayDir)).map((name) => fs.readFile(join(replayDir, name)))));
+}
+// Every file the session owns, with its size, mode and the bound.
+async function assertBoundedPrivateFiles(sessionsDir: string, id: string) {
+  const files = [`${id}.json`];
+  for (const directory of [`${id}.replay`, `${id}.blobs`]) {
+    try { for (const name of await fs.readdir(join(sessionsDir, directory))) files.push(`${directory}/${name}`); }
+    catch (error: any) { if (error.code !== 'ENOENT') throw error; }
+  }
+  for (const file of files) {
+    const stat = await fs.stat(join(sessionsDir, file));
+    expect(stat.size).toBeLessThanOrEqual(MAX_SESSION_FILE_BYTES);
+    if (process.platform !== 'win32') expect(stat.mode & 0o777).toBe(0o600);
+  }
+  return files;
+}
+// Counts filesystem calls by path through the store's injected operations.
+function recordingFs() {
+  const calls: Array<{ op: string; path: string }> = [];
+  const fsOps: Record<string, unknown> = {};
+  for (const op of ['open', 'lstat', 'readdir', 'rename', 'link', 'unlink', 'mkdir', 'rmdir', 'chmod']) {
+    fsOps[op] = async (path: any, ...rest: unknown[]) => {
+      calls.push({ op, path: String(path) });
+      return (fs as any)[op](path, ...rest);
+    };
+  }
+  return { calls, fsOps };
+}
+
+describe('schema-9 session layout (DR-111)', () => {
+  it('publishes and reloads a sealed-segment binding larger than one file', async () => {
+    const { store, sessionsDir, id, lease } = await fixture();
+    await lease.release();
+    const manifest = await store.readManifest(id);
+    const files = createSessionFiles({ sessionsDir, sessionId: id });
+    const sha256 = digest(Buffer.from('one record\n'));
+    const sealed = Array.from({ length: 75_000 }, (_, index) => ({
+      name: segmentName(index + 1), byteLength: 11, sha256,
+    }));
+    expect(Buffer.byteLength(JSON.stringify(sealed))).toBeGreaterThan(MAX_SESSION_FILE_BYTES);
+    const binding = { sealed, open: null };
+    const { bytes, parts } = await files.prepareManifest(manifest, binding);
+    await files.replaceManifest(bytes);
+    expect(bytes.length).toBeLessThanOrEqual(MAX_SESSION_FILE_BYTES);
+    expect(JSON.parse(bytes.toString()).log.sealed).toEqual({ parts });
+    expect(parts.length).toBeGreaterThan(1);
+    for (const part of parts) {
+      expect((await fs.stat(join(files.blobsDir, part.sha256))).size).toBe(part.byteLength);
+      expect(part.byteLength).toBeLessThanOrEqual(MAX_SESSION_FILE_BYTES);
+    }
+    const reopened = await files.decodeManifest(await files.readManifestFile());
+    expect(await store.readManifest(id)).toEqual(manifest);
+    expect(reopened.parts).toEqual(parts);
+    expect(JSON.stringify(reopened.log)).toBe(JSON.stringify(binding));
+    await fs.writeFile(join(files.blobsDir, parts[0].sha256), 'damaged');
+    await expect(files.decodeManifest(bytes)).rejects.toThrow(/differs from its reference/);
+  });
+
+  it('writes one manifest file and an append-only segment log that bind each other', async () => {
+    const { store, id, lease, file, replayDir, sessionsDir } = await fixture();
+    const stored = await physical(file);
+    expect(Object.keys(stored)).toEqual(['schemaVersion', 'kind', 'sessionId', 'manifest', 'log']);
+    expect(stored).toMatchObject({ schemaVersion: 9, kind: 'captain-session-storage', sessionId: id });
+    expect(stored.manifest).toEqual(await store.readManifest(id));
+    expect(await segmentNames(replayDir)).toEqual(['000000000001.jsonl']);
+    expect(stored.log).toEqual({ sealed: [], open: { name: '000000000001.jsonl', byteLength: (await logBytes(replayDir)).length, sha256: digest(await logBytes(replayDir)) } });
+    for (const name of ['.chunks', '.replay.json', '.records.jsonl']) await expect(fs.lstat(join(sessionsDir, `${id}${name}`))).rejects.toMatchObject({ code: 'ENOENT' });
+    await lease.append({ type: 'opaque_history', timestamp: 1, text: 'readable tail' });
+    // An append is durable at once; the manifest still binds its checkpoint.
+    expect((await store.readStream(id)).entries.at(-1).record.text).toBe('readable tail');
+    expect((await physical(file)).log).toEqual(stored.log);
+    await settleTurn(lease, 1);
+    const settled = await physical(file);
+    const bytes = await logBytes(replayDir);
+    expect(settled.log).toEqual({ sealed: [{ name: '000000000001.jsonl', byteLength: bytes.length, sha256: digest(bytes) }], open: null });
+    expect(settled.manifest.replay).toEqual({ seq: bytes.toString().split('\n').length - 1, sha256: digest(bytes), incomplete: false });
+    // Settlement sealed the segment; later appends start the next one.
+    await lease.append({ type: 'opaque_history', timestamp: 2, text: 'after settlement' });
+    expect(await segmentNames(replayDir)).toEqual(['000000000001.jsonl', `${String(settled.manifest.replay.seq + 1).padStart(12, '0')}.jsonl`]);
+    expect((await fs.readFile(join(replayDir, '000000000001.jsonl'))).equals(bytes)).toBe(true);
+    await lease.release();
+    const validation = await store.validate(id);
+    expect(validation).toMatchObject({ integrityValid: true, resumable: true, reasons: [] });
+    await assertBoundedPrivateFiles(sessionsDir, id);
+  });
+
+  it('seals at the size bound and keeps every file within the per-file bound', async () => {
+    const { store, id, lease, replayDir, sessionsDir } = await fixture();
+    const text = 'x'.repeat(300 * 1024);
+    for (let index = 0; index < 8; index++) await lease.append({ type: 'opaque_history', timestamp: index, text });
+    await lease.release();
+    const names = await segmentNames(replayDir);
+    expect(names.length).toBeGreaterThan(1);
+    for (const name of names.slice(0, -1)) expect((await fs.stat(join(replayDir, name))).size).toBeGreaterThanOrEqual(SEGMENT_SEAL_BYTES);
+    expect((await store.readHistory(id)).entries.filter(({ record }: any) => record.text === text)).toHaveLength(8);
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    await assertBoundedPrivateFiles(sessionsDir, id);
+  });
+
+  it('stores an envelope over the per-file bound as blob parts and replays its exact bytes', async () => {
+    const { root, store, id, lease, file, replayDir, blobsDir, sessionsDir } = await fixture();
+    const text = '🦉'.repeat(2 * 1024 * 1024 + 100);
+    await lease.append({ type: 'opaque_history', timestamp: 1, text });
+    await settleTurn(lease, 1);
+    await lease.append({ type: 'opaque_tail', timestamp: 2 });
+    await lease.release();
+    const parts = await fs.readdir(blobsDir);
+    expect(parts.length).toBe(2);
+    const reference = (await logBytes(replayDir)).toString().split('\n').find((line) => line.startsWith('{"parts":'))!;
+    expect(JSON.parse(reference).parts.map((part: any) => part.sha256).sort()).toEqual([...parts].sort());
+    const history = await store.readHistory(id);
+    expect(history.entries.find(({ record }: any) => record.type === 'opaque_history').record.text === text).toBe(true);
+    const manifest = await store.readManifest(id);
+    const bundle = await store.exportBundle(id);
+    expect(bundle.replay.length).toBeGreaterThan(MAX_SESSION_FILE_BYTES);
+    expect(digest(bundle.replay)).toBe(manifest.replay.sha256);
+    expect(bundle.manifest.equals(await fs.readFile(file))).toBe(true);
+    const paths = bundle.files.map(({ path }: any) => path).sort();
+    expect(paths).toEqual([`${id}.json`, ...parts.map((name) => `${id}.blobs/${name}`), ...(await segmentNames(replayDir)).map((name) => `${id}.replay/${name}`)].sort());
+    // The inventory is the complete portable bundle.
+    const copyDir = join(root, 'portable-copy');
+    for (const entry of bundle.files) {
+      const target = join(copyDir, entry.path);
+      await fs.mkdir(dirname(target), { recursive: true, mode: 0o700 });
+      await fs.copyFile(join(sessionsDir, entry.path), target);
+      await fs.chmod(target, 0o600);
+      expect((await fs.stat(target)).size).toBe(entry.byteLength);
+    }
+    await fs.chmod(copyDir, 0o700);
+    const copied = createSessionStore({ sessionsDir: copyDir, hostname: 'session-log-integration' });
+    expect(await copied.read(id)).toEqual(await store.read(id));
+    expect((await copied.validate(id)).integrityValid).toBe(true);
+    await assertBoundedPrivateFiles(sessionsDir, id);
+    if (process.platform !== 'win32') {
+      await fs.chmod(blobsDir, 0o755);
+      expect((await store.validate(id)).integrityValid).toBe(false);
+      await expect(store.exportBundle(id)).rejects.toThrow(/corrupt/);
+    }
+  }, 30_000);
+
+  it('spills manifest values over the per-file bound into blobs and removes them once unreferenced', async () => {
+    const payload = 'repeated observation '.repeat(110_000);
+    const { store, id, lease, file, blobsDir, sessionsDir } = await fixture();
+    for (let turn = 1; turn <= 4; turn++) {
+      const attemptId = randomUUID();
+      await lease.beginTurn({ input: 'next', attemptId, attemptedExecutionProjection: executionProjection() });
+      await lease.settle({ attemptId, snapshot: shellSnapshot(turn, payload), unresolvedEffects: [] });
+    }
+    const expected = await lease.read();
+    const stored = await physical(file);
+    expect(stored.spills.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(await store.readManifest(id)))).toBeGreaterThan(MAX_SESSION_FILE_BYTES);
+    const reopened = createSessionStore({ sessionsDir, hostname: 'session-log-integration' });
+    expect(await reopened.read(id)).toEqual(expected);
+    expect((await reopened.validate(id)).integrityValid).toBe(true);
+    const spilled = new Set(stored.spills.flatMap(({ parts }: any) => parts.map(({ sha256 }: any) => sha256)));
+    expect(new Set(await fs.readdir(blobsDir))).toEqual(spilled);
+    // A smaller settled snapshot drops the spills; settlement removes their parts.
+    await settleTurn(lease, 5, 'small');
+    expect((await physical(file)).spills).toBeUndefined();
+    expect(await fs.readdir(blobsDir)).toEqual([]);
+    await lease.release();
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    await assertBoundedPrivateFiles(sessionsDir, id);
+  }, 60_000);
+
+  it('keeps the asset inventory in the writer, listing stored descriptors without opening an asset (session-assets-13)', async () => {
+    const { store, id, lease, sessionsDir } = await fixture();
+    const first = await lease.importAsset({ bytes: Buffer.from('same bytes'), mimeType: 'text/plain', name: 'first.txt' });
+    const again = await lease.importAsset({ bytes: Buffer.from('same bytes'), mimeType: 'text/markdown', name: 'second.md' });
+    const other = await lease.importAsset({ bytes: Buffer.from('other bytes'), mimeType: 'text/plain' });
+    expect(again).toMatchObject({ assetId: first.assetId, name: 'second.md' });
+    await lease.beginTurn({ input: 'with assets', attemptId: randomUUID(), attemptedExecutionProjection: executionProjection() });
+    await lease.release();
+    const { calls, fsOps } = recordingFs();
+    const writer = await createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps }).acquire(id);
+    calls.length = 0;
+    await writer.recordProgress({ snapshot: null });
+    expect(calls.filter(({ path }) => path.includes(`${id}.assets`))).toEqual([]);
+    await writer.release();
+    const expected = [first, other].sort((left, right) => (left.assetId < right.assetId ? -1 : 1));
+    expect((await store.readManifest(id)).assets.entries).toEqual(expected);
+  });
+
+  it('deletes the owned representation, hints and assets while preserving another session', async () => {
+    const { store, id, lease, sessionsDir } = await fixture();
+    await lease.importAsset({ bytes: Buffer.from('asset'), mimeType: 'text/plain' });
+    lease.acknowledgeHint('captain', 'captain-token');
+    await settleTurn(lease, 1);
+    await lease.release();
+    expect((await fs.readdir(sessionsDir)).filter((name) => name.startsWith(id)).sort()).toEqual([`${id}.assets`, `${id}.hints.json`, `${id}.json`, `${id}.replay`].sort());
+    const other = randomUUID();
+    const otherLease = await store.acquire(other);
+    await otherLease.initializeSettledWithPredecessor(freshBoundary() as any);
+    await otherLease.release();
+    const survivor = await store.exportBundle(other);
+    await store.delete(id);
+    expect((await fs.readdir(sessionsDir)).filter((name) => name.startsWith(id))).toEqual([]);
+    expect((await store.validate(other)).integrityValid).toBe(true);
+    for (const entry of survivor.files) expect((await fs.stat(join(sessionsDir, entry.path))).size).toBe(entry.byteLength);
+  });
+});
+
+describe('schema-9 publication and crash safety (DR-111)', () => {
+  it('lets a concurrent reader see the previous or the new manifest whole while it is replaced', async () => {
+    const { store, id, lease, sessionsDir } = await fixture();
+    const reader = createSessionStore({ sessionsDir, hostname: 'session-log-reader' });
+    let writing = true;
+    const writes = (async () => {
+      for (let turn = 1; turn <= 12; turn++) {
+        await lease.append({ type: 'opaque_history', timestamp: turn, text: `turn ${turn}` });
+        await settleTurn(lease, turn);
+      }
+      writing = false;
+    })();
+    let reads = 0;
+    while (writing) {
+      const validation = await reader.validate(id);
+      expect(validation.integrityValid).toBe(true);
+      expect(validation.manifest.snapshot.journal.length).toBeLessThanOrEqual(12);
+      reads++;
+    }
+    await writes;
+    await lease.release();
+    expect(reads).toBeGreaterThan(0);
+    expect((await store.read(id)).snapshot.journal).toHaveLength(12);
+  }, 60_000);
+
+  it('repairs an unfinished final line beyond the checkpoint at the next lease and continues the sequence', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    await lease.append({ type: 'opaque_history', timestamp: 1, text: 'acknowledged' });
+    await lease.release();
+    const names = await segmentNames(replayDir);
+    const last = join(replayDir, names.at(-1)!);
+    const before = await fs.readFile(last);
+    const status = (await store.readStream(id)).lastReadableSeq;
+    // A crash during an append leaves part of an unacknowledged line.
+    await fs.appendFile(last, `{"v":1,"seq":${status + 1},"record":{"type":"torn`);
+    expect((await store.readStream(id)).lastReadableSeq).toBe(status);
+    const history = await store.readHistory(id);
+    expect(history).toMatchObject({ lastReadableSeq: status, pendingTail: true, incomplete: false });
+    const next = await store.acquire(id);
+    expect(next.streamStatus()).toEqual({ lastReadableSeq: status, lastDurableSeq: status, incomplete: false });
+    expect((await fs.readFile(last)).equals(before)).toBe(true);
+    await next.append({ type: 'after_repair', timestamp: 2 });
+    await next.release();
+    const entries = (await store.readStream(id)).entries;
+    expect(entries.at(-1)).toEqual({ v: 1, seq: status + 1, record: { type: 'after_repair', timestamp: 2, contextSeq: 1 } });
+    expect((await store.validate(id)).integrityValid).toBe(true);
+  });
+
+  it('refuses to extend a log whose bound prefix is damaged and leaves its bytes unchanged', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    await settleTurn(lease, 1);
+    await lease.release();
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    const bytes = await fs.readFile(segment);
+    const damaged = Buffer.from(bytes); damaged[10] ^= 1;
+    await fs.writeFile(segment, damaged);
+    const validation = await store.validate(id);
+    expect(validation.integrityValid).toBe(false);
+    const next = await store.acquire(id);
+    expect(next.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
+    await next.release();
+    expect((await fs.readFile(segment)).equals(damaged)).toBe(true);
+  });
+
+  it('refuses export when an envelope after the checkpoint breaks the replay sequence', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    await lease.release();
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"v":1,"seq":42,"record":{}}\n');
+    expect((await store.validate(id)).integrityValid).toBe(false);
+    await expect(store.exportBundle(id)).rejects.toThrow(/corrupt/);
+  });
+
+  it.each(['seq', 'sha256'])('refuses replay repair when the manifest checkpoint %s disagrees with its bound log', async (field) => {
+    const { store, id, lease, file, replayDir } = await fixture();
+    await lease.release();
+    const stored = await physical(file);
+    if (field === 'seq') stored.manifest.replay.seq++;
+    else stored.manifest.replay.sha256 = '0'.repeat(64);
+    await fs.writeFile(file, JSON.stringify(stored));
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"torn"');
+    const bytes = await fs.readFile(segment);
+    const next = await store.acquire(id);
+    expect(next.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
+    await next.release();
+    expect(await fs.readFile(segment)).toEqual(bytes);
+    expect((await store.readManifest(id)).replay).toEqual({ ...stored.manifest.replay, incomplete: true });
+  });
+
+  it('latches a replaced open segment before a settlement seals it', async () => {
+    const { store, id, lease, replayDir } = await fixture();
+    const attemptId = randomUUID();
+    await lease.beginTurn({ input: 'next', attemptId, attemptedExecutionProjection: executionProjection() });
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    const replacement = `${segment}.replacement`;
+    await fs.writeFile(replacement, await fs.readFile(segment), { mode: 0o600 });
+    await fs.rename(replacement, segment);
+    await lease.settle({ attemptId, snapshot: shellSnapshot(1, 'next'), unresolvedEffects: [] });
+    expect((await store.readManifest(id)).replay.incomplete).toBe(true);
+    expect((await lease.release()).incomplete).toBe(true);
+  });
+
+  it('preserves a torn segment when the existing manifest cannot establish its bound', async () => {
+    const { store, id, lease, file, replayDir } = await fixture();
+    await lease.release();
+    const stored = await physical(file);
+    delete stored.log.open.sha256;
+    await fs.writeFile(file, JSON.stringify(stored));
+    const segment = join(replayDir, (await segmentNames(replayDir))[0]);
+    await fs.appendFile(segment, '{"torn"');
+    const bytes = await fs.readFile(segment);
+    await expect(store.acquire(id)).rejects.toThrow(/replay segment binding/);
+    expect(await fs.readFile(segment)).toEqual(bytes);
+  });
+
+  it('keeps blobs for an append admitted while settlement is finishing', async () => {
+    let hintsTemporary: string | undefined;
+    let appendAfterHints: (() => void) | undefined;
+    const { store, id, lease } = await fixture({
+      async rename(from: string, to: string) {
+        await fs.rename(from, to);
+        if (to.endsWith('.hints.json') && appendAfterHints) hintsTemporary = from;
+      },
+      async unlink(path: string) {
+        try { await fs.unlink(path); }
+        finally {
+          // The final hints cleanup admits an append just before settlement queues blob collection.
+          if (path === hintsTemporary) {
+            hintsTemporary = undefined;
+            appendAfterHints!();
+          }
+        }
+      },
+    });
+    const attemptId = randomUUID();
+    await lease.beginTurn({ input: 'next', attemptId, attemptedExecutionProjection: executionProjection() });
+    const text = 'x'.repeat(MAX_SESSION_FILE_BYTES);
+    let appended: Promise<unknown> | undefined;
+    appendAfterHints = () => {
+      appendAfterHints = undefined;
+      appended = lease.append({ type: 'late_append', text });
+    };
+    await lease.settle({ attemptId, snapshot: shellSnapshot(1, 'next'), unresolvedEffects: [] });
+    expect(appended).toBeDefined();
+    await appended;
+    await lease.release();
+    const history = await store.readHistory(id);
+    expect(history.incomplete).toBe(false);
+    expect(history.entries.at(-1).record.text === text).toBe(true);
+  });
+
+  it('ignores a manifest temporary left by a crash before its rename', async () => {
+    const { store, id, lease, sessionsDir, file } = await fixture();
+    await lease.release();
+    const residue = join(sessionsDir, `.${id}.101.${randomUUID()}.tmp`);
+    await fs.writeFile(residue, '{"partial":', { mode: 0o600 });
+    const before = await fs.readFile(file);
+    expect((await store.listSummaries()).sessions.map(({ sessionId }: any) => sessionId)).toEqual([id]);
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    const next = await store.acquire(id);
+    await settleTurn(next, 1);
+    await next.release();
+    expect((await fs.readFile(file)).equals(before)).toBe(false);
+    expect((await store.validate(id)).integrityValid).toBe(true);
+  });
+
+  it('rejects an extra manifest link and recovers an interrupted initial publication during preparation', async () => {
+    const { store, id, lease, file, sessionsDir } = await fixture();
+    await lease.release();
+    const original = await fs.readFile(file);
+    const unrelated = join(sessionsDir, 'unrelated');
+    await fs.link(file, unrelated);
+    await expect(store.readManifest(id)).rejects.toThrow(/single-link/);
+    await expect(store.acquire(id)).rejects.toThrow(/links/);
+    expect(await fs.readFile(unrelated)).toEqual(original);
+    await fs.unlink(unrelated);
+    const temporary = join(sessionsDir, `.${id}.101.${randomUUID()}.tmp`);
+    await fs.link(file, temporary);
+    await expect(store.readManifest(id)).rejects.toThrow(/single-link/);
+    const next = await store.acquire(id);
+    expect(await fs.readFile(file)).toEqual(original);
+    expect((await fs.stat(file)).nlink).toBe(1);
+    await expect(fs.lstat(temporary)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    await next.release();
+  });
+
+  it('reports earlier storage before preparing its files or creating a management lease for deletion', async () => {
+    const touched: string[] = [];
+    const { store, id, lease, file, sessionsDir } = await fixture({
+      async mkdir(path: string, options: any) {
+        touched.push(path);
+        return fs.mkdir(path, options);
+      },
+      async rename(from: string, to: string) {
+        touched.push(to);
+        return fs.rename(from, to);
+      },
+    });
+    await lease.release();
+    await fs.writeFile(file, JSON.stringify({ schemaVersion: 8, sessionId: id }));
+    const hints = join(sessionsDir, `${id}.hints.json`);
+    await fs.writeFile(hints, '{}');
+    if (process.platform !== 'win32') {
+      await fs.chmod(file, 0o644);
+      await fs.chmod(hints, 0o644);
+    }
+    touched.length = 0;
+    await store.prepare();
+    await expect(store.acquire(id)).rejects.toThrow(/storage schema 8 is unsupported/);
+    await expect(store.delete(id)).rejects.toThrow(/storage schema 8 is unsupported/);
+    expect(touched).toEqual([]);
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(file)).mode & 0o777).toBe(0o644);
+      expect((await fs.stat(hints)).mode & 0o777).toBe(0o644);
+    }
+  });
+
+  it.each(['before', 'after'])('keeps a complete manifest when publication stops %s its rename', async (when) => {
+    let target = '';
+    let failures = 0;
+    // The publication stops at its rename: before it, or after it took
+    // effect and before anything later (the directory sync is a no-op on
+    // Windows, so it cannot carry the injection there).
+    const fsOps = {
+      async rename(from: string, to: string) {
+        if (to !== target || failures++ !== 0) return fs.rename(from, to);
+        if (when === 'after') await fs.rename(from, to);
+        throw Object.assign(new Error(`injected crash ${when} rename`), { code: 'EIO' });
+      },
+    };
+    const { store, id, lease, file } = await fixture(fsOps);
+    const previous = await store.read(id);
+    const previousBytes = await fs.readFile(file);
+    target = file;
+    await expect(settleTurn(lease, 1)).rejects.toThrow(/injected crash/);
+    await lease.release().catch(() => undefined);
+    const reader = createSessionStore({ sessionsDir: dirname(file), hostname: 'session-log-reader' });
+    if (when === 'before') {
+      expect((await fs.readFile(file)).equals(previousBytes)).toBe(true);
+      expect(await reader.read(id)).toEqual(previous);
+    } else {
+      expect((await fs.readFile(file)).equals(previousBytes)).toBe(false);
+    }
+    expect((await reader.validate(id)).integrityValid).toBe(true);
+  });
+
+  it('retries a manifest replacement another process briefly holds, and otherwise keeps the previous manifest', async () => {
+    let target = '';
+    let busy = 0;
+    const fsOps = { async rename(from: string, to: string) {
+      if (to === target && busy > 0) { busy--; throw Object.assign(new Error('target is open without delete sharing'), { code: 'EPERM' }); }
+      return fs.rename(from, to);
+    } };
+    const { store, id, lease, file } = await fixture(fsOps);
+    target = file;
+    busy = 2;
+    await settleTurn(lease, 1);
+    expect((await store.read(id)).snapshot.journal).toHaveLength(1);
+    const kept = await fs.readFile(file);
+    busy = 1000;
+    await expect(settleTurn(lease, 2)).rejects.toThrow(/delete sharing/);
+    expect((await fs.readFile(file)).equals(kept)).toBe(true);
+    busy = 0;
+    await lease.release();
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    expect((await fs.readdir(dirname(file))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+});
+
+describe('schema-9 cost independent of session length (DR-111)', () => {
+  async function longSession(records: number) {
+    const { store, id, lease, sessionsDir, replayDir } = await fixture();
+    await lease.importAsset({ bytes: Buffer.from('first asset'), mimeType: 'text/plain' });
+    for (let seq = 1; seq <= records; seq++) await lease.append({ type: 'player_event', timestamp: seq, text: `record ${seq} ${'y'.repeat(200)}` }, 'coder');
+    for (let index = 0; index < 20; index++) await lease.importAsset({ bytes: Buffer.from(`asset ${index}`), mimeType: 'text/plain' });
+    await lease.release();
+    return { store, id, sessionsDir, replayDir };
+  }
+  async function progressWrites(records: number) {
+    const { id, sessionsDir, replayDir } = await longSession(records);
+    const { calls, fsOps } = recordingFs();
+    const store = createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps });
+    const lease = await store.acquire(id);
+    await lease.beginTurn({ input: 'long run', attemptId: randomUUID(), attemptedExecutionProjection: executionProjection() });
+    const writes = [];
+    for (let write = 1; write <= 3; write++) {
+      await lease.append({ type: 'player_event', timestamp: write }, 'coder');
+      calls.length = 0;
+      await lease.recordProgress({ snapshot: null });
+      writes.push([...calls]);
+    }
+    await lease.release();
+    return { writes, replayDir, assetsDir: join(sessionsDir, `${id}.assets`) };
+  }
+
+  it('makes the same file operations per progress write at 200 and 600 records, reading no segment or asset', async () => {
+    const short = await progressWrites(200);
+    const long = await progressWrites(600);
+    for (const run of [short, long]) {
+      for (const calls of run.writes) {
+        // The open segment's identity is checked by one lstat; nothing is read.
+        expect(calls.filter(({ op, path }) => path.startsWith(run.replayDir) && op !== 'lstat')).toEqual([]);
+        expect(calls.filter(({ path }) => path.startsWith(run.assetsDir))).toEqual([]);
+      }
+    }
+    expect(long.writes.map((calls) => calls.length)).toEqual(short.writes.map((calls) => calls.length));
+  }, 60_000);
+
+  it('opens the manifest, each segment once and a constant number of other files to validate', async () => {
+    const { id, sessionsDir, replayDir } = await longSession(600);
+    const segments = await segmentNames(replayDir);
+    const { calls, fsOps } = recordingFs();
+    const store = createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps });
+    expect((await store.validate(id)).integrityValid).toBe(true);
+    const opens = calls.filter(({ op }) => op === 'open');
+    for (const name of segments) expect(opens.filter(({ path }) => path === join(replayDir, name))).toHaveLength(1);
+    const assetOpens = opens.filter(({ path }) => path.includes(`${id}.assets`)).length;
+    expect(opens.length - assetOpens).toBe(segments.length + 1);
+  }, 60_000);
+
+  it('continues a follower from its verified position and reads only the bytes after it', async () => {
+    const { id, sessionsDir, replayDir } = await longSession(300);
+    const { calls, fsOps } = recordingFs();
+    const follower = createSessionStore({ sessionsDir, hostname: 'session-log-follower', fsOps });
+    const first = await follower.readStream(id);
+    const writerStore = createSessionStore({ sessionsDir, hostname: 'session-log-integration' });
+    for (let round = 1; round <= 3; round++) {
+      const writer = await writerStore.acquire(id);
+      await writer.append({ type: 'later', timestamp: round });
+      await writer.release();
+      calls.length = 0;
+      const next = await follower.readStream(id, { afterSeq: first.lastReadableSeq + round - 1 });
+      expect(next.entries.map(({ record }: any) => record.type)).toEqual(['later']);
+      const segments = await segmentNames(replayDir);
+      // Only the last segment is opened again: earlier ones are verified.
+      expect(calls.filter(({ op, path }) => op === 'open' && path.startsWith(replayDir)).map(({ path }) => path)).toEqual([join(replayDir, segments.at(-1)!)]);
+    }
+  }, 60_000);
+
+  it('answers a lease read of what the lease appended without opening a segment, and earlier reads from the log', async () => {
+    const { id, sessionsDir, replayDir } = await longSession(50);
+    const { calls, fsOps } = recordingFs();
+    const store = createSessionStore({ sessionsDir, hostname: 'session-log-integration', fsOps });
+    const lease = await store.acquire(id);
+    const start = (await lease.readStream()).lastReadableSeq;
+    for (let write = 1; write <= 3; write++) {
+      await lease.append({ type: 'player_event', timestamp: write }, 'coder');
+      calls.length = 0;
+      const next = await lease.readStream({ afterSeq: start + write - 1 });
+      expect(next.entries.map(({ seq, record }: any) => [seq, record.timestamp])).toEqual([[start + write, write]]);
+      expect(calls.filter(({ op, path }) => op === 'open' && path.startsWith(replayDir))).toEqual([]);
+    }
+    const suffix = await lease.readStream({ afterSeq: start });
+    // A caller changing what it read changes no later read.
+    suffix.entries[0].record.timestamp = -1;
+    expect((await lease.readStream({ afterSeq: start })).entries[0].record.timestamp).toBe(1);
+    suffix.entries[0].record.timestamp = 1;
+    calls.length = 0;
+    const earlier = await lease.readStream({ afterSeq: start - 1 });
+    expect(calls.some(({ op, path }) => op === 'open' && path.startsWith(replayDir))).toBe(true);
+    // Both answers equal what an independent reader of the log returns.
+    const independent = createSessionStore({ sessionsDir, hostname: 'session-log-follower' });
+    expect(suffix.entries).toEqual((await independent.readStream(id, { afterSeq: start })).entries);
+    expect(earlier.entries).toEqual((await independent.readStream(id, { afterSeq: start - 1 })).entries);
+    await lease.release();
+  }, 60_000);
+
+  it('rejects a log rolled back below a live follower position while a new store accepts the retained prefix', async () => {
+    const { id, sessionsDir, replayDir } = await longSession(20);
+    const follower = createSessionStore({ sessionsDir, hostname: 'session-log-follower' });
+    const read = await follower.readStream(id);
+    const names = await segmentNames(replayDir);
+    const last = join(replayDir, names.at(-1)!);
+    const bytes = await fs.readFile(last);
+    const lines = bytes.toString().split('\n').filter(Boolean);
+    await fs.writeFile(last, `${lines.slice(0, -1).join('\n')}\n`);
+    await expect(follower.readStream(id, { afterSeq: read.lastReadableSeq })).rejects.toThrow(/rolled back|exceeds/);
+    const fresh = createSessionStore({ sessionsDir, hostname: 'session-log-follower' });
+    expect((await fresh.readStream(id)).lastReadableSeq).toBe(read.lastReadableSeq - 1);
+  });
+});

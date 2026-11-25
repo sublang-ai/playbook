@@ -852,34 +852,29 @@ async function formerDefaultSession(useXdg = true) {
   expect(record.schemaVersion).toBe(6);
   const sourcePath = join(sourceDir, `${id}.json`);
   const sourceBytes = `${JSON.stringify(record)}\n`;
+  // The former default's layout: a schema-6 record beside its replay file.
+  const replayBytes = await readFixtureReplay(join(sourceDir, `${id}.replay.json`));
   await writeFile(sourcePath, sourceBytes);
-  const replayBytes = await readFile(join(sourceDir, `${id}.records.jsonl`));
+  await writeFile(join(sourceDir, `${id}.records.jsonl`), replayBytes, { mode: 0o600 });
+  await rm(join(sourceDir, `${id}.replay`), { recursive: true, force: true });
   return { home, env, sourceDir, sourcePath, sourceBytes, replayBytes, id, configPath: first.configPath };
 }
 
-describe('former-default headless migration', () => {
-  it.each([false, true])('migrates and continues complete history (XDG override: %s)', async (useXdg) => {
+describe('former default location (DR-111)', () => {
+  it.each([false, true])('leaves the former default untouched at the default location (XDG override: %s)', async (useXdg) => {
     const f = await formerDefaultSession(useXdg);
-    const callOffset = FakeAdapter.calls.length;
-    const continued = await headlessHarness(['run', '--session', f.id, 'continue the original task'], {
+    const beforeCalls = FakeAdapter.calls.length;
+    const result = await headlessHarness(['run', '--session', f.id, 'must not start'], {
       injectSessionsDir: false, homeDir: f.home, env: f.env,
       userConfigPath: f.configPath, createCaptainRuntime: undefined,
     });
-    expect(continued.result.code, continued.stderr).toBe(0);
-    expect(continued.result.sessionId).toBe(f.id);
-    expect(continued.stderr).toContain(`migrated 1 sessions from ${f.sourceDir}`);
-    const calls = FakeAdapter.calls.slice(callOffset);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].resume).toBeUndefined();
-    expect(calls[0].prompt).toContain('remember the original task');
-    const destination = join(f.home, '.spex', 'sessions');
-    const record = (await readFixtureManifest(join(destination, `${f.id}.json`)));
-    expect(record).toMatchObject({ schemaVersion: 7, state: 'settled' });
-    expect(record.snapshot.sequences.turn).toBe(2);
-    const replay = await readFixtureReplay(join(destination, `${f.id}.replay.json`));
-    expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
-    await expect(stat(f.sourcePath)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(stat(join(f.sourceDir, `${f.id}.records.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(result.result.code, result.stderr).toBe(1);
+    expect(result.stderr).toContain('does not exist');
+    expect(result.stderr).not.toContain('migrated');
+    expect(FakeAdapter.calls).toHaveLength(beforeCalls);
+    expect(await readFile(f.sourcePath, 'utf8')).toBe(f.sourceBytes);
+    expect(await readFile(join(f.sourceDir, `${f.id}.records.jsonl`))).toEqual(f.replayBytes);
+    await expect(stat(join(f.home, '.spex', 'sessions', `${f.id}.json`))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it.each(['SPEX_HOME', 'directory', 'store', 'config', 'overlay'] as const)(
@@ -2426,9 +2421,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(explicit.stdout).toBe('');
     expect(explicit.inputs).toEqual([]);
     expect(explicitHosts).toBe(0);
-    expect(explicit.stderr).toContain(
-      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover',
-    );
+    expect(explicit.stderr).toContain('storage schema 5 is unsupported');
     expect(explicit.stderr).not.toContain(
       'missing field "unresolvedEffects"',
     );
@@ -2444,7 +2437,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       `skipping legacy Captain session "${firstId}" at "${preCutoverPath}"`,
     );
     expect(fresh.stderr).toContain(
-      'schema 5 predates the canonical schema-6 unresolved-effect settlement boundary for the artifact-schema-3 effect-authority cutover and is not resumable',
+      'session storage schema 5 is unsupported',
     );
     expect(fresh.stderr).toContain(
       'move it outside the sessions directory or remove it',
@@ -3382,9 +3375,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(explicitLegacy.stdout).toBe('');
     expect(explicitLegacy.inputs).toEqual([]);
     expect(explicitLegacyHosts).toBe(0);
-    expect(explicitLegacy.stderr).toContain(
-      'schema 2 has incompatible root-owned player identity',
-    );
+    expect(explicitLegacy.stderr).toContain('storage schema 2 is unsupported');
 
     const continued = await headlessHarness(
       ['run', '--continue', 'latest reply'],
@@ -3400,13 +3391,13 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
     );
     expect(continued.stderr).toContain(
-      'schema 2 has incompatible player identity',
+      'session storage schema 2 is unsupported',
     );
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${fourthId}" at "${memberlessSchema3Path}"`,
     );
     expect(continued.stderr).toContain(
-      'schema 3 predates the artifact-schema-3 effect-authority cutover and is not resumable',
+      'session storage schema 3 is unsupported',
     );
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
@@ -3431,9 +3422,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(explicitPreEffect.stdout).toBe('');
     expect(explicitPreEffect.inputs).toEqual([]);
     expect(explicitPreEffectHosts).toBe(0);
-    expect(explicitPreEffect.stderr).toContain(
-      'schema 3 predates the artifact-schema-3 effect-authority cutover',
-    );
+    expect(explicitPreEffect.stderr).toContain('storage schema 3 is unsupported');
 
     const transientSchema4 = preEffectSessionRecord(
       { ...settledRecord, sessionId: fourthId },
@@ -3458,9 +3447,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continuedSchema4.stdout).toBe('');
     expect(continuedSchema4.inputs).toEqual([]);
     expect(explicitSchema4Hosts).toBe(0);
-    expect(continuedSchema4.stderr).toContain(
-      'schema 4 predates the artifact-schema-3 effect-authority cutover',
-    );
+    expect(continuedSchema4.stderr).toContain('storage schema 4 is unsupported');
     expect(await readFile(memberlessSchema3Path, 'utf8')).toBe(
       transientSchema4Bytes,
     );
@@ -3491,12 +3478,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(malformed.stdout).toBe('');
     expect(malformed.inputs).toEqual([]);
     expect(malformedHosts).toBe(0);
-    expect(malformed.stderr).toContain(
-      'runtime schema 2 cannot migrate to schema 4',
-    );
-    expect(malformed.stderr).not.toContain(
-      'predates the artifact-schema-3 effect-authority cutover',
-    );
+    // DR-111: an earlier record is not validated, only reported unsupported.
+    expect(malformed.stderr).toContain('storage schema 3 is unsupported');
   });
 
   it.each([
@@ -3851,7 +3834,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
           if (
             from.endsWith('.tmp') &&
             to === recordPath &&
-            JSON.parse(await readFile(from, 'utf8')).state === 'settled'
+            JSON.parse(await readFile(from, 'utf8')).manifest?.state === 'settled'
           ) {
             throw new Error('synthetic settlement rename failure');
           }

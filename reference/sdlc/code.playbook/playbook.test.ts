@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile } from './test-support/session-persistence.js';
+import { readFixtureManifest, readFixtureReplay, writeFixtureFile as writeFile, writeRecoveryFixture } from './test-support/session-persistence.js';
 import { EventEmitter } from 'node:events';
 import { readFileSync, realpathSync } from 'node:fs';
 import {
@@ -2447,10 +2447,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       unresolvedEffects: [],
       retainedGenerations: {},
     });
-    const recordPath = join(root, 'sessions', `${id}.json`);
-    await writeFile(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    await chmod(recordPath, 0o600);
-    await createCaptainSessionStore({ sessionsDir }).migrate(id);
+    await writeRecoveryFixture(sessionsDir, record);
     let descriptor: any;
     let hostProjection: any;
     let imports = 0;
@@ -3288,40 +3285,32 @@ async function formerDefaultInteractiveSession() {
   expect(record.schemaVersion).toBe(6);
   const sourcePath = join(sourceDir, `${id}.json`);
   const sourceBytes = `${JSON.stringify(record)}\n`;
+  // The former default's layout: a schema-6 record beside its replay file.
+  const replayBytes = await readFixtureReplay(join(sourceDir, `${id}.replay.json`));
   await writeFile(sourcePath, sourceBytes);
-  const replayBytes = await readFile(join(sourceDir, `${id}.records.jsonl`));
+  await writeFile(join(sourceDir, `${id}.records.jsonl`), replayBytes, { mode: 0o600 });
+  await rm(join(sourceDir, `${id}.replay`), { recursive: true, force: true });
   return { home, env, sourceDir, configPath, config, id, sourcePath, sourceBytes, replayBytes };
 }
 
-describe('former-default interactive migration', () => {
-  it('selects the migrated checkpoint and complete replay before managed launch', async () => {
+describe('former default location (DR-111)', () => {
+  it('leaves the former default untouched at the default location', async () => {
     const f = await formerDefaultInteractiveSession();
     const stderr = writer();
-    let descriptor: any;
+    let launches = 0;
     const result = await runPlaybookCli({
       argv: ['--session', f.id], homeDir: f.home, env: f.env,
       userConfigPath: f.configPath, stderr, stdout: writer(),
       tmuxPlayBin: '/tmp/tmux-play.js', probeAdapterSdk: async () => true,
-      publishManagedReadinessWitness: async () => {},
-      loadModule: async () => { throw new Error('selected outer launch must remain data-only'); },
-      launchManagedTmuxPlay: async (options: any) => {
-        const workDir = await requestManagedSessionCommand(options);
-        descriptor = JSON.parse(await readFile(join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE), 'utf8'));
-        return { sessionId: f.id, workDir, async cancel() {}, async attach() {} };
-      },
+      launchManagedTmuxPlay: async () => { launches += 1; throw new Error('must not launch'); },
     });
-    expect(result, stderr.text()).toEqual({ code: 0 });
-    expect(stderr.text()).toContain(`migrated 1 sessions from ${f.sourceDir}`);
-    const destination = join(f.home, '.spex', 'sessions');
-    expect(descriptor).toMatchObject({ sessionId: f.id, sessionsDir: destination });
-    const manifest = await readFixtureManifest(join(destination, `${f.id}.json`));
-    expect(manifest).toMatchObject({ schemaVersion: 7, state: 'settled' });
-    expect(manifest.snapshot.sequences.turn).toBe(1);
-    expect(JSON.stringify(manifest)).not.toContain('legacy-provider-token');
-    const replay = await readFixtureReplay(join(destination, `${f.id}.records.jsonl`));
-    expect(replay.subarray(0, f.replayBytes.length)).toEqual(f.replayBytes);
-    expect(existsSync(f.sourcePath)).toBe(false);
-    expect(existsSync(join(f.sourceDir, `${f.id}.records.jsonl`))).toBe(false);
+    expect(result, stderr.text()).toEqual({ code: 1 });
+    expect(stderr.text()).toContain('does not exist');
+    expect(stderr.text()).not.toContain('migrated');
+    expect(launches).toBe(0);
+    expect(await readFile(f.sourcePath, 'utf8')).toBe(f.sourceBytes);
+    expect(await readFile(join(f.sourceDir, `${f.id}.records.jsonl`))).toEqual(f.replayBytes);
+    expect(existsSync(join(f.home, '.spex', 'sessions', `${f.id}.json`))).toBe(false);
   });
 
   it.each(['SPEX_HOME', 'directory', 'store', 'config', 'overlay'] as const)(
@@ -3985,10 +3974,7 @@ describe('playbook --module (PBCLI-95)', () => {
       unresolvedEffects: [],
       retainedGenerations: {},
     });
-    const recordPath = join(sessionsDir, `${id}.json`);
-    await writeFile(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    await chmod(recordPath, 0o600);
-    await createCaptainSessionStore({ sessionsDir }).migrate(id);
+    await writeRecoveryFixture(sessionsDir, record);
     const fromless = recorded.replace('    from: "mod://code"\n', '');
 
     const reopen = async (argv: string[]) => {

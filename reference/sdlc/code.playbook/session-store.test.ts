@@ -5,8 +5,6 @@ import { writeFileSync, type StatOptions } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { manifestFromRecovery, contextFromRecovery } from './bin/portable-codec.js';
 import { readFixtureManifest, decodeFixtureManifest, readFixtureReplay, writeFixtureReplay, writeFixtureFile } from './test-support/session-persistence.js';
-import { createBoundedReplay } from './bin/session-replay.js';
-import { createSessionChunks } from './bin/session-chunks.js';
 import {
   chmod,
   link,
@@ -26,7 +24,7 @@ import {
 } from 'node:fs/promises';
 import * as nodeFs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -80,8 +78,10 @@ async function fixtureDir() {
   return { root, sessionsDir: join(root, 'sessions') };
 }
 
+// DR-111: a replay stream is the session's segment log; these cases use
+// its first segment.
 function replayStreamPath(sessionsDir: string, id = sessionId) {
-  return join(sessionsDir, `${id}.records.jsonl`);
+  return join(sessionsDir, `${id}.replay`, '000000000001.jsonl');
 }
 
 function replayEnvelope(
@@ -109,6 +109,8 @@ async function writeReplayStream(
   await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
   await chmod(sessionsDir, 0o700);
   const path = replayStreamPath(sessionsDir, id);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await chmod(dirname(path), 0o700);
   await writeFile(path, text, { mode: 0o600 });
   await chmod(path, 0o600);
   return path;
@@ -187,8 +189,15 @@ function observedReplayMutationFs(
     beforeSessionsSync?: (
       event: ReplayMutationEvent,
     ) => void | Promise<void>;
+    beforeReplayStat?: (
+      event: ReplayMutationEvent,
+    ) => void | Promise<void>;
   } = {},
 ) {
+  // DR-111: every segment of the session's log is replay; a directory sync
+  // of the sessions or replay directory publishes a new segment's name.
+  const replayDir = join(sessionsDir, `${sessionId}.replay`);
+  const isReplayPath = (path: string) => path === streamPath || path.startsWith(`${replayDir}/`) || path.startsWith(`${replayDir}\\`);
   let replayWrites = 0;
   let replaySyncs = 0;
   let sessionsSyncs = 0;
@@ -231,14 +240,14 @@ function observedReplayMutationFs(
     },
     fsOps: {
       async lstat(path: string, options?: StatOptions) {
-        if (path === streamPath) replayPathStats += 1;
+        if (isReplayPath(path)) { replayPathStats += 1; await hooks.beforeReplayStat?.({ call: replayPathStats, path }); }
         if (path === sessionsDir) sessionsDirStats += 1;
         return lstat(path, options);
       },
       async open(path: string, flags: string | number, mode?: number) {
         if (path.endsWith('/owner.json')) ownerOpens += 1;
         const handle = await open(path, flags as any, mode);
-        if (path === streamPath || path.startsWith(join(sessionsDir, `.${sessionId}.replay-`))) {
+        if (isReplayPath(path)) {
           replayOpens += 1;
           return new Proxy(handle as any, {
             get(target, property) {
@@ -281,7 +290,7 @@ function observedReplayMutationFs(
             },
           });
         }
-        if (path === sessionsDir) {
+        if (path === sessionsDir || path === replayDir) {
           return new Proxy(handle as any, {
             get(target, property) {
               if (property === 'sync') {
@@ -1162,16 +1171,12 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       )}\n`;
       await writeFile(recordPath, legacyBytes, 'utf8');
 
-      const nextLease = await fixedStore(sessionsDir, tokenN).acquire(
-        sessionId,
-      );
-      await expect(nextLease.read()).rejects.toThrow(
-        new RegExp(
-          `schema ${schemaVersion} predates the artifact-schema-3 effect-authority cutover`,
-        ),
+      // DR-111: an earlier record format is unsupported storage, refused
+      // before any lease and left unchanged.
+      await expect(fixedStore(sessionsDir, tokenN).acquire(sessionId)).rejects.toThrow(
+        new RegExp(`storage schema ${schemaVersion} is unsupported`),
       );
       expect(await readFile(recordPath, 'utf8')).toBe(legacyBytes);
-      await nextLease.release();
     },
   );
 
@@ -3582,7 +3587,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     await lease.release();
   });
 
-  it('keeps monolithic schema-7 history readable while skipping it for continuation and adoption', async () => {
+  it('reports a monolithic schema-7 session unsupported and declines adoption past it', async () => {
     const { sessionsDir } = await fixtureDir();
     const olderId = adoptionSessionId(70);
     const legacyId = adoptionSessionId(71);
@@ -3597,28 +3602,28 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     const replay = await readFixtureReplay(join(sessionsDir, `${legacyId}.replay.json`));
     await writeFile(legacyPath, JSON.stringify(manifest), { mode: 0o600 });
     await writeFile(join(sessionsDir, `${legacyId}.records.jsonl`), replay, { mode: 0o600 });
-    await unlink(join(sessionsDir, `${legacyId}.replay.json`));
-    await rm(join(sessionsDir, `${legacyId}.chunks`), { recursive: true });
+    await rm(join(sessionsDir, `${legacyId}.replay`), { recursive: true });
     const legacyBytes = await readFile(legacyPath);
     const olderBytes = await readFile(olderPath);
     const store = sequencedStore(sessionsDir, 70);
-    expect((await store.read(legacyId)).retainedGenerations).not.toEqual({});
-    expect(await store.validate(legacyId)).toMatchObject({ integrityValid: true, resumable: false,
-      reasons: [expect.stringMatching(/explicit migration/)] });
+    // DR-111: the store reads only schema 9; the earlier format is reported
+    // and left for the conversion command.
+    await expect(store.read(legacyId)).rejects.toThrow(/storage schema 7 is unsupported; convert it/);
+    await expect(store.validate(legacyId)).rejects.toThrow(/storage schema 7 is unsupported/);
     const skipped: any[] = [];
     expect((await store.latest({ onLegacyRecord: (value: any) => skipped.push(value) })).sessionId).toBe(olderId);
-    expect(skipped).toEqual([expect.objectContaining({ sessionId: legacyId, schemaVersion: 7, reason: expect.stringMatching(/explicit migration/) })]);
+    expect(skipped).toEqual([expect.objectContaining({ sessionId: legacyId, schemaVersion: 7, reason: expect.stringMatching(/playbook sessions upgrade/) })]);
     const target = freshAdoptionTargetRecord({ id: targetId });
     const lease = await store.acquire(targetId);
     try {
       skipped.length = 0;
+      // Its stated place in the predecessor order declines adoption past it.
       const initialized = await lease.initializeSettledWithPredecessor({
         cwd: target.cwd, structuralProjection: target.structuralProjection,
         executionProjection: target.lastAppliedExecutionProjection, snapshot: target.snapshot,
         onLegacyRecord: (value: any) => skipped.push(value),
       });
       expect(initialized.retainedGenerations).toEqual({});
-      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(Date.parse(manifest.updatedAt));
       expect(skipped).toHaveLength(1);
       expect(await readFile(legacyPath)).toEqual(legacyBytes);
       expect(await readFile(join(sessionsDir, `${legacyId}.records.jsonl`))).toEqual(replay);
@@ -3760,11 +3765,13 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           sessionId: olderLegacyId,
           path: olderLegacyPath,
           schemaVersion: 3,
+          reason: expect.stringMatching(/storage schema 3 is unsupported/),
         },
         {
           sessionId: foreignLegacyId,
           path: foreignLegacyPath,
           schemaVersion: 2,
+          reason: expect.stringMatching(/storage schema 2 is unsupported/),
         },
       ]),
     );
@@ -3827,18 +3834,21 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect(Date.parse(targetAfter.updatedAt)).toBeGreaterThan(
       Date.parse(source.updatedAt),
     );
+    // DR-111: an earlier record is unsupported storage that keeps its stated
+    // place in the predecessor order, so adoption declines past it.
     expect(legacyRecords).toEqual([
       {
         sessionId: sourceId,
         path: sourcePath,
         schemaVersion: 4,
+        reason: expect.stringMatching(/storage schema 4 is unsupported/),
       },
     ]);
     expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
     expect(await readFile(olderPath, 'utf8')).toBe(olderBytes);
     expect((await store.read(olderId)).retainedGenerations).not.toEqual({});
     await expect(store.read(sourceId)).rejects.toThrow(
-      /schema 4 predates the artifact-schema-3 effect-authority cutover/,
+      /storage schema 4 is unsupported/,
     );
     await lease.release();
     expect((await sequencedStore(sessionsDir, 20).latest()).sessionId).toBe(
@@ -4954,7 +4964,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
     expect((await store.latest()).sessionId).toBe(secondSessionId);
     const secondPath = join(sessionsDir, `${secondSessionId}.json`);
     const wrongEmbeddedId = await readFixtureManifest(secondPath);
-    await writeFile(
+    await writeFixtureFile(
       secondPath,
       `${JSON.stringify({ ...wrongEmbeddedId, sessionId })}\n`,
       'utf8',
@@ -4982,6 +4992,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         sessionId: secondSessionId,
         path: secondPath,
         schemaVersion: 2,
+        reason: expect.stringMatching(/storage schema 2 is unsupported/),
       },
     ]);
     await expect(store.read(secondSessionId)).rejects.toThrow(
@@ -5016,10 +5027,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         sessionId: secondSessionId,
         path: secondPath,
         schemaVersion: 3,
+        reason: expect.stringMatching(/storage schema 3 is unsupported/),
       },
     ]);
     await expect(store.read(secondSessionId)).rejects.toThrow(
-      /schema 3 predates the artifact-schema-3 effect-authority cutover/,
+      /storage schema 3 is unsupported/,
     );
 
     const schema3Execution = schema3ExecutionProjection();
@@ -5056,12 +5068,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
           sessionId: secondSessionId,
           path: secondPath,
           schemaVersion,
+          reason: expect.stringMatching(new RegExp(`storage schema ${schemaVersion} is unsupported`)),
         },
       ]);
       await expect(store.read(secondSessionId)).rejects.toThrow(
-        new RegExp(
-          `schema ${schemaVersion} predates the artifact-schema-3 effect-authority cutover`,
-        ),
+        new RegExp(`storage schema ${schemaVersion} is unsupported`),
       );
     }
 
@@ -5084,10 +5095,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         sessionId: secondSessionId,
         path: secondPath,
         schemaVersion: 5,
+        reason: expect.stringMatching(/storage schema 5 is unsupported/),
       },
     ]);
     await expect(store.read(secondSessionId)).rejects.toThrow(
-      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
+      /storage schema 5 is unsupported/,
     );
 
     await writeFile(
@@ -5108,10 +5120,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
         sessionId: secondSessionId,
         path: secondPath,
         schemaVersion: 5,
+        reason: expect.stringMatching(/storage schema 5 is unsupported/),
       },
     ]);
     await expect(store.read(secondSessionId)).rejects.toThrow(
-      /schema 5 predates the canonical schema-6 unresolved-effect settlement boundary/,
+      /storage schema 5 is unsupported/,
     );
 
     const malformedUnmigratable = legacyRecord(
@@ -5124,16 +5137,16 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
       'utf8',
     );
     legacyRecords.length = 0;
-    await expect(
-      store.latest({
-        onLegacyRecord: (record: unknown) => legacyRecords.push(record),
-      }),
-    ).rejects.toThrow(/runtime schema 2 cannot migrate to schema 4/);
-    expect(legacyRecords).toEqual([]);
+    // DR-111: an earlier format is not validated; its stated summary alone
+    // reports it, and one without a summary fails closed.
+    expect((await store.latest({
+      onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+    })).sessionId).toBe(sessionId);
+    expect(legacyRecords).toHaveLength(1);
 
     await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
-      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 2`),
     );
 
     await writeFile(secondPath, '{"schemaVersion":99}\n', 'utf8');
@@ -5143,12 +5156,12 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54/63/64)', () =
 
     await writeFile(secondPath, '{"schemaVersion":3}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
-      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 3`),
     );
 
     await writeFile(secondPath, '{"schemaVersion":4}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
-      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 4`),
     );
 
     await writeFile(secondPath, '{not-json\n', 'utf8');
@@ -5311,6 +5324,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     await writeFile(sidecarPath, sidecar, { mode: 0o600 });
     const unrelatedPath = replayStreamPath(sessionsDir, secondSessionId);
     const unrelated = '{not-a-playbook-stream}\n';
+    await mkdir(dirname(unrelatedPath), { mode: 0o700 });
     await writeFile(unrelatedPath, unrelated, { mode: 0o600 });
     const store = fixedStore(sessionsDir, tokenO);
 
@@ -5464,6 +5478,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     const targetBytes = replayLine(replayEnvelope(1));
     await writeFile(target, targetBytes, { mode: 0o600 });
     const symlinkPath = replayStreamPath(symlinkedStream.sessionsDir);
+    await mkdir(dirname(symlinkPath), { mode: 0o700 });
     await symlink(target, symlinkPath);
     await expect(
       fixedStore(symlinkedStream.sessionsDir, tokenO).readStream(sessionId),
@@ -5473,7 +5488,7 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
     const nonRegularStream = await fixtureDir();
     await mkdir(nonRegularStream.sessionsDir, { mode: 0o700 });
     const directoryStream = replayStreamPath(nonRegularStream.sessionsDir);
-    await mkdir(directoryStream, { mode: 0o700 });
+    await mkdir(directoryStream, { recursive: true, mode: 0o700 });
     await expect(
       fixedStore(nonRegularStream.sessionsDir, tokenO).readStream(sessionId),
     ).rejects.toThrow();
@@ -5707,8 +5722,9 @@ describe('shared replay stream codec and reader (PBCLI-74/75/79/80/82)', () => {
 });
 
 describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
+
   function boundedStreamPath(sessionsDir: string) {
-    return join(sessionsDir, `${sessionId}.replay.json`);
+    return join(sessionsDir, `${sessionId}.replay`, '000000000001.jsonl');
   }
   async function writeBoundedReplay(sessionsDir: string, bytes: string) {
     await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
@@ -5718,19 +5734,13 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     return path;
   }
 
-  it('refuses legacy mutation and opens bounded snapshots without repairing their bytes', async () => {
+  it('opens a log, repairing only an unfinished final line, and leaves damaged bytes unchanged', async () => {
     const empty = await fixtureDir();
     const emptyLease = await fixedStore(empty.sessionsDir, tokenO).acquire(sessionId);
     expect(emptyLease.streamStatus()).toEqual({ lastReadableSeq: 0, lastDurableSeq: 0, incomplete: false });
     await emptyLease.release();
     const first = replayLine(replayEnvelope(1, { type: 'retained' }));
     const validTail = '{ "record": {"type":"valid-tail","bytes":"\\u2603"}, "seq":2, "v":1, "role":"coder" }';
-    for (const bytes of [first, `${first}${validTail}`, `${first}{"v":1,"seq":2,"record":`, '{"v":1,"seq":1,"record":']) {
-      const legacy = await fixtureDir();
-      const path = await writeReplayStream(legacy.sessionsDir, bytes);
-      await expect(fixedStore(legacy.sessionsDir, tokenO).acquire(sessionId)).rejects.toThrow(/legacy.*migration/);
-      expect(await readFile(path, 'utf8')).toBe(bytes);
-    }
     const complete = await fixtureDir();
     const completePath = await writeBoundedReplay(complete.sessionsDir, `${first}${validTail}\n`);
     const lease = await fixedStore(complete.sessionsDir, tokenO).acquire(sessionId);
@@ -5739,19 +5749,32 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await lease.append({ type: 'successor' });
     expect((await lease.readStream()).entries.map(({seq}: any) => seq)).toEqual([1,2,3]);
     await expect(lease.release()).resolves.toEqual({ lastReadableSeq: 3, lastDurableSeq: 3, incomplete: false });
+    // An unfinished final line no manifest binds was never acknowledged: a
+    // lease truncates it, even one that would parse once completed.
     for (const bytes of [`${first}${validTail}`, `${first}{"v":1,"seq":2,"record":`]) {
-      const damaged = await fixtureDir();
-      const path = await writeBoundedReplay(damaged.sessionsDir, bytes);
-      const held = await fixedStore(damaged.sessionsDir, tokenO).acquire(sessionId);
-      expect(held.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
-      await held.append({ type: 'suppressed' });
-      await expect(held.readStream()).rejects.toThrow();
+      const torn = await fixtureDir();
+      const path = await writeBoundedReplay(torn.sessionsDir, bytes);
+      expect((await fixedStore(torn.sessionsDir, tokenN).readHistory(sessionId)).pendingTail).toBe(true);
+      const held = await fixedStore(torn.sessionsDir, tokenO).acquire(sessionId);
+      expect(held.streamStatus()).toEqual({ lastReadableSeq: 1, lastDurableSeq: 1, incomplete: false });
+      expect(await readFile(path, 'utf8')).toBe(first);
+      await held.append({ type: 'after-repair' });
       await held.release();
-      expect(await readFixtureReplay(path, 'utf8')).toBe(bytes);
-      const history = await fixedStore(damaged.sessionsDir, tokenN).readHistory(sessionId);
-      expect(history.entries.map(({seq}: any) => seq)).toEqual([1]);
-      expect(history.pendingTail).toBe(true);
+      expect((await fixedStore(torn.sessionsDir, tokenN).readStream(sessionId)).entries.map(({seq}: any) => seq)).toEqual([1, 2]);
     }
+    // A complete damaged line is not repaired: replay stays unavailable.
+    const damagedBytes = `${first}{"v":1,"seq":5,"record":{}}\n`;
+    const damaged = await fixtureDir();
+    const damagedPath = await writeBoundedReplay(damaged.sessionsDir, damagedBytes);
+    const held = await fixedStore(damaged.sessionsDir, tokenO).acquire(sessionId);
+    expect(held.streamStatus()).toEqual({ lastReadableSeq: null, lastDurableSeq: null, incomplete: true });
+    await held.append({ type: 'suppressed' });
+    await expect(held.readStream()).rejects.toThrow();
+    await held.release();
+    expect(await readFile(damagedPath, 'utf8')).toBe(damagedBytes);
+    const history = await fixedStore(damaged.sessionsDir, tokenN).readHistory(sessionId);
+    expect(history.entries.map(({seq}: any) => seq)).toEqual([1]);
+    expect(history.incomplete).toBe(true);
   });
 
   it('ignores follower cursor state and isolates invalid initialization', async () => {
@@ -5812,7 +5835,8 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
     });
-    const directorySyncsBeforePublication = observed.counts().sessionsSyncs;
+    const directorySyncsBeforeAppend = observed.counts().sessionsSyncs;
+    const replaySyncsBeforeAppend = observed.counts().replaySyncs;
 
     await expect(
       lease.append(
@@ -5820,9 +5844,10 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
         'coder',
       ),
     ).resolves.toBeUndefined();
-    expect(observed.counts().sessionsSyncs).toBeGreaterThan(
-      directorySyncsBeforePublication,
-    );
+    // DR-111: the line is synced before the append resolves; the open
+    // segment's name was published earlier.
+    expect(observed.counts().replaySyncs).toBe(replaySyncsBeforeAppend + 1);
+    expect(observed.counts().sessionsSyncs).toBe(directorySyncsBeforeAppend);
     expect(lease.streamStatus()).toEqual({
       lastReadableSeq: 2,
       lastDurableSeq: 1,
@@ -5854,9 +5879,13 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       incomplete: false,
     });
     const settlementSyncs = observed.counts().replaySyncs;
-    expect(settlementSyncs).toBeGreaterThan(0);
+    const settlementDirectorySyncs = observed.counts().sessionsSyncs;
 
+    // Settlement sealed the segment: the next line starts a new one, whose
+    // name is synced before the append resolves.
     await lease.append({ type: 'captain_reply', text: 'done' });
+    expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
+    expect(observed.counts().sessionsSyncs).toBe(settlementDirectorySyncs + 1);
     expect(lease.streamStatus()).toEqual({
       lastReadableSeq: 3,
       lastDurableSeq: 2,
@@ -5870,7 +5899,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     expect(observed.counts().replaySyncs).toBe(settlementSyncs + 1);
   });
 
-  it('publishes one private bounded root for each steady append', async () => {
+  it('appends each steady line to the open segment with one write and one sync', async () => {
     const { sessionsDir } = await fixtureDir();
     const streamPath = boundedStreamPath(sessionsDir);
     const observed = observedReplayMutationFs(sessionsDir, streamPath);
@@ -5881,10 +5910,11 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await lease.append({ type: 'steady-state' });
     expect(observed.counts().replayWrites).toBe(1);
     expect(observed.counts().replaySyncs).toBe(1);
-    expect(observed.counts().sessionsSyncs).toBeGreaterThan(0);
+    expect(observed.counts().sessionsSyncs).toBe(0);
+    expect(observed.counts().replayOpens).toBe(0);
     expect(observed.counts().ownerOpens).toBeGreaterThan(0);
     const after = await stat(streamPath);
-    expect(after.ino).not.toBe(before.ino);
+    expect(after.ino).toBe(before.ino);
     expect(after.nlink).toBe(1);
     expect(after.mode & 0o777).toBe(0o600);
     expect((await lease.readStream()).entries.map(({seq}: any) => seq)).toEqual([1,2]);
@@ -6083,7 +6113,8 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     }
   });
 
-  it('isolates publication, staging-write, checkpoint, and release failures', async () => {
+  it('isolates segment-name, post-write, checkpoint, and release failures', async () => {
+    // A new segment's name is synced before its first line is acknowledged.
     const publication = await fixtureDir();
     const publicationPath = boundedStreamPath(publication.sessionsDir);
     let failPublication = false;
@@ -6093,9 +6124,8 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       {
         async beforeSessionsSync() {
           if (failPublication) {
-            try { await lstat(publicationPath); } catch (error: any) { if (error.code === 'ENOENT') return; throw error; }
             failPublication = false;
-            throw new Error('synthetic replay publication sync failure');
+            throw new Error('synthetic segment name sync failure');
           }
         },
       },
@@ -6107,7 +6137,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     ).acquire(sessionId);
     failPublication = true;
     await expect(publicationLease.append({ type: 'published' })).rejects
-      .toThrow(/publication sync failure/);
+      .toThrow(/segment name sync failure/);
     expect(publicationLease.streamStatus()).toEqual({
       lastReadableSeq: 1,
       lastDurableSeq: 0,
@@ -6123,6 +6153,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       incomplete: true,
     });
 
+    // A line written before its sync failed stays visible, never rolled back.
     const visible = await fixtureDir();
     const visiblePath = boundedStreamPath(visible.sessionsDir);
     let failAfterWrite = false;
@@ -6144,24 +6175,20 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     await expect(visibleLease.append({ type: 'complete-but-failed' })).rejects
       .toThrow(/post-write replay failure/);
     expect(visibleLease.streamStatus()).toEqual({
-      lastReadableSeq: 0,
-      lastDurableSeq: 0,
-      incomplete: true,
-    });
-    expect(await visibleLease.readStream()).toEqual({
-      entries: [],
-      lastReadableSeq: 0,
+      lastReadableSeq: 1,
       lastDurableSeq: 0,
       incomplete: true,
     });
     expect(
       await fixedStore(visible.sessionsDir, tokenN).readStream(sessionId),
     ).toEqual({
-      entries: [],
-      lastReadableSeq: 0,
+      entries: [replayEnvelope(1, { type: 'complete-but-failed' })],
+      lastReadableSeq: 1,
     });
     await visibleLease.release();
 
+    // A checkpoint that cannot prove its open segment latches replay while
+    // progress and settlement still publish the last proven prefix.
     const checkpoint = await fixtureDir();
     const checkpointPath = boundedStreamPath(checkpoint.sessionsDir);
     let failCheckpoint = false;
@@ -6169,7 +6196,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       checkpoint.sessionsDir,
       checkpointPath,
       {
-        beforeSessionsSync() {
+        beforeReplayStat() {
           if (failCheckpoint) {
             failCheckpoint = false;
             throw new Error('synthetic replay checkpoint failure');
@@ -6191,6 +6218,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
     });
     await checkpointLease.append({ type: 'checkpointed' });
     failCheckpoint = true;
+    await expect(checkpointLease.recordProgress({ snapshot: null })).resolves.toBeUndefined();
     await expect(
       checkpointLease.settle({
         attemptId: attempt1,
@@ -6211,6 +6239,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       incomplete: true,
     });
     expect(checkpointFs.counts().replaySyncs).toBe(checkpointSyncs);
+    expect((await fixedStore(checkpoint.sessionsDir, tokenN).readManifest(sessionId)).replay).toMatchObject({ seq: 1, incomplete: true });
 
     const release = await fixtureDir();
     const releasePath = boundedStreamPath(release.sessionsDir);
@@ -6219,7 +6248,7 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
       release.sessionsDir,
       releasePath,
       {
-        beforeSessionsSync() {
+        beforeReplayStat() {
           if (failRelease) {
             failRelease = false;
             throw new Error('synthetic replay release checkpoint failure');
@@ -6305,281 +6334,32 @@ describe('lease-bound replay mutation (PBCLI-73/75/76/79/80/83)', () => {
   });
 });
 
-describe('bounded follower cursor (PBCLI-80, SP-9)', () => {
-  // Every chunk read lstats its path, even on a verified-cache hit, so this
-  // count bounds the chain a read walked regardless of the chunk cache.
-  function chunkLstatFs() {
-    const counter = { lstats: 0 };
-    const fsOps = {
-      async lstat(path: string, options?: StatOptions) {
-        if (/\.chunks\/[0-9a-f]{64}$/.test(path)) counter.lstats += 1;
-        return lstat(path, options);
-      },
-    };
-    return { counter, fsOps };
-  }
-  const envelopes = (from: number, to: number) =>
-    Array.from({ length: to - from + 1 }, (_, index) => replayEnvelope(from + index));
+describe('writer-verified checkpoints (SP-9, SP-14)', () => {
+
   const rootPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay.json`);
-  const chunksDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.chunks`);
-  async function replaceRoot(sessionsDir: string, bytes: Buffer) {
-    const staged = join(sessionsDir, 'replacement-root');
-    await writeFile(staged, bytes, { mode: 0o600 });
-    await chmod(staged, 0o600);
-    await rename(staged, rootPathOf(sessionsDir));
-  }
-  async function boundedSession(records: number) {
-    const { sessionsDir } = await fixtureDir();
-    const { counter, fsOps } = chunkLstatFs();
-    const store = fixedStore(sessionsDir, tokenO, { fsOps });
-    const lease = await store.acquire(sessionId);
-    for (let seq = 1; seq <= records; seq++) await lease.append({ type: `record-${seq}` });
-    return { sessionsDir, counter, fsOps, store, lease };
-  }
-
-  it('reads only the appended node and content chunks through the store and the writer lease alike', async () => {
-    const { store, lease, counter } = await boundedSession(20);
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(40);
-    let last = 20;
-    for (let round = 0; round < 5; round++) {
-      await lease.append({ type: `record-${++last}` });
-      counter.lstats = 0;
-      expect(await store.readStream(sessionId, { afterSeq: last - 1 })).toEqual({
-        entries: [replayEnvelope(last)],
-        lastReadableSeq: last,
-      });
-      expect(counter.lstats).toBe(2);
-    }
-    for (let round = 0; round < 5; round++) {
-      await lease.append({ type: `record-${++last}` });
-      counter.lstats = 0;
-      const result = await lease.readStream({ afterSeq: last - 1 });
-      expect(result.entries).toEqual([replayEnvelope(last)]);
-      expect(result.lastReadableSeq).toBe(last);
-      expect(counter.lstats).toBe(2);
-    }
-    await lease.release();
-  });
-
-  it('verifies only appended nodes for an independent follower across successive retiring writer leases (PBCLI-79)', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const first = await sequencedStore(sessionsDir, 10).acquire(sessionId);
-    for (let seq = 1; seq <= 10; seq++) await first.append({ type: `record-${seq}` });
-    await first.release();
-    const { counter, fsOps } = chunkLstatFs();
-    const follower = fixedStore(sessionsDir, tokenO, { fsOps });
-    expect(await follower.readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(20);
-    for (let seq = 11; seq <= 13; seq++) {
-      const writer = await sequencedStore(sessionsDir, 10 * seq).acquire(sessionId);
-      await writer.append({ type: `record-${seq}` });
-      await writer.release();
-      counter.lstats = 0;
-      expect(await follower.readStream(sessionId, { afterSeq: seq - 1 })).toEqual({ entries: [replayEnvelope(seq)], lastReadableSeq: seq });
-      // The follower's chunk cache has not seen another writer's new node, so
-      // each of its two chunks costs a pre-read and a post-read lstat.
-      expect(counter.lstats).toBe(4);
-    }
-  });
-
-  it('verifies the complete chain for a request below the cached sequence and keeps later reads cheap', async () => {
-    const { store, lease, counter } = await boundedSession(20);
-    await store.readStream(sessionId);
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId, { afterSeq: 10 })).toEqual({ entries: envelopes(11, 20), lastReadableSeq: 20 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(40);
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(40);
-    await lease.append({ type: 'record-21' });
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId, { afterSeq: 20 })).toEqual({ entries: [replayEnvelope(21)], lastReadableSeq: 21 });
-    expect(counter.lstats).toBe(2);
-    await lease.release();
-  });
-
-  it('verifies the complete chain on a new store first read', async () => {
-    const { sessionsDir, store, lease, counter, fsOps } = await boundedSession(20);
-    await store.readStream(sessionId);
-    counter.lstats = 0;
-    const successor = fixedStore(sessionsDir, tokenN, { fsOps });
-    expect(await successor.readStream(sessionId, { afterSeq: 20 })).toEqual({ entries: [], lastReadableSeq: 20 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(40);
-    await lease.release();
-  });
-
-  it('caches no head when the verified chain ends in a torn tail', async () => {
-    const { sessionsDir } = await fixtureDir();
-    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
-    await chmod(sessionsDir, 0o700);
-    const backend = await createBoundedReplay({ sessionId, sessionsDir });
-    const third = replayLine(replayEnvelope(3));
-    const torn = third.length - 5;
-    await backend.initializeBytes(Buffer.from(replayLine(replayEnvelope(1))));
-    await backend.appendBytes(Buffer.from(replayLine(replayEnvelope(2))));
-    await backend.appendBytes(Buffer.from(third.slice(0, torn)));
-    const { counter, fsOps } = chunkLstatFs();
-    const store = fixedStore(sessionsDir, tokenO, { fsOps });
-    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 2), lastReadableSeq: 2 });
-    await backend.appendBytes(Buffer.from(third.slice(torn)));
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId, { afterSeq: 2 })).toEqual({ entries: [replayEnvelope(3)], lastReadableSeq: 3 });
-    expect(counter.lstats).toBeGreaterThanOrEqual(8);
-    await backend.appendBytes(Buffer.from(replayLine(replayEnvelope(4))));
-    counter.lstats = 0;
-    expect(await store.readStream(sessionId, { afterSeq: 3 })).toEqual({ entries: [replayEnvelope(4)], lastReadableSeq: 4 });
-    expect(counter.lstats).toBe(4);
-  });
-
-  it('verifies the complete chain of a root that does not extend the cached head', async () => {
-    const { sessionsDir, store, lease, counter, fsOps } = await boundedSession(10);
-    await store.readStream(sessionId);
-    await lease.release();
-    const other = await fixtureDir();
-    await mkdir(other.sessionsDir, { recursive: true, mode: 0o700 });
-    await chmod(other.sessionsDir, 0o700);
-    const replacement = await createBoundedReplay({ sessionId, sessionsDir: other.sessionsDir });
-    const replaced = Array.from({ length: 12 }, (_, index) => replayEnvelope(index + 1, { type: `replaced-${index + 1}` }));
-    for (const envelope of replaced) await replacement.appendBytes(Buffer.from(replayLine(envelope)));
-    for (const name of await readdir(chunksDirOf(other.sessionsDir))) {
-      if (!/^[0-9a-f]{64}$/.test(name)) continue;
-      const target = join(chunksDirOf(sessionsDir), name);
-      await writeFile(target, await readFile(join(chunksDirOf(other.sessionsDir), name)), { mode: 0o600, flag: 'wx' });
-      await chmod(target, 0o600);
-    }
-    await replaceRoot(sessionsDir, await readFile(rootPathOf(other.sessionsDir)));
-    counter.lstats = 0;
-    await expect(store.readStream(sessionId, { afterSeq: 10 })).rejects.toThrow(/observed prefix/);
-    expect(counter.lstats).toBeGreaterThanOrEqual(24);
-    expect(await fixedStore(sessionsDir, tokenN, { fsOps }).readStream(sessionId)).toEqual({ entries: replaced, lastReadableSeq: 12 });
-  });
-
-  it('rejects a root shortened below the cached boundary while a new store accepts the retained prefix', async () => {
-    const { sessionsDir, store, lease } = await boundedSession(10);
-    const saved = await readFile(rootPathOf(sessionsDir));
-    for (let seq = 11; seq <= 20; seq++) await lease.append({ type: `record-${seq}` });
-    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 20), lastReadableSeq: 20 });
-    await lease.release();
-    await replaceRoot(sessionsDir, saved);
-    await expect(store.readStream(sessionId, { afterSeq: 20 })).rejects.toThrow(/rolled back/);
-    expect(await fixedStore(sessionsDir, tokenN).readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
-  });
-
-  it('refuses a chunk corrupted after another store verified it on a new store first read (SP-9)', async () => {
-    const { sessionsDir, store, lease } = await boundedSession(10);
-    expect(await store.readStream(sessionId)).toEqual({ entries: envelopes(1, 10), lastReadableSeq: 10 });
-    await lease.release();
-    const chunks = createSessionChunks({ directory: chunksDirOf(sessionsDir) });
-    let node = await chunks.readJson(JSON.parse(await readFile(rootPathOf(sessionsDir), 'utf8')).head);
-    while (node.previous !== null) node = await chunks.readJson(node.previous);
-    const path = join(chunksDirOf(sessionsDir), node.content.sha256);
-    const bytes = await readFile(path);
-    bytes[0] ^= 1;
-    await writeFile(path, bytes);
-    await expect(fixedStore(sessionsDir, tokenN).readStream(sessionId)).rejects.toThrow();
-  });
-});
-
-describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
-  const rootPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay.json`);
-  const chunksDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.chunks`);
+  const replayDirOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.replay`);
   const recordPathOf = (sessionsDir: string) => join(sessionsDir, `${sessionId}.json`);
   const digestThrough = (bytes: Buffer, seq: number) => {
     let end = 0;
     for (let line = 0; line < seq; line++) end = bytes.indexOf(10, end) + 1;
     return createHash('sha256').update(bytes.subarray(0, end)).digest('hex');
   };
-  // Fixture construction only: hundreds of appends through the store take
-  // seconds each run, so the chain under test is written directly in its chunk
-  // encoding (SP-11, SP-12) and published once; the store verifies it on acquisition.
-  async function filledChain(records: number) {
-    const { sessionsDir } = await fixtureDir();
-    await mkdir(chunksDirOf(sessionsDir), { recursive: true, mode: 0o700 });
-    await chmod(sessionsDir, 0o700);
-    await chmod(chunksDirOf(sessionsDir), 0o700);
-    const replayChunks = new Set<string>();
-    const writeChunk = async (bytes: Buffer) => {
-      const ref = { sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.length };
-      const path = join(chunksDirOf(sessionsDir), ref.sha256);
-      await writeFile(path, bytes, { mode: 0o600 });
-      replayChunks.add(path);
-      return ref;
-    };
-    const tagged = (value: unknown): unknown => value === null || typeof value !== 'object'
-      ? ['v', value]
-      : ['o', Object.entries(value as Record<string, unknown>).map(([key, child]) => [key, tagged(child)])];
-    let head: unknown = null, totalBytes = 0;
-    for (let seq = 1; seq <= records; seq++) {
-      const bytes = Buffer.from(replayLine(replayEnvelope(seq, { type: 'player_event', timestamp: seq }, 'coder')));
-      const content = await writeChunk(Buffer.concat([Buffer.from([0]), bytes]));
-      totalBytes += bytes.length;
-      const node = { previous: head, content, byteLength: bytes.length, totalBytes };
-      head = await writeChunk(Buffer.concat([Buffer.from([2]), Buffer.from(JSON.stringify(tagged(node)))]));
-    }
-    await writeFile(rootPathOf(sessionsDir), `${JSON.stringify({ kind: 'captain-session-replay', schemaVersion: 1, sessionId, head, byteLength: totalBytes })}\n`, { mode: 0o600 });
-    return { sessionsDir, replayChunks };
-  }
-  // Every filesystem call the store makes, by operation and path.
-  function recordingFs() {
-    const calls: Array<{ op: string; path: string }> = [];
-    const fsOps: Record<string, unknown> = {};
-    for (const op of ['access', 'chmod', 'link', 'lstat', 'mkdir', 'open', 'readdir', 'readFile', 'rename', 'rmdir', 'stat', 'unlink', 'writeFile'] as const) {
-      fsOps[op] = (path: unknown, ...rest: unknown[]) => {
-        calls.push({ op, path: String(path) });
-        return (nodeFs[op] as (...args: unknown[]) => unknown)(path, ...rest);
-      };
-    }
-    return { calls, fsOps };
-  }
-  async function progressWrites(records: number) {
-    const { sessionsDir, replayChunks } = await filledChain(records);
-    const { calls, fsOps } = recordingFs();
-    const lease = await fixedStore(sessionsDir, tokenO, { fsOps }).acquire(sessionId);
-    expect(lease.streamStatus()).toEqual({ lastReadableSeq: records, lastDurableSeq: records, incomplete: false });
-    const execution = executionProjection();
-    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
-    await lease.beginTurn({ input: 'long run', attemptId: attempt1, attemptedExecutionProjection: execution });
-    const writes: Array<Array<{ op: string; path: string }>> = [];
-    const chunkNames = async () => new Set((await readdir(chunksDirOf(sessionsDir))).filter((name) => /^[0-9a-f]{64}$/.test(name)));
-    for (let write = 1; write <= 4; write++) {
-      const before = await chunkNames();
-      await lease.append({ type: 'player_event', timestamp: records + write }, 'coder');
-      for (const name of await chunkNames()) if (!before.has(name)) replayChunks.add(join(chunksDirOf(sessionsDir), name));
-      calls.length = 0;
-      await lease.recordProgress({ snapshot: null });
-      writes.push([...calls]);
-    }
-    await lease.release();
-    return { writes, replayChunks };
-  }
-
-  it('reads no replay chunk in a progress write and makes as many file calls at 600 records as at 200 (SP-13)', async () => {
-    const short = await progressWrites(200);
-    const long = await progressWrites(600);
-    expect(short.replayChunks.size).toBeGreaterThanOrEqual(400);
-    expect(long.replayChunks.size).toBeGreaterThanOrEqual(1200);
-    for (const { writes, replayChunks } of [short, long]) {
-      for (const calls of writes) {
-        expect(calls.length).toBeGreaterThan(0);
-        expect(calls.filter(({ path }) => replayChunks.has(path))).toEqual([]);
-      }
-    }
-    expect(long.writes.map((calls) => calls.length)).toEqual(short.writes.map((calls) => calls.length));
-  }, 120_000);
 
   it('publishes the replay boundary and context a complete read derives across context changes, assets and a latch (SP-14)', async () => {
     const { sessionsDir } = await fixtureDir();
     let failRootPublication = false;
     const lease = await fixedStore(sessionsDir, tokenO, {
       fsOps: {
-        async rename(from: string, to: string) {
-          if (failRootPublication && to === rootPathOf(sessionsDir)) {
-            failRootPublication = false;
-            throw Object.assign(new Error('injected replay root publication failure'), { code: 'EIO' });
-          }
-          return rename(from, to);
+        async open(path: string, flags: any, mode?: number) {
+          const handle = await nodeFs.open(path, flags, mode);
+          if (!String(path).startsWith(replayDirOf(sessionsDir))) return handle;
+          return new Proxy(handle, { get(target, key) {
+            if (key === 'write' && failRootPublication) {
+              return async () => { failRootPublication = false; throw Object.assign(new Error('injected replay append failure'), { code: 'EIO' }); };
+            }
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          } });
         },
       },
     }).acquire(sessionId);
@@ -6630,20 +6410,19 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     await lease.release();
   });
 
-  it('refuses a progress write on a monolithic session and leaves its record unchanged (SP-14)', async () => {
+  it('refuses a lease on an earlier monolithic record and leaves it unchanged (DR-111)', async () => {
     const { sessionsDir } = await fixtureDir();
     await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
     await chmod(sessionsDir, 0o700);
     const recordBytes = JSON.stringify(freshUncertainRecord());
     await writeFile(recordPathOf(sessionsDir), recordBytes, { mode: 0o600 });
     await chmod(recordPathOf(sessionsDir), 0o600);
-    const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-    await expect(lease.recordProgress({ snapshot: null })).rejects.toThrow(/session context/);
+    await expect(fixedStore(sessionsDir, tokenO).acquire(sessionId)).rejects.toThrow(/storage schema 6 is unsupported/);
     expect(await readFile(recordPathOf(sessionsDir), 'utf8')).toBe(recordBytes);
-    await lease.release();
+    expect((await readdir(sessionsDir)).filter((name) => name.includes('.lock'))).toEqual([]);
   });
 
-  it('keeps the digest of the written bytes when a chunk is corrupted during the lease, and the next open refuses (SP-9)', async () => {
+  it('keeps the digest of the written bytes when a segment is corrupted during the lease, and the next open refuses (SP-9)', async () => {
     const { sessionsDir } = await fixtureDir();
     const lease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
     const execution = executionProjection();
@@ -6651,13 +6430,10 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
     await lease.beginTurn({ input: 'corrupted during the lease', attemptId: attempt1, attemptedExecutionProjection: execution });
     for (let timestamp = 1; timestamp <= 3; timestamp++) await lease.append({ type: 'player_event', timestamp }, 'coder');
     const written = await readFixtureReplay(rootPathOf(sessionsDir));
-    const chunks = createSessionChunks({ directory: chunksDirOf(sessionsDir) });
-    let node = await chunks.readJson(JSON.parse(await readFile(rootPathOf(sessionsDir), 'utf8')).head);
-    while (node.previous !== null) node = await chunks.readJson(node.previous);
-    const corruptedPath = join(chunksDirOf(sessionsDir), node.content.sha256);
+    const corruptedPath = join(replayDirOf(sessionsDir), (await readdir(replayDirOf(sessionsDir))).sort()[0]);
     const original = await readFile(corruptedPath);
     const corrupted = Buffer.from(original);
-    corrupted[corrupted.length - 2] ^= 1;
+    corrupted[corrupted.length - 3] ^= 1;
     await writeFile(corruptedPath, corrupted);
 
     await lease.recordProgress({ snapshot: null });
@@ -6666,7 +6442,7 @@ describe('writer-verified checkpoints (SP-9, SP-13, SP-14)', () => {
       seq, sha256: digestThrough(written, seq), incomplete: false,
     });
     await lease.release();
-    await expect(fixedStore(sessionsDir, tokenR).validate(sessionId)).rejects.toThrow();
+    expect((await fixedStore(sessionsDir, tokenR).validate(sessionId)).integrityValid).toBe(false);
 
     await writeFile(corruptedPath, original);
     expect(await fixedStore(sessionsDir, tokenThird).validate(sessionId)).toMatchObject({ integrityValid: true, resumable: true });

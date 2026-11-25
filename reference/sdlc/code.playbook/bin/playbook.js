@@ -95,27 +95,36 @@ export async function runPlaybookCli(options = {}) {
     });
   }
 
-  if (argv[0] === "migrate-session") {
+  // DR-111: the manual conversion of schema 7 and 8 sessions to schema 9;
+  // only this command loads the conversion module.
+  if (argv[0] === "sessions" && argv[1] === "upgrade") {
+    const usage = "Usage: playbook sessions upgrade [<dir>] [--recursive] [--dry-run] [--with <path>]...\n";
     try {
-      const { withPaths, rest } = extractWithFlags(argv.slice(1));
+      const { withPaths, rest } = extractWithFlags(argv.slice(2));
       if (rest.length === 1 && ["--help", "-h"].includes(rest[0])) {
-        stdout.write("Usage: playbook migrate-session <id> [--with <path>]...\n");
+        stdout.write(usage);
+        stdout.write("  Converts sessions saved by earlier versions in place and keeps their\n  former files in .legacy-sessions/ beside each sessions directory.\n  Quit every app and host using these sessions first.\n");
         return { code: 0 };
       }
-      if (rest.length !== 1 || !SESSION_ID_PATTERN.test(rest[0])) throw new Error("expected one canonical session UUID: playbook migrate-session <id> [--with <path>]...");
-      const sessionsDir = options.sessionStore === undefined ? resolveLaunchSessionsDir({
-        userConfigPath, overlayPaths: withPaths, env, homeDir: home,
-        ...(options.sessionsDir !== undefined ? { sessionsDir: options.sessionsDir } : {}),
-        preparePrimary: false,
-      }) : options.sessionStore.sessionsDir;
-      const store = options.sessionStore ?? createCaptainSessionStore({ sessionsDir, env, homeDir: home });
-      const result = await store.migrate(rest[0]);
-      stdout.write(`playbook: ${result.migrated ? 'migrated' : 'already portable'} session ${rest[0]} in ${sessionsDir} (${result.manifest.state})\n`);
-      if (result.manifest.state === 'history-only') stderr.write(`playbook: ${result.manifest.reason}\n`);
-      for (const reason of result.reasons) stderr.write(`playbook: ${reason}\n`);
-      return { code: 0 };
+      const flags = new Set(rest.filter((value) => value.startsWith("-")));
+      const positional = rest.filter((value) => !value.startsWith("-"));
+      const unknown = [...flags].filter((flag) => !["--recursive", "--dry-run"].includes(flag));
+      if (unknown.length > 0 || positional.length > 1) throw new Error(`unexpected arguments ${JSON.stringify([...unknown, ...positional.slice(1)])}\n${usage}`);
+      const root = positional[0] !== undefined
+        ? resolve(options.cwd ?? process.cwd(), positional[0])
+        : options.sessionStore?.sessionsDir ?? resolveLaunchSessionsDir({
+          userConfigPath, overlayPaths: withPaths, env, homeDir: home,
+          ...(options.sessionsDir !== undefined ? { sessionsDir: options.sessionsDir } : {}),
+          preparePrimary: false,
+        });
+      const { upgradeSessions, formatUpgradeReport } = await import("./session-upgrade.js");
+      const dryRun = flags.has("--dry-run");
+      const results = await upgradeSessions({ root, recursive: flags.has("--recursive"), dryRun, storeOptions: { env, homeDir: home } });
+      const report = formatUpgradeReport(results, { dryRun });
+      stdout.write(report.text);
+      return { code: report.failed > 0 ? COMPOSITION_FAILURE_EXIT_CODE : 0 };
     } catch (error) {
-      stderr.write(`playbook migrate-session: ${errorMessage(error)}\n`);
+      stderr.write(`playbook sessions upgrade: ${errorMessage(error)}\n`);
       return { code: COMPOSITION_FAILURE_EXIT_CODE };
     }
   }
@@ -293,7 +302,6 @@ export async function runPlaybookCli(options = {}) {
     interactiveArgs.cwd ?? ".",
   );
   let resolvedSessionsDir;
-  let migrateDefaultStore = false;
   if (options.sessionStore === undefined) {
     try {
       resolvedSessionsDir = resolveLaunchSessionsDir({
@@ -305,7 +313,6 @@ export async function runPlaybookCli(options = {}) {
           ? { sessionsDir: options.sessionsDir }
           : {}),
         preparePrimary: interactiveArgs.sessionId === undefined,
-        onDefault: () => { migrateDefaultStore = !(typeof env.SPEX_HOME === 'string' && env.SPEX_HOME.trim() !== ''); },
         onNotice: (line) => stderr.write(line),
       });
       // PBCLI-78: listing validates the locator but never consumes the store.
@@ -324,7 +331,7 @@ export async function runPlaybookCli(options = {}) {
   let selectedRecord;
   if (interactiveArgs.sessionId !== undefined) {
     try {
-      store = await createInteractiveStore(options, env, home, resolvedSessionsDir, migrateDefaultStore, stderr);
+      store = await createInteractiveStore(options, env, home, resolvedSessionsDir);
       await store.prepare();
       const validation = await store.validate(interactiveArgs.sessionId);
       if (!validation.resumable) throw new Error(validation.reasons.join('; '));
@@ -481,7 +488,7 @@ export async function runPlaybookCli(options = {}) {
   }
 
   try {
-    store ??= await createInteractiveStore(options, env, home, resolvedSessionsDir, migrateDefaultStore, stderr);
+    store ??= await createInteractiveStore(options, env, home, resolvedSessionsDir);
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -820,7 +827,7 @@ function optionValue(argv, index, name) {
   return value;
 }
 
-async function createInteractiveStore(options, env, home, sessionsDir, migrateDefault, stderr) {
+async function createInteractiveStore(options, env, home, sessionsDir) {
   const store = (
     options.sessionStore ??
     createCaptainSessionStore({
@@ -833,11 +840,6 @@ async function createInteractiveStore(options, env, home, sessionsDir, migrateDe
         : {}),
     })
   );
-  if (migrateDefault && options.sessionStore === undefined) {
-    const migrated = await store.migrateLegacyDefault();
-    if (migrated.migrated.length > 0) stderr.write(`playbook: migrated ${migrated.migrated.length} sessions from ${migrated.sourceDir}\n`);
-    for (const skipped of migrated.skipped) stderr.write(`playbook: preserved legacy session ${skipped.sessionId} in ${migrated.sourceDir}: ${skipped.reason}\n`);
-  }
   return store;
 }
 
@@ -976,7 +978,7 @@ function helpText({
     "  playbook run (--continue | --session <id>) [reply]",
     "  playbook run --session <id> --retry-uncertain",
     "  playbook run --session <id> --discard-uncertain",
-    "  playbook migrate-session <id> [--with <path>]...",
+    "  playbook sessions upgrade [<dir>] [--recursive] [--dry-run] [--with <path>]...",
     "  playbook --help",
     "",
     `Default config: ${userConfigPath}`,

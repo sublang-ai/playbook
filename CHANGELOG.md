@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A session is one manifest file and a replay log** ([DR-111](specs/decisions/111-a-session-is-a-manifest-and-a-replay-log.md)): sessions are stored in schema 9 — `<session-id>.json` holding the whole logical manifest, replaced atomically, and append-only replay segments in `<session-id>.replay/`, sealed at 1 MiB and at each settled turn. Validation and lease acquisition open one file per replay segment, and checkpoint publication reuses the verified replay digest and asset inventory. A sealed-segment list that outgrows the manifest is stored in verified blob parts. Each append is still synced before it is acknowledged; a line a crash left half-written is truncated by the next lease.
+- **Breaking:** the store reads only schema 9. Sessions saved in schema 8 (chunks) or schema 7 (monolithic) are listed as unsupported and left unchanged; convert them by hand with `playbook sessions upgrade [<dir>] [--recursive] [--dry-run]`, which keeps the former files in `.legacy-sessions/` beside the sessions directory. Quit every app and host using the sessions, and upgrade every device that syncs them, first.
+
+### Removed
+
+- `playbook migrate-session`, `migrate()` and `migrateLegacyDefault()` on the shared store, the reading of schema 2–6 records and desktop sidecars, and the startup import of the former `${XDG_STATE_HOME:-~/.local/state}/playbook/sessions` default. Migrate such sessions with an earlier Playbook version before converting them.
+
 ## [19.1.0] - 2026-11-18
 
 The [19.1.0-rc.8 release notes](https://github.com/sublang-ai/playbook/releases/tag/v19.1.0-rc.8) preserve the prerelease history.

@@ -63,20 +63,19 @@ async function fixture() {
 }
 
 describe('real CLI over an application-owned home',()=>{
-  it('continues the application session among migrated desktop history and unmigrated CLI records',async()=>{
+  it('continues the application session among unsupported earlier records',async()=>{
     const f=await fixture();
     const legacyId=randomUUID();const legacy=await f.store.read(f.id);const legacyPath=join(f.store.sessionsDir,`${legacyId}.json`);
     await writeFile(legacyPath,JSON.stringify({...legacy,sessionId:legacyId}),{mode:0o600});
     const historyId=randomUUID();const sidecar=join(f.store.sessionsDir,`${historyId}.spex.json`);
     await writeFile(sidecar,JSON.stringify({v:1,id:historyId,createdAt:Date.now(),endedAt:Date.now()}),{mode:0o644});
-    await f.store.migrate(historyId,{sourcePath:sidecar,cwd:f.cwd});
     const result=await f.invoke(['run','--continue','--json','Continue the application conversation.']);
     expect(result.code,result.stderr).toBe(0);expect(JSON.parse(result.stdout)).toEqual({sessionId:f.id,reply:'Portable CLI answer.'});
-    expect(result.stderr).toContain(historyId);expect(result.stderr).toContain('requires explicit migration');
+    expect(result.stderr).toContain(legacyId);expect(result.stderr).toContain('storage schema 6 is unsupported');expect(result.stderr).not.toContain(historyId);
     const resumed=await f.store.read(f.id);expect(resumed.snapshot.sequences.turn).toBe(2);
     const calls=(await readFile(f.env.PLAYBOOK_TEST_PROVIDER_LOG,'utf8')).trim().split('\n').map(line=>JSON.parse(line));expect(calls[0].resume).toBe('fixture-continuation');
     const fresh=await f.invoke(['run','--json','Create another session.']);expect(fresh.code,fresh.stderr).toBe(0);expect(JSON.parse(fresh.stdout).sessionId).not.toBe(f.id);
-    const refused=await f.invoke(['run','--session',legacyId,'Cannot resume before migration.']);expect(refused.code).toBe(1);expect(refused.stderr).toContain(`playbook migrate-session ${legacyId}`);
+    const refused=await f.invoke(['run','--session',legacyId,'Cannot resume an earlier format.']);expect(refused.code).toBe(1);expect(refused.stderr).toContain('storage schema 6 is unsupported');
     expect(JSON.parse(await readFile(legacyPath,'utf8')).schemaVersion).toBe(6);
   });
   it('seeds a mixed lineup under both credentials and continues its own session',async()=>{
@@ -94,16 +93,20 @@ describe('real CLI over an application-owned home',()=>{
     expect((await f.store.read(id)).snapshot.sequences.turn).toBe(2);
     const calls=(await readFile(f.env.PLAYBOOK_TEST_PROVIDER_LOG,'utf8')).trim().split('\n').map(line=>JSON.parse(line));expect(calls.at(-1).resume).toBe('fixture-continuation');
   });
-  it('migrates an explicitly configured directory through the executable without provider work',async()=>{
-    const f=await fixture();const target=join(f.root,'override');await mkdir(target,{mode:0o700});const id=randomUUID();
-    const legacy=await f.store.read(f.id);const source=JSON.stringify({...legacy,sessionId:id});await writeFile(join(target,`${id}.json`),source,{mode:0o644});
-    await writeFile(join(target,`${id}.records.jsonl`),await readFixtureReplay(join(f.store.sessionsDir,`${f.id}.records.jsonl`)),{mode:0o644});
+  it('converts the configured directory through the executable without provider work (DR-111)',async()=>{
+    const f=await fixture();const target=join(f.root,'override');await mkdir(target,{mode:0o700});
+    // A schema-7 monolithic session: the logical manifest whole beside its replay.
+    const manifest=await f.store.readManifest(f.id);const id=f.id;
+    const replay=await readFixtureReplay(join(f.store.sessionsDir,`${f.id}.records.jsonl`));
+    const source=JSON.stringify(manifest);await writeFile(join(target,`${id}.json`),source,{mode:0o644});
+    await writeFile(join(target,`${id}.records.jsonl`),replay,{mode:0o644});
     const overlay=join(f.root,'overlay.yaml');await writeFile(overlay,`sessions: ${JSON.stringify(target)}\n`);
-    const result=await f.invoke(['migrate-session',id,'--with',overlay]);expect(result.code,result.stderr).toBe(0);expect(result.stdout).toContain(`migrated session ${id} in ${target}`);
-    const migrated=createSessionStore({sessionsDir:target});expect((await migrated.validate(id)).resumable).toBe(true);
-    expect(await readFile(join(f.root,'local','migrations',id,'inputs','0'),'utf8')).toBe(source);
+    const result=await f.invoke(['sessions','upgrade','--with',overlay]);expect(result.code,`${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(target);expect(result.stdout).toContain(`${id} schema 7: converted`);
+    const converted=createSessionStore({sessionsDir:target});expect((await converted.validate(id)).resumable).toBe(true);
+    expect(await converted.readManifest(id)).toEqual(manifest);
+    expect(await readFile(join(f.root,'.legacy-sessions',id,`${id}.json`),'utf8')).toBe(source);
     await expect(readFile(f.env.PLAYBOOK_TEST_PROVIDER_LOG)).rejects.toMatchObject({code:'ENOENT'});
-    expect((await f.store.readManifest(f.id)).schemaVersion).toBe(7);
   });
   it.each(['digest','incomplete','context','path','module'])('rejects %s before either CLI imports registry code',async(kind)=>{
     const f=await fixture();const file=join(f.store.sessionsDir,`${f.id}.json`);const stream=join(f.store.sessionsDir,`${f.id}.replay.json`);
