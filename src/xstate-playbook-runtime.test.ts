@@ -4309,7 +4309,7 @@ describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
   });
 });
 
-describe('host-owned player continuation (DR-030)', () => {
+describe('host-owned player continuation (DR-032)', () => {
   it('selects and advances the shared token before the matching traces', async () => {
     const tokens = new Map<string, string>([['coder', 'parent-token']]);
     const operations: string[] = [];

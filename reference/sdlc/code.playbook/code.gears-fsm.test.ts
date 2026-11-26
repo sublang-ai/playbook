@@ -119,7 +119,7 @@ const RETIRED_COMMIT_RESPONSE_INSTRUCTION =
 describe('CODE Source, GEARS, and FSM agreement', () => {
   it('preserves every authored instruction and quoted relay', () => {
     expect(checkSourceGearsContract(source, gearsText)).toEqual([]);
-    // DR-102 retired the DR-081 prior-phase relay: no record is frozen and
+    // DR-102 retired the prior-phase relay: no record is frozen and
     // no later task reads one.
     for (const text of [source, gearsText]) {
       expect(text).not.toContain('previous-phase-review');

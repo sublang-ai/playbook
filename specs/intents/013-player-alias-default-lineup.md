@@ -43,7 +43,8 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
 - It embeds an unsettled design decision (see below) that warrants
   deliberate specification before code.
 - Touched specs span three packages (PBCODE, PBRT, PLAYBOOK) and two DRs
-  (DR-004 §2 baked-binding plus DR-006 §2.4 base-inheritance);
+  (DR-004 §2 baked-binding plus the CODE config-composition decision's
+  base-inheritance, since replaced by [DR-009](../decisions/009-generic-playbook-cli-and-registry.md));
   touched code spans the composer, the adapter, the FSM, and the runtime,
   with `.js`/`.d.ts` siblings and four test files.
 - The layout and model-default refresh are independently reviewable from the
@@ -88,7 +89,7 @@ and DR-004 §2 (Addendum A2):
 
 - [x] IR-013 doc and its `map.md` row.
 - [x] Alias-representation decision recorded — DR-004 §2 amendment (Addendum A2); no DR-008, no new DR map row.
-- [x] [DR-006](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
+- [x] CODE config-composition decision (since replaced by [DR-009](../decisions/009-generic-playbook-cli-and-registry.md)) amended by adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
 - [x] `specs/packages/playbook-code.md` — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
 - [x] `specs/packages/playbook-code.md` — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
 - [x] `specs/packages/playbook-code.md` — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
@@ -122,7 +123,7 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    Composer carries a top-level `layout` block (overlay → composed, inherited
    from a base config like `theme`); PBCODE-16/17 + PBCODE-18 amended; the
    structural `layout` block is added to PBCODE-7's template shape.
-   DR-006 §2.4 is amended to add `layout` to the base-inheritable list (today
+   The CODE config-composition decision is amended to add `layout` to the base-inheritable list (today
    closed to `theme` + the captain-judge fields), with a `map.md` refresh.
    Template gains
    `layout: { window: { columns: 174, rows: 49 }, columnWeights: [4, 6, 6] }`.

@@ -23,7 +23,7 @@ The project-local item boundary and its preservation across scaffold refreshes a
 ## Tasks
 
 1. **Align Spex and the record corpus.** _[done]_
-   One commit: upgrade the project dependency and lockfile to Spex 3, replace every cross-intent name or citation with self-contained historical wording, audit all 40 decision records under the refreshed References rule, relocate the internal links and delete the emptied References sections in DR-017, DR-019, DR-022, and DR-030, verify the map remains exact, run project-local `spex lint` plus the complete repository test suite, and close this intent.
+   One commit: upgrade the project dependency and lockfile to Spex 3, replace every cross-intent name or citation with self-contained historical wording, audit all 40 decision records under the refreshed References rule, relocate the internal links and delete the emptied References sections in DR-019, DR-022, and two since-deleted decision records, verify the map remains exact, run project-local `spex lint` plus the complete repository test suite, and close this intent.
 
 ## Verification
 

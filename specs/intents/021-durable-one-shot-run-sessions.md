@@ -9,7 +9,7 @@ Done
 
 ## Intent
 
-Implement DR-014 end to end: parked-session snapshot export/restore on the linked runtimes, a persisted one-shot session store, and a `playbook run resume` surface that prints the pending Boss question and finishes a parked run with one more invocation.
+Implement the durable one-shot run-session decision (its snapshot capability since kept by [DR-031](../decisions/031-shared-captain-session-front-ends.md)) end to end: parked-session snapshot export/restore on the linked runtimes, a persisted one-shot session store, and a `playbook run resume` surface that prints the pending Boss question and finishes a parked run with one more invocation.
 
 ## Deliverables
 
@@ -22,8 +22,8 @@ Implement DR-014 end to end: parked-session snapshot export/restore on the linke
 
 ## Tasks
 
-1. **Author DR-014 and the spec surface.** _[done]_
-   DR-014, this iteration, the `slc/link.md` parked-session snapshot section, playbook-runtime-45/playbook-runtime-46, amended playbook-cli-18/playbook-cli-20, and new playbook-cli-22/playbook-cli-23/playbook-cli-24 precede code changes.
+1. **Author the decision and the spec surface.** _[done]_
+   The decision, this iteration, the `slc/link.md` parked-session snapshot section, playbook-runtime-45/playbook-runtime-46, amended playbook-cli-18/playbook-cli-20, and new playbook-cli-22/playbook-cli-23/playbook-cli-24 precede code changes.
 2. **Add the snapshot contract to the shared runtime module.** _[done]_
    `src/runtime.ts` gains `PlaybookRuntimeSnapshot`, `PlaybookPendingBossQuestion`, and the optional `exportSnapshot` / `restore` members with compiled siblings.
 3. **Implement export/restore in the linked runtimes.** _[done]_

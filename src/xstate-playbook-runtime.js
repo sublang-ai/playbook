@@ -6346,7 +6346,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             let builtActor;
             builtActor = createActor(provided, {
                 input: machineInput(boundOptions, requireSession()),
-                // DR-014 §1: a restore rehydrates the persisted machine snapshot;
+                // DR-031 §7: a restore rehydrates the persisted machine snapshot;
                 // XState derives context/value from it and ignores `input` then.
                 ...(machineSnapshot === undefined
                     ? {}
@@ -6546,7 +6546,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // stays callable. The caller rethrows its original failure. A snapshot
         // start failure skips the disposal trace — the parked generation was
         // never re-bound in this process, so its persisted snapshot stays
-        // authoritative (DR-014 §2).
+        // authoritative (DR-031 §8).
         async function cleanupFailedStart(cause, options) {
             let finalState;
             if (options.emitDisposal && actor) {
@@ -6869,7 +6869,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 ...(receipt.disposition === 'executed' ? { run: receipt.run } : {}),
             };
         }
-        // DR-014 / DR-038: restore and adoption share one transactional snapshot
+        // DR-031 §7 / DR-038: restore and adoption share one transactional snapshot
         // start. Adoption deliberately differs at the public boundary so a host
         // can feature-detect permission to bind a retained generation to a fresh
         // engagement identity; the runtime-visible schema, playbook, and actor
@@ -7437,13 +7437,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         initInFlight = undefined;
                 }
             },
-            // DR-014 §1 / DR-031 §5 / PBRT-45: JSON-safe capture of a parked
+            // DR-031 §5, §7 / PBRT-45: JSON-safe capture of a parked
             // session, including one already-started suspended nested call.
             // Defined only at a safe capture point — initialized, not disposing
             // or disposed, no active public boundary, and the actor quiescent with
             // status `active`.
             exportSnapshot: (checkpoint) => exportRuntimeSnapshot(checkpoint?.child ? { child: checkpoint.child } : undefined),
-            // DR-014 §1 / PBRT-45: alternative to `init` that rehydrates an
+            // DR-031 §7 / PBRT-45: alternative to `init` that rehydrates an
             // exported snapshot under the same immutable session identity.
             // Emits no `session.started`, transition trace, or human status —
             // the session already started; the next public boundary continues

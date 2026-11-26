@@ -764,7 +764,7 @@ export interface PlaybookBossExchange {
   readonly reply: string;
 }
 
-// DR-014 §1 / DR-031 §5 / DR-032: JSON-safe capture of a parked or nested-call
+// DR-031 §5, §7 / DR-032: JSON-safe capture of a parked or nested-call
 // suspended session. `machine` is the opaque XState persisted snapshot;
 // pending Boss questions and a suspended call are first-class so a
 // host never has to reconstruct durable ownership from presentation records.
@@ -891,7 +891,7 @@ export interface PlaybookRetainedGenerationMetadata {
 
 export interface PlaybookRuntime {
   init(session: PlaybookSession): Promise<void>;
-  // DR-014 §1 optional durable-session capability: a runtime implements
+  // DR-031 §7 optional durable-session capability: a runtime implements
   // both members or neither. `exportSnapshot` returns undefined outside
   // a safe capture point (parked quiescence between public boundaries);
   // `restore` is an alternative to `init` that rehydrates the exported

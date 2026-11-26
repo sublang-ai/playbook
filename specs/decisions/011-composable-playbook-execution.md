@@ -8,8 +8,7 @@
 Accepted.
 [DR-029](029-session-scoped-conversational-captain.md) amends §4: the Captain is placed outside the engagement stack as an always-present controller, the manual-slash-selection sentence is superseded by the absent-from-path `switch`, and leaf-only Boss input is recast as leaf-only *delivery* — the Captain receives every turn.
 The stack semantics themselves stay intact.
-[DR-030](030-shared-mapped-player-continuity.md) amends §4 and the player-isolation consequence: runtime frames remain distinct, while exact same-name nested roles inherit player bindings and continuation from their active ancestor path.
-[DR-032](032-explicit-roles-session-players.md) supersedes that inheritance with explicit role-to-player bindings while retaining rejection of simultaneous calls to one player.
+[DR-032](032-explicit-roles-session-players.md) amends §4: runtime frames remain distinct, child roles resolve explicit role-to-player bindings, and simultaneous calls to one player still reject.
 [DR-032](032-explicit-roles-session-players.md) also advances the linked trace schema from `2` to `3` for distinct role and player identities while retaining this decision's nested causality fields.
 [DR-040](040-outcome-authority-effect-reconciliation.md) adds same-worktree observation coordination around delegated calls while preserving the declared concurrent zero-only proposal cohort and its blind join.
 [DR-067](067-parallel-proposals-through-the-shared-factory.md) amends §1: the shared engine, not a linked runtime of DECIDE's own, interprets the parallel proposal pair.
@@ -100,8 +99,7 @@ This is an intentional pre-1.0 breaking change.
 The Playbook Captain shell shall treat one Boss-selected engagement and its nested descendants as one active call stack.
 Each frame shall own a distinct runtime instance and immutable playbook-session UUID.
 Only the top frame receives Boss input and owns visible player panes.
-For each child role, the shell shall inherit the nearest same-name ancestor binding or use the child's namespaced binding when no ancestor declares that role.
-The root engagement shall own continuation for those effective bindings, so child return preserves mapped conversations and root replacement starts fresh ([DR-030](030-shared-mapped-player-continuity.md)).
+Each child role shall resolve its explicit role-to-player binding, and the logical Captain session shall own continuation for those players ([DR-032](032-explicit-roles-session-players.md)).
 
 Opening a child shall push a frame whose session records `rootSessionId`, `parentSessionId`, `parentCallId`, and depth.
 Child terminal completion shall pop and dispose that frame, then resume and drive its parent in the same live Captain turn.

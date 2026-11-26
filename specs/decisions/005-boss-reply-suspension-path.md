@@ -53,8 +53,7 @@ The next Boss turn shall reach the active leaf runtime, and only the selected pe
 ### 5. Player continuity
 
 The resumed prompt shall always carry the explicit question and answer so behavior remains deterministic across adapters.
-Where the player result supplied a continuation token, the resumed call may additionally continue that backend conversation under [DR-010](010-playbook-session-tracing-and-resume.md) and [DR-030](030-shared-mapped-player-continuity.md).
-Under [DR-032](032-explicit-roles-session-players.md), the host resolves that continuation from the explicit session player rather than same-role inheritance.
+Where the player result supplied a continuation token, the resumed call may additionally continue that backend conversation under [DR-010](010-playbook-session-tracing-and-resume.md), with the host resolving that continuation from the explicit session player under [DR-032](032-explicit-roles-session-players.md).
 
 ## Consequences
 

@@ -6,8 +6,8 @@
 ## Status
 
 Accepted.
-[DR-030](030-shared-mapped-player-continuity.md) amends §3: a composing host may supply the continuation authority shared by mapped roles across nested runtime frames.
-[DR-032](032-explicit-roles-session-players.md) supersedes that root-engagement authority with a logical-Captain-session ledger keyed by explicitly bound player id and preserves a prior token when an aborted or error result omits a replacement.
+Amended by [DR-031](031-shared-captain-session-front-ends.md).
+[DR-032](032-explicit-roles-session-players.md) amends §3: a logical-Captain-session ledger keyed by explicitly bound player id supplies continuation across nested runtime frames and preserves a prior token when an aborted or error result omits a replacement.
 [DR-032](032-explicit-roles-session-players.md) also advances trace schema `2` to `3`, replacing its overloaded player identity with a required local `roleId` and optional resolved `playerId`.
 [DR-040](040-outcome-authority-effect-reconciliation.md) advances governed transition evidence to trace schema `4` and adds an `unresolved-effect` host disposal result outside the `terminal` variant while preserving session identity and causality.
 
@@ -27,7 +27,7 @@ Only the latter is safe for resume [[1]].
 
 ### 1. Session identity
 
-A playbook session is one `PlaybookRuntime.init` through `dispose` lifecycle.
+A playbook session is one logical lifecycle from its first `PlaybookRuntime.init` to its final settlement, and it may span host processes under [DR-031](031-shared-captain-session-front-ends.md) §8.
 
 The shared runtime contract shall expose `PlaybookSession`, carrying a non-empty `sessionId`, the stable `playbookId`, and the runtime's `PlaybookPorts`.
 `PlaybookRuntime.init` shall accept that object.
@@ -94,7 +94,7 @@ Resume tokens are opaque credentials for backend conversations; observers that p
 The shared contract shall add `PlayerCallOptions { resume: string | false }`, require it on every `PlaybookPorts.callPlayer` call, and add optional `resumeToken` to `PlayerResult`.
 
 Each runtime shall use a bounded continuation store from resolved local player id to the latest non-empty resume token.
-The store is runtime-owned unless a composing host supplies the frame's view of its root engagement store ([DR-030](030-shared-mapped-player-continuity.md)).
+The store is runtime-owned unless a composing host supplies the frame's view of its logical Captain session's continuation ledger ([DR-032](032-explicit-roles-session-players.md)).
 For the first call to a fresh binding, the runtime shall pass `resume: false`; omission is not permitted because a host may otherwise auto-resume an older conversation.
 For a later call, the runtime shall pass the exact stored token.
 

@@ -49,7 +49,7 @@ runtime, CLI, or published-surface change.
 - [x] `src/cross-references.test.ts` — the cross-references-3 / cross-references-4 acceptance case
   over the real tree, plus fixture cases for each rule. Unit coverage of the
   slug helper stays unspecified per [[meta-21](../meta.md#meta-21)].
-- [x] [DR-002](../decisions/002-in-page-xstate-visualizer.md)
+- [x] The in-page XState visualizer decision record (since deleted)
   — two links into a sibling `cligent` checkout repointed at its published
   URL, matching how DR-004, DR-009, and DR-027 already cite cligent.
 - [x] `package.json` `check:links` script and the `CHANGELOG.md` entry.
@@ -58,7 +58,7 @@ runtime, CLI, or published-surface change.
 
 1. **Land the XREF package, the checker, and its tests.** _[done]_
    One commit: spec items, `scripts/check-links.mjs`, the vitest case,
-   `map.md` rows, `package.json`, and `CHANGELOG.md`, plus the DR-002 link
+   `map.md` rows, `package.json`, and `CHANGELOG.md`, plus that record's link
    repointing needed to make the check pass on a clean checkout.
    No CI change — `pnpm test` already runs in the `playbook` job, so the
    check rides the existing suite rather than taking its own job the way

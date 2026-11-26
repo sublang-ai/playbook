@@ -8,7 +8,6 @@
 Accepted.
 [DR-021](021-inline-agent-settings.md) replaces the former profile model with inline agent settings.
 [DR-029](029-session-scoped-conversational-captain.md) places the compiled session Captain outside the engagement stack and owns ordinary-language routing and outcome-grounded replies.
-[DR-030](030-shared-mapped-player-continuity.md) adds exact same-role inheritance and root-owned continuation to nested frames.
 [DR-032](032-explicit-roles-session-players.md) supersedes the per-playbook fallback roster and same-role inheritance with top-level session players and explicit role bindings.
 [DR-040](040-outcome-authority-effect-reconciliation.md) refines §1 by separating persisted plain-JSON workflow options from current-host runtime-construction capabilities and refines §5 so CODE, REVIEW, and DECIDE metrics consume accepted outcomes while replies consume canonical structured settlements.
 [DR-050](050-pull-request-delivery.md) extends §6's starter enablement to BRANCH and PR.
@@ -41,7 +40,7 @@ Missing or invalid modules, id mismatches, duplicate ids or effective commands, 
 
 The launcher shall create the static tmux roster as the union of each configured playbook's namespaced `<id>-<role>` fallback players because tmux can change visibility but cannot create or reconfigure player identities after startup [[1]].
 Distinct playbook declarations shall remain distinct configured players even when their agent settings are equal.
-At runtime, a nested exact same-role child shall inherit the nearest ancestor's effective host player and root-owned continuation, while an unmatched child role shall use its own namespaced fallback under [DR-030](030-shared-mapped-player-continuity.md).
+At runtime, each nested child role shall resolve its explicit role binding under [DR-032](032-explicit-roles-session-players.md).
 Registry identity metadata and visible panes shall follow these effective bindings rather than the unused fallback.
 
 ### 4. Active visibility

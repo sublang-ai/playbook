@@ -577,7 +577,7 @@ export declare function inferSemanticValueShapes(machine: AnyStateMachine, autho
  * under the slc/link.md contract. The factory provides every actor kind the
  * machine declares — `player`, `script`, `captain`, and nested `playbook`
  * (literal and dynamic) — and implements the full runtime lifecycle including
- * the optional parked-session snapshot capability (DR-014) and the retained-
+ * the optional parked-session snapshot capability (DR-031 §7) and the retained-
  * snapshot adoption capability (DR-038).
  *
  * Scope: flat single-region machines — every root state's

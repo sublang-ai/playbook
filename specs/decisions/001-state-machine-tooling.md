@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Visualization scope narrowed by [DR-033](033-sketch-view-retirement.md): this repository defines and runs machines; live drawing belongs to the host application.
+Amended by [DR-033](033-sketch-view-retirement.md).
 
 ## Context
 

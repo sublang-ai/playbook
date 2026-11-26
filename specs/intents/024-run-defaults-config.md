@@ -9,7 +9,7 @@ Done
 
 ## Intent
 
-Implement DR-017: `playbook run` takes default player and captain agent specs from a top-level `run` block in the user config when flags are absent, so a tuned one-shot lineup no longer needs retyping on every invocation.
+Implement the run-defaults decision (since retired by [DR-031](../decisions/031-shared-captain-session-front-ends.md)): `playbook run` takes default player and captain agent specs from a top-level `run` block in the user config when flags are absent, so a tuned one-shot lineup no longer needs retyping on every invocation.
 
 ## Deliverables
 
@@ -20,8 +20,8 @@ Implement DR-017: `playbook run` takes default player and captain agent specs fr
 
 ## Tasks
 
-1. **Author DR-017 and the spec surface.** _[done]_
-   DR-017, this iteration, amended playbook-cli-19, and new playbook-cli-28/playbook-cli-29/playbook-cli-30 precede code changes.
+1. **Author the decision and the spec surface.** _[done]_
+   The decision, this iteration, amended playbook-cli-19, and new playbook-cli-28/playbook-cli-29/playbook-cli-30 precede code changes.
 2. **Load run defaults in the one-shot host.** _[done]_
    `loadRunDefaults` over the resolved user config in `bin/run.js`, the per-role and captain precedence chains in the first-run bind, launcher forwarding of the injected config path in `bin/playbook.js`, the amended run help text, and the template's commented `run` block.
 3. **Pin acceptance tests.** _[done]_
