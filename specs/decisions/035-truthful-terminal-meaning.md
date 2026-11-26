@@ -6,8 +6,8 @@
 ## Status
 
 Accepted.
-Extends [DR-029](029-session-scoped-conversational-captain.md)'s evidence contract to the terminal meaning a compiled workflow publishes about itself.
-[DR-040](040-outcome-authority-effect-reconciliation.md) preserves the authored-final-state rule by representing unresolved-effect abandonment as a host disposal result outside the `terminal` variant rather than an FSM outcome.
+Amends [DR-029](029-session-scoped-conversational-captain.md).
+Amended by [DR-037](037-terminal-result-meaning.md), [DR-102](102-code-reviews-the-intent-once.md).
 
 ## Context
 
@@ -17,6 +17,7 @@ Extends [DR-029](029-session-scoped-conversational-captain.md)'s evidence contra
 - CODE routed three arms into one `done` state described as completion after REVIEW found no unsettled findings — exact approval, an authored REVIEW abort or failure, and a terminal REVIEW result that does not prove approval.
 - Dismissing a parked nested REVIEW consequently drove CODE to `done` and announced "completed after REVIEW found no unsettled findings", while the `review-failed` status and its abort error remained visible only to a caller that reads run output.
 - DECIDE already compiles the same authored outcomes onto two final states, so the divergence is a per-workflow accident rather than a contract, and no compiler rule forbids the overload.
+- This extends the evidence contract of [DR-029](029-session-scoped-conversational-captain.md) to the terminal meaning a compiled workflow publishes about itself.
 
 ## Decision
 
@@ -33,6 +34,7 @@ Extends [DR-029](029-session-scoped-conversational-captain.md)'s evidence contra
 4. **Declared machine output is unchanged.**
    A terminal result contract keeps deriving its status and fields from typed context, so a caller that does read run output sees exactly what it saw before.
    Splitting a state changes only what the workflow publishes about itself.
+   Unresolved-effect abandonment is a host disposal result outside the `terminal` variant, not an FSM outcome, so it publishes no final-state meaning ([DR-040](040-outcome-authority-effect-reconciliation.md)).
 
 Considered and rejected: retaining one final state and widening its description to cover every outcome.
 A description true of both approval and failure carries no outcome at all, so the Boss-facing fact degrades into an announcement that something ended, which is the same failure of meaning stated more carefully.
@@ -40,6 +42,6 @@ A description true of both approval and failure carries no outcome at all, so th
 ## Consequences
 
 - CODE gains a terminal review-failure state, so a REVIEW failure — including a Boss dismissal of the nested review — is announced as a failure instead of as a clean success.
-- Conformance gains a terminal-meaning check, which is what keeps this defect class from returning at the next compile; REVIEW and DECIDE already satisfy it.
+- Conformance gains a terminal-meaning check, which is what keeps this defect class from returning at the next compile; DECIDE already satisfies it, and REVIEW's bounded rounds end at their own `unsettled` failure terminal ([DR-102](102-code-reviews-the-intent-once.md)).
 - Hosts that quote the published description need no change: the correction lands inside the artifact whose published meaning was wrong.
 - A workflow's terminal state id becomes outcome-bearing, so a trace consumer grouping by state id sees a distinct id for an outcome that previously shared one.

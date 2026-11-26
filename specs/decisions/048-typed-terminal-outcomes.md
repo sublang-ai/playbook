@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amended by [DR-102](102-code-reviews-the-intent-once.md).
 
 ## Context
 
@@ -22,6 +23,7 @@ The machine state is the outcome, and the compiler already decides at compile ti
 - A completed child's public call result carries its reached final state's `terminal` record — state id, kind, and description — as runtime-owned data read from the artifact, never from an agent reply.
 - The nested-call bridge delivers a success terminal through the caller's `playbook` actor; a failure terminal rejects through its existing error path with an `Error` carrying that same public result, so the caller's first `onError` arm accepts an authored abort, an authored error, or a completed child whose terminal kind is `failure`.
 - `onDone` proves successful bridge delivery without a declared child failure, not satisfaction of every caller-owned domain condition: the caller still enforces any explicit source-authored acceptance or relay predicates on the delivered output, without inventing predicates from callee implementation details or reclassifying the child's compiled terminal kind.
+- REVIEW's bounded rounds end at a distinct `unsettled` failure terminal that its callers route through this path ([DR-102](102-code-reviews-the-intent-once.md)).
 - An artifact whose final states declare no kind keeps today's delivery: its completion resolves the actor and carries no `terminal` record.
 - No agent call is added: the kind is fixed at compile time and read at run time from the reached state.
 

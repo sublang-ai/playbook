@@ -6,13 +6,12 @@
 ## Status
 
 Accepted.
-[DR-040](040-outcome-authority-effect-reconciliation.md) requires an adopted retained generation to preserve and reenter an unresolved reconciliation state, prevents adopted work from resuming or exposing ordinary actions until every outstanding effect boundary resolves, forbids duplicate-effect replay from an unresolved generation, and makes explicit unresolved abandonment clear the root's prior retained generation rather than preserve a dismissal candidate.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amends [DR-034](034-durable-failure-retry-continuity.md).
+Amended by [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md).
 
 ## Context
 
-Playbook authors describe only the normal procedure; GEARS sources carry no interruption states, and universal concerns are synthesized below the authored text rather than written per playbook — Boss-question suspension reaches every captain-invoking state that way per [DR-005](005-boss-reply-suspension-path.md), and a parked failure already retries from the persisted machine snapshot per [DR-034](034-durable-failure-retry-continuity.md).
+Playbook authors describe only the normal procedure; GEARS sources carry no interruption states, and universal concerns are synthesized below the authored text rather than written per playbook — Boss-question suspension reaches every captain-invoking state that way per [DR-005](005-boss-reply-suspension-path.md), and a parked failure already retries from durable state per [DR-034](034-durable-failure-retry-continuity.md), which this decision extends to every retained pre-terminal generation.
 Every quiescent state is durably persisted and provably re-enterable: restore depends on it per [DR-010](010-playbook-session-tracing-and-resume.md) and [DR-031](031-shared-captain-session-front-ends.md).
 Resumption nevertheless exists only while an engagement lives: when a root completes on a reported failure, is dismissed, or a structural player change forces a fresh session per [DR-032](032-explicit-roles-session-players.md), the final runtime snapshot is dropped with its frame, and re-entry must pass through the procedure's initial state.
 An initial state's outcome vocabulary describes only the normal first phase (CODE: a direct commit or a new intent record), so a continuation input has no truthful classification: adjudication must stretch an outcome over the continuation report, re-entry into mid-procedure loops varies with the acting model's report style, and each interruption costs one Boss turn per remaining unit of work plus hand-written recovery instructions.
@@ -25,7 +24,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 
 1. **Adoption is an optional public runtime capability.**
    Like the optional control-surface pair, a runtime may implement snapshot adoption — constructing a fresh runtime from a retained snapshot under a new engagement — and the shared linked-runtime factory implements it for every artifact it hosts.
-   A runtime without the capability retains nothing and advertises nothing, and the shell degrades exactly as it does for a capability-less control surface; DECIDE's bespoke runtime remains without it.
+   A runtime without the capability retains nothing and advertises nothing, and the shell degrades exactly as it does for a capability-less control surface.
 
 2. **Retention captures the last unfinished pre-terminal generation, atomically with its nested stack.**
    At each settlement — abort settlement included per [DR-036](036-coherent-abort-settlement.md) — the Captain session record retains, per enabled root playbook id, the latest quiescent generation that carries unfinished work: the root frame's snapshot together with every nested descendant frame's snapshot and the call bridges between them, as one indivisible generation.
@@ -36,6 +35,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
    An existing root whose turn-start stack is fully capability-bearing but whose previous generation cannot be captured safely still leaves a boundary that requires that previous candidate unsettled.
    The linked artifact declares its unfinished final-state ids as link-time metadata beside the resumable-state registry — mechanical metadata, not procedure text.
    A later settlement of the same root playbook replaces the generation in place; clean completion clears it.
+   Host settlement of lost progress clears only the retained generations containing a runtime that owns the changed evidence, never attributing session-level evidence to a workflow merely because it was active earlier ([DR-072](072-host-owned-interrupted-work-settlement.md)).
 
 3. **A retained generation may cross sessions under an exact structural envelope and single-transfer ownership.**
    A fresh session's launch may adopt the retained generation from its predecessor: the newest settled session record with the same working directory, read under the store's lease discipline; adoption moves the generation into the adopting record and clears it at the source in the same guarded exchange, so no generation is adopted twice.
@@ -46,7 +46,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
    A nominated predecessor that disappears or is superseded by another newest valid boundary during authoritative reread likewise declines adoption without retrying or falling through.
    Adoption validates an exact envelope: working directory, root playbook id and its complete catalog-entry structure — registry module identity, manifest command, options, and role set — and the artifact schema of every frame in the generation.
    Deterministic envelope drift declines adoption and starts with an empty map rather than blocking unrelated fresh work.
-   A referenced player's own structural members may differ; such a role resumes with a fresh conversation, while model, effort, and fast mode retune exactly as ordinary continuation allows.
+   A referenced player's own structural members may differ; such a role resumes with a fresh conversation, while tuning changes exactly as ordinary continuation allows.
 
 4. **The Captain-session player ledger is the sole conversation authority.**
    Adoption never restores the retained snapshots' role-token projections: a shared player may have advanced through another playbook after capture, so the adopting runtime binds each role from the current ledger, and a role the ledger cannot supply starts a fresh conversation and re-grounds from the procedure's externalized effects.
@@ -59,7 +59,10 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
    Arbitration is fixed: headless uncertain retry precedes all host work; a live engagement's advertised actions precede adoption; adoption precedes fresh start; explicit Boss intent overrides, and a bare continuation request for a playbook with a retained generation selects resumption.
    An adopted state advances through its class's existing affordances — a Boss question awaits its answer, a failure advertises retry per [DR-034](034-durable-failure-retry-continuity.md), a suspended parent continues through its restored child — with no initial-state classification anywhere.
 
-7. **Durable facts belong to the world, not to conversations.**
+7. **Unresolved effects fence adoption.**
+   An adopted generation preserves and reenters an unresolved reconciliation state; adopted work neither resumes nor exposes ordinary actions until every outstanding effect boundary resolves, no duplicate-effect replay runs from an unresolved generation, and explicit unresolved abandonment clears the root's prior retained generation rather than preserve a dismissal candidate ([DR-040](040-outcome-authority-effect-reconciliation.md)).
+
+8. **Durable facts belong to the world, not to conversations.**
    A procedure whose effects are externalized (commits, records, files) resumes losslessly; this is the stated authoring principle rather than a per-procedure corner case.
 
 ## Consequences
@@ -73,4 +76,3 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 - Cross-adapter resumption cannot restore a player's conversation; fidelity rests on externalized effects, per the stated authoring principle.
 - A retained generation can be stale against a world that moved on; the resumed state's own first act observes the world, so staleness surfaces through normal review and failure paths rather than silently.
 - Like uncertain retry, resumption may duplicate external effects attempted in the interrupted span, and the shell's warnings say so; the runtime's at-most-once apply semantics are unchanged.
-- Extends [DR-034](034-durable-failure-retry-continuity.md) from the failure state to every retained pre-terminal generation; supersedes nothing.

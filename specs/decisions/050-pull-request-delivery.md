@@ -6,10 +6,8 @@
 ## Status
 
 Accepted.
-Amends [DR-044](044-dev-planning-workflow.md): DEV's planning result gains the `code via pull request` and `decide then code via pull request` outcomes, and on those outcomes DEV calls `branch` before, and `pr` after, its existing `code` or `decide`-then-`code` path.
-Amends [DR-009](009-generic-playbook-cli-and-registry.md) §6 as extended by DR-044: the starter config also enables BRANCH and PR, binding both `coder` roles to the seeded `dev.coder` player.
-Amends [DR-016](016-script-actors-and-optimize-pass.md): a script blockquote may carry a `<placeholder>` relaying a runtime value the machine retains.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: PR's GEARS carry no `## Optimizations` section, so conformance recognises the five script items by their `Captain shall run:` clause.
+Amends [DR-009](009-generic-playbook-cli-and-registry.md), [DR-016](016-script-actors-and-optimize-pass.md), [DR-044](044-dev-planning-workflow.md).
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -35,7 +33,7 @@ BRANCH and PR join CODE, REVIEW, DECIDE, and DEV as maintained workflows compile
   That amends DR-016's placeholder-free script text: a target the command cannot otherwise name is the one runtime value a script may carry, and an absent value leaves the quoted placeholder so the step refuses rather than acting unbound.
   The URL is Coder-reported text, so it binds as a single-quoted shell literal rather than being interpolated into the command: interpolated raw, a reported `$(…)` would both execute and expand to whatever makes the comparison succeed, turning the guard into the vulnerability it exists to prevent.
   `PR-2` runs in `PR-1`'s own turn with no suspension before it, `PR-5` only watches, and `PR-7` runs on the default branch where the merged pull request is no longer inferable, so none of the three carries the identity.
-  The maintained PR artifact is compiled with the optimize pass, so those five items are `script` states with no agent call, no adjudication, and no governance boundary; conformance fails a maintained PR artifact whose GEARS `## Optimizations` section does not list exactly those five items as `captain → script` or whose FSM invokes any other actor for them.
+  The maintained PR artifact is compiled with the optimize pass, so those five items are `script` states with no agent call, no adjudication, and no governance boundary; conformance recognises those five items by their `Captain shall run:` clause, with no `## Optimizations` section ([DR-108](108-compiled-gears-is-a-spec-package.md)), and fails a maintained PR artifact where they are not script states or whose FSM invokes any other actor for them.
   An unoptimized compile is a valid GEARS package whose mechanical steps run through the host Captain's own tools — the tool restriction is source-owned and applies only to a routing-only Captain — but it is not a release form.
 - The check wait polls `gh pr checks` while it reports no checks, for about a minute, so checks registering after creation or after a push are not mistaken for absence; a pull request whose repository still reports no checks then counts as passed, and otherwise `gh pr checks --watch --fail-fast` decides [[1]].
   The fix publication pushes and then waits until the pull request's head equals the local HEAD [[4]], so a check result for the previous head is never watched.

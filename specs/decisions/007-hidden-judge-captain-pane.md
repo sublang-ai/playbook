@@ -5,14 +5,15 @@
 
 ## Status
 
-Accepted; question presentation superseded by [DR-070](070-captain-relays-player-questions.md).
+Accepted.
+Amended by [DR-070](070-captain-relays-player-questions.md).
 
 ## Context
 
 Linked workflows use `callJudge` for classification and adjudication, whose JSON replies are control-plane data rather than Boss-facing prose.
 Displaying those replies would duplicate the runtime's human-readable status and expose machine contracts on the Boss pane.
 The generic Playbook Captain shell now owns every workflow's host bridge, while CODE contains no direct tmux-play adapter under [DR-004](004-link-code-fsm-to-playbook-runtime.md).
-Hiding a judge reply also removes any incidental view of a player's clarifying question, so the runtime must present that question explicitly.
+Hiding a judge reply also removes any incidental view of a player's clarifying question, so that question must reach Boss another way.
 
 ## Decision
 
@@ -25,8 +26,9 @@ The runtime shall identify adjudication prompts as hidden control work and shall
 ### 2. Runtime-owned visible presentation
 
 The runtime shall remain the sole composer of Boss-facing workflow progress, so raw judge JSON never reaches a visible pane.
-On entry to a Boss-reply wait, it shall emit the full untruncated `<player> asks: <question>` as Captain speech and then the rider-less routing marker `◆ awaiting Boss reply · <resumeStateId> · <player> · <sourceItem>` [[playbook-runtime-3](../packages/playbook-runtime.md#playbook-runtime-3)].
-Telemetry may retain the verbatim pending question for non-tmux-play hosts.
+On entry to a Boss-reply wait, it shall emit the full untruncated `<asker> asks: <question>` and the routing marker `◆ awaiting Boss reply · <resumeStateId> · <asker> · <sourceItem>`, both marked as question status [[playbook-runtime-3](../packages/playbook-runtime.md#playbook-runtime-3)].
+Captain receives the full question and explains it briefly in plain language, and the shell shows that reply in place of the marked lines ([DR-070](070-captain-relays-player-questions.md)).
+Telemetry may retain the verbatim pending question for hosts.
 
 ### 3. Scope
 
@@ -37,5 +39,5 @@ It introduces no CODE-specific host type, adapter, or port beyond the generic co
 
 - The Boss pane carries human-readable workflow status without duplicate judge JSON.
 - Every enabled workflow receives the same hidden-judge behavior through the generic shell.
-- A suspended player's full question remains visible even though its adjudication reply is hidden.
+- A suspended player's question reaches Boss through Captain even though its adjudication reply is hidden.
 - The durable session-Captain conversation is not contaminated by fresh judge calls.

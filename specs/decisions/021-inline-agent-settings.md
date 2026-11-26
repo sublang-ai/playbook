@@ -6,11 +6,8 @@
 ## Status
 
 Accepted.
-Supersedes the top-level `profiles` map and the agent-block `profile` key of [DR-009](009-generic-playbook-cli-and-registry.md).
-[DR-032](032-explicit-roles-session-players.md) moves inline agent blocks to identity-bearing top-level players and explicit role bindings; they do not regain profile indirection.
-Amended by [DR-075](075-subagent-model-is-tuning.md) in §1: an agent block carries a fourth tuning field, `subagentModel`.
-
-Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
+Amends [DR-009](009-generic-playbook-cli-and-registry.md).
+Amended by [DR-032](032-explicit-roles-session-players.md), [DR-075](075-subagent-model-is-tuning.md), [DR-103](103-independent-ultracode-tuning.md).
 
 ## Context
 
@@ -31,7 +28,7 @@ Duplication across two or three agents is cheaper than an indirection layer plus
 ### 1. Agent settings are inline
 
 The top-level `profiles` map and the agent-block `profile` key are removed.
-Every `captain` and top-level `players.<player-id>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, `fastMode`, and `permissions` as needed.
+Every `captain` and top-level `players.<player-id>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, `fastMode`, `subagentModel` ([DR-075](075-subagent-model-is-tuning.md)), `subagentEffort`, `ultracode` ([DR-103](103-independent-ultracode-tuning.md)), and `permissions` as needed.
 A scalar therefore has exactly one meaning — an adapter shorthand — and an agent block is self-contained, so a reader learns an agent's full settings from the block in front of them and retuning one player cannot move another.
 
 ### 2. The seeded config inlines its lineup
@@ -50,8 +47,8 @@ Migration is idempotent: a migrated config carries nothing to migrate on the nex
 
 ### 4. Preserved scope
 
-- The original release did not change the `playbooks` model, launcher-owned keys, roster generation, or readiness; [DR-032](032-explicit-roles-session-players.md) subsequently changes those surfaces for explicit bindings.
-- [DR-031](031-shared-captain-session-front-ends.md) subsequently retired the separate `run` defaults block and run-only agent grammar; [DR-032](032-explicit-roles-session-players.md) gives both front ends the same inline Captain, top-level player, and role-binding blocks.
+- The `playbooks` model, roster generation, and role bindings belong to [DR-032](032-explicit-roles-session-players.md).
+- Both front ends share the same inline Captain, top-level player, and role-binding blocks ([DR-031](031-shared-captain-session-front-ends.md), [DR-032](032-explicit-roles-session-players.md)).
 - Agent-block schema and per-agent fields stay exactly as the installed cligent tmux-play loader defines and normalizes them.
 
 ## Consequences

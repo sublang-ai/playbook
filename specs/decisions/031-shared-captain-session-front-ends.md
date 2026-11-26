@@ -5,14 +5,9 @@
 
 ## Status
 
-Amended by [DR-073](073-durable-step-progress.md): step progress replaces whole-turn replay and saved continuation points in every host.
-
 Accepted.
-Amends [DR-010](010-playbook-session-tracing-and-resume.md).
-[DR-032](032-explicit-roles-session-players.md) amends the shared configuration and durable record: active structure remains restorable, explicit session players and current model and effort replace the frozen namespaced lineup, and runtime snapshot schema `3` replaces schema `2` player identity.
-[DR-040](040-outcome-authority-effect-reconciliation.md) extends the leased uncertain record with governed-call receipts, deferred-operation checkpoints, and unresolved-abandonment settlement, with whole-turn replay since removed by [DR-073](073-durable-step-progress.md).
-[DR-041](041-working-directory-aware-continuation.md) amends §4 so bare headless continuation prefers the newest session stored for the invoking working directory before an explicit global fallback.
-Amended by [DR-049](049-portable-session-contract.md): embedding-host lifecycle parity.
+Amends [DR-010](010-playbook-session-tracing-and-resume.md), [DR-015](015-per-run-agent-tuning.md), [DR-024](024-runtime-engine-provisioning.md).
+Amended by [DR-032](032-explicit-roles-session-players.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-041](041-working-directory-aware-continuation.md), [DR-042](042-shared-session-store-and-replay-stream.md), [DR-049](049-portable-session-contract.md), [DR-073](073-durable-step-progress.md).
 
 ## Context
 
@@ -31,10 +26,11 @@ The session Captain remains outside the working-playbook stack and is not disgui
 
 ### 2. One configuration
 
-A new headless session shall seed, migrate, overlay, validate, and resolve the same top-level `captain` and `playbooks` configuration as an interactive session.
+A new headless session shall seed, migrate, overlay, validate, and resolve the same top-level `captain`, `players`, and `playbooks` configuration as an interactive session ([DR-032](032-explicit-roles-session-players.md)).
 The separate top-level `run:` block and the run-only captain, player, and playbook-option overrides are retired.
 Headless mode shall honor the resolved agent settings and playbook options while treating presentation-only layout, theme, and notification fields as inert.
-Under [DR-032](032-explicit-roles-session-players.md), ordinary continuation shall retain the stored absolute working directory and structural projection while resolving current model and effort, so a config edit cannot silently replace an active conversation or security envelope.
+Both front ends provision configured filesystem `playbooks.<id>.from` modules through this one launch path ([DR-024](024-runtime-engine-provisioning.md)), and both accept `--with` overlays ([DR-015](015-per-run-agent-tuning.md)).
+Under [DR-032](032-explicit-roles-session-players.md), ordinary continuation shall retain the stored absolute working directory and structural projection while resolving current tuning, so a config edit cannot silently replace an active conversation or security envelope.
 
 ### 3. Equivalent Boss turns and replies
 
@@ -45,22 +41,23 @@ Operational status and diagnostics shall use stderr, and JSON mode shall expose 
 
 ### 4. Durable complete sessions
 
-A fresh launch through either front end shall create one public logical session id; a fresh interactive launch shall expose that id through operational output and atomically persist the initialized settled session under the XDG state directory with user-only permissions before accepting Boss input.
-Before agent work for every submitted non-empty turn in either front end, the host shall persist an uncertain write-ahead record; after the turn settles, including chat and turns after a working playbook completes, it shall atomically persist the complete logical Captain session before presenting the reply.
+A fresh launch through either front end shall create one public logical session id; a fresh interactive launch shall expose that id through operational output and atomically persist the initialized settled session in the shared session store ([DR-042](042-shared-session-store-and-replay-stream.md)) with user-only permissions before accepting Boss input.
+Before agent work for every submitted non-empty turn in either front end, the host shall persist an uncertain write-ahead record, which also carries governed-call receipts, deferred-operation checkpoints, and unresolved-abandonment settlement ([DR-040](040-outcome-authority-effect-reconciliation.md)); after the turn settles, including chat and turns after a working playbook completes, it shall atomically persist the complete logical Captain session before presenting the reply.
 The record shall contain the compiled Captain runtime snapshot, durable-conversation state and recovery journal, every engagement frame and runtime snapshot, pending nested-call identities, Captain-session player continuation ledger, counters, structural and attempted execution projections, and absolute working directory.
-`playbook run --continue [reply]` shall select the latest resumable session, while `--session <id>` shall select one explicitly; either shall read stdin when the reply is absent.
-A per-session exclusive lock shall reject concurrent writers, and a crash after a turn starts but before its replacement snapshot is committed shall leave an explicit uncertain record rather than make the prior boundary silently replayable.
+`playbook run --continue [reply]` shall select the newest resumable session stored for the invoking working directory, falling back explicitly to the globally newest ([DR-041](041-working-directory-aware-continuation.md)), while `--session <id>` shall select one explicitly; either shall read stdin when the reply is absent.
+A per-session exclusive lock shall reject concurrent writers, and a crash after a turn starts but before its replacement snapshot is committed shall leave an explicit uncertain record rather than make the prior boundary silently replayable; reopening it restores the saved step position and reports before Boss chooses further work, never replaying a whole turn ([DR-073](073-durable-step-progress.md)).
+Embedding hosts share this session lifecycle through Playbook's portable session contract ([DR-049](049-portable-session-contract.md)).
 
 ### 5. Suspended nested-call restoration
 
-Runtime snapshot schema version 3 shall represent an already-started suspended nested call with its call id, source state, target playbook, exact handed-off text, child session id, and trace ownership.
+The runtime snapshot shall represent an already-started suspended nested call with its call id, source state, target playbook, exact handed-off text, child session id, and trace ownership.
 Restoring that boundary shall reconnect the parent promise actor to the existing child frame without invoking `callPlaybook` again and without re-emitting the start boundary.
 The eventual child result shall emit the one matching finish boundary and resume the restored parent exactly once.
-Under [DR-032](032-explicit-roles-session-players.md), the next major shall reject runtime snapshot schemas `1` and `2` before binding rather than reinterpret their player identities.
+Runtime snapshot schemas older than the player identity of [DR-032](032-explicit-roles-session-players.md) are rejected before binding rather than reinterpreted.
 
 ### 6. Public transition
 
-The positional registry form `playbook run <from>`, `playbook run resume`, run-only binding flags, and the `run:` configuration block are removed together in the next major release.
+The positional registry form `playbook run <from>`, `playbook run resume`, run-only binding flags, and the `run:` configuration block are removed.
 An external playbook remains headlessly callable by enabling its registry in the shared config and sending its effective `/command` through Captain.
 No separate direct-execution command is introduced by this decision.
 
@@ -85,4 +82,4 @@ A host that has persisted a parked snapshot may end its process without calling 
 - Headless CODE can call REVIEW through the real engagement stack instead of stopping at a synthetic suspended result.
 - Cross-process continuation becomes a host-level Captain capability rather than a special case for one parked runtime.
 - The nested runtime bridge, shared and bespoke linked runtimes, Captain shell, CLI, configuration, documentation, and release gates all require coordinated changes.
-- The released direct-run surface changes incompatibly, so the implementation requires a new major version.
+- The direct-run surface changed incompatibly, in a major version.

@@ -6,10 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-019](019-shared-linked-runtime-factory.md): the `script` actor implementation moved from each emitted module into the shared linked-runtime factory — the linker emits no script executor inside a factory-backed module, and `node:child_process` is imported by the shared engine rather than per artifact.
-Amended by [DR-050](050-pull-request-delivery.md): a script blockquote may carry a `<placeholder>` relaying a runtime value the machine retains, because a command whose target is ambient state the run does not own cannot otherwise stay bound to it; the placeholder occupies a single-quoted shell word and binds as a single-quoted literal, so reported text stays data, and the script still reads no conversation and produces no prose.
-Amended by [DR-106](106-a-script-step-records-its-output.md): the `playbook.script` telemetry event additionally carries the step's duration and a bounded tail of the command's output, for hosts and people only — the output still enters no machine context, prompt, or trace.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: provenance is no longer an appended `## Optimizations` section — a script item is its own provenance, because `text2gears` never emits one.
+Amended by [DR-019](019-shared-linked-runtime-factory.md), [DR-050](050-pull-request-delivery.md), [DR-106](106-a-script-step-records-its-output.md), [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -26,30 +23,31 @@ That needs an execution primitive the definitions do not have: a state kind that
 
 ### 1. A fourth actor kind: `script`
 
-- GEARS gains an optimizer-introduced item kind, written `Captain shall run:` with a blockquoted static POSIX shell script and exactly two `Results:` guards — first zero exit status, second nonzero ([slc/text2gears.md "Script behaviors"](../../slc/text2gears.md#script-behaviors-optimizer-introduced)).
+- GEARS gains an optimizer-introduced item kind, written `Captain shall run:` with a blockquoted POSIX shell script and exactly two `Results:` guards — first zero exit status, second nonzero ([slc/text2gears.md "Script behaviors"](../../slc/text2gears.md#script-behaviors-optimizer-introduced)).
   `text2gears` itself never emits the kind; only the optimize pass introduces it.
+  The script is static apart from `<placeholder>`s relaying runtime values the machine retains; each occupies a single-quoted shell word and binds as a single-quoted literal, so reported text stays data, and the script still reads no conversation and produces no prose ([DR-050](050-pull-request-delivery.md)).
 - `gears2fsm` compiles a script item to a `script` actor invocation with typed `ScriptInput` (`stateId`, `sourceItem`, `command`, `result`) and discriminated `ScriptOutput` carrying `exitStatus` ([slc/gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup)).
   Script states are not agent-invoking: no `needsBossReply`, no resume registration.
-- The linker provides the `script` actor implementation inside the emitted module: `sh -c` execution in the runtime's working directory (`PlaybookRuntimeOptions.cwd`, defaulting to the process working directory), mechanical exit-status-to-guard mapping, no port call, no adjudication, abort by child termination ([slc/link.md "Script execution"](../../slc/link.md#script-execution)).
+- The shared linked-runtime factory provides the `script` actor implementation, so the linker emits no executor inside a factory-backed module ([DR-019](019-shared-linked-runtime-factory.md)): `sh -c` execution in the runtime's working directory (`PlaybookRuntimeOptions.cwd`, defaulting to the process working directory), mechanical exit-status-to-guard mapping, no port call, no adjudication, abort by child termination ([slc/link.md "Script execution"](../../slc/link.md#script-execution)).
 
 ### 2. Observability without new trace types
 
-- Script execution emits one status line (`Executed script for <stateId> (exit <status>).`) and one telemetry event under the `playbook.script` topic.
-- No `*.call.*` trace pair is added: trace consumers ([DR-010](010-playbook-session-tracing-and-resume.md), as advanced to schema `3` by [DR-032](032-explicit-roles-session-players.md)) are unaffected; the FSM transition trace plus the `playbook.script` topic record the step.
-- Script stdout/stderr never enter machine context, prompts, or traces; a script's effect is on the environment plus its exit status.
+- Script execution emits one status line (`Executed script for <stateId> (exit <status>).`) and one telemetry event under the `playbook.script` topic, carrying the command as executed, the step's duration, and a bounded tail of its output for hosts and people ([DR-106](106-a-script-step-records-its-output.md)).
+- No `*.call.*` trace pair is added: trace consumers ([DR-010](010-playbook-session-tracing-and-resume.md)) are unaffected; the FSM transition trace plus the `playbook.script` topic record the step.
+- Script stdout/stderr never enter machine context, guards, prompts, status lines, or traces; a script's effect is on the environment plus its exit status.
 
 ### 3. The `optimize` pass definition
 
 - A new definition `slc/optimize.md` (gears → gears, format-preserving) rewrites eligible items into script items: mechanical, static-command, environment-only effects, two-way exit-status outcome.
   Uncertain items stay unchanged — the pass is conservative by construction, and an unoptimized playbook has identical observable behavior.
   A rewrite preserves the source's exact environmental predicate and effect, including resource location: being inside an ancestor's Git working tree does not satisfy an explicit requirement for the current directory to be its own repository root.
-- Provenance is explicit: rewritten items are listed in one appended `## Optimizations` section.
+- A script item is its own provenance: the pass appends no `## Optimizations` section, and nothing requires or preserves one ([DR-108](108-compiled-gears-is-a-spec-package.md)).
 - The definition ships in the package beside the other three (`./slc/*` export) and is compilable by `slc slc` like any phase definition; whether and when a compile runs it is the driver's concern (slc `-O`), not the definitions'.
 
 ### 4. Contract impact
 
 - No change to `@sublang/playbook/runtime`: no new port, no new runtime method.
-  The `script` actor is runtime-internal; `node:child_process` is imported by an emitted module only when its FSM declares a script state.
+  The `script` actor is runtime-internal; `node:child_process` is imported by the shared engine rather than per artifact.
 - `PlaybookRuntimeOptions` for a script-bearing playbook gains an optional `cwd` knob, emitted per playbook by the linker as with other per-run options.
 
 ## Consequences

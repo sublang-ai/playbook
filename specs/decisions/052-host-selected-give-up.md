@@ -6,8 +6,8 @@
 ## Status
 
 Accepted.
-Amends [DR-051](051-host-selected-runtime-recovery.md) in one scope: a host may also decide a give-up turn, whose result phase the shell settles itself instead of through the closing-reply call.
-Amended by [DR-063](063-failures-explain-themselves.md): the shell's give-up control carries `standing` like every advertised action.
+Amends [DR-051](051-host-selected-runtime-recovery.md).
+Amended by [DR-063](063-failures-explain-themselves.md).
 
 ## Context
 
@@ -23,7 +23,7 @@ An exit that works only while the provider is healthy is not an exit.
 
 ## Decision
 
-- The shell publishes one Boss-facing control of its own between turns, disjoint from the leaf's advertised runtime actions: a give-up while a root is engaged, and nothing while idle or while a turn is active.
+- The shell publishes one Boss-facing control of its own between turns, disjoint from the leaf's advertised runtime actions and carrying its standing like every advertised action ([DR-063](063-failures-explain-themselves.md)): a give-up while a root is engaged, and nothing while idle or while a turn is active.
 - A host may select it as the next Boss turn's decision, exactly as it may select a runtime action. The turn enters decided, reaches the shell through the controller port as `dismiss`, and every validation that selection carries is unchanged.
 - A give-up turn makes no model call. Its decision is the host's, and its closing reply is the shell's own deterministic rendering of that settlement, presented through the one presentation seam under the same single-attempt rule. The durable conversation learns of the turn through the catch-up this shell already defines, never through a second memory channel.
 - A give-up clears the root's retained generation instead of retaining it. An ordinary dismissal preserves the turn-start candidate so the work can resume; a Boss who gave up is not offered it back on their next message.

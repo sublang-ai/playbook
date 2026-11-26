@@ -6,16 +6,14 @@
 ## Status
 
 Accepted.
-Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR remains the accepted long-term direction, but it no longer gates dropping the project-local install and `npx` consumption story — this record's provisioning mechanism is the chosen near-term gate, delivered as a 3.x minor.
-Amended by [DR-031](031-shared-captain-session-front-ends.md): provisioning now applies to configured filesystem `playbooks.<id>.from` modules through the launch path shared by interactive and headless Captain sessions, not a positional direct-run module.
-
-Amended by [DR-110](110-managed-artifact-environments.md): extend environment preparation to external compilers and managed manifests, while retaining this legacy no-manifest provisioning path.
+Amends [DR-023](023-data-only-machine-ir.md).
+Amended by [DR-031](031-shared-captain-session-front-ends.md), [DR-110](110-managed-artifact-environments.md).
 
 ## Context
 
 - A compiled thin artifact is code: its FSM imports `xstate` and its runtime module imports `@sublang/playbook/xstate-runtime`, both resolved by Node walking up from the **artifact's** directory.
   A globally installed host launches fine but fails at artifact load in any directory without a project-local install ([DR-023](023-data-only-machine-ir.md)).
-- The Boss judged the full data-only IR redesign too heavy a prerequisite for the near-term goal; the goal is only that `npm install -g @sublang/playbook` plus a configured filesystem playbook work from either CLI front end anywhere.
+- The Boss judged the full data-only IR redesign too heavy a prerequisite for the near-term goal, so [DR-023](023-data-only-machine-ir.md) stays the long-term direction while this mechanism is the near-term gate for dropping the project-local install and `npx` consumption story; the goal is only that `npm install -g @sublang/playbook` plus a configured filesystem playbook work from either CLI front end anywhere.
 - npm-mediated fixes are rejected for cause:
   - `npm link` maintains a global link registry, writes manifests, and its links are silently removed by later `npm install` runs in the same tree;
   - a default registry `npm install` at run time needs the network, drifts from the host's engine version, and npm's directory walk-up can mutate an unrelated parent `package.json` — the exact bug that recently bit slc's demo docs.
@@ -26,6 +24,7 @@ Amended by [DR-110](110-managed-artifact-environments.md): extend environment pr
 
 - Before either front end imports a configured filesystem `playbooks.<id>.from` artifact, the shared launch path probes resolution of both engine specifiers — `xstate` and `@sublang/playbook/xstate-runtime` — with the artifact's own path as resolution parent (`module.createRequire(artifactPath).resolve(...)`).
 - If both resolve, the command touches nothing: a project-local installation is always authoritative, whatever its version — [DR-022](022-runtime-compatibility-contract.md)'s `spec.compat` check remains the arbiter of genuine incompatibility.
+- This is the legacy path for an artifact without a managed environment manifest; managed bundles and external compilers prepare their environments through the shared artifact-environment service of [DR-110](110-managed-artifact-environments.md).
 
 ### 2. Provision by direct symlink from the host's own tree
 
@@ -68,7 +67,7 @@ Amended by [DR-110](110-managed-artifact-environments.md): extend environment pr
 
 ## Consequences
 
-- The original global-CLI provisioning behavior shipped additively; [DR-031](031-shared-captain-session-front-ends.md) carries its later front-end unification in a major release without changing the engine-link mechanism.
+- Both front ends provision through the one launch path of [DR-031](031-shared-captain-session-front-ends.md) with the same engine-link mechanism.
 - Provisioned runs execute under exactly the host's engine, so the remaining artifact/engine skew surface is the one [DR-022](022-runtime-compatibility-contract.md) already checks by declaration.
 - Machine-local symlinks are the accepted cost; the dangling-link diagnostic and the never-overwrite rule bound the damage, and copy-mode remains open under a future record.
 - [DR-023](023-data-only-machine-ir.md) work is deferred, not abandoned: when a data-only artifact format lands, provisioning simply stops triggering for it (nothing to resolve), so the mechanisms compose rather than conflict.

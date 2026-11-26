@@ -5,8 +5,8 @@
 
 ## Status
 
-Accepted as amended by [DR-031](031-shared-captain-session-front-ends.md).
-[DR-032](032-explicit-roles-session-players.md) supersedes the frozen-lineup and no-continuation-overlay rules for an ordinary settled reopen: current model, effort, and fast mode plus opening overlays may retune a stable player id, instruction and permissions remain structurally frozen, and uncertain retry retains its attempted settings.
+Accepted.
+Amended by [DR-031](031-shared-captain-session-front-ends.md), [DR-032](032-explicit-roles-session-players.md).
 
 ## Context
 
@@ -20,14 +20,14 @@ Trying a stronger reviewer model, dropping the Coder's effort for a cheap smoke 
 
 ### 1. Agent tuning uses the shared config
 
-Interactive and headless Captain sessions shall obtain each agent's adapter, model, effort, fast mode, and permissions from the same inline top-level config and optional launch overlays.
-An ordinary settled continuation shall preserve the session's structural settings while re-reading current model, effort, and fast-mode tuning plus opening overlays under [DR-032](032-explicit-roles-session-players.md); an uncertain retry shall use its exact attempted settings, and neither path shall accept run-only binding flags.
+Interactive and headless Captain sessions shall obtain each agent's adapter, tuning, and permissions from the same inline top-level config and optional launch overlays.
+An ordinary settled continuation shall preserve the session's structural settings while re-reading current tuning plus opening overlays under [DR-032](032-explicit-roles-session-players.md); an uncertain retry shall use its exact attempted settings, and neither path shall accept run-only binding flags.
 
 ### 2. `--with` config overlays for a configured session launch
 
 The generic interactive or new-headless-session launch path has a repeatable `--with <path>` flag.
-Each named file is a fragment in the same top-level `profiles`/`playbooks` format as the global config ([[playbook-cli-4](../packages/playbook-cli.md#playbook-cli-4)]); the launcher merges the fragments over the resolved — and, when absent, freshly seeded — global config in argument order, then feeds the merged result through the ordinary composition, `--list`, and readiness paths.
-Merging is recursive for plain maps and replacement for everything else (scalars, sequences, and `null`), so a three-line fragment can retune one player while a larger one can swap profiles or enable another playbook.
+Each named file is a fragment in the same top-level `players`/`playbooks` format as the global config ([[playbook-cli-4](../packages/playbook-cli.md#playbook-cli-4)]); the launcher merges the fragments over the resolved — and, when absent, freshly seeded — global config in argument order, then feeds the merged result through the ordinary composition, `--list`, and readiness paths.
+Merging is recursive for plain maps and replacement for everything else (scalars, sequences, and `null`), so a three-line fragment can retune one player while a larger one can swap players or enable another playbook.
 `--with` is launcher-owned: the flag and its value are consumed, extending the launcher-owned argument set of [[playbook-cli-1](../packages/playbook-cli.md#playbook-cli-1)], and are never forwarded to tmux-play or interpreted as Boss text.
 The global config file is never modified by an overlaid launch, and `--with` combined with `--config` is rejected — a raw tmux-play config bypasses the composition the overlay targets.
 

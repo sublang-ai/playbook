@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amended by [DR-066](066-compiled-builtins-keep-their-public-interface.md).
 
 ## Context
 
@@ -19,6 +20,7 @@ The shared nested-call API deliberately transports arbitrary JSON-safe child out
 - Declare the selected pipeline's default builtin target namespace through the catalog's explicit `literalTargetBindings`; an explicit source or supplied compiler-dependency binding overrides a default and needs its own interface, and runtime hosts must honor the compiled external ABI.
 - A matching local filename or an undeclared custom runtime registration does not establish or override that compiler binding.
 - Keep the catalog independent of prompts, acting results, states, transitions, runtime implementations, and maintained compiled declarations.
+- The catalog binds the compiled side of a builtin as well as its callers, and `text2gears` reads it beside `gears2fsm` and `link` ([DR-066](066-compiled-builtins-keep-their-public-interface.md)).
 - Require callers to use the declared interface for source-owned output predicates without inventing correlation fields or confusing bridge success with domain acceptance.
 - Keep missing required external interface information a compiler dependency failure, distinct from a missing or contradictory authored behavior requiring source clarification.
 - Verify catalog drift against exported output types and real maintained runtime outputs; include the catalog in the compiler definition's semantic-input closure.

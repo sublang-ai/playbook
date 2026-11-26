@@ -5,24 +5,9 @@
 
 ## Status
 
-Amended by [DR-073](073-durable-step-progress.md): step results restore only at their saved start; settlement owns retention and reporting, and whole-turn replay is removed.
-
-Amended by [DR-069](069-captain-prepares-step-recovery.md): saved-result assessment and verified read-only restoration permit bounded recovery while preserving immutable physical evidence.
-
 Accepted.
-Refines the registry construction and summary ownership of [DR-009](009-generic-playbook-cli-and-registry.md), transition evidence of [DR-010](010-playbook-session-tracing-and-resume.md), corrective retries of [DR-025](025-resilient-captain-control-adjudication.md) and [DR-028](028-empty-ok-result-re-ask.md), result grounding of [DR-029](029-session-scoped-conversational-captain.md), uncertain recovery of [DR-031](031-shared-captain-session-front-ends.md), failure retry of [DR-034](034-durable-failure-retry-continuity.md), and retained resumption of [DR-038](038-universal-run-resumption.md).
-Refines [DR-005](005-boss-reply-suspension-path.md)'s Boss-reply path for an effect-authorized call by binding the question and its continuation to one cumulative repository operation.
-Refines [DR-011](011-composable-playbook-execution.md)'s same-worktree call coordination while preserving its concurrent blind proposal pair.
-Refines the artifact compatibility rollout of [DR-022](022-runtime-compatibility-contract.md) without changing its shared-engine ABI rule.
-Preserves [DR-020](020-spec-layout-agnostic-code-prompts.md): no repository layout or informal intent-progress notation becomes a generic effect fact.
-Preserves [DR-035](035-truthful-terminal-meaning.md) and [DR-037](037-terminal-result-meaning.md): unresolved-effect abandonment is not an FSM terminal outcome and publishes no invented final-state meaning.
-Amended by [DR-049](049-portable-session-contract.md): deferred-player identity independent of provider tokens.
-Amended by [DR-062](062-pre-existing-changes-are-context.md): a governed call may absorb or alter the pre-existing changes of its baseline within its one commit, recorded as receipt evidence; only a lost pre-existing change and an unattributable delta remain ambiguity.
-Amended by [DR-063](063-failures-explain-themselves.md): a parked failure carries a structured cause beside the bounded unresolved-effect list, and advertised recovery actions carry a standing.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
-
-Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's `one-descendant-commit` proof covers one or more new commits, listed on the receipt, and under §1 and §5 a commit outcome over an `unchanged` receipt takes the commit already at HEAD that its final text names, where the call declares no `unchanged` outcome.
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-009](009-generic-playbook-cli-and-registry.md), [DR-010](010-playbook-session-tracing-and-resume.md), [DR-011](011-composable-playbook-execution.md), [DR-022](022-runtime-compatibility-contract.md), [DR-025](025-resilient-captain-control-adjudication.md), [DR-028](028-empty-ok-result-re-ask.md), [DR-029](029-session-scoped-conversational-captain.md), [DR-031](031-shared-captain-session-front-ends.md), [DR-034](034-durable-failure-retry-continuity.md), [DR-037](037-terminal-result-meaning.md), [DR-038](038-universal-run-resumption.md).
+Amended by [DR-045](045-unchanged-receipt-revision-authority.md), [DR-049](049-portable-session-contract.md), [DR-062](062-pre-existing-changes-are-context.md), [DR-063](063-failures-explain-themselves.md), [DR-069](069-captain-prepares-step-recovery.md), [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md), [DR-073](073-durable-step-progress.md), [DR-088](088-a-commit-outcome-takes-every-new-commit.md), [DR-089](089-judge-replies-take-the-machines-shapes.md).
 
 ## Context
 
@@ -35,6 +20,7 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's `one-
 - Effect-authorized calls have no enforceable predeclared path scope, so a player's residual edit and the same concurrent foreign edit are observationally indistinguishable after the call.
 - A per-session writer lease protects one durable session record but neither serializes effectful calls from different sessions in the same worktree nor excludes nonparticipating writers.
 - XState snapshot inspection proves the resulting public state but does not expose a stable public identifier for the selected guarded arm.
+- This decision refines registry construction and summary ownership, transition evidence, corrective retries, result grounding, uncertain recovery, failure retry, retained resumption, the Boss-reply path of an effect-authorized call, same-worktree call coordination, and the artifact compatibility rollout; it preserves [DR-020](020-spec-layout-agnostic-code-prompts.md), so no repository layout or informal intent-progress notation becomes a generic effect fact, and [DR-035](035-truthful-terminal-meaning.md), so unresolved-effect abandonment publishes no invented final-state meaning.
 
 ## Decision
 
@@ -47,13 +33,13 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's `one-
 | Effect | A host-observed repository receipt | The meaning of player prose, intent progress, or another semantic workflow choice |
 | Runtime | Reconciliation of the semantic candidate with effect evidence, the transition the FSM accepts, and the canonical settlement or terminal result | New facts inferred from presentation text |
 
-`finalText` shall remain opaque to FSM guards and effect validation; the hidden adjudicator may read it as semantic evidence, and presentation may relay it, but neither path may parse it for a repository fact.
+`finalText` shall remain opaque to FSM guards and effect validation; the hidden adjudicator may read it as semantic evidence, and presentation may relay it, but neither path may parse it for a repository fact, except that the reconciler reads it for one designation: whether it names, by full OID or an abbreviation of at least seven hex digits, the commit an `unchanged` receipt observed at HEAD ([DR-088](088-a-commit-outcome-takes-every-new-commit.md)).
 Every delegated-player outcome field in CODE, REVIEW, and DECIDE governed by this decision shall declare exactly one authority in versioned artifact metadata, and runtime reconciliation shall reject a missing required, extra, wrongly owned, or mutually inconsistent field before FSM delivery.
-`latestCommit` and the qualifying commit delta are effect-owned.
+`latestCommit` and the qualifying commit delta are effect-owned; an `unchanged` arm may also declare effect-owned fields, injected with its receipt's observed HEAD ([DR-045](045-unchanged-receipt-revision-authority.md)).
 `irNumber`, `irTask`, and `moreTasks` versus `finalTask` remain semantic and shall not be inferred from an informal task-completion marker.
 Every outcome arm of each governed delegated-player call shall also declare exactly one repository disposition in schema-3 artifact metadata: `unchanged`, `one-descendant-commit`, or `deferred`.
 At link time, the disposition follows the source-derived operation and outcome's required repository effect independently of payload-field presence: a commit-required completion declares `one-descendant-commit` even for a generic `done` arm with no effect-owned field.
-`unchanged` and `one-descendant-commit` are exact effect predicates, while `deferred` makes no final repository claim and shall be valid only for a `needsBossReply` arm of a call whose other declared arm permits `one-descendant-commit`.
+`unchanged` and `one-descendant-commit` — read as "HEAD advanced by new commits" ([DR-088](088-a-commit-outcome-takes-every-new-commit.md)) — are exact effect predicates, while `deferred` makes no final repository claim and shall be valid only for a `needsBossReply` arm of a call whose other declared arm permits `one-descendant-commit`.
 A call shall be effect-authorized when any declared arm permits `one-descendant-commit`; `deferred`, a role name, prompt instruction, player prose, or semantic reply shall never weaken or establish that classification.
 The CODE Coder calls, REVIEW Coder reconciliation call, and DECIDE merge call shall be effect-authorized; their commit arms shall declare `one-descendant-commit`, REVIEW's `rejectedAll` shall declare `unchanged`, and their `needsBossReply` arms shall declare `deferred`.
 The REVIEW Reviewer calls and DECIDE's concurrent Coder and Reviewer proposal calls, including their `needsBossReply` arms, shall declare only `unchanged`.
@@ -68,8 +54,8 @@ Before each governed call, the host shall append a durably started boundary to a
 One durable logical-operation identity shall link every physical boundary in a deferred question chain across successive turn ledgers until final reconciliation or abandonment, and ordinary turn settlement shall not retire its original baseline.
 A repository-relevant worktree projection shall be a detached path-keyed, content-addressed view of Git-visible deviations from that observation's own HEAD: index entries that differ from the HEAD tree, tracked worktree content or modes that differ from the index, and non-ignored untracked paths under Git's resolved excludes; ignored-only untracked paths, Git administrative data, and timestamps shall not enter it.
 A receipt shall prove `unchanged` only when after-HEAD equals baseline HEAD and the after projection equals the baseline projection, so byte- and mode-identical pre-existing dirt remains zero delta while any introduced staged, tracked, or non-ignored-untracked overlay does not.
-A receipt shall prove `one-descendant-commit` only when after-HEAD is exactly one commit descended from baseline HEAD and the after projection equals the baseline projection; an altered pre-existing overlay, residual worktree change, or overlap that cannot be attributed uniquely shall be observation ambiguity.
-The observer shall otherwise classify multiple commits, rewritten or non-descendant HEAD, worktree-only change, detected concurrent or foreign change, and observation ambiguity without treating an ignored-only output as repository evidence.
+For an effect-authorized call, a receipt shall prove `one-descendant-commit` only when after-HEAD descends from baseline HEAD by one or more new commits, listed on the receipt oldest first ([DR-088](088-a-commit-outcome-takes-every-new-commit.md)), and every baseline projection entry is preserved, or absorbed or altered and carried by those commits as recorded `preExisting` evidence, with nothing else in the after projection ([DR-062](062-pre-existing-changes-are-context.md)); a lost pre-existing entry, an entry altered but left uncommitted, or a new uncommitted entry shall be observation ambiguity.
+The observer shall otherwise classify rewritten or non-descendant HEAD, worktree-only change, detected concurrent or foreign change, and observation ambiguity without treating an ignored-only output as repository evidence.
 Every governed call shall acquire an exclusive cooperative claim keyed by canonical Git worktree identity before its baseline and hold it through durable receipt capture.
 Only calls in one invocation of an artifact-declared concurrent group whose role set appears in `concurrentRoleSets` and whose roles all declare exclusively `unchanged` may instead share a cohort-scoped claim; the host shall durably start every boundary from one common baseline before starting any cohort call, complete every receipt from an after observation taken only after all cohort calls resolve, and admit no same-worktree call outside that cohort until every boundary completes.
 Separate runtime invocations or sessions shall be separate cohorts, and a common after observation that does not prove `unchanged` shall make every cohort receipt ambiguous.
@@ -78,7 +64,7 @@ The lease does not prove the absence of writes by a human or another nonparticip
 
 ### 3. Semantic adjudication is exact and bounded
 
-The hidden adjudicator shall return exactly one declared semantic outcome in its closed schema, with every required semantic field and no undeclared field.
+The hidden adjudicator shall return exactly one declared semantic outcome in its closed schema, with every required semantic field and no undeclared field; a semantic field's schema is the value shape the compiled machine admits ([DR-089](089-judge-replies-take-the-machines-shapes.md)).
 A first structurally invalid adjudication reply shall make one corrective hidden judge call eligible with the schema and validation error restated over the same retained evidence.
 Before crossing the corrective judge boundary, the runtime shall await the host channel's idempotent durable spend of that boundary's correction budget; a failed or indeterminate spend shall start no judge call, and a successful spend shall permit the call only while the applicable abort signal remains live.
 A second structurally invalid reply, a previously spent correction budget, or abort before the corrective call begins shall fail closed.
@@ -90,14 +76,14 @@ This extends [DR-025](025-resilient-captain-control-adjudication.md)'s bounded s
 The host and runtime shall preserve every unresolved or deferred boundary in the ordered per-turn ledger as a reconciliation envelope containing the baseline and after evidence available so far, the optional opaque `finalText`, source state and outcome schema, any semantic candidate, the adjudication correction budget, any open logical-operation checkpoint, and its current checkpoint-restoration eligibility.
 A durably started boundary lacking a complete `unchanged` receipt shall be effect-possible even when no after observation was persisted, and host recovery shall construct or restore its envelope before restoring the source state.
 A schema-valid `deferred` candidate shall enter the authored Boss-reply wait instead of resolving an effect predicate only when its complete after observation keeps HEAD at the operation baseline and shows neither a rewritten or multiple-commit history nor detected foreign overlap or observation ambiguity; its repository-relevant worktree projection may differ.
-Before releasing the exclusive claim and publishing that question, the host shall durably bind the pending question, player continuation, original operation baseline, and complete after observation as one open logical operation.
+Before releasing the exclusive claim and publishing that question, the host shall durably bind the pending question, the player identity of its continuation — never a provider token ([DR-049](049-portable-session-contract.md)) — the original operation baseline, and the complete after observation as one open logical operation.
 On each valid Boss answer, the host shall reacquire the exclusive same-worktree claim and start exactly one authored question-and-answer continuation only after the current HEAD and projection equal the latest saved after observation; no other later player-call path is permitted, and a mismatch shall start no player and enter unresolved reconciliation.
 Repeated validated questions shall update the saved checkpoint without changing the original baseline, and the eventual `unchanged` or `one-descendant-commit` predicate shall reconcile the cumulative operation from that original baseline.
 Every physical boundary in that chain shall retain its own baseline and after receipt for checkpoint and replay safety, while a separate logical-operation receipt computed from the original operation baseline and final after observation shall alone reconcile the eventual semantic arm.
 An empty, malformed, mismatched-question, or otherwise invalid Boss answer shall start no player and leave the checkpoint-bound wait unchanged; a fresh directive or any other exit from that wait shall enter unresolved reconciliation rather than ordinary failure, retry, or bypass.
 The question-and-answer call is an authored continuation, not an automatic retry or replay.
 For an envelope neither eligible for that bound continuation nor carrying a complete consistent final disposition, where any evidence proves a nonzero repository delta or cannot exclude one, the runtime shall enter an explicit effect-possible, outcome-unresolved state, shall invoke no player while that state remains active, and shall never replay that boundary's player call.
-That state shall advertise only an explicit reconciliation retry and a Boss abandonment action; reconciliation may retry repository observation and hidden semantic adjudication over retained evidence but shall itself start no player.
+That state shall advertise only an explicit reconciliation retry and a Boss abandonment action, each carrying its standing, while the parked failure carries a structured cause beside its bounded unresolved-effect list ([DR-063](063-failures-explain-themselves.md)); reconciliation may retry repository observation and hidden semantic adjudication over retained evidence but shall itself start no player.
 When that state was entered solely because a valid Boss answer encountered a checkpoint mismatch for a still-open deferred logical operation, the host shall durably mark the unresolved episode as checkpoint-restoration-eligible, preserve the bound pending question, stable question and logical-operation identities, player continuation, original baseline, and latest checkpoint, and shall neither bind nor reuse that Boss answer as continuation input.
 Every other entrance to unresolved reconciliation shall record that eligibility absent.
 On an explicit reconciliation retry carrying that eligibility, the host shall reacquire the exclusive same-worktree claim and compare current HEAD and projection with the latest saved after observation.
@@ -116,15 +102,18 @@ When retained semantic and effect evidence establish a complete consistent final
 Every reconciled envelope taking neither that final-disposition exit nor the exact wait-restoration exit shall remain parked as effect-possible and outcome-unresolved until the Boss abandons it.
 
 For a player call governed by this decision, [DR-028](028-empty-ok-result-re-ask.md) and [[playbook-runtime-9](../packages/playbook-runtime.md#playbook-runtime-9)] retain their one identical player re-ask only when the call's complete durable receipt proves `unchanged`; an observed, nonzero, incomplete, or ambiguous receipt takes the reconciliation path instead.
-[DR-034](034-durable-failure-retry-continuity.md)'s entry-event retry shall not be advertised from the unresolved state, whose only retry is reconciliation.
-Under [DR-073](073-durable-step-progress.md), uncertain recovery reconstructs receipts and reports the saved step without whole-turn replay; nonzero, ambiguous or incomplete evidence retains its reconciliation requirements.
+A failure retry ([DR-034](034-durable-failure-retry-continuity.md)) shall not be advertised from the unresolved state, whose only retry is reconciliation.
+Under [DR-073](073-durable-step-progress.md), step results restore only at their saved start, settlement owns retention and reporting, and uncertain recovery reconstructs receipts and reports the saved step without whole-turn replay; nonzero, ambiguous or incomplete evidence retains its reconciliation requirements.
+Lost progress that the saved state cannot represent settles in the shared host, preserving files, receipts and ordered unresolved-effect evidence without running a player ([DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md)).
+A missing judgment after a receipted commit may be recovered from the saved player text and receipt without repeating the player, and a read-only invocation that changed the worktree may be retried once preparation restores its exact original observation, recorded as a separate verified read-only restoration rather than acceptance of the failed result ([DR-069](069-captain-prepares-step-recovery.md)).
 [DR-038](038-universal-run-resumption.md)'s retained generation shall preserve and reenter an unresolved reconciliation state, prevent adopted work from resuming or exposing ordinary actions until every outstanding effect boundary resolves, and prevent a retained pre-effect generation from bypassing the ledger rather than using its duplicate-effect warning as permission to replay the player; explicit unresolved abandonment shall clear that root instead of retaining a turn-start dismissal candidate.
 
 ### 5. Workflow commit outcomes reconcile semantics with effects
 
 For the maintained CODE and DECIDE artifacts, a commit outcome shall require a receipt proving `one-descendant-commit` and shall take `latestCommit` only from the observed OID.
 For the maintained REVIEW artifact, `committed` shall require that same predicate, while `rejectedAll` shall require a receipt proving `unchanged`.
-An `unchanged` receipt for a claimed commit, a nonzero receipt for a claimed no-commit outcome, multiple commits, rewritten or non-descendant history, concurrent or foreign changes, and ambiguous evidence shall not select either claimed outcome.
+Where the call declares no `unchanged` outcome, a commit outcome also reconciles with an `unchanged` receipt whose HEAD the player's final text names, and effect-owned fields take that HEAD ([DR-088](088-a-commit-outcome-takes-every-new-commit.md)).
+Any other `unchanged` receipt for a claimed commit, a nonzero receipt for a claimed no-commit outcome, rewritten or non-descendant history, concurrent or foreign changes, and ambiguous evidence shall not select either claimed outcome.
 The semantic plane continues to decide CODE's direct-versus-intent and remaining-task meaning; repository evidence corroborates only the declared repository disposition.
 
 ### 6. Canonical runtime evidence grounds status, metrics, and Captain control
@@ -138,18 +127,15 @@ Session-Captain control shall consume canonical structured settlement, terminal-
 Before each controller result-phase presentation, the host shall freeze one canonical `unresolvedEffects` list from the applicable durable envelopes, schema-3 `SettlementEvidence` shall carry an exact validated copy, and the result-phase facts shall be only a deterministic bounded rendering of that structure.
 At that turn's later safe settlement boundary, `PlaybookCaptainSettlement` and Captain session-record schema `6` shall carry exact validated copies of the frozen controller list without another repository observation; a safe settlement with no controller settlement shall instead carry the current canonical list from its durable envelopes in those two host shapes without another repository observation and without fabricating `SettlementEvidence` or result-phase facts.
 
-### 7. Compatibility and release ordering are explicit
+### 7. Compatibility
 
-The shared engine, registries, and CLI artifact validators shall add artifact schema `3` alongside schema `2`, and the engine shall retain runtime ABI `1`, because the authority metadata and current-host construction capabilities are schema-gated additions that neither widen `PlaybookPorts` nor change the schema-2 factory contract.
-Schema `2` shall retain legacy behavior during implementation, while schema `3` shall require exact authority and repository-disposition metadata for every governed delegated-player outcome and an explicit empty governed set for an artifact with none.
-No shipped artifact shall declare schema `3` before satisfying that contract, and every artifact shall migrate atomically with its governed behavior before the candidate gate removes schema `2` from the supported set.
-Removing schema `2` shall be the breaking next-major cutover under [DR-022](022-runtime-compatibility-contract.md).
-The closed public `PlaybookRunResult` union shall add the `unresolved-effect` variant, `PlaybookCaptainSettlement` shall add its required `unresolvedEffects` list, and schema-3 Captain `SettlementEvidence` shall require the same list in that next-major release, with the SLC, maintained runtimes, Captain host, CLI, package declarations, and exhaustive consumers shipping together.
-Runtime snapshots, trace events, and complete shell snapshots shall advance from schema `3` to schema `4`; the Captain session record shall advance to schema `6` because schema `4` already names the historical retained-generation shape and schema `5` was used by two incompatible pre-release shapes around the required `unresolvedEffects` addition.
+Artifact schema `3` carries the authority metadata and current-host construction capabilities under runtime ABI `1`, because they are schema-gated additions that do not widen `PlaybookPorts`; schema `2` is no longer supported, a breaking cutover under [DR-022](022-runtime-compatibility-contract.md).
+Schema `3` requires exact authority and repository-disposition metadata for every governed delegated-player outcome and an explicit empty governed set for an artifact with none.
+The closed public `PlaybookRunResult` union carries the `unresolved-effect` variant, and `PlaybookCaptainSettlement` and schema-3 Captain `SettlementEvidence` carry the required `unresolvedEffects` list.
+Runtime snapshots, trace events, and complete shell snapshots use schema `4`; the Captain session record uses schema `6` because schema `4` names the historical retained-generation shape and schema `5` was used by two incompatible pre-release shapes around the required `unresolvedEffects` addition.
 Older persisted artifacts, snapshots, retained generations, and session records shall be migrated only by an explicit validator that can preserve every authority fact; otherwise they shall reject before governed work rather than fabricate evidence.
-Trace schema `4` shall distinguish the accepted-outcome event contract for consumers, which shall not treat an earlier trace event as authority-bearing evidence.
-Consumption and packed acceptance of the upstream message-boundary repair require a published Cligent release, and the Playbook release shall remain gated on that artifact under [[release-14](../packages/release.md#release-14)].
-The authority model, observer, reconciliation, workflow migration, and canonical reporting may proceed independently while that external release is unavailable.
+Trace schema `4` distinguishes the accepted-outcome event contract for consumers, which shall not treat an earlier trace event as authority-bearing evidence.
+Consumption and packed acceptance of the upstream message-boundary repair require a published Cligent release, gated under [[release-14](../packages/release.md#release-14)].
 
 ## Consequences
 
@@ -160,5 +146,5 @@ The authority model, observer, reconciliation, workflow migration, and canonical
 - Cooperative leasing reduces collisions among Playbook hosts, while foreign writes remain outside its guarantee and fail closed when detected or when they make observation ambiguous.
 - Status, summary counts, and Captain control agree with the outcome the machine accepted.
 - The durable envelope expands persisted sensitive data and requires the same user-only protection as the containing Captain session record, while the Boss-visible unresolved summary excludes paths, prose, and internal identifiers.
-- Artifact support, the public run-result union, trace events, runtime snapshots, shell snapshots, and durable records change together in a next-major cutover while the shared-engine ABI remains `1`.
+- Artifact support, the public run-result union, trace events, runtime snapshots, shell snapshots, and durable records changed together in one major cutover while the shared-engine ABI remained `1`.
 - Playbook 9 record schema `3`, the historical record schema `4` retention shape, and both pre-release schema-`5` shapes predate the canonical schema-`6` record boundary; the earlier schema-`5` shape also lacks `unresolvedEffects`, so their files remain stored but cannot resume after the cutover, explicit selection rejects them, and implicit continuation and unrelated fresh discovery report and skip each recognized record with an archive-or-remove remedy rather than guessing whether governed work may replay.

@@ -9,7 +9,7 @@ Done
 
 ## Intent
 
-Implement [DR-026](../decisions/026-optional-adapter-sdks.md): move
+Implement the optional-SDK decision, since merged into [DR-027](../decisions/027-runtime-compatibility-from-cligent.md): move
 `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk` from hard
 `dependencies` to optional `peerDependencies`, so an install carries
 only the agent stacks the user chose; add the adapter SDK preflight that
@@ -19,7 +19,7 @@ at the two install shapes users actually produce.
 
 ## Deliverables
 
-- [x] DR-026, the rewritten [[release-12](../packages/release.md#release-12)]
+- [x] DR-027, the rewritten [[release-12](../packages/release.md#release-12)]
       and [[release-13](../packages/release.md#release-13)], new
       [[release-27](../packages/release.md#release-27)], new
       [[playbook-cli-39](../packages/playbook-cli.md#playbook-cli-39)]/[[playbook-cli-40](../packages/playbook-cli.md#playbook-cli-40)]/[[playbook-cli-41](../packages/playbook-cli.md#playbook-cli-41)],
@@ -49,7 +49,7 @@ at the two install shapes users actually produce.
 
 ## Tasks
 
-1. **Spec surface.** _[done]_ Author DR-026, rewrite release-12/13, add
+1. **Spec surface.** _[done]_ Author the optional-SDK DR (since merged into DR-027), rewrite release-12/13, add
    release-27 and playbook-cli-39/40/41, author this record and the map rows.
 2. **Declaration move.** _[done]_ Move both SDKs to optional peers plus
    `devDependencies` in `package.json`, refresh `pnpm-lock.yaml`, and add
@@ -67,7 +67,7 @@ at the two install shapes users actually produce.
    `gemini` out explicitly; add the exec-tree smoke shapes and the
    npx-aware remedy per amended release-12/13 and playbook-cli-39/40/41; and
    replace the false upgrade-compatibility claim with the measured
-   prune-and-reinstall migration in DR-026, README, `docs/cli.md`, and
+   prune-and-reinstall migration in DR-027, README, `docs/cli.md`, and
    the changelog.
 6. **One-hop ephemeral re-run.** _[done]_ Build the printed re-run from
    the lineup's full mapped SDK set instead of the missing subset —
@@ -76,24 +76,24 @@ at the two install shapes users actually produce.
    package's own version, and replay the original arguments
    shell-quoted in place of the literal `playbook ...` placeholder;
    amend playbook-cli-40/41, release-13's partial exec shape with its CI leg,
-   DR-026 §3, and the changelog accordingly.
+   DR-027 §3, and the changelog accordingly.
 7. **Stdin preservation and CLI ordering.** _[done]_ Append a
    stdin-consumed task or reply to the re-run as a quoted positional
    and print prerequisite external CLI installs before the ephemeral
-   re-run; amend playbook-cli-40/41, DR-026 §3, and the changelog.
+   re-run; amend playbook-cli-40/41, DR-027 §3, and the changelog.
 8. **Flag-shaped stdin values.** _[done]_ Add the `--` end-of-options
    terminator to the `run` argument grammar and emit it before
    stdin-derived values on the re-run — quoting cannot stop a `--json`
    task or `--last` reply from being reinterpreted as an option, the
    latter silently resuming the wrong session — with first-run and
-   resume round-trip tests; amend playbook-cli-18/40/41, DR-026 §3, the run
+   resume round-trip tests; amend playbook-cli-18/40/41, DR-027 §3, the run
    help text, and the changelog.
 9. **Terminator reuse.** _[done]_ Reuse an invocation's own active
    `--` instead of appending a second — parsing stops at the first,
    so a doubled marker becomes positional data (`-- --json`) — with
    the parser itself reporting activation so a `--` consumed as an
    option's value never counts; trailing, mid-argv, and resume cases
-   tested; amend playbook-cli-40/41, DR-026 §3, and the changelog.
+   tested; amend playbook-cli-40/41, DR-027 §3, and the changelog.
 
 ## Verification
 

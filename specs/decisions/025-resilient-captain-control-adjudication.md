@@ -6,10 +6,7 @@
 ## Status
 
 Accepted.
-[DR-029](029-session-scoped-conversational-captain.md) extends §One corrective re-ask to the interactive decision call and supersedes §Internal-root failure resets the shell: disposal-on-failure is replaced by the conversation reseed — the stack and completed work survive, and only the model-side conversation is replaced.
-§Explicit shared adjudication reply contract stands: `defaultBuildCaptainJudgePrompt` stays exported and reused.
-[DR-040](040-outcome-authority-effect-reconciliation.md) extends the bounded structural correction to delegated-player adjudication and places its durable one-call budget in the host-owned write-ahead ledger.
-[DR-089](089-judge-replies-take-the-machines-shapes.md) amends the consequence that the generic factory keeps single-call direct-Captain adjudication: its prompt states each key's exact reply, a structural error earns one corrective adjudication, and a second parks the step as a `judge-failed` failure.
+Amended by [DR-029](029-session-scoped-conversational-captain.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-089](089-judge-replies-take-the-machines-shapes.md).
 
 ## Context
 
@@ -35,19 +32,20 @@ The compiled default Captain runtime shall compose its `captain-output-adjudicat
 
 When an adjudication reply fails structural validation — no recoverable JSON object, a missing or undeclared `guard`, an undeclared field, or a missing or malformed required structural field — the compiled default Captain runtime shall issue exactly one corrective judge call that appends the rejection reason and the restated reply shape to the same prompt, then adjudicate the second reply.
 A second malformed reply shall keep the existing semantics: the control error latches and the machine parks in its recoverable `failed` state.
+The same single correction applies to the session Captain's interactive decision call ([DR-029](029-session-scoped-conversational-captain.md)), to the generic factory's direct-Captain adjudication, whose second structural error parks the step as a `judge-failed` failure ([DR-089](089-judge-replies-take-the-machines-shapes.md)), and to delegated-player adjudication, whose durable one-call budget lives in the host-owned write-ahead ledger ([DR-040](040-outcome-authority-effect-reconciliation.md)).
 A rejected or aborted judge transport call shall not trigger the corrective re-ask.
 Each judge call, initial or corrective, shall trace its own paired `judge.call.started` / `judge.call.finished` boundaries.
 
-### Internal-root failure resets the shell
+### A failed control call keeps the session
 
-Where the parentless internal Captain frame's delivered boundary call rejects, the shell shall dispose the complete stack under a `failure` disposal reason and return to idle `chat`, so the next Boss message or registered command engages cleanly.
-The rethrown boundary error shall carry Boss-appropriate prose naming a concrete next step, shall contain no internal control vocabulary (such as `adjudicator`, `guard`, or hidden control JSON), and shall preserve the original diagnostic as its `cause`; the raw diagnostic remains on the trace telemetry channel.
+Where a session-Captain control call fails, the shell shall reseed only the model-side conversation; the engagement stack and completed work survive ([DR-029](029-session-scoped-conversational-captain.md)).
+The Boss-facing error shall carry Boss-appropriate prose naming a concrete next step, shall contain no internal control vocabulary (such as `adjudicator`, `guard`, or hidden control JSON), and shall preserve the original diagnostic as its `cause`; the raw diagnostic remains on the trace telemetry channel.
 A parentless external root's rejected turn shall retain the frame for later Boss recovery and propagate its boundary error unchanged, because a delivered external engagement may hold recoverable work.
 
 ## Consequences
 
 - A conversational first message now settles as the Captain's declared routing `question` outcome; the happy path no longer depends on a judge inferring an implicit reply shape.
-- The exported builder is an additive, semver-minor engine surface; the generic factory keeps its single-call adjudication, and adopting the corrective re-ask there needs its own decision.
+- The exported builder is an additive, semver-minor engine surface.
 - One extra hidden judge call occurs only when a control reply is malformed.
 - Boss-facing failure prose and hidden control diagnostics gain distinct contracts at the shell boundary, extending DR-013's control/presentation separation to the failure path.
 - The adjudication prompt contract and the re-ask are pinned by integration tests, closing the coverage gap that let the paraphrase drift ship.

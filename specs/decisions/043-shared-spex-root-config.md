@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-064](064-the-config-directory-is-named-config.md) in one scope: the canonical directory under the root is `config/`, and `playbook/` is a former location the relocation serves.
+Amended by [DR-064](064-the-config-directory-is-named-config.md).
 
 ## Context
 
@@ -27,15 +27,14 @@ user's doing.
 
 ## Decision
 
-The canonical path is `${SPEX_HOME:-$HOME/.spex}/playbook/playbook.config.yaml`.
+The canonical path is `${SPEX_HOME:-$HOME/.spex}/config/playbook.config.yaml` ([DR-064](064-the-config-directory-is-named-config.md)).
 Both hosts resolve the root the same way: the first nonempty `SPEX_HOME`,
 otherwise the first nonempty `HOME` joined with `.spex`, otherwise the
 process home directory joined with `.spex`.
-The singular `playbook/` namespace holds the config; Spex owns the plural
-`playbooks/` library beside it.
+The root's `config/` directory holds human-authored configuration files and is the primary configuration directory every relative locator resolves against; Spex owns the plural `playbooks/` library beside it.
 
-Playbook relocates a config found at the former path to the canonical path on
-its next launch, before any read, seed, or plan work observes its absence.
+Playbook relocates a config found at a former path — the root's `playbook/playbook.config.yaml` first, then the XDG path — to the canonical path on
+its next launch, before any read, seed, or plan work observes its absence, removing the former directory when that leaves it empty.
 The move preserves the file's bytes and permissions, never overwrites a
 canonical file, and is a no-op once the former file is gone.
 Playbook rejects before publication when that byte-preserving move would change the

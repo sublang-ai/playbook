@@ -6,12 +6,11 @@
 ## Status
 
 Accepted.
-Records the abort-settlement model the post-[DR-034](034-durable-failure-retry-continuity.md) review rounds converged on piecemeal, so conformance replaces per-round design relitigation.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md).
 
 ## Context
 
+- This record states the abort-settlement model that review rounds after durable failure retry ([DR-034](034-durable-failure-retry-continuity.md)) converged on piecemeal, so conformance replaces per-round design relitigation.
 - The linked runtime races two authorities at every public boundary: the machine, which settles by reaching quiescence, and the Boss signal, which may abort at any instant — including from inside the runtime's own emission sinks.
 - Review rounds amended the classification and settlement rules one sentence at a time, and the sentences drifted into conflict: an unconditional start-sink error law contradicted the exact-identity cancellation carve-out, and abort-over-terminal ordering contradicted the rule that a computed outcome stands.
 - Each round re-derived the design from scratch, so every fix minted new read points and new sentences for a reviewer to probe, without a recorded decision to check conformance against.
@@ -53,12 +52,16 @@ Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progre
 7. **Outside any boundary, observed errors ride the emission channel.**
    A startup actor error latches onto the channel `init` and `restore` drain, so the failed-start cleanup runs and the boundary rejects with the original error instead of resolving over a dead machine.
 
+8. **Boss cancellation reaches nested work.**
+   Captain forwards Boss cancellation to the active child and keeps an exportable aborted child suspended under its parent, while caller cancellation stays scoped to active runtime calls ([DR-071](071-interrupted-continuation-settlement.md)).
+   A child is retained on cancellation only after the runtime accepted its initial text; after complete call draining, an unaccepted player result loses its provider continuation hint, and no late result is accepted or effect replayed ([DR-072](072-host-owned-interrupted-work-settlement.md)).
+
 Considered and rejected: name-based (`AbortError`) classification — a fresh failure can wear the name and a cancellation can arrive without it; abort-over-terminal precedence — it converts a completed workflow into a silent rerun; rewriting a computed outcome when an abort lands during settlement emission — the return would disagree with the settlement trace already on the wire.
 Considered and rejected: forgiving an identical pre-publication rejection after an otherwise successful apply — publication commits the receipt, so that alternative would report a fully settled success after its settlement was cancelled instead of the honest failed-after-effects-may-exist disposition.
 
 ## Consequences
 
-- The shared engine and DECIDE's bespoke runtime implement one model, and review checks conformance to this record instead of re-deriving the design each round.
+- The shared engine implements one model, and review checks conformance to this record instead of re-deriving the design each round.
 - A cancellation that races completion now reports `terminal` with the machine's output; hosts that treated any aborted signal as "nothing happened" must consult the outcome.
 - An aborted resume leaves the child call resumable; hosts that assumed abort consumed the result must retry the resume to deliver it.
 - A script reports a clean abort only after its process group stops being signalable; an unconfirmed teardown instead reports a distinct bounded control failure.
