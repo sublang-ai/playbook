@@ -6,12 +6,8 @@
 ## Status
 
 Accepted.
-Amends the configuration and binding model of [DR-009](009-generic-playbook-cli-and-registry.md), the continuation ownership of [DR-010](010-playbook-session-tracing-and-resume.md), the same-player constraint of [DR-011](011-composable-playbook-execution.md), the continuation tuning rules of [DR-015](015-per-run-agent-tuning.md), the fixed source labels of [DR-018](018-gears-grammar-provenance-from-spex.md), the linker metadata of [DR-019](019-shared-linked-runtime-factory.md), the inline-agent placement of [DR-021](021-inline-agent-settings.md), the compatibility transition of [DR-022](022-runtime-compatibility-contract.md), and the configuration and persistence boundary of [DR-031](031-shared-captain-session-front-ends.md).
-Amended by [DR-075](075-subagent-model-is-tuning.md): a role binding's tuning is four fields — model, subagent model, effort, and fast mode.
-
-Amended by [DR-103](103-independent-ultracode-tuning.md) for independent Ultracode tuning and adapter-scoped capability detection.
-
-The primary model on Claude resume follows [DR-105](105-runtime-owned-seed-and-delegation.md).
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-009](009-generic-playbook-cli-and-registry.md), [DR-010](010-playbook-session-tracing-and-resume.md), [DR-011](011-composable-playbook-execution.md), [DR-015](015-per-run-agent-tuning.md), [DR-018](018-gears-grammar-provenance-from-spex.md), [DR-019](019-shared-linked-runtime-factory.md), [DR-021](021-inline-agent-settings.md), [DR-022](022-runtime-compatibility-contract.md), [DR-031](031-shared-captain-session-front-ends.md).
+Amended by [DR-075](075-subagent-model-is-tuning.md), [DR-103](103-independent-ultracode-tuning.md), [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -22,6 +18,8 @@ That inference makes session sharing depend on spelling, can ignore a child's co
 Durable continuation also freezes the complete launch configuration.
 A user who updates a player from one model to another therefore resumes the old model even when the provider can continue the same conversation under the new model.
 Identity, workflow structure, security, and current invocation tuning need distinct ownership.
+
+This decision replaces the configuration and binding model of [DR-009](009-generic-playbook-cli-and-registry.md), the continuation ownership of [DR-010](010-playbook-session-tracing-and-resume.md), the same-player constraint of [DR-011](011-composable-playbook-execution.md), the continuation tuning rules of [DR-015](015-per-run-agent-tuning.md), the fixed source labels of [DR-018](018-gears-grammar-provenance-from-spex.md), the linker metadata of [DR-019](019-shared-linked-runtime-factory.md), the inline-agent placement of [DR-021](021-inline-agent-settings.md), the compatibility transition of [DR-022](022-runtime-compatibility-contract.md), the configuration and persistence boundary of [DR-031](031-shared-captain-session-front-ends.md), and the Boss-question asker of [DR-005](005-boss-reply-suspension-path.md).
 
 ## Decision
 
@@ -43,7 +41,7 @@ The exact id `captain` is reserved for the session Captain.
 A player value shall be an adapter shorthand or a normalized agent block whose `adapter` is part of that player's identity and whose remaining fields are defaults; a logical Captain session freezes the adapter of every referenced player, while a new session may choose another adapter.
 
 Every enabled playbook shall explicitly bind each manifest `requiredRoleIds` member through `playbooks.<id>.roles`.
-A binding shall be either a scalar player id or a block containing `player` and optional `model`, `effort`, and `fastMode` overrides; each model or effort override shall be a concrete string or the boolean `false` sentinel selecting the provider default, while a `fastMode` override shall be a literal boolean and omission of any override shall inherit that player's top-level default.
+A binding shall be either a scalar player id or a block containing `player` and optional tuning overrides — `model`, `effort`, `fastMode`, `subagentModel` ([DR-075](075-subagent-model-is-tuning.md)), `subagentEffort` ([DR-076](076-subagents-delegate-by-default.md)), and `ultracode` ([DR-103](103-independent-ultracode-tuning.md)); each model or effort override shall be a concrete string or the boolean `false` sentinel selecting the provider default, while a `fastMode` or `ultracode` override shall be a literal boolean and omission of any override shall inherit that player's top-level default.
 Adapter, instruction, permissions, workspace, and tool posture belong to the player session envelope and shall not be overridden by a role binding.
 Bindings shall cover the required role set exactly; unknown players, missing or extra roles, implicit name matching, ancestor inheritance, and generated fallback players are errors.
 When a manifest requires no roles, its exact binding map shall be empty and it shall contribute no player to the session roster; the launcher shall not invent a role merely to satisfy presentation.
@@ -79,12 +77,12 @@ The stored enabled catalog and structural projection shall remain authoritative 
 The current structural projection restricted to the stored playbook ids, Captain, and players referenced by those stored playbooks shall reproduce their prepared module identities, manifest contracts, effective commands, runtime options, required roles, explicit role-to-player ids, adapters, instructions, and permissions.
 A missing or changed stored member shall reject before agent work, while additional current playbooks and players unreferenced by the stored catalog shall neither invalidate nor enter the reopened session; a new logical session is required to change that topology or provider identity.
 
-The next Captain or player call shall use the current normalized model, effort, and optional fast-mode settings for its stable id while resuming the stored provider token under the established adapter.
+The next Captain or player call shall use the current normalized tuning — model, effort, optional fast mode, subagent model, subagent effort, and Ultracode — for its stable id while resuming the stored provider token under the established adapter.
 Normalization shall represent each model and effort selection explicitly as either one concrete value or `provider-default`, so an explicit provider-default selection clears the configured pin for the call.
 Fast mode shall remain an optional plain boolean: top-level omission selects the provider default, role omission inherits its player's top-level value, and explicit `false` is a retained literal request rather than a provider-default sentinel.
 The host shall pass both complete model and effort selections plus the optional effective fast mode on every call on the selected conversation.
-The adapter resolves a provider-default selection for that conversation and rejects unsupported explicit tuning.
-The Captain-to-tmux-play host call surface shall therefore carry each delegated-player and durable session-Captain invocation's atomic complete-settings block containing model, effort, optional fast mode, instruction, and permissions alongside resume selection; omission of that block retains the host's legacy configured defaults, while a present block inherits no omitted model, effort, instruction, or permission member, and only model, effort, and fast mode may differ from the stored structural projection on ordinary reopen.
+The adapter resolves a provider-default selection for that conversation and rejects unsupported explicit tuning; for Claude, a provider-default primary model delegates selection to the native SDK on a fresh or resumed conversation ([DR-105](105-runtime-owned-seed-and-delegation.md)).
+The Captain-to-tmux-play host call surface shall therefore carry each delegated-player and durable session-Captain invocation's atomic complete-settings block containing model, effort, optional fast mode, instruction, and permissions alongside resume selection; omission of that block retains the host's legacy configured defaults, while a present block inherits no omitted model, effort, instruction, or permission member, and only tuning fields may differ from the stored structural projection on ordinary reopen.
 Where an adapter cannot enforce the requested settings on that resumed conversation, the call shall fail explicitly and retain the prior token; it shall never retry fresh or silently fork the session.
 For the durable session Captain, that typed preflight rejection shall retain the selected token or never-opened `false` value plus the journal watermark already represented to it; the next supported call shall resume that selection with only the authoritative missed journal suffix.
 An exact player-call preflight rejection that reaches shell fallback shall likewise retain the prior Captain resume target and require only missed-journal catch-up, never a fresh Captain conversation.
@@ -100,10 +98,10 @@ Linked-runtime traces and corresponding shell telemetry shall retain both the lo
 The old `playbooks.<id>.players` format shall receive a major-version migration diagnostic rather than an automatic rewrite because choosing new player ids would also choose which prior conversations merge or remain isolated.
 Released Captain-session records whose root-scoped generated players cannot be mapped unambiguously shall be rejected rather than merged, split, or resumed under guessed identities.
 The source change from `Players:` to `Roles:` is mechanical only where no alias is present; an alias requires an explicit role and binding redesign.
-Newly linked artifacts shall use artifact schema `2` for local-role metadata under [DR-022](022-runtime-compatibility-contract.md).
-Every registry shall advertise artifact schema `2`, including bespoke profiles, and the next-major shared factory and Captain host shall reject artifact schema `1`, declaration-free artifacts, or a registry/factory disagreement because their `player` values may contain linker-time bindings or aliases that cannot be reinterpreted safely as local roles.
-Linked-runtime traces shall use schema `3` so player-call boundaries carry required local `roleId` and optional resolved `playerId` without reinterpreting trace schema `2`'s overloaded player identity.
-Runtime and complete shell snapshots shall use schema `3` for session player ledgers, local-role token projections, and discriminated Captain-or-role Boss-question ownership, and shall reject their released schemas rather than guess former player semantics.
+Linked artifacts shall declare their local-role metadata through an explicit artifact schema under [DR-022](022-runtime-compatibility-contract.md).
+Every registry shall advertise its artifact schema, including bespoke profiles, and the shared factory and Captain host shall reject artifact schema `1`, declaration-free artifacts, or a registry/factory disagreement because their `player` values may contain linker-time bindings or aliases that cannot be reinterpreted safely as local roles.
+Linked-runtime trace schemas from `3` on carry required local `roleId` and optional resolved `playerId` on player-call boundaries without reinterpreting trace schema `2`'s overloaded player identity.
+Runtime and complete shell snapshot schemas from `3` on carry session player ledgers, local-role token projections, and discriminated Captain-or-role Boss-question ownership, and reject earlier schemas rather than guess former player semantics.
 
 ## Consequences
 
@@ -111,7 +109,7 @@ Runtime and complete shell snapshots shall use schema `3` for session player led
 - CODE, REVIEW, and DECIDE can share a Coder or Reviewer by naming the same player while applying role-specific invocation settings.
 - A session can move from Opus 4.8 to Opus 5 without losing its Claude conversation, subject to provider support.
 - Top-level players are identity-bearing session lanes rather than the reusable setting profiles rejected by [DR-021](021-inline-agent-settings.md).
-- Active workflow state and security-sensitive provider identity remain stable while ordinary model, effort, and fast-mode tuning can evolve.
+- Active workflow state and security-sensitive provider identity remain stable while ordinary tuning can evolve.
 - A reopened session retains its saved catalog; newly enabled playbooks and their additional players become available only in a new logical session.
 - The tmux-play host contract must accept segmented player ids and complete per-call effective settings before this design can be implemented.
 - Source grammar, configuration, runtime metadata, snapshot shape, CLI continuation, and release acceptance change incompatibly and require a new major version.

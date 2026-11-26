@@ -5,28 +5,27 @@
 
 ## Status
 
-Amended by [DR-077](077-portable-assets-and-inspection.md): session-owned immutable assets.
-
-Amended by [DR-073](073-durable-step-progress.md): portable progress records replace continuation points, with one shared discard predicate.
-
 Accepted (2026-09-05).
-Amends [DR-031](031-shared-captain-session-front-ends.md) for embedding-host lifecycle parity, [DR-042](042-shared-session-store-and-replay-stream.md) for manifest ownership, defaults, durable replay status and local hints, [DR-040](040-outcome-authority-effect-reconciliation.md) for token-free deferred-player identity, and [DR-029](029-session-scoped-conversational-captain.md) for definite-rejection-only immediate fresh retry.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amends [DR-029](029-session-scoped-conversational-captain.md), [DR-031](031-shared-captain-session-front-ends.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-042](042-shared-session-store-and-replay-stream.md).
+Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md), [DR-073](073-durable-step-progress.md), [DR-077](077-portable-assets-and-inspection.md), [DR-094](094-bounded-session-persistence.md).
 
 ## Context
 
 - Spex desktop and the CLI need one durable session and one management path; separate sidecars and private lifecycle writers cannot provide that.
 - Git can carry recovery evidence and history, but provider stores and machine paths remain external.
+- This gives embedding hosts the lifecycle of [DR-031](031-shared-captain-session-front-ends.md), moves manifest ownership, defaults, durable replay status, and local hints into the store of [DR-042](042-shared-session-store-and-replay-stream.md), makes the deferred-player identity of [DR-040](040-outcome-authority-effect-reconciliation.md) token-free, and limits the immediate fresh retry of [DR-029](029-session-scoped-conversational-captain.md) to definite rejection.
 
 ## Decision
 
 - Playbook owns the shared session contract and lifecycle [[session-storage-1](../packages/session-storage.md#session-storage-1)] [[session-storage-11](../packages/session-storage.md#session-storage-11)]; application registries remain host-owned.
-- Schema 7 binds token-free recovery to a durable replay prefix; context records retain historical participants/settings/graphs under the unchanged v1 envelope [[session-storage-2](../packages/session-storage.md#session-storage-2)] [[session-storage-4](../packages/session-storage.md#session-storage-4)] [[session-storage-5](../packages/session-storage.md#session-storage-5)].
+- The session manifest binds token-free recovery to a durable replay prefix, in the bounded physical representation of [DR-094](094-bounded-session-persistence.md); context records retain historical participants/settings/graphs under the unchanged v1 envelope [[session-storage-2](../packages/session-storage.md#session-storage-2)] [[session-storage-4](../packages/session-storage.md#session-storage-4)] [[session-storage-5](../packages/session-storage.md#session-storage-5)].
 - Local hints belong to an exact checkpoint and are consumed before use; deferred operations bind player identity, never a provider token [[session-storage-6](../packages/session-storage.md#session-storage-6)] [[session-storage-7](../packages/session-storage.md#session-storage-7)].
 - Only definite pre-execution session rejection permits one fresh attempt; ambiguous execution preserves uncertainty [[session-storage-8](../packages/session-storage.md#session-storage-8)].
 - The initial format supports no checkpoint path relocation: differing repository/module paths permit history only [[session-storage-9](../packages/session-storage.md#session-storage-9)].
 - Shared opening removes excess permissions from verified owned entries before strict reads or lease admission; unsafe paths still refuse [[session-storage-1](../packages/session-storage.md#session-storage-1)].
+- Portable progress records carry durable step progress, and one shared predicate decides discard ([DR-073](073-durable-step-progress.md)); lost progress the saved state cannot represent settles in the shared host ([DR-072](072-host-owned-interrupted-work-settlement.md)).
+- A session owns its immutable assets, which travel with its bundle, deletion, and relocation ([DR-077](077-portable-assets-and-inspection.md)).
+- Every host sharing a store upgrades together; mixed old and new writers are unsupported ([DR-071](071-interrupted-continuation-settlement.md)).
 - Shared migration retains ignored originals; deletion keeps retired guards and removes the manifest last [[session-storage-10](../packages/session-storage.md#session-storage-10)] [[session-storage-12](../packages/session-storage.md#session-storage-12)].
 
 ## Consequences

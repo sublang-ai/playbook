@@ -6,10 +6,8 @@
 ## Status
 
 Accepted.
-Amended by [DR-031](031-shared-captain-session-front-ends.md).
-[DR-032](032-explicit-roles-session-players.md) amends §3: a logical-Captain-session ledger keyed by explicitly bound player id supplies continuation across nested runtime frames and preserves a prior token when an aborted or error result omits a replacement.
-[DR-032](032-explicit-roles-session-players.md) also advances trace schema `2` to `3`, replacing its overloaded player identity with a required local `roleId` and optional resolved `playerId`.
-[DR-040](040-outcome-authority-effect-reconciliation.md) advances governed transition evidence to trace schema `4` and adds an `unresolved-effect` host disposal result outside the `terminal` variant while preserving session identity and causality.
+Amends [DR-005](005-boss-reply-suspension-path.md).
+Amended by [DR-011](011-composable-playbook-execution.md), [DR-031](031-shared-captain-session-front-ends.md), [DR-032](032-explicit-roles-session-players.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-042](042-shared-session-store-and-replay-stream.md).
 
 ## Context
 
@@ -46,7 +44,7 @@ Every trace payload shall carry:
 
 | Field | Contract |
 | --- | --- |
-| `schemaVersion` | Literal `1`. |
+| `schemaVersion` | The current trace schema version. |
 | `sessionId` | The immutable playbook-session UUID. |
 | `playbookId` | The stable playbook id supplied at init. |
 | `sequence` | Contiguous one-based integer within the session. |
@@ -56,16 +54,9 @@ Every trace payload shall carry:
 | `callId` | Stable id shared by matching call-started and call-finished events. |
 | `payload` | JSON-safe event data. |
 
-[DR-011](011-composable-playbook-execution.md) §5
-supersedes the version-1 schema, closed type set, and state-id-only
-payload vocabulary for every linked runtime with trace schema version
-2, structured state, suspended settlement, causal session fields, and
-nested-call pairs.
-The remaining boundary-order, exact prompt/reply, error-normalization,
-sensitivity, and player-continuation rules in this section continue to
-apply.
+The base trace types and payloads below are extended by [DR-011](011-composable-playbook-execution.md) §5 with structured state, suspended settlement, causal session fields, and nested-call pairs, by [DR-032](032-explicit-roles-session-players.md) with distinct local role and resolved player identities, and by [DR-040](040-outcome-authority-effect-reconciliation.md) with governed transition evidence.
 
-The trace types shall be `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
+The base trace types shall be `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
 
 Their payloads shall use the following common vocabulary; fields marked optional are omitted when unavailable rather than synthesized:
 
@@ -76,8 +67,8 @@ Their payloads shall use the following common vocabulary; fields marked optional
 | `boss.input.settled` | `{ outcome, stateId?, error? }`, where `outcome` is `quiescent`, `no-action`, `failed`, `terminal`, or `aborted`. |
 | `judge.call.started` | `{ purpose, stateId?, prompt }`. |
 | `judge.call.finished` | `{ purpose, stateId?, status, reply?, error? }`. |
-| `player.call.started` | `{ purpose, stateId?, sourceItem, playerId, prompt, resume }`. |
-| `player.call.finished` | `{ purpose, stateId?, sourceItem, playerId, resume, status, resumeToken?, finalText?, error? }`. |
+| `player.call.started` | `{ purpose, stateId?, sourceItem, roleId, playerId?, prompt, resume }`. |
+| `player.call.finished` | `{ purpose, stateId?, sourceItem, roleId, playerId?, resume, status, resumeToken?, finalText?, error? }`. |
 | `fsm.transition` | The runtime's existing JSON-safe transition payload, including its `from`, `to`, event, pending-question, and error data where applicable. |
 | `status.emitted` | `{ message, data?, stateId? }`, preserving the exact host status arguments; `stateId` is optional context. |
 
@@ -98,14 +89,12 @@ The store is runtime-owned unless a composing host supplies the frame's view of 
 For the first call to a fresh binding, the runtime shall pass `resume: false`; omission is not permitted because a host may otherwise auto-resume an older conversation.
 For a later call, the runtime shall pass the exact stored token.
 
-After every resolved player call, the runtime shall replace the stored token when the result carries a non-empty `resumeToken`, or clear it when the result omits one, before interpreting the result status.
-An aborted or error result may therefore preserve a returned token.
+After every resolved player call, the runtime shall replace the stored token when the result carries a non-empty `resumeToken`, clear it when an `ok` result omits one, and preserve it when an `aborted` or `error` result omits one, before interpreting the result status ([DR-032](032-explicit-roles-session-players.md)).
 A thrown port call with no result shall leave the prior token unchanged.
 The runtime shall not retry fresh after an invalid resume token.
 
-The map key shall be the resolved player id for a private store and the effective host-player binding for a host-owned root store, so exact same-role nested frames share only the conversation they actually invoke.
 Runtime-owned continuation survives parked Boss turns and an actor rebuild inside that runtime, and is discarded on runtime disposal.
-Host-owned continuation survives child return and disposal, is shared only by frames mapped to the same effective binding, and is discarded with the root engagement.
+Host-owned continuation is the logical Captain session's ledger keyed by explicitly bound player id: it survives child return, root completion, and process hand-off, and is shared only by frames bound to the same player id.
 
 ### 4. tmux-play bridge
 
@@ -124,15 +113,13 @@ The explicit Q+A remains deterministic input and an adapter-independent fallback
 
 ### 6. Preserved scope
 
-This decision does not add persisted XState checkpoints, rehydrate a disposed runtime, expose resume tokens in the Boss UI, add multiple Boss-selected root engagements, or persist the trace itself.
-A nested live-session stack is added separately by
-[DR-011](011-composable-playbook-execution.md).
-A host observer may persist `playbook.trace`; durable storage and cross-process runtime restoration require a separate decision.
+This decision exposes no resume token in the Boss UI and adds no Boss-selected root engagement beyond one.
+Durable sessions and cross-process restoration belong to [DR-031](031-shared-captain-session-front-ends.md), and durable storage to [DR-042](042-shared-session-store-and-replay-stream.md), which persists a token-free projection rather than the trace itself; a host observer may still persist `playbook.trace`.
 
 ## Consequences
 
 - A playbook engagement has one immutable correlation id across Boss turns, runtime telemetry, player calls, and disposal.
-- New root engagements start every effective player fresh instead of inheriting tmux-play's prior host-player conversation.
+- A new logical Captain session starts every player fresh instead of inheriting tmux-play's prior host-player conversation.
 - Parked and nested mapped engagements resume each resolved player explicitly from the last authoritative adapter token.
 - The public runtime contract and authored linker contract change incompatibly before 1.0.
 - Trace sinks can reconstruct the complete runtime-boundary history without an unbounded conversation ledger in the Captain shell.

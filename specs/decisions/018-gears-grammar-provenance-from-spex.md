@@ -6,8 +6,7 @@
 ## Status
 
 Accepted.
-[DR-032](032-explicit-roles-session-players.md) replaces the Playbook-owned fixed `Players:` label with `Roles:` syntax; the Spex GEARS-statement provenance remains unchanged.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: compiled GEARS follow the cited definition's package form, not only its statement pattern.
+Amended by [DR-032](032-explicit-roles-session-players.md), [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -18,9 +17,9 @@ The language contract for compiled GEARS was fragmented: `slc/text2gears.md` sai
 
 ## Decision
 
-- The grammar authority for the shipped `slc/*` definitions is the GEARS definition shipped by the installed `@sublang/spex` package — `@sublang/spex/scaffold/specs/meta.md` (English) and `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese) — cited in numbered-reference style together with the two canonical URLs.
-- `@sublang/spex` becomes a regular runtime dependency (`^0.3.0`), so the cited files resolve in every install closure ([[release-22](../packages/release.md#release-22)], verified by [[release-23](../packages/release.md#release-23)]).
-- `slc/text2gears.md` carries the unified language rule: an item's condition prose, acting prompts, and result descriptions follow the Source language, per the matching localization of the GEARS definition; the four `Captain shall` acting-clause forms, guard names, and the `Roles:`/`Results:` labels are fixed machine syntax in exact English regardless of Source language.
+- The grammar authority for the shipped `slc/*` definitions is the GEARS definition shipped by the installed `@sublang/spex` package — `@sublang/spex/scaffold/specs/meta.md` (English) and `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese) — cited in numbered-reference style together with the two canonical URLs; compiled GEARS follow that definition's spec-package form, not only its statement pattern ([DR-108](108-compiled-gears-is-a-spec-package.md)).
+- `@sublang/spex` is a regular runtime dependency, so the cited files resolve in every install closure ([[release-22](../packages/release.md#release-22)], verified by [[release-23](../packages/release.md#release-23)]).
+- `slc/text2gears.md` carries the unified language rule: an item's condition prose, acting prompts, and result descriptions follow the Source language, per the matching localization of the GEARS definition; the four `Captain shall` acting-clause forms, guard names, and the `Roles:` ([DR-032](032-explicit-roles-session-players.md)) and `Results:` labels are fixed machine syntax in exact English regardless of Source language.
 - `slc/optimize.md` keeps its script-clause fixed-English sentence and repoints it to the same authority.
 - Playbook's own `specs/meta.md` remains this repository's spec-authoring convention, unchanged; the shipped `slc/*` definitions simply no longer cite it.
 
@@ -29,7 +28,6 @@ The language contract for compiled GEARS was fragmented: `slc/text2gears.md` sai
 - Consumers of the shipped `slc/*` definitions pin the published grammar artifact instead of a local copy; vendoring the definitions no longer rebinds the citation.
 - Localized sources compile under one language contract, with machine syntax stable for downstream compilers (`gears2fsm`, conformance tooling).
 - The install closure grows by one dependency-free documentation package.
-- The original provenance change was additive, while [DR-032](032-explicit-roles-session-players.md) changes the Playbook-owned declaration label incompatibly in the next major.
 
 ## References
 

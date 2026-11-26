@@ -442,7 +442,7 @@ The probe shall be the adapter's own loader rather than a resolution
 check: it performs the same dynamic import the adapter performs at run
 time, from the same installed module scope, so a passing probe cannot
 disagree with a failing run
-([DR-026](../decisions/026-optional-adapter-sdks.md) §4).
+([DR-027](../decisions/027-runtime-compatibility-from-cligent.md) §2).
 A resolution-based probe shall not be substituted: neither SDK exports
 `./package.json` and `@openai/codex-sdk` is ESM-only, so
 `createRequire(...).resolve()` reports both absent when present.

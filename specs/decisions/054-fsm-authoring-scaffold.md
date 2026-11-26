@@ -5,7 +5,7 @@
 
 ## Status
 
-Accepted as an unmeasured experiment.
+Accepted.
 
 ## Context
 
@@ -21,7 +21,7 @@ The output is deliberately incomplete TypeScript requiring ordinary agent author
 Register reusable assignments through a contextually typed setup extension and reference their action names, rather than directly reusing an externally typed action on heterogeneous actor completion events.
 Nested-call prompt constants remain templates: runtime composition and child acceptance remain the existing phase contract.
 Unsupported source forms use ordinary compilation rather than inferred defaults.
-Retain this technique as a performance optimization only after a matched, accepted experiment demonstrates improvement; incomplete or failed compilations prove no speed benefit.
+The technique is an unmeasured experiment: retain it as a performance optimization only after a matched, accepted experiment demonstrates improvement; incomplete or failed compilations prove no speed benefit.
 
 ## Consequences
 

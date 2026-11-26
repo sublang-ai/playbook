@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-For a delegated-player call governed by [DR-040](040-outcome-authority-effect-reconciliation.md), the corrective re-ask requires a complete durable `unchanged` receipt; that decision does not amend schema-2, nongoverned, or direct-Captain boundaries.
+Amended by [DR-040](040-outcome-authority-effect-reconciliation.md).
 
 ## Context
 
@@ -23,6 +23,7 @@ The two call boundaries also disagreed on whether `''` counts as empty.
 - Both boundaries use that same empty predicate, closing the `''` asymmetry.
 - Non-`ok` results, thrown calls, and aborts are never retried ([DR-025](025-resilient-captain-control-adjudication.md)'s transport exclusion).
 - A second empty result follows the existing failure path.
+- For a delegated-player call governed by [DR-040](040-outcome-authority-effect-reconciliation.md), the re-ask requires a complete durable `unchanged` receipt.
 - A retry preserves the originating call's continuity policy: player retries follow player-session continuity ([[playbook-runtime-38](../packages/playbook-runtime.md#playbook-runtime-38)]); only the controller Captain's calls join [DR-029](029-session-scoped-conversational-captain.md)'s durable conversation; all other Captain and judge calls keep their existing isolation.
 - When an empty controller result also loses continuity, the journal-seeded reseed is the single corrective call — never a reseed plus another retry.
 

@@ -5,13 +5,9 @@
 
 ## Status
 
-Amended by [DR-069](069-captain-prepares-step-recovery.md): host-selected actions receive the same bounded automatic recovery as model-selected actions.
-Amended by [DR-073](073-durable-step-progress.md): host-selected actions use normal step progress; saved continuation points and whole-turn replay are removed.
-
 Accepted.
-Amends [DR-029](029-session-scoped-conversational-captain.md) in one scope: a `runtime` turn may be decided by the embedding host instead of the hidden decision call, preserving every validation and effect rule that decision carries.
-Amended by [DR-052](052-host-selected-give-up.md): a host may also decide a give-up turn, whose result phase the shell settles itself instead of through the closing-reply call.
-Amended by [DR-063](063-failures-explain-themselves.md): the advertised `{ id, label }` pairs gain `standing` and its `reason`.
+Amends [DR-029](029-session-scoped-conversational-captain.md).
+Amended by [DR-052](052-host-selected-give-up.md), [DR-063](063-failures-explain-themselves.md), [DR-069](069-captain-prepares-step-recovery.md), [DR-073](073-durable-step-progress.md).
 
 ## Context
 
@@ -23,8 +19,9 @@ The list cannot be reconstructed outside the shell: it is computed per call from
 
 ## Decision
 
-- The Captain shell publishes the active leaf's currently advertised runtime actions — the ids and Boss-facing labels its ControlView digest would name — to its embedding host between turns, taking the digest's own rules: an unreadable control view advertises nothing, and a fenced leaf advertises only its fence controls.
-- A host may select one advertised action as the next Boss turn's decision. Such a turn enters with its decision already made and allocates no decision call, exactly as a parse-resolved command does; the selection reaches the shell through the controller port as `runtime`, and validation against the leaf's current `describe()`, the per-turn idempotency key, the outcome report, and the closing reply are unchanged.
+- The Captain shell publishes the active leaf's currently advertised runtime actions — the ids, Boss-facing labels, and standing with its reason ([DR-063](063-failures-explain-themselves.md)) its ControlView digest would name — to its embedding host between turns, beside its own give-up control ([DR-052](052-host-selected-give-up.md)), taking the digest's own rules: an unreadable control view advertises nothing, and a fenced leaf advertises only its fence controls.
+- A host may select one advertised action as the next Boss turn's decision, instead of the hidden decision call of [DR-029](029-session-scoped-conversational-captain.md). Such a turn enters with its decision already made and allocates no decision call, exactly as a parse-resolved command does; the selection reaches the shell through the controller port as `runtime`, and validation against the leaf's current `describe()`, the per-turn idempotency key, the outcome report, and the closing reply are unchanged.
+- A host-selected action receives the same bounded automatic recovery and normal step progress as a model-selected one ([DR-069](069-captain-prepares-step-recovery.md), [DR-073](073-durable-step-progress.md)).
 - The shell remains the sole effector. A selection is a selection, never an execution: an id the leaf no longer advertises is refused with a reason and starts no turn, and one the leaf stops advertising between selection and settlement settles `rejected` like any other invalid selection.
 - The selection carries the turn it decides. The shell returns the selected action's own Boss-facing label as that turn's text, so the conversation records what was asked in words the Boss can read, and a turn carrying other text drops the selection and is decided the ordinary way.
 - The host surface is additive and optional: a shell that publishes neither member advertises nothing, which is what an older shell already means to a host.

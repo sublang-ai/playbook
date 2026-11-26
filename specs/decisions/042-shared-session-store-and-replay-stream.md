@@ -6,10 +6,8 @@
 ## Status
 
 Accepted.
-Takes up [DR-010](010-playbook-session-tracing-and-resume.md) §6's deferral of durable trace storage to a separate decision, and preserves its resume-token credential posture by persisting a token-free projection instead of the trace itself.
-Extends [DR-031](031-shared-captain-session-front-ends.md) §2's one shared configuration with an optional `sessions` bootstrap locator.
-Amended by [DR-049](049-portable-session-contract.md): shared manifest lifecycle, default location, persisted replay status and local hints.
-Extended by [DR-087](087-leases-name-the-machine.md): the lease owner names its machine by the published machine identity carried in the `hostname` field, a legacy host name reclaimable under the old rule.
+Amends [DR-010](010-playbook-session-tracing-and-resume.md), [DR-031](031-shared-captain-session-front-ends.md).
+Amended by [DR-049](049-portable-session-contract.md), [DR-087](087-leases-name-the-machine.md).
 
 ## Context
 
@@ -19,6 +17,7 @@ The external host persists that full record stream in its own store, which this 
 Both front ends already observe every record and drop most of it, so teeing the stream to a per-session file beside the existing record is one added observer rather than a new execution path.
 The store module already ships in the published tarball and is injectable, but it is unreachable behind the package `exports` map and has no declaration file, so exposing it wholesale would freeze every internal it happens to carry.
 The durable format and the public module surface are therefore this project's to define, and the external host pins its dependency floor to the release that ships them.
+This takes up the durable trace storage [DR-010](010-playbook-session-tracing-and-resume.md) deferred, keeping its resume-token credential posture by persisting a token-free projection instead of the trace itself, and extends the one shared configuration of [DR-031](031-shared-captain-session-front-ends.md) with a sessions locator.
 The dependent host already writes the stream's content shape, but its current default-created directory and stream modes do not satisfy the privacy boundary and its reader does not enforce the frozen read contract, so its adoption includes those changes rather than starting at zero compatibility burden.
 
 ## Decision
@@ -45,6 +44,7 @@ The published lease is therefore a narrower handle than the internal one, becaus
 The facade shall validate a canonical manifest through the private reader and then return only a detached frozen session summary, so neither the credential-bearing manifest nor its evolving internal schema shape becomes reachable through the public capability.
 The facade and both front ends shall use the same private store implementation and validators, so an external consumer's validation is the CLI's own validation by construction rather than by resemblance; the front ends retain their richer private leases, and the facade is not their exclusive access path.
 A record below the current schema shall be rejected rather than migrated, consistent with this project's hard-cutover posture.
+[DR-049](049-portable-session-contract.md) gives Playbook the shared session contract and lifecycle on top of this facade, with the default location, persisted replay status, and local hints.
 
 ### 3. A token-free replay projection under one frozen ABI
 
@@ -54,7 +54,7 @@ The following ABI is frozen at the release that ships it:
 
 | Element | Contract |
 | --- | --- |
-| File | `<sessionId>.records.jsonl`, beside `<sessionId>.json` in the sessions directory |
+| File | the session's replay log, beside `<sessionId>.json` in the sessions directory, in the physical representation the session-persistence decisions after [DR-049](049-portable-session-contract.md) define |
 | Privacy | every live store participant uses mode `0600` regular non-symlink stream files in a mode `0700` real non-symlink directory, and a reader rejects an incompatible boundary rather than weakening it |
 | Envelope | one JSON object per line, `{"v": 1, "seq": <n>, "role"?: <string>, "record": <sanitized record>}` |
 | Record | one opaque recursively sanitized JSON object, preserved without interpreting or gating its `type` or members; a missing or non-object value is a malformed envelope |
@@ -97,17 +97,15 @@ The shared launch configuration gains an optional top-level `sessions` key, reso
 Tilde expansion is new in this configuration, and it applies to this key alone.
 The key shall never enter a persisted structural or execution projection, and behavior with the key unset shall be byte-identical to today's default directory.
 
-### 6. Preserved scope and deferrals
+### 6. Preserved scope
 
-- Lease acquisition and retirement are unchanged: per-session single writer, lease-free reads, and foreign-host leases never broken. This decision routes appends through that lease rather than altering it.
+- Lease acquisition and retirement are unchanged: per-session single writer, lease-free reads, and foreign-host leases never broken; appends route through that lease.
+  The lease owner names its machine by the published machine identity carried in its `hostname` field, and a legacy host name stays reclaimable under the old rule ([DR-087](087-leases-name-the-machine.md)).
 - The public facade gains no explicit checkpoint operation: private session-record settlement and public lease release remain the two content-checkpoint boundaries, while separate readable and durable sequences keep intermediate status meaningful.
 - The agent-runtime client library needs no change; the tee rides its existing record-observer contract.
-- Stream retention and deletion are deferred: streams are unbounded in this first version, and retention rides the already-deferred session-deletion decision.
-- A durable incompleteness latch is deferred as a queued rider: the next session-record schema bump that happens for any independent reason shall carry a durable `recordsStream.incompleteAfterSeq` member, so the latch lands at zero marginal cost rather than spending a schema bump of its own. A genuinely cross-host proof additionally requires the dependent host to read this shared record, which is that repository's adoption work and is not decided here — our member alone is not the symmetric solution.
+- Streams have no retention of their own; they are deleted with their session ([DR-049](049-portable-session-contract.md)).
 - Reading another host's own sidecar files stays out of scope.
 - Before it can use the shared home, the dependent host must satisfy the `0700` directory and `0600` stream-file boundary and the strict reader contract; this project shall not relax credential-bearing store privacy to accommodate its current defaults.
-
-Every change above ships in one release, so the dependent host pins its floor to that version rather than to a sequence of partial ones.
 
 ## Consequences
 

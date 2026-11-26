@@ -6,11 +6,11 @@
 ## Status
 
 Accepted.
-Amends [DR-031](031-shared-captain-session-front-ends.md) §4's globally newest implicit selection while preserving explicit selection and uncertain-turn recovery.
+Amends [DR-031](031-shared-captain-session-front-ends.md).
 
 ## Context
 
-`playbook run --continue` selects the globally newest durable Captain-session record by update time.
+[DR-031](031-shared-captain-session-front-ends.md) §4 had `playbook run --continue` select the globally newest durable Captain-session record by update time.
 When several repositories have sessions in flight, invoking it from one repository can therefore reopen another repository's Captain session without an explicit choice.
 Each durable record already carries the normalized absolute working directory that restoration keeps authoritative.
 Explicit `--session <id>` is the unambiguous cross-directory selector, and an uncertain record must still be selected before its existing refusal can protect against replay.

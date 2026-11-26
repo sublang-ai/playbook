@@ -11,11 +11,11 @@ DR-031 later unified interactive and headless execution on this shared Captain s
 
 ## Intent
 
-Implement [DR-013](../decisions/013-routing-only-captain-control.md) Addendum A1: stop requesting an explicit empty tool allowlist from a captain adapter that cannot enforce one, so a Codex captain runs instead of failing every Boss turn, while Claude keeps its provider-enforced tool-free isolation.
+Implement [DR-013](../decisions/013-routing-only-captain-control.md) §Tool-free control calls (formerly Addendum A1): stop requesting an explicit empty tool allowlist from a captain adapter that cannot enforce one, so a Codex captain runs instead of failing every Boss turn, while Claude keeps its provider-enforced tool-free isolation.
 
 ## Deliverables
 
-- [x] DR-013 Addendum A1 records the decision, the degrade path, and the unknown-adapter default.
+- [x] DR-013 §Tool-free control calls (formerly Addendum A1) records the decision, the degrade path, and the unknown-adapter default.
 - [x] The launcher passes the resolved captain adapter to the shell as `captain.options.captainAdapter`.
 - [x] The shell omits `allowedTools` on its own control calls, and on a runtime-requested empty allowlist it forwards, for adapters without provider-enforced tool restriction; a non-empty request stays fail-closed.
 - [x] `playbook run`'s `callJudge` applies the same rule from its bound captain spec.

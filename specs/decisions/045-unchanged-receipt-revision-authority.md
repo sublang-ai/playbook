@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amends [DR-040](040-outcome-authority-effect-reconciliation.md).
 
 ## Context
 

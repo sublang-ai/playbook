@@ -74,7 +74,7 @@ and DR-004 §2 (Addendum A2):
   a two-source conflict.
 - **No cligent change.** Resolved entirely in the playbook composer + CODE
   runtime; `@sublang/cligent` is untouched and the lockfile unchanged. Recorded
-  as a DR-004 §2 amendment (Addendum A2), not a standalone DR-008.
+  as a DR-004 §2 amendment (Addendum A2), not a standalone DR.
 - **Path to `resolvePlayerId` (playbook-runtime-8).** The adapter validates
   `captain.options.code.committer` and threads it into `createPlaybookRuntime`,
   which wires it onto the `Committer` states' `CaptainInput.committerPlayer`. A
@@ -88,7 +88,7 @@ and DR-004 §2 (Addendum A2):
 ## Deliverables
 
 - [x] IR-013 doc and its `map.md` row.
-- [x] Alias-representation decision recorded — DR-004 §2 amendment (Addendum A2); no DR-008, no new DR map row.
+- [x] Alias-representation decision recorded — DR-004 §2 amendment (Addendum A2); no standalone DR, no new DR map row.
 - [x] CODE config-composition decision (since replaced by [DR-009](../decisions/009-generic-playbook-cli-and-registry.md)) amended by adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
 - [x] `specs/packages/playbook-code.md` — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
 - [x] `specs/packages/playbook-code.md` — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.

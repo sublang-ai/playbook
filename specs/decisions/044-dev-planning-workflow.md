@@ -6,10 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-050](050-pull-request-delivery.md): DEV's planning result gains two pull-request outcomes, and DEV composes `branch` before and `pr` after its paths.
-Seeded-lineup scope amended by [DR-053](053-seeding-picks-a-ready-adapter.md): the seeded agents' adapter and model are selected from the adapters whose credentials are present rather than fixed; the players, their role bindings, and everything else here stand.
-Planning-result scope amended by [DR-061](061-dev-analyst-plans-the-path.md): the Analyst's result is the chosen path and a bounded planning note, a Boss question serves only that choice, and analysis, design, and implementation stay with the called playbooks; the outcomes, composition, governance, and suspension here stand.
-Seeded-model scope amended by [DR-074](074-seeds-name-the-latest-models.md): `dev.analyst` takes its adapter's current seeded model, the latest of that adapter's line, rather than `claude-opus-5`; the player, its binding, and everything else here stand.
+Amended by [DR-050](050-pull-request-delivery.md), [DR-053](053-seeding-picks-a-ready-adapter.md), [DR-061](061-dev-analyst-plans-the-path.md), [DR-074](074-seeds-name-the-latest-models.md).
 
 ## Context
 
@@ -24,10 +21,11 @@ DEV joins CODE, REVIEW, and DECIDE as a maintained workflow compiled from `refer
 
 - DEV declares exactly one local role, `Analyst`, and no concurrent role set.
 - DEV owns no repository commit: every delegated Analyst state is governed with the `unchanged` repository disposition, so planning that mutates the repository fails authority instead of being adopted.
-- The planning result has four semantic outcomes — needs Boss reply, discussion complete, code, and decide then code — each requiring affirmative support in Analyst's result; Boss-question suspension and reentry follow the standard path of [DR-005](005-boss-reply-suspension-path.md) within one Analyst conversation.
-- DEV acts on the accepted outcome itself: it calls playbook `code`, or playbook `decide` and then `code`, as function-style nested literal calls through the shared bridge per [DR-011](011-composable-playbook-execution.md), consumes commit and revision identities only from each child's canonical structured result, and never returns to the session Captain for another routing decision.
+- The planning result has six semantic outcomes — needs Boss reply, discussion complete, code, decide then code, code via pull request, and decide then code via pull request ([DR-050](050-pull-request-delivery.md)) — each requiring affirmative support in Analyst's result.
+- The Analyst's result is the chosen path and a bounded planning note, a Boss question serves only that choice, and analysis, design, and implementation stay with the called playbooks ([DR-061](061-dev-analyst-plans-the-path.md)); Boss-question suspension and reentry follow the standard path of [DR-005](005-boss-reply-suspension-path.md) within one Analyst conversation.
+- DEV acts on the accepted outcome itself: it calls playbook `code`, or playbook `decide` and then `code`, preceded by `branch` and followed by `pr` on a pull-request outcome ([DR-050](050-pull-request-delivery.md)), as function-style nested literal calls through the shared bridge per [DR-011](011-composable-playbook-execution.md), consumes commit and revision identities only from each child's canonical structured result, and never returns to the session Captain for another routing decision.
 - Terminal meaning follows [DR-035](035-truthful-terminal-meaning.md): distinct final states for discussion complete, completion through the final child's success, and an authored child abort, failure, or insufficient terminal result relayed as DEV's own failure outcome; a child failure outside its authored contract parks DEV recoverable with the control-plane error.
-- The host surface adopts DEV completely: public `./dev/playbook` and `./dev/registry` subpaths, packaged artifact files, and starter-config enablement binding `analyst` to a new seeded `dev.analyst` player on `claude` / `claude-opus-5`, keeping the existing seeded lineup otherwise unchanged.
+- The host surface adopts DEV completely: public `./dev/playbook` and `./dev/registry` subpaths, packaged artifact files, and starter-config enablement binding `analyst` to a new seeded `dev.analyst` player whose adapter and model the seed selects like the rest of the lineup ([DR-053](053-seeding-picks-a-ready-adapter.md), [DR-074](074-seeds-name-the-latest-models.md)).
 - `dev.analyst` is a distinct player rather than a reuse of `dev.reviewer`: equal player ids deliberately share conversation continuity, and planning context must not bleed into review conversations.
 
 Recompiling CODE, REVIEW, and DECIDE artifacts to their current authored sources is ordinary maintenance under the existing decisions and needs no decision here.

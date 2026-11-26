@@ -6,12 +6,8 @@
 ## Status
 
 Accepted.
-[DR-029](029-session-scoped-conversational-captain.md) amends §4: the Captain is placed outside the engagement stack as an always-present controller, the manual-slash-selection sentence is superseded by the absent-from-path `switch`, and leaf-only Boss input is recast as leaf-only *delivery* — the Captain receives every turn.
-The stack semantics themselves stay intact.
-[DR-032](032-explicit-roles-session-players.md) amends §4: runtime frames remain distinct, child roles resolve explicit role-to-player bindings, and simultaneous calls to one player still reject.
-[DR-032](032-explicit-roles-session-players.md) also advances the linked trace schema from `2` to `3` for distinct role and player identities while retaining this decision's nested causality fields.
-[DR-040](040-outcome-authority-effect-reconciliation.md) adds same-worktree observation coordination around delegated calls while preserving the declared concurrent zero-only proposal cohort and its blind join.
-[DR-067](067-parallel-proposals-through-the-shared-factory.md) amends §1: the shared engine, not a linked runtime of DECIDE's own, interprets the parallel proposal pair.
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-010](010-playbook-session-tracing-and-resume.md).
+Amended by [DR-029](029-session-scoped-conversational-captain.md), [DR-032](032-explicit-roles-session-players.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-067](067-parallel-proposals-through-the-shared-factory.md).
 
 ## Context
 
@@ -37,7 +33,7 @@ Each working leaf shall invoke an actor, and each successful region shall reach 
 The parallel parent's `onDone` transition is the join.
 Async actions and runtime-owned `Promise.all` joins shall not model workflow state because XState does not await actions [[2]].
 
-DECIDE shall use this structure for its independent proposal pair.
+DECIDE shall use this structure for its independent proposal pair, interpreted by the shared engine rather than a linked runtime of its own ([DR-067](067-parallel-proposals-through-the-shared-factory.md)).
 Coder and Reviewer shall receive the same topic concurrently, and neither prompt shall contain the other's proposal.
 Their results shall be staged per branch and promoted together at the join, so completion order cannot affect the later Coder commit.
 
@@ -50,6 +46,7 @@ The fixed parallel parent is one Boss-interrupt unit.
 An interrupt shall restart the whole pair with the replacement topic and clear both staged results and questions, while a branch-local Boss reply shall resume only the identified waiting branch.
 
 Parallel calls may target distinct resolved players.
+Delegated calls on one worktree coordinate their repository observations, while the concurrent proposal pair, which may not change the repository, keeps its blind join ([DR-040](040-outcome-authority-effect-reconciliation.md)).
 A linked runtime shall reject simultaneous calls that resolve to the same player id because one backend resume-token chain cannot be forked deterministically.
 The host Captain judge remains one single-flight resource, so hidden classifier and adjudicator calls shall pass through one abort-aware FIFO with concurrency one.
 The implementation shall use `p-queue` rather than maintain a custom asynchronous queue [[5]].
@@ -98,7 +95,7 @@ This is an intentional pre-1.0 breaking change.
 
 The Playbook Captain shell shall treat one Boss-selected engagement and its nested descendants as one active call stack.
 Each frame shall own a distinct runtime instance and immutable playbook-session UUID.
-Only the top frame receives Boss input and owns visible player panes.
+Only the top frame receives delivered Boss input and owns visible player panes; the session Captain outside the stack receives every turn ([DR-029](029-session-scoped-conversational-captain.md)).
 Each child role shall resolve its explicit role-to-player binding, and the logical Captain session shall own continuation for those players ([DR-032](032-explicit-roles-session-players.md)).
 
 Opening a child shall push a frame whose session records `rootSessionId`, `parentSessionId`, `parentCallId`, and depth.
@@ -119,7 +116,7 @@ Boss dismissal at a child frame shall abort and dispose that child, then resume 
 Boss dismissal at the root shall dispose the complete stack in last-in-first-out order.
 Host teardown shall dispose the complete stack in last-in-first-out order without resuming callers.
 A child that parks remains the top frame for the next Boss turn.
-Manual slash selection shall not bypass or replace an active stack.
+Selecting a playbook absent from the active path is the Captain's `switch` action ([DR-029](029-session-scoped-conversational-captain.md)), never a bypass of the active stack.
 
 ### 5. Trace causality
 
@@ -127,9 +124,7 @@ Manual slash selection shall not bypass or replace an active stack.
 `depth`, plus optional `parentSessionId` and `parentCallId` fields.
 Root sessions shall use their own id as `rootSessionId` and depth zero.
 
-The trace schema for every linked runtime shall advance to version 2 and add
-`rootSessionId`, optional parent-session/call fields, depth,
-`playbook.call.started`, and `playbook.call.finished`.
+The trace schema for every linked runtime shall add `rootSessionId`, optional parent-session/call fields, depth, `playbook.call.started`, and `playbook.call.finished` to the base trace of [DR-010](010-playbook-session-tracing-and-resume.md), whose state-id-only payload vocabulary it replaces with structured state.
 Every event in one session shall carry the same causal identity.
 The parent trace pair shall share the runtime call id and carry target playbook id, child session id when assigned, status, output, and normalized error where applicable.
 The child's `session.started` trace shall carry its causal session fields.
@@ -137,26 +132,20 @@ Every trace payload shall be JSON-safe.
 A suspended Boss settlement shall carry the structured state descriptor and
 the same pending-call identity returned by the runtime.
 
-This section supersedes DR-010's version-1 type set and state-id-only payload
-vocabulary for all linked runtimes.
-DR-010's boundary ordering, exact prompt/reply, error normalization,
-sensitivity, and explicit player-continuation rules remain in force.
-
 Parallel calls may finish in either order.
 The session trace sequence remains the authoritative total order, while acceptance tests shall require only causal partial orders between independent calls.
 
 ### 6. Preserved scope
 
-This decision composes live runtime sessions.
-It does not add durable XState snapshot persistence, cross-process rehydration, recursive playbook calls, parallel Boss turns, or concurrent calls to one resolved player.
-XState deep persistence can preserve invoked child actors in a future durable design, but restarted invocations and JSON-serialization constraints require a separate decision [[6]].
+This decision composes runtime sessions; their durable persistence belongs to [DR-031](031-shared-captain-session-front-ends.md).
+It does not add recursive playbook calls, parallel Boss turns, or concurrent calls to one resolved player.
 
 ## Consequences
 
 - DECIDE can overlap independent Coder and Reviewer proposals without race-dependent prompts or premature disclosure.
 - One branch can wait for Boss without discarding a completed sibling result.
 - A playbook can call an enabled child, pause across Boss turns, and continue from the child's output like a function return.
-- Every nested runtime retains an independent runtime session and a causally linked trace, while explicitly mapped roles share player continuation within the root engagement.
+- Every nested runtime retains an independent runtime session and a causally linked trace, while roles bound to the same player share its continuation within the logical Captain session.
 - Hosts and linked runtimes must understand structured state descriptors and the new nested-call protocol.
 - Direct child-machine invocation within one XState actor system remains the preferred future architecture when the public runtime factory exposes actor logic; the live stack bridge preserves current dynamic registry and free-text runtime boundaries without deadlocking interactive children.
 
@@ -167,4 +156,3 @@ XState deep persistence can preserve invoked child actors in a future durable de
 [3]: https://stately.ai/docs/actors#waitfor 'XState actor waitFor'
 [4]: https://stately.ai/docs/output 'XState actor output'
 [5]: https://github.com/sindresorhus/p-queue#readme 'p-queue concurrency and AbortSignal support'
-[6]: https://stately.ai/docs/persistence 'XState deep actor persistence'

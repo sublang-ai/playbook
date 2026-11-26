@@ -18,7 +18,7 @@ absent.
 
 ## Deliverables
 
-- [x] DR-027 records the delegation and the clauses of DR-026 it
+- [x] DR-027 records the delegation and the clauses of the optional-SDK decision (since merged into DR-027) it
       supersedes; playbook-cli-39, playbook-cli-40, playbook-cli-41, release-12, and release-27
       state the delegated contract.
 - [x] The gate module derives adapter runtimes, floors, and remedies from
@@ -56,7 +56,7 @@ green at its boundary.
        affected tests.
 3. [x] **Record the change.**
        Update the changelog, correct the superseded mirror sentence in this
-       cycle's DR-026 entry, and align the README install guidance with the
+       cycle's DR-027 entry, and align the README install guidance with the
        pinned remedies the gate prints.
 
 ## Verification

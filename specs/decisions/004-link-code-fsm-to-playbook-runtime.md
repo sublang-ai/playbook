@@ -6,10 +6,7 @@
 ## Status
 
 Accepted.
-[DR-019](019-shared-linked-runtime-factory.md) moves CODE's single-region interpreter into the shared runtime factory.
-[DR-011](011-composable-playbook-execution.md) supplies nested playbook-call semantics.
-[DR-032](032-explicit-roles-session-players.md) supplies player continuity: CODE and REVIEW share continuity only where their explicit role bindings name the same configured player id.
-[DR-102](102-code-reviews-the-intent-once.md) amends §3: CODE invokes REVIEW once, after the direct phase or the final IR-task phase, over every `code`-owned commit of the run.
+Amended by [DR-102](102-code-reviews-the-intent-once.md).
 
 ## Context
 
@@ -31,7 +28,7 @@ CODE shall declare only the Coder player because review work belongs to the nest
 
 ### 3. Nested REVIEW boundary
 
-After each CODE-owned Coder commit, CODE shall invoke enabled playbook `review` with the authored request and suspend until the child returns under [DR-011](011-composable-playbook-execution.md).
+After the direct phase or the final IR-task phase, CODE shall invoke enabled playbook `review` once, over every CODE-owned commit of the run, with the authored request and suspend until the child returns under [DR-011](011-composable-playbook-execution.md) ([DR-102](102-code-reviews-the-intent-once.md)).
 Each child role shall use its explicit role binding under [DR-032](032-explicit-roles-session-players.md), so the child Coder continues CODE's conversation only where both bind the same player id.
 CODE shall validate REVIEW's declared success output before advancing and shall terminate with the child failure and exact last CODE-owned commit on an abort, error, or invalid success.
 After REVIEW passes the direct phase or final IR task, CODE shall report its exact last CODE-owned commit rather than a later review-fix commit.

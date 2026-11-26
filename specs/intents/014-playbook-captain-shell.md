@@ -9,13 +9,13 @@ Done
 
 ## Intent
 
-Implement [DR-008](../decisions/008-playbook-captain-shell.md) in reviewable slices.
+Implement the built-in Captain shell, now recorded in [DR-029](../decisions/029-session-scoped-conversational-captain.md), in reviewable slices.
 The end state is a built-in Playbook Captain shell as the tmux-play Captain, with CODE registered as the first sub-runtime, `/code` as the explicit playbook-selection command, hidden routing and hidden CODE judge calls in one Captain session, telemetry-mirrored sub-runtime state, park/resume semantics, and a `./code/tmux-play` compatibility shim that delegates to the shell.
 
 ## Deliverables
 
 - [x] IR-014 doc and its `map.md` row.
-- [x] Runtime/user/test specs amended for DR-008: playbook-runtime-1/2 scoped to engaged CODE turns; playbook-runtime-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; playbook-runtime-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; playbook-runtime-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package; stale DR-004 and CODE config-composition direct-adapter wording reconciled.
+- [x] Runtime/user/test specs amended for DR-029: playbook-runtime-1/2 scoped to engaged CODE turns; playbook-runtime-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; playbook-runtime-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; playbook-runtime-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package; stale DR-004 and CODE config-composition direct-adapter wording reconciled.
 - [x] Upstream cligent shared-session contract verified or amended before the shell relies on one Captain session across visible chat, hidden routing, and sub-runtime judge calls.
 - [x] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
 - [x] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
@@ -23,7 +23,7 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 - [x] CODE tmux-play compatibility shim delegates to the same shell with CODE registered.
 - [x] `playbook-code` composer, package exports, example configs, generated `.js`/`.d.ts` siblings, and README updated for the shell adapter path while preserving explicit `./code/tmux-play` users.
 - [x] Tests cover shell routing, hidden control calls, shared-session call surfaces, telemetry mirroring, park/resume/dismiss/final disposal, CODE option validation through the registry, compatibility shim behavior, and composer output.
-- [x] Close-out re-verifies `map.md` and records any DR-008 divergence.
+- [x] Close-out re-verifies `map.md` and records any DR-029 divergence.
 
 ## Tasks
 
@@ -34,10 +34,10 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Add this doc and its `map.md` row.
    No runtime behavior change.
 2. **Spec amendments.** _[done]_
-   Amend playbook-runtime-1/2/15/16/29/30, PBCODE-16, and the matching test specs for DR-008.
+   Amend playbook-runtime-1/2/15/16/29/30, PBCODE-16, and the matching test specs for DR-029.
    Record playbook-runtime-12's no-change disposition: direct runtime use may still restart terminal CODE actors, while the shell disposes final sub-runtime engagements instead.
    Add the CAPTAIN user/dev/test package for shell chat, routing, engagement status, telemetry topic separation, and park/resume/dispose behavior.
-   Reconcile DR-004 and CODE config-composition direct-adapter wording with the DR-008 shell target.
+   Reconcile DR-004 and CODE config-composition direct-adapter wording with the DR-029 shell target.
    Prose only; no code.
 3. **Extract CODE registration.** _[done]_
    Factor CODE option validation and runtime construction into a registry entry that the existing direct adapter can use without changing behavior.
@@ -63,10 +63,10 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Update example configs, README, generated siblings, and composer/compatibility tests.
    Implementation note: `playbook-code` now composes `captain.from: @sublang/playbook/playbook-captain`, the package exports that shell subpath while keeping `./code/tmux-play` as a delegating shim, example configs and README name the shell path, and compatibility tests drive CODE through `/code` on the shim.
 8. **Close-out.** _[done]_
-   Run the relevant test suite, re-verify `specs/map.md`, and record any substantive divergence from DR-008 in this IR.
-   Close-out note: `specs/map.md` still reflects DR-008, IR-014, CAPTAIN, PBCODE, and PBRT after the launch-path switch.
-   Close-out note: no substantive divergence from DR-008 was found.
-   Audit note: host adapter teardown through tmux-play `Captain.dispose()` is intentionally not treated as Boss-facing engagement disposal; cligent closes session emissions before calling Captain teardown, so the shell clears local state and disposes the active sub-runtime without emitting shell status or shell FSM telemetry on that teardown path, while dismiss and final engagement disposal still emit the DR-008/CAPTAIN status and telemetry.
+   Run the relevant test suite, re-verify `specs/map.md`, and record any substantive divergence from DR-029 in this IR.
+   Close-out note: `specs/map.md` still reflects DR-029, IR-014, CAPTAIN, PBCODE, and PBRT after the launch-path switch.
+   Close-out note: no substantive divergence from DR-029 was found.
+   Audit note: host adapter teardown through tmux-play `Captain.dispose()` is intentionally not treated as Boss-facing engagement disposal; cligent closes session emissions before calling Captain teardown, so the shell clears local state and disposes the active sub-runtime without emitting shell status or shell FSM telemetry on that teardown path, while dismiss and final engagement disposal still emit the DR-029/CAPTAIN status and telemetry.
 
 ## Verification
 

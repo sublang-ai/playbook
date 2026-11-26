@@ -77,16 +77,15 @@ const turnFailureMarkers = [
   'workflow failed',
 ] as const;
 
-// DR-026: the adapter SDKs are optional peers that no install acquires on a
-// user's behalf — "libraries declare, the deliberately-installed root
-// supplies" (§2). Every scenario below spends real Claude and Codex calls
+// DR-027 §1: an adapter SDK that is not an ordinary dependency is supplied
+// by the deliberately-installed root. Every scenario below spends real Claude and Codex calls
 // through the *installed* candidate, in a temp tree outside this repository,
 // so this gate is that deliberately-installed root and has to name them on
-// its own install lines. DR-026 §1's note that the repository's
+// its own install lines. DR-027 §1's note that the repository's
 // devDependencies keep the acceptance suite on real adapters holds only for
 // suites that run in the repository's own module tree; RELEASE-24/25 pin
 // this one to a packed install, which the repository's `node_modules` never
-// reaches. Without them the launcher's §4 preflight correctly refuses every
+// reaches. Without them the launcher's §2 readiness gate refuses every
 // scenario before it starts.
 const adapterSdks = [
   '@anthropic-ai/claude-agent-sdk',
@@ -104,7 +103,7 @@ const adapterSdks = [
 // hard ETARGET. Pinning to a version the repository already depends on is
 // immune to that: a stale packument still lists it.
 //
-// This is also the concrete form of DR-026 §1's intent — that the
+// This is also the concrete form of DR-027 §1's intent — that the
 // repository's devDependencies keep the real-agent acceptance suite on real
 // adapters. The suite runs from a packed install outside this tree, so the
 // versions have to be carried across rather than resolved again.
@@ -1902,15 +1901,15 @@ function installedCligentDir(installRoot: string): string {
   return found;
 }
 
-// DR-026 §3: a supplied SDK is only usable if it sits on the directory
+// DR-027 §1: a supplied SDK is only usable if it sits on the directory
 // ancestor walk from cligent's installed location — the same walk the
 // adapter's own dynamic import performs. Assert that here, at install time
 // and in milliseconds, rather than discovering it from a preflight refusal
 // once a scenario has already claimed a live turn's budget.
 //
-// `require.resolve` cannot stand in for this: DR-026 §4 records that neither
-// SDK exposes `./package.json` and that `@openai/codex-sdk` is ESM-only, so
-// resolution reports both missing when they are present.
+// `require.resolve` cannot stand in for this: DR-027 §2 records that the SDKs'
+// `exports` maps make resolution report them missing when they are present.
+// (Neither exposes `./package.json`, and `@openai/codex-sdk` is ESM-only.)
 function assertAdapterSdksVisible(
   installRoot: string,
   cligentDir: string,
@@ -1923,7 +1922,7 @@ function assertAdapterSdksVisible(
     throw new Error(
       `the ${shape} install left ${missing.join(' and ')} off the module ` +
         `walk from ${cligentDir}; the live scenarios would be refused at ` +
-        'the DR-026 §4 adapter preflight before spending a model call',
+        'the DR-027 §2 readiness gate before spending a model call',
     );
   }
 }
@@ -1968,7 +1967,7 @@ async function installGlobalCandidate(): Promise<string> {
       '--no-fund',
       '--prefer-offline',
       candidateTarball,
-      // DR-026 §3: each SDK its own top-level install root, so it lands on
+      // DR-027 §1: each SDK its own top-level install root, so it lands on
       // the ancestor walk from the cligent nested under @sublang/playbook.
       ...adapterSdkSpecs(),
     ],

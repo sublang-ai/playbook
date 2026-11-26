@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Extended by [DR-087](087-leases-name-the-machine.md): the repository claim's owner names its machine by the published machine identity carried in the `hostname` field, a legacy host name reclaimable under the old rule.
+Amended by [DR-087](087-leases-name-the-machine.md).
 
 ## Context
 
@@ -21,6 +21,7 @@ The package publishes `@sublang/playbook/host-capabilities`: a narrow self-conta
 
 - The facade exposes exactly what an embedding host needs: constructing live schema-3 `{ repository, effectLedger }` capabilities for a Git worktree from a host-owned ledger seed, observing a worktree, capturing and classifying a receipt against the declared dispositions, and a fail-closed capabilities constructor for hosts that run no governed states.
 - Lease, session-record, and Captain-lifecycle members stay private to the CLI host; the facade carries no resume credential and no manifest access.
+- A repository claim's owner names its machine by the published machine identity carried in its `hostname` field, a legacy host name reclaimable under the old rule ([DR-087](087-leases-name-the-machine.md)).
 - `bin/repository-effects.js` remains the single implementation; the facade re-exports it and declares its types, and the CLI host keeps consuming the module directly.
 - Every live capability the module constructs — the CLI host's own as much as the facade's — binds the governed worktree lazily, at each governed call and observation, to the nearest worktree containing the working directory or else to that directory as its own prospective root, and the shared observer reports a HEAD naming no commit as the null OID — because a host's workflow may initialize its own repository and make its first commit under governance, which a worktree resolved once at construction and an observer that refuses an unborn HEAD cannot classify.
 - The subpath joins the packed and pinned public surfaces under the same release gates as `./session-store`, including the packed external-consumer type-check.
