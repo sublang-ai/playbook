@@ -5,13 +5,13 @@
 
 ## Status
 
-Accepted (2026-11-11), after one check step's nonzero exit ended three runs for two different reasons that no record could tell apart [[1]].
-Amends [DR-016](016-script-actors-and-optimize-pass.md) §2 in one scope: the `playbook.script` telemetry event additionally carries the step's duration and a bounded tail of what the command printed.
-Script output stays out of machine context, guards, prompts, status lines, and `playbook.trace` payloads, and every other DR-016 decision stands.
-Amended by [DR-107](107-a-script-steps-command-is-on-record.md): §3's event additionally carries the command as executed, and §4's Captain is told the exit status and command of the last script step of a failed run and that its output is on record — the output still reaches no agent call.
+Accepted (2026-11-11).
+Amends [DR-016](016-script-actors-and-optimize-pass.md).
+Amended by [DR-107](107-a-script-steps-command-is-on-record.md).
 
 ## Context
 
+- One check step's nonzero exit ended three runs for two different reasons that no record could tell apart [[1]].
 - A script step ran its command with stdout and stderr discarded: its whole record was the status line and `{ stateId, sourceItem, exitStatus }`.
 - Script steps serve as gates, and a nonzero exit has many causes besides the check's own "no": a missing tool, a wrong runtime version, a wrong branch or directory, no network.
 - A script runs in the host process's environment, not in an agent's shell, so one command can pass for the agent and fail as a script with nothing recorded to show the difference.
@@ -34,6 +34,8 @@ Amended by [DR-107](107-a-script-steps-command-is-on-record.md): §3's event add
 
 ## Decision
 
+This record extends [DR-016](016-script-actors-and-optimize-pass.md) §2's `playbook.script` telemetry event with the step's duration and a bounded tail of what the command printed; script output stays out of machine context, guards, prompts, status lines, and `playbook.trace` payloads, and every other DR-016 decision stands.
+
 ### 1. One text, in the order written
 
 The command's stdout and stderr share one pipe, so the record is one text in the order the command wrote it.
@@ -54,14 +56,14 @@ Where the runtime can make the pipe itself, it starts the relay beside the comma
 
 ### 3. The record is the `playbook.script` telemetry event
 
-Every completed script step, at a zero or nonzero exit alike, emits `{ stateId, sourceItem, exitStatus, durationMs, output, outputTruncated }`.
+Every completed script step, at a zero or nonzero exit alike, emits `{ stateId, sourceItem, command, exitStatus, durationMs, output, outputTruncated }`, `command` being the command as executed ([DR-107](107-a-script-steps-command-is-on-record.md)).
 The status line is unchanged, and an aborted or unspawnable step still emits neither.
 The exit status alone still selects the guard.
 
 ### 4. Untrusted text, for hosts and people only
 
 - The output enters no actor result, machine context, saved step result, player, Captain, or judge prompt, status line, `playbook.trace` payload, or run result.
-- The Captain shell passes the event to its host and gives its output to no agent call, the one reporting a failed run included.
+- The Captain shell passes the event to its host and gives its output to no agent call, the one reporting a failed run included; that call is told only the last script step's exit status and command and that its output is on record ([DR-107](107-a-script-steps-command-is-on-record.md)).
 - A host shows the output as inert text and hands it to no agent on the run's behalf.
 
 ### 5. Stored like every telemetry record

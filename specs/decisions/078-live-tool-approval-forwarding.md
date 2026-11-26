@@ -6,7 +6,6 @@
 ## Status
 
 Accepted.
-Cligent floor raised to `^0.33.2` by Playbook 17.4.1 for deterministic fresh Claude session titles.
 
 ## Context
 
@@ -31,9 +30,9 @@ Native cancellation, expiry and provider permission precedence remain the adapte
 No answer or native OS permission is inferred from a saved approval event.
 
 Tool consent does not supply a typed answer to a native question, form, or URL-authentication request.
-Playbook requires Cligent 0.33.1 or later so unsupported OpenCode questions proven to belong to the current invocation receive explicit native rejection, releasing that native answer wait.
+The required Cligent gives unsupported OpenCode questions proven to belong to the current invocation an explicit native rejection, releasing that native answer wait.
 Foreign or unproven requests retain their native ownership and receive no answer from this invocation.
-The dependency update changes no compiler or workflow contract, and an ordinary later Boss reply does not answer that rejected native request.
+This changes no compiler or workflow contract, and an ordinary later Boss reply does not answer that rejected native request.
 
 ## Consequences
 

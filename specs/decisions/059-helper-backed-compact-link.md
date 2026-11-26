@@ -5,7 +5,7 @@
 
 ## Status
 
-Rejected (2026-09-12): the controlled successful comparison demonstrated no compilation-speed improvement.
+Rejected (2026-09-12).
 
 ## Context
 
@@ -20,12 +20,13 @@ Both cold link runs used GPT-6 Astra at low effort, installed Playbook 12.3.0, t
 
 Compiler fingerprint `03e2960950937414ba617c7feaf4ca86bf1b4f8823f471505a77197348da252d` and harness fingerprint `3c8b3d825c7c59498c3d694a743ea9f8eba84e41370aa5f06437dcec4e08cb0d` match across the two summaries under `/private/tmp/slc-performance-evidence/<run>/summary.json`.
 The corresponding `/private/tmp/slc-fixed-link-runtime-probe/B6ZwA7.json` and `VWL108.json` record the separate real-runtime acceptance checks.
+This controlled successful comparison demonstrated no compilation-speed improvement.
 
 ## Decision
 
 Restore the complete link definition as the shipped entry and remove the production compact companion and its packaging/closure dependency.
 Retain the rejected compact entry only as an explicitly named, non-shipped experiment fixture for reproducing the comparison.
-Keep the materializer's independent retention decision under [DR-058](058-link-materialization-tool.md) pending its own controlled baseline evidence.
+The materializer's retention is decided separately, on its own controlled evidence, under [DR-058](058-link-materialization-tool.md).
 
 ## Consequences
 

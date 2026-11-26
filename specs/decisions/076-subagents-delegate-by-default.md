@@ -6,10 +6,8 @@
 ## Status
 
 Accepted (2026-10-01).
-Amends [DR-075](075-subagent-model-is-tuning.md): the subagent model admits `inherit` and defaults to it where the adapter serves one, and a fifth tuning field, `subagentEffort`, joins the four.
-Amends [DR-074](074-seeds-name-the-latest-models.md) in its Cligent floor alone: `^0.30.0`, the first release whose Claude adapter serves the literal, the effort and the subagent definitions.
-
-Amended in seeded model pairs under [DR-104](104-parent-and-child-seed-models.md) and Codex implicit delegation under [DR-105](105-runtime-owned-seed-and-delegation.md).
+Amends [DR-075](075-subagent-model-is-tuning.md).
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -24,9 +22,11 @@ A pinned effort governs the `delegate` definition and the `general-purpose` one 
 
 ## Decision
 
-### 1. `subagentModel` defaults to `inherit` where the adapter serves one
+### 1. `subagentModel` defaults to `inherit` on Claude
 
-An agent block whose adapter Cligent reports as serving a subagent model, and which leaves `subagentModel` unset, resolves to `inherit`: its subagents run on its own model and it receives the delegation directive.
+The subagent model of [DR-075](075-subagent-model-is-tuning.md) admits `inherit`, the agent's own model.
+A Claude agent block that leaves `subagentModel` unset resolves to `inherit`: its subagents run on its own model and it receives the delegation directive.
+On Codex an unset field requests no delegation, and an explicit child model or effort requests it ([DR-105](105-runtime-owned-seed-and-delegation.md)).
 A nonblank string pins a model, `inherit` names the agent's own explicitly, and `false` selects the runtime's own order with no directive — the way to switch delegation off.
 Adapters serving none resolve to nothing, as before.
 
@@ -36,15 +36,15 @@ A `captain` or `players.<player-id>` block, a `playbooks.<id>.roles.<role>` bind
 Resolved to absence it means the agent chooses per task.
 It is validated through the installed Cligent against the block's adapter and the resolved subagent model, carried in every complete call setting beside `subagentModel`, erased from the structural projection, and free to differ on an ordinary reopen.
 
-### 3. Nothing is seeded
+### 3. The seed names no subagent effort
 
-The starter config names neither field; the default of §1 does the work, and the documentation shows both fields once in the role-binding form with what they do.
+The seed carries no `subagentEffort` and the child model Cligent returns ([DR-105](105-runtime-owned-seed-and-delegation.md)); the documentation shows both fields once in the role-binding form with what they do.
 
 ## Consequences
 
 - Every Claude agent of an existing config now delegates by default: its runs carry the directive and the definitions, and its subagents run on its own model, at efforts the agent chooses except `Explore` and `Plan`, which keep its own — a behavior change this release names in its changelog, with `subagentModel: false` as the way back.
 - Session records written by this release may carry `subagentEffort`; a host on 17.2 that reads one rejects the unknown field, so hosts sharing a session store upgrade together.
-- The Cligent floor rises to `^0.30.0`, an additive release; the release-capability guard probes the new setting, and the literal rides on that floor.
+- The release-capability guard probes the new setting, which the Cligent floor of [DR-105](105-runtime-owned-seed-and-delegation.md) serves.
 - This is additive in surface and ships in a MINOR release.
 
 ## References

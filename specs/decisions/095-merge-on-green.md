@@ -5,12 +5,12 @@
 
 ## Status
 
-Accepted (2026-10-23) on the owner's direction to make merging timely while several people and agents land work on `main` at once.
-Amended by [DR-098](098-native-windows-private-storage.md) to include the native Windows storage job in the pull-request gate.
+Accepted (2026-10-23).
+Amended by [DR-098](098-native-windows-private-storage.md).
 
 ## Context
 
-Several branches now land on `main` in one day.
+The owner directed that merging be made timely while several people and agents land work on `main` at once: several branches now land on `main` in one day.
 A pull request's checks run against the pull request merged with `main` as it stands, so a run goes stale the moment `main` moves, and waiting for a fresh run before each merge gives `main` time to move again.
 `main` is not protected: a merge needs no check, so a red test or a duplicate spec item ID merged into `main` turns every open pull request red.
 Every push to a pull request's branch queues a full run beside the runs it supersedes.

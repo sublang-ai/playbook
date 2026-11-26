@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: the pass preserves every other item and every section heading, and no `## Optimizations` section exists to leave untouched.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -29,7 +29,7 @@ A second pass is the natural home for the reorder: the compiled artifact shows t
 - Source prose that orders a prompt's composition — a relay "after the instruction", an instruction "at the end of the prompt" — binds `text2gears`, not this pass: the pass overrides that order by design, and `--no-optimize` restores it.
 - The layout is its own provenance: a GEARS blockquote is the composed prompt verbatim, so a list of rewritten items would only repeat what each prompt shows, and the pass records nothing beside the rewritten prompts.
   It removes a `## Prefixed prompts` section an earlier revision of the pass appended, and re-running it is a no-op because an item whose relays already trail is not eligible.
-- The pass name sorts after `optimize`, so a default compile runs `text2gears → optimize → prefix → gears2fsm`, and the pass leaves an `## Optimizations` section untouched.
+- The pass name sorts after `optimize`, so a default compile runs `text2gears → optimize → prefix → gears2fsm`; it preserves every other item and every section heading, and no `## Optimizations` section exists ([DR-108](108-compiled-gears-is-a-spec-package.md)).
 - The definition ships beside the other definitions through `./slc/*`, compilable by `slc slc` like any phase, with no `## Compiled execution` section and no compiled bundle, as for `optimize.md` ([DR-047](047-compiled-execution-contract-in-definitions.md)).
 
 ### 2. A deterministic tool: `slc/prefix-prompts.mjs`

@@ -5,13 +5,9 @@
 
 ## Status
 
-Accepted (2026-09-17).
-Amends [DR-040](040-outcome-authority-effect-reconciliation.md) §4 in one scope: beside the bounded unresolved-effect list, a parked failure carries a structured cause, and the advertised recovery actions carry a standing.
-Amends [DR-051](051-host-selected-runtime-recovery.md) and [DR-052](052-host-selected-give-up.md) in one scope: the `{ id, label }` pairs a host reads gain `standing` and its `reason`.
-Everything else of those records stands.
-§4 amended (2026-09-25): one renderer and one report assembly state each failure once, in Boss's words, by rules that hold by construction.
-[DR-090](090-every-role-hears-the-boss.md) amends §4: the appended failure line and control lines carry marks and identifiers, not sentences, while the renderer's words stay in the settlement facts.
-§1 amended (2026-11-08): an `aborted` player or Captain host result is `aborted`, as the signal's own stop is, whichever call it ends; `player-failed` covers an errored player call or an `error` result.
+Accepted (2026-09-17); revised (2026-11-08).
+Amends [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-051](051-host-selected-runtime-recovery.md), [DR-052](052-host-selected-give-up.md).
+Amended by [DR-090](090-every-role-hears-the-boss.md).
 
 ## Context
 
@@ -22,6 +18,7 @@ Everything else of those records stands.
   Reconciliation only re-reads the host's ledger; over a complete receipt it can never resolve anything, yet it read exactly like a retry.
   The embedding host took the first advertised action as its Retry and offered nothing for the second.
 - Every host reinvents the explanation: the CLI Boss reads the closing reply, the desktop Boss reads a notice, and both depend on a model composing prose from facts it may drop.
+- This record adds to DR-040 §4 a structured cause beside the bounded unresolved-effect list and a standing on every advertised recovery action, and adds `standing` and its `reason` to the `{ id, label }` pairs of DR-051 and DR-052; everything else of those records stands.
 - The facts already exist as data at the moment each failure is decided: the reconciliation reason, the receipt with its `preExisting` accounting ([DR-062](062-pre-existing-changes-are-context.md)), the player or judge error, the aborted signal, the child's own failure.
 
 ## Decision
@@ -57,13 +54,13 @@ Everything else of those records stands.
    Reconciliation is `no-op` with reason `receipt-complete` when re-reading the host's ledger, which the control view has just done, leaves reconciliation unresolved and no checkpoint restoration is eligible; abandonment, the shell's give-up, a jump, and a retry of a failed call are `ready`, since the runtime cannot see whether the Boss changed the outside world.
    The Captain's decision digest names each action's standing, so a model is never invited to select a no-op.
 4. **Every host sees the same report.**
-   When a Boss turn settles with the leaf parked in its failure state or behind the retained-effect fence, the shell appends one deterministic Boss-visible report through the presentation seam: the cause as one sentence per code with its bounded evidence, and each advertised action with its standing and reason.
+   When a Boss turn settles with the leaf parked in its failure state or behind the retained-effect fence, the shell appends one deterministic Boss-visible report through the presentation seam: the cause as one marked failure line of its code and the identities its evidence carries, and each advertised action as one marked control line with its standing and reason identifiers, in the marks of [DR-090](090-every-role-hears-the-boss.md) §5; the cause's words stay in the turn's settlement facts.
    The report supplements the unresolved-effect report and the pre-existing-changes report; it exposes no file content, player output, or internal identity.
    It says each thing once, in Boss's words, by rules that hold by construction rather than by heuristics:
    - one renderer puts every failure into words, for the Boss and for the turn's facts, as `<Subject> failed: <reason>.`, the reason being the phrase of its cause code, else the phrase of a reason the runtime mints from its own literal text — its refusal of an action it no longer advertises, the judge's, the governed settlement's, and the player and Captain calls' reasons, its own invariant reasons behind its diagnostic label, and its stand-ins for a missing player or error message, each listed with its phrase in a closed set — else any other recorded reason, a player's or script's message included, quoted where it reads as prose, else that whole reason shown once as recorded in a code span, never replaced by a sentence that hides it; prose begins with no error-class name, holds a space, begins with a capital letter, ends in a terminal mark, holds no word the reply validation's own identifier grammar tells apart from English, and passes that validation, while a reason behind an error-class name is machine text by origin, shown whole in a code span however the rest reads; and the leaf's cause restates in place the fact that already stated its failure;
-   - one report assembly composes every Boss-facing text the shell writes itself from three kinds of statement — listed facts, numbered unresolved-effect entries, and the `Failure:` line — and the kinds, not the words' length, decide what is dropped: an entry records a boundary of its own and is never dropped or merged, while a fact or the `Failure:` line is dropped where an entry, or an earlier fact, carries its reason, so of two facts the earlier stays;
+   - one report assembly composes every Boss-facing text the shell writes itself from three kinds of statement — listed facts, numbered unresolved-effect entries, and the failure line — and the kinds, not the words' length, decide what is dropped: an entry records a boundary of its own and is never dropped or merged, while a fact or the failure line is dropped where an entry, or an earlier fact, carries its reason, so of two facts the earlier stays;
    - each statement is weighed by the reply validation on its own, outside its code spans: a code span naming a live or supplied identifier reads `an internal error`, a phrased reason whose own words fail is withheld the same way, and a failure subject or action label whose own words fail reads `The step` or `the selected action`, and no statement is ever left out, whatever words are left;
-   - after a model-composed reply the `Failure:` line stays, once, as the shell's exact record beside the model's prose, since the shell cannot tell whether that prose stated the failure faithfully.
+   - after a model-composed reply the failure line stays, once, as the shell's exact record beside the model's prose, since the shell cannot tell whether that prose stated the failure faithfully.
 
    Residuals accepted by design:
    - two different failures with an identical reason, the same phrase or the same recorded text, are said once, since the assembly weighs reasons and not their sources;

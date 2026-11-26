@@ -7,7 +7,7 @@
 
 Accepted (2026-09-05).
 Amends [DR-029](029-session-scoped-conversational-captain.md), [DR-031](031-shared-captain-session-front-ends.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-042](042-shared-session-store-and-replay-stream.md).
-Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md), [DR-073](073-durable-step-progress.md), [DR-077](077-portable-assets-and-inspection.md), [DR-094](094-bounded-session-persistence.md).
+Amended by [DR-073](073-durable-step-progress.md), [DR-077](077-portable-assets-and-inspection.md), [DR-094](094-bounded-session-persistence.md).
 
 ## Context
 
@@ -23,9 +23,9 @@ Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-ho
 - Only definite pre-execution session rejection permits one fresh attempt; ambiguous execution preserves uncertainty [[session-storage-8](../packages/session-storage.md#session-storage-8)].
 - The initial format supports no checkpoint path relocation: differing repository/module paths permit history only [[session-storage-9](../packages/session-storage.md#session-storage-9)].
 - Shared opening removes excess permissions from verified owned entries before strict reads or lease admission; unsafe paths still refuse [[session-storage-1](../packages/session-storage.md#session-storage-1)].
-- Portable progress records carry durable step progress, and one shared predicate decides discard ([DR-073](073-durable-step-progress.md)); lost progress the saved state cannot represent settles in the shared host ([DR-072](072-host-owned-interrupted-work-settlement.md)).
+- Portable progress records carry durable step progress, one shared predicate decides discard, and lost progress the saved state cannot represent settles in the shared host ([DR-073](073-durable-step-progress.md)).
 - A session owns its immutable assets, which travel with its bundle, deletion, and relocation ([DR-077](077-portable-assets-and-inspection.md)).
-- Every host sharing a store upgrades together; mixed old and new writers are unsupported ([DR-071](071-interrupted-continuation-settlement.md)).
+- Every host sharing a store upgrades together; mixed old and new writers are unsupported ([DR-073](073-durable-step-progress.md)).
 - Shared migration retains ignored originals; deletion keeps retired guards and removes the manifest last [[session-storage-10](../packages/session-storage.md#session-storage-10)] [[session-storage-12](../packages/session-storage.md#session-storage-12)].
 
 ## Consequences

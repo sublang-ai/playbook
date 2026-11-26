@@ -6,10 +6,7 @@
 ## Status
 
 Accepted (2026-10-12).
-Amends [DR-005](005-boss-reply-suspension-path.md) §2 in one scope: the resumed call's question and answer blocks carry language-neutral markers instead of English labels, and every later call of the run carries the run's exchanges as well.
-Amends [DR-088](088-a-commit-outcome-takes-every-new-commit.md) §3 in two scopes: a step's commit statement names the branch its commits landed on, and a step's one new commit reaches the closing reply's facts; the reply shows each step as a marked line.
-Amends [DR-063](063-failures-explain-themselves.md) §4 and [DR-089](089-judge-replies-take-the-machines-shapes.md) §3 in one scope: the failure, control and commits-before-failure lines the shell appends to a reply carry marks and identifiers instead of English sentences; the settlement facts keep their words.
-Source-required retention under [[compiler-source-state-2](../packages/compiler-source-state.md#compiler-source-state-2)] stands as the stronger guarantee.
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-063](063-failures-explain-themselves.md), [DR-088](088-a-commit-outcome-takes-every-new-commit.md), [DR-089](089-judge-replies-take-the-machines-shapes.md).
 
 ## Context
 
@@ -23,6 +20,9 @@ A walk of ten teams through the 17.8.1 build (2026-10-12) found four gaps:
   The outcome report carried no hash for a step's single commit, and no receipt named a branch.
 - A player's commit trailer named its model "GPT-6 (coder)" for `gpt-6.1-sol` in an analyst's step: nothing told the player its role or its model.
 - A Chinese team's failed run ended its Chinese closing reply with the shell's fixed English lines: "Repository changes made before the failure:", "- A step made one new commit; HEAD moved from … to the proven commit …", "The failure does not undo these commits.", "Failure: The acting player returned an unrecognized or incomplete result.", "Controls:", "- Stop /sprint-plan (ready)".
+
+This record changes [DR-005](005-boss-reply-suspension-path.md) §2's resumed-call blocks to carry language-neutral markers and every later call of the run to carry the run's exchanges; [DR-088](088-a-commit-outcome-takes-every-new-commit.md) §3's commit statements to name their branch, with a step's one new commit reaching the closing reply's facts; and the failure, control and commits-before-failure lines of [DR-063](063-failures-explain-themselves.md) §4 and [DR-089](089-judge-replies-take-the-machines-shapes.md) §3 to carry marks and identifiers, the settlement facts keeping their words.
+Source-required retention under [[compiler-source-state-2](../packages/compiler-source-state.md#compiler-source-state-2)] stands as the stronger guarantee.
 
 Considered and declined:
 

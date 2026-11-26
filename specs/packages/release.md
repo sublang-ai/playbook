@@ -468,7 +468,7 @@ Before tagging a stable release, the developer/agent shall verify, in this order
 
 #### release-35
 
-Before releasing recovery or asset extensions that retain existing persisted version numbers, the maintainer shall verify that every supported host sharing a store, including the CLI and Spex SDK, uses the same compatible recovery reader and writer, and that the upgrade instructions require stopping all older writers before any new writer saves recovery, worker-evidence progress or asset-bearing data [[session-storage-2](session-storage.md#session-storage-2)] ([DR-071](../decisions/071-interrupted-continuation-settlement.md)).
+Before releasing recovery or asset extensions that retain existing persisted version numbers, the maintainer shall verify that every supported host sharing a store, including the CLI and Spex SDK, uses the same compatible recovery reader and writer, and that the upgrade instructions require stopping all older writers before any new writer saves recovery, worker-evidence progress or asset-bearing data [[session-storage-2](session-storage.md#session-storage-2)] ([DR-073](../decisions/073-durable-step-progress.md)).
 A mixed 15.1.x and extended-format store shall not be a supported release configuration.
 
 #### release-38

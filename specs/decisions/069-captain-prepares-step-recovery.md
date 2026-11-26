@@ -5,29 +5,23 @@
 
 ## Status
 
-Amended by [DR-073](073-durable-step-progress.md): normal step progress replaces saved continuation selections and whole-playbook retry; crash recovery restores and reports before further Boss choice; automatic preparation follows only a stop produced by an operation of the same turn, and resuming or adopting stopped work authorizes none; an unsuccessful continuation ends automatic recovery, which realizes this record's unchanged-failure limit without comparing failures.
-
 Accepted.
-Amends [DR-029](029-session-scoped-conversational-captain.md)'s tool-free Captain in one scope: a model- or host-selected recovery action, including bounded automatic recovery, may run a separate preparation call.
-Refines [DR-034](034-durable-failure-retry-continuity.md)'s entry retry with a runtime-owned checkpoint of the actual interrupted invocation.
-Amends [DR-040](040-outcome-authority-effect-reconciliation.md) with saved-result assessment and verified read-only restoration, and [DR-051](051-host-selected-runtime-recovery.md) with saved continuation points and automatic recovery after host-selected actions.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amends [DR-029](029-session-scoped-conversational-captain.md), [DR-034](034-durable-failure-retry-continuity.md), [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-051](051-host-selected-runtime-recovery.md).
+Amended by [DR-073](073-durable-step-progress.md).
 
 ## Context
 
 A restored machine is insufficient when its next invocation still encounters the repository or environment condition that stopped it.
 Captain currently cannot inspect or repair that condition, and retrying the entry event can discard progress or be fenced by an earlier successful commit in the same turn.
 The procedure author should not need to describe exception handling, and neither Captain nor Boss should need to edit saved machine state.
+This record lets a model- or host-selected recovery action, bounded automatic recovery included, run a separate preparation call beside [DR-029](029-session-scoped-conversational-captain.md)'s tool-free Captain, refines [DR-034](034-durable-failure-retry-continuity.md)'s entry retry with a runtime-owned checkpoint of the actual interrupted invocation, adds saved-result assessment and verified read-only restoration to [DR-040](040-outcome-authority-effect-reconciliation.md), and adds automatic recovery after host-selected actions to [DR-051](051-host-selected-runtime-recovery.md).
 
 ## Decision
 
-The saved-selection and whole-turn replay rules below are historical and replaced by DR-073; bounded live preparation remains.
-
 - Ordinary Captain decisions, replies, and adjudication remain tool-free.
-- Starting or continuing a task authorizes bounded preparation of its next step; the host may select the same `recover` operation after a recoverable stop without asking Boss to repeat that authorization.
+- Starting or continuing a task authorizes bounded preparation of its next step; the host may select the same `recover` operation after a recoverable stop produced by an operation of the same turn without asking Boss to repeat that authorization, while resuming or adopting stopped work authorizes none ([DR-073](073-durable-step-progress.md)).
 - Recovery is a contract between the host and the runtime, not a catalog of repair tools or error strings: the runtime supplies the interrupted task and an available continuation, Captain prepares prerequisites with its configured tools, and the runtime checks whether that continuation is now valid.
-- One Boss turn permits at most two automatic recovery attempts and at most five minutes of preparation in total; an unchanged failure may be retried only once, and cancellation stops recovery.
+- One Boss turn permits at most two automatic recovery attempts and at most five minutes of preparation in total; an unsuccessful continuation ends automatic recovery, and cancellation stops it.
 - Ordinary questions receive a tool-free check without a repository claim or preparation tools.
   A real question requiring a product decision or new authority remains for Boss; a question already answered by the current engagement's saved root request may continue using that exact instruction.
   The saved request and later delivered Boss input survive restoration and adoption; later input is nonselectable context that prevents reuse when relevant, and the same root request cannot be automatically delivered twice.
@@ -49,12 +43,8 @@ The saved-selection and whole-turn replay rules below are historical and replace
 - A read-only invocation that changed the worktree may be retried after preparation restores its exact original repository observation with no commit movement.
   The host appends that restoration separately from the original receipt; it authorizes another read-only invocation, not acceptance of the failed result.
 - An unexpected child-runtime exception preserves a valid parked child and its parents instead of converting it to a completed workflow failure.
-- Preparation saves the current parked stack before tool use, so interruption resumes that step rather than the original turn selection.
-  Before continuation, the point is replaced by the saved continuation and its current effect baseline; later unrepresented progress settles at host level under [DR-072](072-host-owned-interrupted-work-settlement.md).
-  Every stopped continuation attempts to advance the point to the actual stack or completed root with reporting-only retry; any thrown turn with a point settles through the shared host after calls drain and before disposal when possible.
-  The last settled controller and journal remain the conversational baseline; the attempted turn remains in replay.
-- Uncertain-turn recovery never chooses discard automatically.
-  Without a saved recovery point, a continuation may retry only after the existing effect checks prove whole-turn replay safe; otherwise it settles lost progress without replay under [DR-072](072-host-owned-interrupted-work-settlement.md).
+- Preparation, like every start of work, is recorded before it runs, and its result records what was done; an interrupted preparation restores the paused step for a Boss choice rather than dispatching preparation again ([DR-073](073-durable-step-progress.md)).
+- Uncertain-turn recovery never chooses discard automatically and never replays a whole turn: it restores and reports the saved step, or settles lost progress in the shared host ([DR-073](073-durable-step-progress.md)).
 - Recovery is host/runtime behavior, independent of individual workflow repair recipes; the default Captain source and compiled controller add `recover`, requiring SLC’s recovery-controller discriminator [[1]].
   Existing checkpoints without the new optional invocation checkpoint keep their existing advertised controls.
 

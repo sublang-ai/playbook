@@ -5,8 +5,8 @@
 
 ## Status
 
-Approved direction; implementation and delivery acceptance authorized by the user on 2026-11-17.
-Amends [DR-024](024-runtime-engine-provisioning.md) and [DR-027](027-runtime-compatibility-from-cligent.md) in provisioning scope and SDK delivery, retaining runtime compatibility ownership and preflight gates.
+Accepted (2026-11-17).
+Amends [DR-024](024-runtime-engine-provisioning.md), [DR-027](027-runtime-compatibility-from-cligent.md).
 
 ## Context
 
@@ -14,6 +14,8 @@ Existing launch-time provisioning repairs unresolved thin-artifact engine import
 Unrelated ancestor module settings, independently resolved runtimes, and unchecked changes to globally linked packages can make successful compilation differ from actual loading.
 SDKs installed as sibling global roots are not necessarily reachable from another root's nested Cligent.
 The approved installation contract favors both default Agent stacks being available over minimizing a single-vendor installation's footprint.
+The user approved this direction and authorized implementation and delivery acceptance on 2026-11-17.
+It changes [DR-024](024-runtime-engine-provisioning.md)'s provisioning scope and [DR-027](027-runtime-compatibility-from-cligent.md)'s SDK delivery, retaining runtime compatibility ownership and preflight gates.
 
 ## Decision
 
@@ -29,7 +31,6 @@ The approved installation contract favors both default Agent stacks being availa
 - The separate `spex-playbook` Skill is outside this change and is not a release-acceptance prerequisite.
 - Compiler definitions direct generated-code verification through compiler-owned checks and may provide finite public-entry witnesses; they do not guess project tooling or use patched private context as reachability proof.
 - Release gates exercise the actual packed global install, managed and legacy artifacts, and both SDKs through nested Cligent; credentialed live acceptance remains separate from deterministic package checks.
-
 - Pre-merge validation separates locally built/installed functional candidates from real branch prerelease registry installs, retaining stable publication gates without making a formal stable release a prerequisite.
 - The shared compilation dependency/environment contract supports macOS, Linux and native Windows; POSIX-only historical front-end constraints do not exempt the native Windows compiler/library path.
 

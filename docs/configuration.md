@@ -291,7 +291,7 @@ Claude and Gemini enforce the tool restriction at the
 provider level. The Codex, Kimi, and OpenCode adapters cannot — they
 reject any tool list — so a `captain:` using one of them falls back to a
 prompt-level restriction
-([DR-013](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/013-routing-only-captain-control.md) A1).
+([DR-013](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/013-routing-only-captain-control.md)).
 Those adapters remain good choices for *players*, where full tools are wanted.
 
 Recovery preparation is separate: Captain may use its configured tools and permissions to repair prerequisites for the paused step, within the existing task.

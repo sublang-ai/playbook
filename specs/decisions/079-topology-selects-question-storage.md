@@ -6,13 +6,14 @@
 ## Status
 
 Accepted (2026-10-02).
-Clarifies the compiler guidance under [DR-005](005-boss-reply-suspension-path.md) and [DR-067](067-parallel-proposals-through-the-shared-factory.md); neither runtime contract changes.
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-067](067-parallel-proposals-through-the-shared-factory.md).
 
 ## Context
 
 The Boss-reply compiler guide permitted scalar storage when at most one task was active and required keyed storage for parallel tasks, without excluding keyed storage from a flat machine.
 A real approval workflow consequently compiled to a flat FSM with keyed questions and failed linking because the shared factory discovers flat questions only through scalar context.
 A test manually projected a keyed record into scalar input before calling the question reader, so it did not establish discovery from the actual flat machine context.
+This clarifies the compiler guidance under [DR-005](005-boss-reply-suspension-path.md) and [DR-067](067-parallel-proposals-through-the-shared-factory.md); neither runtime contract changes.
 
 ## Decision
 

@@ -6,11 +6,8 @@
 ## Status
 
 Accepted (2026-10-11).
-Amends [DR-040](040-outcome-authority-effect-reconciliation.md) in three scopes: §2's `one-descendant-commit` proof covers one or more new commits, §1 lets the reconciler read `finalText` for exactly one designation — whether it names the commit an `unchanged` receipt observed at HEAD — and §5's `unchanged` receipt for a claimed commit resolves under that designation.
-Amends [DR-062](062-pre-existing-changes-are-context.md) §2 in one scope: its accounting applies to the whole advance rather than to exactly one commit.
-The three dispositions, the exclusive claim, the cohort and exclusively-`unchanged` rules, the deferred chain, and the fail-closed treatment of rewritten, residual, foreign, lost, and unstable evidence stand.
-[DR-090](090-every-role-hears-the-boss.md) amends §3: each statement names the branch the commits landed on, and a step's one new commit joins the closing reply's facts.
-[DR-102](102-code-reviews-the-intent-once.md) amends the consequence on CODE's review request: it names every phase's receipt-owned commit, oldest first, in the one review after the intent.
+Amends [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-062](062-pre-existing-changes-are-context.md).
+Amended by [DR-090](090-every-role-hears-the-boss.md), [DR-102](102-code-reviews-the-intent-once.md).
 
 ## Context
 
@@ -28,6 +25,9 @@ The three dispositions, the exclusive claim, the cohort and exclusively-`unchang
 
 ## Decision
 
+This record changes [DR-040](040-outcome-authority-effect-reconciliation.md) §2's `one-descendant-commit` proof to cover one or more new commits, lets its §1 reconciler read `finalText` for exactly one designation — whether it names the commit an `unchanged` receipt observed at HEAD — and resolves its §5 `unchanged` receipt for a claimed commit under that designation; [DR-062](062-pre-existing-changes-are-context.md) §2's accounting applies to the whole advance.
+The three dispositions, the exclusive claim, the cohort and exclusively-`unchanged` rules, the deferred chain, and the fail-closed treatment of rewritten, residual, foreign, lost, and unstable evidence stand.
+
 1. **New commits satisfy a commit outcome.**
    For an effect-authorized call, a receipt proves `one-descendant-commit` when its after HEAD descends from its baseline HEAD by one or more new commits — those reachable from the after HEAD and not from the baseline HEAD, every reachable commit for the null HEAD — and [DR-062](062-pre-existing-changes-are-context.md)'s accounting holds over the whole advance.
    The receipt carries the after HEAD as `commitOid` and, where more than one commit is new, a `commits` list of every one, oldest first and ending at `commitOid`; a receipt of one new commit keeps its shape.
@@ -41,7 +41,7 @@ The three dispositions, the exclusive claim, the cohort and exclusively-`unchang
    A call that declares an `unchanged` outcome, such as REVIEW's `rejectedAll`, already has the outcome for "I changed nothing"; accepting a claimed commit there would blur the distinction its author drew.
    Uncommitted changes, a different named commit, or an unborn HEAD keep the existing `commit-missing` failure.
 3. **The Boss sees every commit.**
-   Beside [DR-062](062-pre-existing-changes-are-context.md) §5's report, each presented reply states, for each step completed since the last one presented, the new commits when more than one, oldest first, and, for a step reconciled by a named HEAD, that it made no new commit and named the commit already at HEAD.
+   Beside [DR-062](062-pre-existing-changes-are-context.md) §5's report, each presented reply states, for each step completed since the last one presented, the new commits when more than one, oldest first, and, for a step reconciled by a named HEAD, that it made no new commit and named the commit already at HEAD, each statement naming the branch the step's commits landed on; a step's one new commit reaches the closing reply's facts ([DR-090](090-every-role-hears-the-boss.md) §4).
    The report of the commits a failed turn made ([DR-089](089-judge-replies-take-the-machines-shapes.md) §3) lists them the same way.
    An unresolved-effect entry or failure cause over a receipt listing more than one commit reads as `multiple-commits` and `commits-more-than-one`, so their existing phrases stay exact, and the failed-turn report does not restate a receipt such an entry already names.
 4. **Uncommitted work is not an outcome (non-goal).**
@@ -56,7 +56,7 @@ The three dispositions, the exclusive claim, the cohort and exclusively-`unchang
 
 - `/design`'s final step reconciles as already at its commit, and `/verify`'s two commits reconcile as its outcome with both listed.
 - CODE's Coder and DECIDE's merge accept several commits and a named HEAD; REVIEW's Coder accepts several commits but not a named HEAD.
-- CODE's review request still names one commit, the phase's last, with its resulting repository state; its prompts still ask for one commit per phase.
+- CODE's review request names each phase's receipt-owned commit, oldest first, in the one review after the intent ([DR-102](102-code-reviews-the-intent-once.md)); its prompts still ask for one commit per phase.
 - Player prompts, compiled artifacts, the artifact schema, the runtime ABI, and configuration are unchanged; the linker's description of the shared reconciler names the two new cases.
 - A Playbook release before this one rejects a ledger whose receipt carries `commits`; hosts sharing a session store upgrade together.
 - The evidence still proves neither authorship of a commit nor completion of a workflow; the listed commits and the named commit are what the Boss reviews.

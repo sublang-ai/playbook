@@ -2031,7 +2031,7 @@ failure; the synthetic finish must not replace the original sink error.
 A linked runtime may implement the optional durable-session capability of
 `@sublang/playbook/runtime` — `exportSnapshot()` and
 `restore(session, snapshot)` — so a host can persist a parked session and
-rehydrate it in a later process (DR-014). A runtime that implements either
+rehydrate it in a later process (DR-031). A runtime that implements either
 member shall implement both. When generated for a runtime whose host needs
 durability, the pair shall behave as follows.
 
@@ -2838,7 +2838,7 @@ This spec is silent on the choice; the contract is the same in any location.
   may persist the emitted trace, but the runtime does not rehydrate a
   disposed actor from it. Parked-session durability is in scope only
   through the optional snapshot surface of §Parked-session snapshot
-  (DR-014); everything beyond it remains out of scope.
+  (DR-031); everything beyond it remains out of scope.
 
 New behavior in any of these areas requires a separate slc spec.
 

@@ -5,13 +5,12 @@
 
 ## Status
 
-Accepted (2026-11-25), after long sessions spent minutes at every host start, turn opening and Git sync on the per-file cost of the bounded chunk layout [[1]] [[2]].
-Amends [DR-094](094-bounded-session-persistence.md): replaces its chunked physical representation, and moves the conversion of earlier physical formats out of the store into a separate command; its logical recovery contract, durable dependency publication, exact replay bytes, per-file bound and quota decisions stand.
-Amends [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a reader's verified boundary becomes a byte offset in the replay log instead of a chain head.
-Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its representation only: the writer's verified prefix is the replay log it verified and appended, with no chain to walk.
+Accepted (2026-11-25).
+Amends [DR-094](094-bounded-session-persistence.md), [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md), [DR-109](109-a-writer-checkpoints-from-what-it-verified.md).
 
 ## Context
 
+- Long sessions spent minutes at every host start, turn opening and Git sync on the per-file cost of the bounded chunk layout [[1]] [[2]].
 - A 3,993-record session in the schema 8 layout holds 9,451 files with 32.8 MB of content and occupies 62–65 MB on disk.
   - A record is two chunk files of a few hundred bytes, each filling a 4 KB block.
   - A manifest publication writes 3–4 new chunk files and retains the superseded generation, which accounts for 86% of the content.
@@ -29,6 +28,8 @@ Amends [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) in its repres
 - Reading them at run time would keep two layouts and their cost in every host, while their owners still need a way to keep them.
 
 ## Decision
+
+This replaces the chunked physical representation of [DR-094](094-bounded-session-persistence.md) and moves its conversion of earlier physical formats out of the store into a separate command, while DR-094's logical recovery contract, durable dependency publication, exact replay bytes, per-file bound and quota decisions stand; a reader's verified boundary of [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md) becomes a byte offset in the replay log, and the writer's verified prefix of [DR-109](109-a-writer-checkpoints-from-what-it-verified.md) is the log it verified and appended, with no chain to walk.
 
 - A session's physical representation (schema 9) consists of:
   - one manifest file, `<sessionId>.json`, holding the complete logical manifest;

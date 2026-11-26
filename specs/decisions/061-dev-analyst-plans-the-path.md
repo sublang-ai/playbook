@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-09-17).
-Amends [DR-044](044-dev-planning-workflow.md) in scope: the Analyst's result is the chosen path and a bounded planning note, a Boss question serves only that choice, and analysis, design, and implementation stay with the called playbooks; DR-044's outcomes, composition, governance, and suspension stand.
+Amends [DR-044](044-dev-planning-workflow.md).
 
 ## Context
 

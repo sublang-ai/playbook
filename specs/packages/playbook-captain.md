@@ -128,7 +128,7 @@ for a validated `switch`, that idle state lasts only until the same
 turn starts the target playbook ([[playbook-captain-2](#playbook-captain-2)]).
 Nested child completion and dismissal shall instead follow
 [[playbook-captain-28](#playbook-captain-28)].
-A Boss-turn cancellation signal shall reach a runtime operation only while that operation is active; a previously returned parked child shall remain owned by its suspended parent until explicit return, dismissal or disposal ([DR-071](../decisions/071-interrupted-continuation-settlement.md)).
+A Boss-turn cancellation signal shall reach a runtime operation only while that operation is active; a previously returned parked child shall remain owned by its suspended parent until explicit return, dismissal or disposal ([DR-073](../decisions/073-durable-step-progress.md)).
 
 #### playbook-captain-19
 
@@ -247,7 +247,7 @@ recovery, the shell shall attempt one Boss-appropriate failure reply
 that states only established facts, assembled as
 [[playbook-captain-69](#playbook-captain-69)] states, preserves the
 engagement, and names a safe next step.
-It shall append the complete original pending question as a clearly identified quote without replacing the truthful action-result reply ([DR-071](../decisions/071-interrupted-continuation-settlement.md)).
+It shall append the complete original pending question as a clearly identified quote without replacing the truthful action-result reply ([DR-073](../decisions/073-durable-step-progress.md)).
 If that presentation rejects, the shell shall surface the boundary
 failure without another presentation attempt.
 It shall not claim that nothing changed or invite a retry when work may
@@ -708,7 +708,7 @@ The wrapper shall route a sub-runtime `callPlayer(localRole, …, { resume })` t
 The shell shall track one delegated-call transaction by resolved player id across the logical session and reject a simultaneous second call to the same id rather than fork or serialize its continuation.
 A token-changing result shall remain logically in flight after the host promise resolves until the owning runtime synchronously validates it and `PlayerSessionStore.update` atomically publishes the exact returned transition ([[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)], [[playbook-runtime-58](playbook-runtime.md#playbook-runtime-58)]); no other frame, role, or unsourced store call may publish, clear, cancel, or reuse that lane meanwhile.
 A resolved result that is malformed, arrives after its runtime operation, or is not committed by that exact update shall quarantine the player lane, block later calls on its uncertain prior token, and make snapshot capture unsafe until the cancelled-turn exception below or the logical session ends; a rejected call that produced no result shall preserve and release the prior token after the provider promise settles.
-After a cancelled Boss turn drains all admitted calls, the shell shall clear only that turn’s quarantined lanes whose invocation signal was aborted, delete their uncertain provider hints from the shared player ledger, and retain the parked runtime for a fresh provider call; it shall accept no late result and change no repository evidence ([DR-072](../decisions/072-host-owned-interrupted-work-settlement.md)).
+After a cancelled Boss turn drains all admitted calls, the shell shall clear only that turn’s quarantined lanes whose invocation signal was aborted, delete their uncertain provider hints from the shared player ledger, and retain the parked runtime for a fresh provider call; it shall accept no late result and change no repository evidence ([DR-073](../decisions/073-durable-step-progress.md)).
 The wrapper shall route sub-runtime
 `callCaptain(prompt, signal, options)` through the shared Captain queue to
 `context.callCaptain(prompt, options)`, preserving the required `visibility`

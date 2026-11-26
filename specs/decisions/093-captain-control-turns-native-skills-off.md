@@ -6,14 +6,13 @@
 ## Status
 
 Accepted (2026-10-20).
-
-Amended in tool-free delegation under [DR-105](105-runtime-owned-seed-and-delegation.md).
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
 [DR-092](092-skills-follow-working-agents.md) gives routing, Judge and reporting calls an empty skill list, but each runtime still discovers skills by itself in its project and user skill folders and offers them to every run [[1]].
 Environment managers now install persistent skills into exactly those folders [[2]].
-Such a skill reaches a Captain's routing decision or a Judge's adjudication as instructions no Boss gave, and where tool isolation is prompt-only ([DR-013](013-routing-only-captain-control.md) A1) the Captain can even invoke it.
+Such a skill reaches a Captain's routing decision or a Judge's adjudication as instructions no Boss gave, and where tool isolation is prompt-only ([DR-013](013-routing-only-captain-control.md)) the Captain can even invoke it.
 
 Cligent 0.35.0 adds a per-run `nativeSkills` option: `false` turns off, as far as each adapter's levers reach, the skills a runtime discovers by itself [[1]].
 Cligent 0.36.0 carries it in tmux-play's complete call settings and rejects `false` before the call's prompt record for an adapter whose published native-skill support does not set `disableSupported` [[3]].
@@ -24,11 +23,11 @@ A resumed conversation keeps the skill listings and bodies already in its histor
 
 - Every decision, Judge and reporting call, and every forwarded sub-runtime Captain call requesting an empty allowlist, carries `nativeSkills: false` where `getNativeSkillSupport` reports `disableSupported` for the session Captain's adapter.
 - Where it does not — Kimi Code — or reports nothing, those calls omit `nativeSkills`, and the Captain keeps its runtime's own skill discovery.
-  The owner chose this documented reduction over refusing a Kimi Captain, as DR-013 A1 accepts prompt-only tool isolation.
+  The owner chose this documented reduction over refusing a Kimi Captain, as DR-013 accepts prompt-only tool isolation.
 - Working-player and bounded recovery-preparation calls omit it: they are working actors, which DR-092 already gives their configured skills.
+- The same tool-free calls also omit child model and effort, so delegation settings never reach them ([DR-105](105-runtime-owned-seed-and-delegation.md)).
 - The durable session-Captain conversation keeps resuming ([[playbook-captain-31](../packages/playbook-captain.md#playbook-captain-31)]); Judge and sub-runtime control calls already start fresh.
 - The switch is fixed host behavior: no configuration field, durable execution field or structural-projection member, so ordinary reopening applies it at once.
-- The Cligent floor rises to 0.36.0.
 
 ## Consequences
 

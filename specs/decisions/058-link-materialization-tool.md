@@ -5,21 +5,23 @@
 
 ## Status
 
-Accepted for the measured flat single-player/script workflow with standalone quoted relays (2026-09-12) and one labelled CODE materializer comparison (2026-09-14).
-A separate accepted cold minimal demo demonstrates the five-minute overall target once; isolated linking gains outside the quoted-relay and labelled CODE observations remain unproven.
+Accepted (2026-09-12); revised (2026-09-14).
+Amended by [DR-067](067-parallel-proposals-through-the-shared-factory.md).
 
 ## Context
 
 The shared factory already owns interpretation under [DR-019](019-shared-linked-runtime-factory.md), but the linking agent still generates repetitive types, option validation, and factory wiring.
 The measured minimal baseline spent 158 seconds in linking; [DR-060](060-compact-link-definition.md)'s input-only split demonstrated no gain.
 Some required metadata disappears under TypeScript erasure or belongs to authored policy, so runtime inspection cannot replace semantic linking.
+The tool was accepted for the measured flat single-player/script workflow with standalone quoted relays and then for one labelled CODE comparison; isolated linking gains outside those observations remain unproven.
 
 ## Decision
 
 An optional Playbook-owned tool materializes the existing thin module from the loaded FSM and a strict declarative descriptor.
 Its initial domain is flat ordinary player/script workflows using shared default strategies and primitive options.
 An explicit `flat-quoted-relays` profile extends that domain only with deterministic string substitution for standalone `> <token>` lines, keeping shared continuation behavior and the same descriptor keys.
-An explicit `flat-labelled-relays` profile extends that domain only for flat player/script/nested-call machines with literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
+An explicit `flat-labelled-relays` profile extends that domain only for flat player/script/nested-call machines with literal string relays, exact optional-line declarations, and source-declared local-role identity tokens; its descriptor additionally names the exact exported player-input type, the shared factory still owns the nested bridge, and the tool never derives child semantics or changes the FSM.
+Under [DR-067](067-parallel-proposals-through-the-shared-factory.md), every profile also accepts root `type: 'parallel'` states in the compiled shape, so a DECIDE link is the same deterministic step as every other maintained link: the tool derives role states from each player-invoking state, region working leaves included, by stable state id, and declares nothing new, since the factory derives the regions and the cohort from the machine and the FSM's own `concurrentRoleSets` stay its only cohort declaration; the factory preflight alone validates that shape, and other compound states remain unsupported.
 The linker selects a materializer profile only when the source needs that exact supported convention; identity-specific composition outside the labelled profile, structured renderers, and other custom strategies still require ordinary linking.
 The agent remains responsible for exact erased and authored metadata and every requirement of the complete link definition.
 Unsupported workflows retain ordinary normative linking; invalid descriptors and preflight failures produce diagnostics without replacing the target.
@@ -56,23 +58,7 @@ The runtime delivers the exact literal Boss task to one delegated call, makes on
 This one accepted observation uses the default helper profile and demonstrates the five-minute demo target; it supplies neither a general latency guarantee nor an isolated full-compilation or default-profile speed ratio.
 The quoted-relay pair's 63.1% improvement remains the separately controlled retention evidence.
 
-## Addendum A1: Labelled/nested profile scope
-
-An explicitly selected `flat-labelled-relays` profile supports flat player/script/nested-call machines using literal string relays, exact optional-line declarations, and source-declared local-role identity tokens.
-The descriptor retains all existing semantic responsibilities and additionally names the exact exported player-input type.
-The shared factory still owns the nested bridge; this tool never derives child semantics or changes the FSM.
-This profile supersedes the earlier profile exclusion only for its explicitly supported forms and does not expand the measured retention claim beyond the accepted observations recorded in this decision.
-
-## Addendum A2: Labelled CODE observation
-
 The [accepted labelled CODE comparison](../../scripts/experiments/c10-v13-code-link-pair-evidence.json) used the same CODE source, accepted GEARS and FSM, immutable C10 engine, emitted public entry, strict typecheck, import check, all four generated suites and the 18-case runtime profile.
 The ordinary linked baseline `c10-v13-code-link-baseline` completed in 638,219 ms total, including 636,735 ms link compilation; the `flat-labelled-relays` materializer candidate `c10-v13-code-link-prefer-materializer` completed in 206,865 ms total, including 205,227 ms link compilation.
 The observed reduction for this one pair is 67.59% total and 67.77% link compilation, with provider calls moving from 2 to 1.
 This is one paired observation for CODE under the labelled profile; it is not a DEV result, population ratio, cold full-compilation claim, or authorization to widen descriptors, drop custom strategies, alter generated assertions, or weaken verification.
-
-## Addendum A3: Compiled parallel shape
-
-Under [DR-067](067-parallel-proposals-through-the-shared-factory.md), every profile also accepts root `type: 'parallel'` states, so a DECIDE link is the same deterministic step as every other maintained link.
-The tool derives role states from each player-invoking state, region working leaves included, by stable state id, and declares nothing new: the factory derives the regions and the cohort from the machine, and the FSM's own `concurrentRoleSets` stay its only cohort declaration.
-The factory preflight alone validates the compiled parallel shape; other compound states remain unsupported.
-This widens no measured retention claim.

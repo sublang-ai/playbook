@@ -7,7 +7,7 @@
 
 Accepted.
 Amends [DR-034](034-durable-failure-retry-continuity.md).
-Amended by [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amended by [DR-040](040-outcome-authority-effect-reconciliation.md), [DR-073](073-durable-step-progress.md).
 
 ## Context
 
@@ -35,7 +35,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
    An existing root whose turn-start stack is fully capability-bearing but whose previous generation cannot be captured safely still leaves a boundary that requires that previous candidate unsettled.
    The linked artifact declares its unfinished final-state ids as link-time metadata beside the resumable-state registry — mechanical metadata, not procedure text.
    A later settlement of the same root playbook replaces the generation in place; clean completion clears it.
-   Host settlement of lost progress clears only the retained generations containing a runtime that owns the changed evidence, never attributing session-level evidence to a workflow merely because it was active earlier ([DR-072](072-host-owned-interrupted-work-settlement.md)).
+   Host settlement of lost progress clears only the retained generations containing a runtime that owns the changed evidence, never attributing session-level evidence to a workflow merely because it was active earlier ([DR-073](073-durable-step-progress.md)).
 
 3. **A retained generation may cross sessions under an exact structural envelope and single-transfer ownership.**
    A fresh session's launch may adopt the retained generation from its predecessor: the newest settled session record with the same working directory, read under the store's lease discipline; adoption moves the generation into the adopting record and clears it at the source in the same guarded exchange, so no generation is adopted twice.

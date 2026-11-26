@@ -6,11 +6,7 @@
 ## Status
 
 Accepted (2026-11-14).
-Amends [DR-018](018-gears-grammar-provenance-from-spex.md) in one scope: compiled GEARS follow the cited definition's package form, not only its statement pattern.
-Amends [DR-016](016-script-actors-and-optimize-pass.md), [DR-050](050-pull-request-delivery.md) and [DR-065](065-prompt-prefix-pass.md) in one scope: the optimize pass appends no `## Optimizations` section, and nothing requires or preserves one.
-Amends [DR-068](068-labelled-section-placeholders.md) and [DR-082](082-retain-input-owned-boss-replies.md) in one scope: the defining sentence of a derived placeholder and the retention of an input-owned Boss reply are requirement items, not package introduction or item prose.
-Amends [DR-102](102-code-reviews-the-intent-once.md)'s consequence that CODE's GEARS carry three items: they carry three action items.
-Leaves [DR-039](039-cohesive-concern-spec-item-boundary.md) as it is: that record governs this repository's own `specs/`, not compiler output.
+Amends [DR-016](016-script-actors-and-optimize-pass.md), [DR-018](018-gears-grammar-provenance-from-spex.md), [DR-050](050-pull-request-delivery.md), [DR-065](065-prompt-prefix-pass.md), [DR-068](068-labelled-section-placeholders.md), [DR-082](082-retain-input-owned-boss-replies.md), [DR-102](102-code-reviews-the-intent-once.md).
 
 ## Context
 
@@ -20,6 +16,8 @@ Leaves [DR-039](039-cohesive-concern-spec-item-boundary.md) as it is: that recor
 - The dependency ran the wrong way: the shape of the requirements followed the shape of the machine, so a requirement could not be restated, split or cited without touching the item-to-state mapping, and two references hand-edited on 2026-11-08 left the compiler's grammar unnoticed.
 - The mechanical binding is narrow: the compiler's conformance check binds an action item's acting clause, prompt and `Results:`, and its ID where a state cites one, to one state, and reads no requirement prose.
 - The maintained machines are verified and are not to be recompiled for a change of form.
+- This record has compiled GEARS follow the cited definition's package form, not only the statement pattern of [DR-018](018-gears-grammar-provenance-from-spex.md); drops the `## Optimizations` section of [DR-016](016-script-actors-and-optimize-pass.md), [DR-050](050-pull-request-delivery.md) and [DR-065](065-prompt-prefix-pass.md); makes the derived-placeholder definition of [DR-068](068-labelled-section-placeholders.md) and the input-owned retention of [DR-082](082-retain-input-owned-boss-replies.md) requirement items; and counts CODE's three GEARS items of [DR-102](102-code-reviews-the-intent-once.md) as action items.
+  It leaves [DR-039](039-cohesive-concern-spec-item-boundary.md) as it is: that record governs this repository's own `specs/`, not compiler output.
 - Considered and declined:
   - recording that compiled GEARS is a compiler dialect exempt from the package rules: it keeps the file unreviewable;
   - one item per requirement with no action items, the machine reading prompts from a generated text module: it changes every machine;

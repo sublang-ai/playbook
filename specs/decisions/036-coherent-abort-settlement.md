@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amended by [DR-073](073-durable-step-progress.md).
 
 ## Context
 
@@ -53,8 +53,8 @@ Amended by [DR-071](071-interrupted-continuation-settlement.md), [DR-072](072-ho
    A startup actor error latches onto the channel `init` and `restore` drain, so the failed-start cleanup runs and the boundary rejects with the original error instead of resolving over a dead machine.
 
 8. **Boss cancellation reaches nested work.**
-   Captain forwards Boss cancellation to the active child and keeps an exportable aborted child suspended under its parent, while caller cancellation stays scoped to active runtime calls ([DR-071](071-interrupted-continuation-settlement.md)).
-   A child is retained on cancellation only after the runtime accepted its initial text; after complete call draining, an unaccepted player result loses its provider continuation hint, and no late result is accepted or effect replayed ([DR-072](072-host-owned-interrupted-work-settlement.md)).
+   Captain forwards Boss cancellation to the active child and keeps an exportable aborted child suspended under its parent, while caller cancellation stays scoped to active runtime calls.
+   A child is retained on cancellation only after the runtime accepted its initial text; after complete call draining, an unaccepted player result loses its provider continuation hint, and no late result is accepted or effect replayed ([DR-073](073-durable-step-progress.md)).
 
 Considered and rejected: name-based (`AbortError`) classification — a fresh failure can wear the name and a cancellation can arrive without it; abort-over-terminal precedence — it converts a completed workflow into a silent rerun; rewriting a computed outcome when an abort lands during settlement emission — the return would disagree with the settlement trace already on the wire.
 Considered and rejected: forgiving an identical pre-publication rejection after an otherwise successful apply — publication commits the receipt, so that alternative would report a fully settled success after its settlement was cancelled instead of the honest failed-after-effects-may-exist disposition.
