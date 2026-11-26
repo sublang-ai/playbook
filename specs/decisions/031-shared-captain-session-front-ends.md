@@ -8,6 +8,7 @@
 Amended by [DR-073](073-durable-step-progress.md): step progress replaces whole-turn replay and saved continuation points in every host.
 
 Accepted.
+Amends [DR-010](010-playbook-session-tracing-and-resume.md).
 [DR-032](032-explicit-roles-session-players.md) amends the shared configuration and durable record: active structure remains restorable, explicit session players and current model and effort replace the frozen namespaced lineup, and runtime snapshot schema `3` replaces schema `2` player identity.
 [DR-040](040-outcome-authority-effect-reconciliation.md) extends the leased uncertain record with governed-call receipts, deferred-operation checkpoints, and unresolved-abandonment settlement, with whole-turn replay since removed by [DR-073](073-durable-step-progress.md).
 [DR-041](041-working-directory-aware-continuation.md) amends §4 so bare headless continuation prefers the newest session stored for the invoking working directory before an explicit global fallback.
@@ -62,6 +63,21 @@ Under [DR-032](032-explicit-roles-session-players.md), the next major shall reje
 The positional registry form `playbook run <from>`, `playbook run resume`, run-only binding flags, and the `run:` configuration block are removed together in the next major release.
 An external playbook remains headlessly callable by enabling its registry in the shared config and sending its effective `/command` through Captain.
 No separate direct-execution command is introduced by this decision.
+
+### 7. Parked-session snapshot capability
+
+The shared runtime contract shall carry an optional, paired `exportSnapshot`/`restore` capability, and a runtime shall implement both members or neither.
+`exportSnapshot` shall return a JSON-safe snapshot only at a safe capture point — initialized, not disposing or disposed, no active public boundary, and the root actor quiescent — and `undefined` otherwise.
+The snapshot shall carry its schema version, the playbook id, the XState persisted machine snapshot as an opaque JSON-safe value with raw `Error` values normalized to `{ name, message, stack? }`, the resume tokens, the sequence counters, the current state descriptor, and the pending Boss questions as a host-readable list, so a host shows the Boss what was asked without parsing status lines or telemetry.
+`restore` is an alternative to `init` that binds the same immutable `PlaybookSession` identity, reconstructs the actor and its tokens and counters, emits no `session.started` trace, and continues the session's contiguous trace sequence.
+The host shall recreate the runtime through the same factory with equivalent options and ports, and the runtime shall reject a snapshot whose schema version or playbook id it cannot rehydrate.
+A host shall treat an absent `restore` as a playbook that cannot resume and fail with a diagnostic rather than silently start fresh.
+
+### 8. A session may park across processes
+
+Amends [DR-010](010-playbook-session-tracing-and-resume.md) §1: a playbook session is one logical lifecycle from its first `init` to its final settlement, and it may span host processes through export and restore segments.
+A host that has persisted a parked snapshot may end its process without calling `dispose`; the parked session is suspended, not ended.
+`session.disposed` marks the true session end — terminal completion, failure disposal, or deliberate abandonment — never a parked hand-off.
 
 ## Consequences
 

@@ -842,7 +842,7 @@ A caller shall neither invent predicates from a callee's implementation nor use 
 
 Where a linked runtime implements the optional durable-session
 capability of `@sublang/playbook/runtime`
-([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §1),
+([DR-031](../decisions/031-shared-captain-session-front-ends.md) §7),
 the runtime shall implement `exportSnapshot` and `restore` together.
 When `exportSnapshot` is called at a safe capture point — initialized,
 not disposing or disposed, no active public boundary, and the root actor

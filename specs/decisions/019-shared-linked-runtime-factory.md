@@ -24,7 +24,7 @@ Accepted.
 
 - `createXStatePlaybookRuntime(machine, spec)` lives in `src/xstate-playbook-runtime.ts` and is re-exported from `@sublang/playbook/xstate-runtime` ([[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)]), so linked artifacts keep one shared engine import surface.
 - The machinery is hoisted from the reference CODE artifact verbatim where possible; the CODE behavior suites are the equivalence proof, and observable behavior shall not change under the move.
-- The factory provides every actor kind the machine declares — `player`, `script` ([DR-016](016-script-actors-and-optimize-pass.md)), direct `captain`, and nested `playbook` (literal and dynamic) via the shared bridge — and always implements the [DR-014](014-durable-one-shot-run-sessions.md) parked-session snapshot capability.
+- The factory provides every actor kind the machine declares — `player`, `script` ([DR-016](016-script-actors-and-optimize-pass.md)), direct `captain`, and nested `playbook` (literal and dynamic) via the shared bridge — and always implements the parked-session snapshot capability of [DR-031](031-shared-captain-session-front-ends.md) §7.
 - Scope: flat FSMs that declare no parallel state (each snapshot exposes exactly one playbook state id).
   Parallel FSMs require bespoke linked machinery.
 

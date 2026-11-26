@@ -7,7 +7,6 @@
 
 Accepted (2026-11-08).
 Amends [DR-004](004-link-code-fsm-to-playbook-runtime.md) §3 in one scope: CODE invokes REVIEW once, after the direct phase or the final IR-task phase, over every `code`-owned commit of the run, instead of after each commit.
-Supersedes [DR-081](081-code-prior-review-relay.md): with no review between IR tasks there is no prior-phase review to relay, so the frozen record, its relay, and the Coder instructions that read it are retired.
 Amends [DR-088](088-a-commit-outcome-takes-every-new-commit.md)'s consequence that CODE's review request names one commit: it now names each phase's receipt-owned commit, oldest first.
 Extends [DR-035](035-truthful-terminal-meaning.md) and [DR-048](048-typed-terminal-outcomes.md) to REVIEW: its bounded rounds end at a distinct failure terminal.
 Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in its consequence that CODE's GEARS carry three items: they carry three action items.
@@ -18,7 +17,7 @@ Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in its consequence 
 - A review of each task repeats the Reviewer's reading of the intent, the IR, and the specs once per task, and a Reviewer who finds something in task one and again in task two reviews the same design twice; the maintainer measured this as the dominant cost of a multi-task intent (2026-11-08).
 - The intent is what the Boss asked for and what the IR records; a task is a commit-sized slice of it, and a finding about one slice is usually a finding about the intent's design, which the final task settles or exposes.
 - An unbounded review loop has no terminal of its own: a Reviewer and a Coder who disagree keep exchanging rounds until the Boss interrupts, and the run publishes no meaning for that outcome.
-- [DR-081](081-code-prior-review-relay.md) existed only because a later task's Coder saw an IR that truthfully said earlier work awaited review; with one review at the end, that statement is simply true until the end.
+- The former prior-phase review relay existed only because a later task's Coder saw an IR that truthfully said earlier work awaited review; with one review at the end, that statement is simply true until the end.
 - Considered and declined:
   - a per-task review that skips REVIEW's fix loop and reviews only at the end: two review protocols for one artifact;
   - counting rounds in CODE: REVIEW owns the rounds and the review-fix commits, so the bound belongs where the loop runs, and DECIDE and standalone REVIEW gain the same bound for free;
@@ -54,5 +53,5 @@ No caller reads REVIEW's state id or output fields to route the outcome.
 - Reviewer calls per intent fall from one REVIEW call per phase, each unbounded, to one REVIEW call of at most three Reviewer rounds: an intent of one new-IR phase and three tasks moves from four REVIEW calls to one.
 - REVIEW's public output interface gains a second variant; a caller that reads the output still sees the success variant unchanged.
 - CODE's GEARS carry three items — the first phase, the later IR-task phase, and the one REVIEW call — and the FSM has one nested-call state.
-- The `code-prior-review` integration suite and spec items `playbook-60` and `playbook-61` retire with DR-081; their request-scoped record-maintenance case moves into the remaining CODE integration coverage.
+- The `code-prior-review` integration suite and spec items `playbook-60` and `playbook-61` retire with the prior-phase relay; their request-scoped record-maintenance case moves into the remaining CODE integration coverage.
 - The Boss sees a review stopped at its bound as a failure with the findings attached, and decides what to do with them.

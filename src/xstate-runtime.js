@@ -605,7 +605,7 @@ export function normalizePlaybookSnapshot(snapshot, options = {}) {
         ...(activeStateIds.length === 1 ? { stateId: activeStateIds[0] } : {}),
     };
 }
-// DR-014 §1: deep-detach an XState persisted actor snapshot into strict
+// DR-031 §7: deep-detach an XState persisted actor snapshot into strict
 // JSON for a PlaybookRuntimeSnapshot, normalizing any raw Error value
 // (for example FSM context `lastError`) instead of rejecting it.
 // DR-063 §2: a runtime parked in its failure state supplies the `lastError`
@@ -1786,7 +1786,7 @@ function snapshotSuspendedCall(value, path = 'runtime snapshot suspendedCall') {
     }
     return Object.freeze(call);
 }
-// DR-014 §1 / DR-031 §5 / DR-032 / DR-040: validate and detach a host-supplied
+// DR-031 §5, §7 / DR-032 / DR-040: validate and detach a host-supplied
 // schema-4 runtime snapshot before restore touches any state. A suspended
 // call is rejected unless the restore path explicitly promises to seed and
 // claim it; older schemas are rejected by this public restore boundary.
