@@ -5,12 +5,13 @@
 
 ## Status
 
-Accepted (2026-11-15), after a host could show what a failed check printed but not the command that printed it, and the session Captain could tell the Boss neither [[1]].
-Amends [DR-106](106-a-script-step-records-its-output.md) in two scopes: §3's `playbook.script` event additionally carries the command as executed, and §4's Captain is told of the last script step of a failed run — its exit status, its command, and that its output is on record — while the output itself still reaches no agent call.
-Every other DR-106 decision stands.
+Accepted (2026-11-15).
+Amends [DR-106](106-a-script-step-records-its-output.md).
 
 ## Context
 
+- A host could show what a failed check printed but not the command that printed it, and the session Captain could tell the Boss neither [[1]].
+- This record extends DR-106 §3's event with the command and §4's Captain with the facts below; every other DR-106 decision stands.
 - DR-106 records what a script step printed, and the event names the step only by `stateId` and `sourceItem`.
 - A script's command may carry a placeholder the machine binds at run time ([DR-050](050-pull-request-delivery.md)), so a host reading the artifact's source finds the authored command, not the one that ran.
 - The session Captain closes a failed run from the terminal's authored description alone; asked which command ran and how it exited, it can only answer that its report holds neither.

@@ -26,7 +26,7 @@ All 18 active items are accepted; none is rejected and no rebuttal remains.
 | 6 | Accept. The outermost participating summary policy counts the child's automatic answer and resumed parent work together. | `captain-recovery-progress.integration.test.ts`, auto-child and counts cases. |
 | 11 | Accept. General saved-point wording, discard guidance and linker action descriptions now match behavior. | Specs, CLI/embedding docs, store diagnostics and linker contract checks. |
 | 15 | Accept. Added independent pre-delivery disposal, request/input validation, legacy empty candidates, exact action attribution, SDK routing and signal-lifetime checks; split verification flows. | Shell, recovery, frontend-parity and progress integration suites. |
-| 16 | Accept. Failure-reply item 34 owns appending the original question; DR-071 records the decision and item 37 cites it. | Existing failed-reply checks in the passing shell suite. |
+| 16 | Accept. Failure-reply item 34 owns appending the original question; DR-073 records the decision and item 37 cites it. | Existing failed-reply checks in the passing shell suite. |
 | 22 | Accept in SLC. Fold verification-11 into one statement. | SLC's round-three record; spec lint has no warnings. |
 | 25 | Accept. Saved continuations retain preparation and automatic-answer facts; one spec owns disclosure. | SIGKILL before dispatch, followed by retry with exact disclosure. |
 | 26 | Accept. The question check uses the standard hidden-control envelope. | All five adapter cases and explicit quoted-evidence instruction checks. |
@@ -38,7 +38,7 @@ All 18 active items are accepted; none is rejected and no rebuttal remains.
 | 33 | Accept. Later delivered Boss text and current instructions are nonselectable context; an original answer is never sent twice automatically. | Repeated question, changed Boss input and legacy reopening cases. |
 | 34 | Accept in both repos. SLC excludes only the final defensive failure sink; Captain's six verifier files are copied from built SLC. | SLC's positive/negative fallback fixture; regenerated Captain checks. |
 | 35 | Accept. Headless saved-work notices require this attempt's actual settlement. | Fresh-boundary retraction, existing-session setup refusal and interrupted CLI cases. |
-| 36 | Accept. Record coordinated upgrade of every host sharing the store, including Spex. | DR-071 and both user guides; no release is performed here. |
+| 36 | Accept. Record coordinated upgrade of every host sharing the store, including Spex. | DR-073 and both user guides; no release is performed here. |
 | 37 | Accept. An open controller newly left uncertain consistently requires disposal and reopening with `mode:'recover'`. | `recover()`, `recover(text)` and `retry()` refusals plus successful reopening. |
 
 The review's already-closed items 4, 7, 10, 12, 13, 14, 24 and 27 remain closed; 19 and 23 retain their accepted earlier dispositions, and 20 stays folded into 10/24.

@@ -5,31 +5,30 @@
 
 ## Status
 
-Accepted (2026-11-08), after long chunked sessions in the Spex app slowed down as they grew [[1]].
-Amends [DR-094](094-bounded-session-persistence.md) in one rule: a store need not verify the whole replay chain again when it reads a root that extends a head it has verified completely.
-Every other DR-094 decision stands.
-Amended by [DR-109](109-a-writer-checkpoints-from-what-it-verified.md): recovery publication under a lease rests on that lease writer's verified prefix.
-Amended by [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) to express the reader's verified boundary as a byte offset in the replay log.
+Accepted (2026-11-08).
+Amends [DR-094](094-bounded-session-persistence.md).
+Amended by [DR-109](109-a-writer-checkpoints-from-what-it-verified.md), [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md).
 
 ## Context
 
+- Long chunked sessions in the Spex app slowed down as they grew [[1]].
 - A host that tees records through the replay observer reads the stream after every append.
-- On bounded storage every such read pinned the root and verified its complete chain from the head back to the first node, about two file stats per record even when the verified-bytes cache held the content, so one read cost time proportional to the session and a session cost time quadratic in its length: 0.9 s per record at 3,700 records [[1]].
-- The legacy single-file reader already keeps a per-store cursor and validates only the bytes after it, and the bounded writer already reuses a publication proof so its appends and trusted checkpoints skip the walk; only the bounded public read verified everything every time.
-- Chunks are content-addressed: a node whose `previous` names a verified head is bound to that whole prefix by SHA-256.
+- Every such read verified the complete replay history, so one read cost time proportional to the session and a session cost time quadratic in its length: 0.9 s per record at 3,700 records [[1]].
+- The legacy single-file reader already kept a per-store cursor and validated only the bytes after it, and the writer already reused a publication proof so its appends and trusted checkpoints skip the walk; only the public read verified everything every time.
+- This record changes one rule of [DR-094](094-bounded-session-persistence.md): a store need not verify the whole replay again when it reads a replay that extends a prefix it has verified completely; every other DR-094 decision stands.
 
 ## Decision
 
-- A store caches, per session, the head reference whose complete closure it verified, with that prefix's byte count, final sequence and digest, and only when the verified chain ends at a complete envelope line.
-- A later monotonic read of a root whose byte length is not below that count walks from the new head, verifying each node and its content, until it reaches the cached head, whose remaining total must equal the cached count, and parses only the bytes it walked from the cached sequence and digest.
-- A read without such a boundary verifies the complete chain: a new store or process, a request below the cached sequence, a root that does not extend the cached head, a shortened root, a chain ending in a torn tail, export, migration, and the retry after a changed snapshot; a shortened or replaced observed prefix still rejects in the live store.
-- The trust assumed is the one the legacy offset cursor and the writer's publication proof already assume: immutable chunks are not modified outside the storage protocol. A partial walk never establishes a publication proof.
-- Writer initialization still verifies from the root without reusing a follower cursor.
+- A store caches, per session, the position through which it verified the complete replay log — the segment's identity and the byte offset after its last complete line, as [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) expresses it — with that prefix's final sequence and digest, and only when the verified prefix ends at a complete envelope line.
+- A later monotonic read whose replay extends that position verifies only the bytes after it, continuing from the cached sequence and digest.
+- A read without such a boundary verifies the complete log: a new store or process, a request below the cached sequence, a replay that does not extend the cached position, a shortened replay, a torn tail, export, conversion, and the retry after a changed snapshot; a shortened or replaced observed prefix still rejects in the live store.
+- The trust assumed is the one the writer's publication proof already assumes: verified replay bytes are not modified outside the storage protocol. A partial read never establishes a publication proof.
+- Writer initialization still verifies from the start without reusing a follower cursor, and a lease writer's own publications rest on its verified prefix ([DR-109](109-a-writer-checkpoints-from-what-it-verified.md)).
 
 ## Consequences
 
 - A read after an append costs time proportional to the appended records, not to the session.
-- A chunk altered outside the protocol after this store verified it goes undetected by this store's later incremental reads; a new store, reopening, export and migration still refuse it.
+- A replay byte altered outside the protocol after this store verified it goes undetected by this store's later incremental reads; a new store, reopening, export and conversion still refuse it.
 - "Public reads always verify" narrows to public reads without a boundary the reading store verified itself.
 
 ## References

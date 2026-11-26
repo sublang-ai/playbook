@@ -6,9 +6,8 @@
 ## Status
 
 Accepted (2026-09-30).
-Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
-Extends [DR-042](042-shared-session-store-and-replay-stream.md) in one scope: the session lease's owner names its machine by a published machine identity rather than by the operating system's host name; the store, its files, and its lifecycle otherwise stand.
-Extends [DR-046](046-public-worktree-host-capabilities.md) in one scope: the repository claim's owner names its machine by the same identity; the capabilities and the claim discipline otherwise stand.
+Amends [DR-042](042-shared-session-store-and-replay-stream.md), [DR-046](046-public-worktree-host-capabilities.md).
+Amended by [DR-098](098-native-windows-private-storage.md).
 
 ## Context
 
@@ -20,6 +19,7 @@ Spex's state-root lease keeps the same rule and met exactly this failure; its re
 The session store is shared by the standalone CLI and by Spex, and any writer may take over a dead writer's session on the same machine.
 A fix that only one writer adopts regresses that takeover: an identity in the owner's `hostname` field looks foreign to a reader still comparing host names, and vice versa.
 The identity therefore belongs to Playbook, which owns the store, and every writer sharing a store adopts it together.
+This record changes only how the session lease of [DR-042](042-shared-session-store-and-replay-stream.md) and the repository claim of [DR-046](046-public-worktree-host-capabilities.md) name their owner's machine; the store, its files and lifecycle, the capabilities and the claim discipline otherwise stand.
 
 Considered and declined:
 
@@ -30,7 +30,7 @@ Considered and declined:
 
 ## Decision
 
-- **One machine identity per user and machine**, read from `${XDG_STATE_HOME:-~/.local/state}/playbook/machine-id` on macOS and Linux alike: a private regular file holding one tagged value `machine-id:v1:<UUID>`.
+- **One machine identity per user and machine**, read from `${XDG_STATE_HOME:-~/.local/state}/playbook/machine-id` on every host, native Windows through the private-storage admission of [DR-098](098-native-windows-private-storage.md): a private regular file holding one tagged value `machine-id:v1:<UUID>`.
   It is not per Spex home: every store on the machine shares it, so it never lives inside a directory a sync service or Git may carry to another machine.
 - **Playbook publishes and reads it** through `@sublang/playbook/machine-identity`, an asynchronous public facade; a host consumes that facade and keeps no copy of its rules.
   An absent file is published once, exclusively and complete; a concurrent creator that loses discards its value and reads the winner's.

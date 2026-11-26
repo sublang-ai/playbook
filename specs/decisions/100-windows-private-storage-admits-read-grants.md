@@ -5,12 +5,12 @@
 
 ## Status
 
-Accepted (2026-11-04) on the owner's direction, after a Spex home that the Codex sandbox had granted read access to was refused at start by Playbook's session store.
-Amends [DR-098](098-native-windows-private-storage.md) in the grants and the facts its Windows admission requires: a grant to another principal refuses only when it may change the entry, and the volume need not be local.
-Creation, links, special files, multi-link files, POSIX behavior and every other DR-098 decision stand.
+Accepted (2026-11-04).
+Amends [DR-098](098-native-windows-private-storage.md).
 
 ## Context
 
+- The owner directed this change after a Spex home that the Codex sandbox had granted read access to was refused at start by Playbook's session store.
 - DR-098 admitted a Windows entry only when its descriptor granted no principal beyond the current user, LocalSystem and built-in Administrators any right, and only on a local volume.
 - The Codex Windows sandbox grants its `CodexSandboxUsers` group read and execute access on every top-level entry of the user profile outside a fixed exclusion list that omits `.spex` and `.local` [[1]], so one Codex run makes the Spex home and `~/.local/state/playbook/` fail that admission and the session store and machine identity refuse to open.
 - On POSIX, Playbook tightens excess permission bits; on Windows it can only refuse, so a read grant another tool added left the host unable to start.
@@ -25,6 +25,7 @@ Creation, links, special files, multi-link files, POSIX behavior and every other
   - deny entries are admitted whatever their rights.
 - Owner and descriptor facts that cannot be read whole, an absent descriptor, or an unsupported entry type still refuse.
 - A local volume is no longer required, as POSIX never required one.
+- Creation, links, special files, multi-link files, POSIX behavior and every other DR-098 decision stand.
 - This one rule serves every Windows caller of the private-entry implementation: session files, chunks, replay, assets, leases, repository claims and the machine identity.
 
 ## Consequences

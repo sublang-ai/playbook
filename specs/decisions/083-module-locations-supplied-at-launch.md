@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-10-06).
-Amends [DR-009](009-generic-playbook-cli-and-registry.md) §1, §2 and §6 in one scope: an enabled playbook's registry module may be supplied by the launch, including through the CLI, instead of its configured `from`; enablement, validation and everything else of that record stand.
+Amends [DR-009](009-generic-playbook-cli-and-registry.md).
 
 ## Context
 
@@ -15,6 +15,7 @@ Its core hands the launcher the module location of each playbook its composed co
 Its configuration files therefore name no `playbooks.<id>.from`, which the shared launch-config loader refuses before import.
 The `playbook` CLI consequently cannot open or continue a session Spex created without a rewritten launcher config, and Spex could hand a module only by writing a path into a file it shares with other hosts.
 A module location is a property of the machine and installation running the launch, not of the configuration a team shares.
+This record changes [DR-009](009-generic-playbook-cli-and-registry.md) §1, §2 and §6 only in where an enabled playbook's registry module may come from; enablement, validation and everything else of that record stand.
 
 ## Decision
 

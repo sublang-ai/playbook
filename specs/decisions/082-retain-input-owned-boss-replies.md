@@ -6,18 +6,19 @@
 ## Status
 
 Accepted (2026-10-03).
-Clarifies the input-owned retention boundary under [DR-005](005-boss-reply-suspension-path.md) and [DR-066](066-compiled-builtins-keep-their-public-interface.md), without changing the runtime contract.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: GEARS states the input-owned retention and its acceptance condition as a requirement item, not in non-acting prose.
+Amends [DR-005](005-boss-reply-suspension-path.md), [DR-066](066-compiled-builtins-keep-their-public-interface.md).
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
 A generated scope-approval workflow required the adjudicator to echo the complete Boss reply as an output property, then compared that echo with the canonical input.
 The actual affirmative reply retained its trailing LF, while the accepted semantic output dropped that LF, so the workflow failed after a valid planning commit and before design.
 Source required preservation of the received answer; it did not assign production of that input to the acting agent or adjudicator.
+This clarifies the input-owned retention boundary under [DR-005](005-boss-reply-suspension-path.md) and [DR-066](066-compiled-builtins-keep-their-public-interface.md) without changing the runtime contract.
 
 ## Decision
 
-GEARS preserves input-owned retention in non-acting prose and the semantic acceptance condition in the acting result contract, without an extracted echo field.
+GEARS states input-owned retention and its acceptance condition as a requirement item ([DR-108](108-compiled-gears-is-a-spec-package.md)) and the semantic acceptance condition in the acting result contract, without an extracted echo field.
 At that accepted boundary the generated FSM verifies current question authority, retains the exact canonical reply before clearing Q/A, and relays it where Source requires it.
 Semantic approval is still judged; deterministic input retention does not infer approval from nonempty text.
 An undeclared echo remains malformed under the unchanged closed result contract.

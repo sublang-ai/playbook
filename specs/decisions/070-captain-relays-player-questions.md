@@ -6,8 +6,8 @@
 ## Status
 
 Accepted.
-
-Amended by [DR-071](071-interrupted-continuation-settlement.md); its lost-progress runtime marker is replaced by [DR-072](072-host-owned-interrupted-work-settlement.md).
+Amends [DR-007](007-hidden-judge-captain-pane.md).
+Amended by [DR-073](073-durable-step-progress.md).
 
 ## Context
 

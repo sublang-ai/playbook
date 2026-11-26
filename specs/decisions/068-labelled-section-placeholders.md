@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-09-25).
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: the derived placeholder's defining sentence is a requirement item keeping the Source's defining words, not package introduction or item prose.
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -19,7 +19,7 @@ Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in one scope: the d
 ## Decision
 
 - A Source may define a placeholder as a labelled section of another relayed text, naming the label that opens the section and the labels that end it.
-  `text2gears` keeps the defining sentence verbatim — in the package introduction, or in the item's prose where the Source states it — names the placeholder as the Source does, and declares no result property for it: the value is derived, not produced.
+  `text2gears` states the definition as a requirement item keeping the Source's defining words ([DR-108](108-compiled-gears-is-a-spec-package.md)), names the placeholder as the Source does, and declares no result property for it: the value is derived, not produced.
 - `gears2fsm` binds the placeholder to a typed context field that the compiled FSM derives deterministically in the entry action or transition that stores the text, and again wherever that text is replaced:
   - the text as read is the text itself, except that where every non-blank line begins with `>`, each line is read without that marker and one optional space, the quote layer the caller's relay adds;
   - the section is the lines of the text as read from the first line that begins with the opening label, the label removed, through the line before the first later line that begins with an ending label, or through the last line, trimmed; a line that merely looks labelled, such as `Note:`, stays in it;

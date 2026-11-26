@@ -6,11 +6,8 @@
 ## Status
 
 Accepted (2026-10-22).
-Amended by [DR-098](098-native-windows-private-storage.md) for native Windows private storage.
-Amended by [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md): a store's later monotonic reads verify only the nodes after a head it verified completely.
-Amended by [DR-109](109-a-writer-checkpoints-from-what-it-verified.md): recovery publication under a lease rests on that lease writer's verified prefix.
-Amended by [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md) for the schema 9 manifest and replay log, with earlier formats converted by a separate command.
 Amends [DR-049](049-portable-session-contract.md).
+Amended by [DR-098](098-native-windows-private-storage.md), [DR-101](101-a-store-rereads-only-what-it-has-not-verified.md), [DR-109](109-a-writer-checkpoints-from-what-it-verified.md), [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md).
 
 ## Context
 
@@ -20,17 +17,17 @@ Dropping evidence or refusing completion recording after an external action woul
 
 ## Decision
 
-- Keep the existing logical recovery contract and shared store API; introduce a versioned physical representation beneath it.
-- Store each session's immutable, integrity-checked content in its own bounded chunks, deduplicating equal JSON subtrees and keeping root references bounded.
-- Publish dependencies durably before replacing a manifest or replay root.
-- Preserve exact replay envelope bytes across segmentation and bind recovery to its existing sequence and digest.
-- Read existing sessions without modifying them; convert them explicitly under exclusive ownership with retained originals.
-- Treat per-file bounds separately from total-storage quotas and retention; introduce neither automatic evidence deletion nor a post-effect quota in this change.
+- Keep the existing logical recovery contract and shared store API; introduce a versioned physical representation beneath it, now the manifest file and segmented replay log of [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md).
+- Keep every session-owned file within a per-file bound, splitting what would exceed it into integrity-checked parts.
+- Publish dependencies durably before replacing a manifest.
+- Preserve exact replay envelope bytes and bind recovery to its existing sequence and digest.
+- Convert earlier physical formats only explicitly, under exclusive ownership with retained originals, by the separate command of [DR-111](111-a-session-is-a-manifest-and-a-replay-log.md).
+- Treat per-file bounds separately from total-storage quotas and retention; introduce neither automatic evidence deletion nor a post-effect quota.
+- A store reverifies only what it has not verified ([DR-101](101-a-store-rereads-only-what-it-has-not-verified.md)), a lease writer publishes from its verified prefix ([DR-109](109-a-writer-checkpoints-from-what-it-verified.md)), and native Windows storage is admitted under [DR-098](098-native-windows-private-storage.md).
 - Coordinate CLI and embedding-host adoption before production writes.
 
 ## Consequences
 
-Sync and export must preserve the complete session-owned chunk closure.
-Normal publication retains old chunks so concurrent readers can finish; whole-session deletion removes them.
-The initial implementation continues materializing logical recovery objects in memory; bounded disk files do not promise bounded total recovery memory.
-Old physical formats remain readable, but older writers must not share stores with the new writer.
+Sync and export must preserve every session-owned file; whole-session deletion removes them.
+The implementation materializes logical recovery objects in memory; bounded disk files do not promise bounded total recovery memory.
+Older writers must not share stores with the new writer.

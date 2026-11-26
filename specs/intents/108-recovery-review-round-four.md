@@ -27,7 +27,7 @@ Resolve the fourth recovery review with shared-host recovery and complete saved 
 
 All 17 active finding numbers are accepted; the request to publish SLC immediately is rejected separately below.
 Previously closed findings are unchanged.
-The shared design is recorded in [DR-072](../decisions/072-host-owned-interrupted-work-settlement.md).
+The shared design is recorded in [DR-073](../decisions/073-durable-step-progress.md).
 
 | Finding | Disposition and fix | Evidence |
 | --- | --- | --- |
@@ -40,13 +40,13 @@ The shared design is recorded in [DR-072](../decisions/072-host-owned-interrupte
 | 30 | Accept. Parent cancellation pauses only when the child accepts its initial input. Cancellation before delivery disposes that child. After a later cancelled call drains, its unsafe provider hint is dropped so the paused child can continue. | [Shell suite](../../reference/sdlc/code.playbook/playbook-captain.test.ts): ordinary-error/visibility-abort matrix; progress suite: `child-later-cancel`. |
 | 33 | Accept. Retrying a recorded selection adds no automatic question check. The whole starting turn is excluded from later Boss input, including after preparation. | Process-loss suite: `retry-question`; progress suite: `start-prepares-question`; [shell implementation](../../reference/sdlc/code.playbook/playbook-captain.ts). |
 | 34 | Accept the SLC defect. Only a distinct parked failure leaf shared with the final unconditional error path is excluded. Guarded error paths and real action routes remain checked. | Companion SLC review report; rebuilt checker copied by SLC's emitter; Captain transition coverage passes. See release rebuttal below. |
-| 36 | Accept. Added the coordinated-upgrade release gate and its required audit; corrected the promise about older hosts reading these same-version extensions. | [[release-35](../packages/release.md#release-35)] and [[release-36](../packages/release.md#release-36)], [[session-storage-2](../packages/session-storage.md#session-storage-2)], DR-071/049. |
+| 36 | Accept. Added the coordinated-upgrade release gate and its required audit; corrected the promise about older hosts reading these same-version extensions. | [[release-35](../packages/release.md#release-35)] and [[release-36](../packages/release.md#release-36)], [[session-storage-2](../packages/session-storage.md#session-storage-2)], DR-073/049. |
 | 37 | Accept. SDK recovery checks busy/closing state before and after its store read; a newly uncertain live controller consistently requires reopening in recovery mode. | [SDK recovery suite](../../reference/sdlc/code.playbook/captain-recovery.integration.test.ts): timeout/checkpoint-observer case; [shared host](../../reference/sdlc/code.playbook/bin/session-host.js). |
 | 38 | Accept. Removed the invented runtime marker. The shared host can end a lost attempt without restoring any stale runtime, including DECIDE or an older engine. | Actual maintained DECIDE root and nested process-loss cases; runtime restoration suites. |
 | 39 | Accept. Lost-work reporting is selected only for this retry's unmatched progress. It leaves no persistent marker to swallow later input and adds no claim that a result was saved. | Process-loss suite: `later-chat`; [shared recovery decision](../../reference/sdlc/code.playbook/bin/run.js). |
 | 40 | Accept. Evidence uses the shared projection, and retained generations are cleared only when their runtime identities own changed evidence. An earlier generation of the same playbook is also kept when unrelated. | Process-loss suite: `switch`, `same-root`; shared recovery decision. |
 | 41 | Accept. recovery-27 owns the lost-progress behavior. CLI, runtime, shell and storage contracts now agree on replay, reporting and retained evidence. | [[recovery-27](../packages/recovery.md#recovery-27)]; spec lint below. |
-| 42 | Accept. Completed DR-071's amendment chain for DR-036/038/040/049/066/067 and their map entries; DR-072 records the replacement. | [Decision map](../map.md#decisions) and amended records. |
+| 42 | Accept. Completed the amendment chain for DR-036/038/040/049/066/067 and their map entries; DR-073 now records the replacement. | [Decision map](../map.md#decisions) and amended records. |
 
 ### Release rebuttal for finding 34
 

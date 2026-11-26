@@ -5,7 +5,7 @@
 
 ## Status
 
-Rejected (2026-09-12): no demonstrated compilation improvement.
+Rejected (2026-09-12).
 
 ## Context
 

@@ -6,12 +6,8 @@
 ## Status
 
 Accepted (2026-09-17).
-Amends [DR-040](040-outcome-authority-effect-reconciliation.md) §2 in one scope: how a receipt treats the baseline projection entries a governed call absorbs into its one commit, alters, or loses.
-The observation itself, the exclusive claim, the exclusively-`unchanged` and cohort rules, and the fail-closed treatment of residual, multiple-commit, rewritten, foreign, and unstable evidence stand.
-
-Amended by [DR-073](073-durable-step-progress.md): a carried-changes report not presented because the turn was cancelled or lost is presented with the next reply that is shown.
-
-Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's accounting applies to an advance of one or more new commits rather than to exactly one.
+Amends [DR-040](040-outcome-authority-effect-reconciliation.md).
+Amended by [DR-073](073-durable-step-progress.md), [DR-088](088-a-commit-outcome-takes-every-new-commit.md).
 
 ## Context
 
@@ -31,6 +27,7 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's accou
   an isolated worktree hides the Boss's uncommitted inputs, which this very task needed, and is a host's choice at session start rather than a runtime rule;
   stashing and restoring conflicts whenever the call touches the same files and hides inputs the same way;
   a runtime judgment of relevance would put a model between the Boss and a repository fact.
+- This record changes DR-040 §2 only in how a receipt treats the baseline projection entries a governed call absorbs into its commits, alters, or loses; the observation itself, the exclusive claim, the exclusively-`unchanged` and cohort rules, and the fail-closed treatment of residual, rewritten, foreign, and unstable evidence stand.
 
 ## Decision
 
@@ -39,7 +36,7 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's accou
    A rename, an unmerged path, a submodule, or a nested worktree is preserved when byte-equal and otherwise lost: no content matching is attempted for them.
    Content is compared by the projection's own content addressing, never by Git object id alone.
 2. **Classification.**
-   For an effect-authorized call whose after HEAD is exactly one commit descended from the baseline HEAD, the receipt proves `one-descendant-commit` when every baseline entry is preserved, absorbed, or altered and carried by the commit, and the after projection holds nothing else.
+   For an effect-authorized call whose after HEAD descends from the baseline HEAD by one or more new commits ([DR-088](088-a-commit-outcome-takes-every-new-commit.md)), the receipt proves `one-descendant-commit` when every baseline entry is preserved, absorbed, or altered and carried by the advance, and the after projection holds nothing else; the accounting applies to the whole advance.
    A baseline entry altered but left uncommitted, a lost entry, or a new uncommitted entry keeps the receipt `observation-ambiguous`, named by path.
    For a same-HEAD delta from an effect-authorized call, `worktree-only-change` admits altered pre-existing entries beside new ones; a lost entry keeps it `observation-ambiguous`.
    A call declared exclusively `unchanged`, and every cohort call, keeps DR-040's rules unchanged.
@@ -49,7 +46,7 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's accou
    Every effect-authorized player prompt carries the pre-existing changes of the call's own baseline as a bounded path list grouped by kind, with one rule: they existed before this call and belong to the Boss; leave them exactly as they are unless the task or the Boss's request requires building on them; never revert or delete them; when you commit any of them, name them in your final report.
    An empty baseline adds nothing.
 5. **The Boss is told.**
-   A settled turn whose accepted commit absorbed or altered pre-existing changes reports it deterministically in that turn's Boss-visible reply, bounded to paths, beside the unresolved-effect report DR-040 §4 already requires.
+   A settled turn whose accepted commits absorbed or altered pre-existing changes reports it deterministically, bounded to paths, beside the unresolved-effect report DR-040 §4 already requires, in that turn's Boss-visible reply or, where that reply was not presented because the turn was cancelled or lost, in the next reply that is shown ([DR-073](073-durable-step-progress.md)).
 
 ## Consequences
 
@@ -57,5 +54,5 @@ Amended by [DR-088](088-a-commit-outcome-takes-every-new-commit.md): §2's accou
 - Absorbing unrelated work is visible to the Boss and to review and is reversible; losing the Boss's work is a failure named by path.
 - The reviewer receives no separate list: it reviews the whole commit, and the Boss reads provenance from the turn's report.
 - Stored receipts stay valid, since the member is optional and absent means empty.
-- A fixture that produced ambiguity by absorbing pre-existing dirt now needs a stray file, a second commit, or a lost entry to do so.
+- A fixture that produced ambiguity by absorbing pre-existing dirt now needs a stray file or a lost entry to do so.
 - Each missing baseline path costs the classifier one tree lookup and one blob read at the after HEAD.

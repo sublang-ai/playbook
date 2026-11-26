@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-This narrowly amends [DR-009](009-generic-playbook-cli-and-registry.md) for fresh engagement of the explicitly configured packaged CODE and DECIDE registries.
+Amends [DR-009](009-generic-playbook-cli-and-registry.md).
 
 ## Context
 
@@ -14,6 +14,7 @@ A valid configuration can enable CODE without REVIEW.
 The packaged workflow then commits work before its required nested REVIEW fails because that playbook is absent.
 Rejecting the whole configuration would unnecessarily disable chat, inspection and unrelated custom workflows.
 Generic registry manifests declare no callee-dependency interface.
+This record therefore narrows [DR-009](009-generic-playbook-cli-and-registry.md) only for fresh engagement of the explicitly configured packaged CODE and DECIDE registries.
 
 ## Decision
 

@@ -6,9 +6,8 @@
 ## Status
 
 Accepted (2026-10-26).
-Amends [DR-053](053-seeding-picks-a-ready-adapter.md) in two scopes: where both adapters are ready, the seeded `dev.reviewer` takes the second adapter instead of the first; and the selection becomes a public export, so its consequence that the desktop app copies the template and may seed a different lineup no longer holds once that host adopts the export.
-The credential-only readiness test, the fixed order, the per-adapter table of [DR-074](074-seeds-name-the-latest-models.md), the efforts, the none-ready notice, and the one exclusive create stand.
-Amended by [DR-099](099-seeds-run-at-medium-effort.md): the second-adapter Reviewer takes effort `high`.
+Amends [DR-053](053-seeding-picks-a-ready-adapter.md).
+Amended by [DR-099](099-seeds-run-at-medium-effort.md).
 
 ## Context
 
@@ -19,12 +18,13 @@ A reviewer from another provider brings a different model's blind spots to the s
 Spex seeds the same starter for its own users.
 It copies the template, so on the same machine the two front ends can seed different agents, a gap [DR-053](053-seeding-picks-a-ready-adapter.md) recorded as a consequence.
 Spex cannot adopt the rule while it exists only inside the launcher: a copy would drift the first time the table or the rule changes.
+This record changes [DR-053](053-seeding-picks-a-ready-adapter.md) in two scopes — the both-ready `dev.reviewer` takes the second adapter, and the selection becomes a public export, so that record's consequence of a differently seeded desktop lineup no longer holds once a host adopts the export; the credential-only readiness test, the fixed order, the efforts, the none-ready notice, and the one exclusive create stand.
 
 ## Decision
 
-- Where both `claude` and `codex` are ready, the seed shall set only `dev.reviewer` to the second row of the table (`codex`, `gpt-6-sol`, with the `.git` writable-path grant every codex agent takes); the Captain and every other player keep the first row, as written in the template.
+- Where both `claude` and `codex` are ready, the seed shall set only `dev.reviewer` to the second adapter (`codex`, with the models Cligent selects under [DR-105](105-runtime-owned-seed-and-delegation.md) and the `.git` writable-path grant every codex agent takes); the Captain and every other player keep the first adapter, as written in the template.
   Where only one adapter is ready, or none, the seed is unchanged: every agent on that adapter, or the template with its notice.
-- The Reviewer keeps its own effort; only the adapter, model, and writable-path grant change, so the template still supplies structure, comments, and efforts.
+- The second-adapter Reviewer takes effort `high` ([DR-099](099-seeds-run-at-medium-effort.md)); beyond that, only the adapter, model, and writable-path grant change, so the template still supplies structure, comments, and efforts.
 - Readiness stays credentials alone, checked synchronously before the file is written; no runtime probe, model call, or quota check takes part.
 - The selection ships as the public subpath `@sublang/playbook/seed-config`, which returns the text the launcher would seed under a given environment and home.
   The launcher seeds through that same implementation, so a host that seeds through the export selects the same agent settings (`adapter`, `model`, `effort`, `writablePaths`) for the Captain and every player under the same credentials and home.

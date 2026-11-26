@@ -6,8 +6,7 @@
 ## Status
 
 Accepted (2026-10-26).
-Amends [DR-053](053-seeding-picks-a-ready-adapter.md) and the readiness gate it relies on in one scope: an adapter's credential is any of its agent's documented environment forms, not one API key variable alone.
-Readiness stays credentials alone, checked synchronously; the agent's sign-in folder still counts; the fixed order, the table and the second-adapter Reviewer of [DR-096](096-a-second-adapter-reviews.md) stand.
+Amends [DR-053](053-seeding-picks-a-ready-adapter.md).
 
 ## Context
 
@@ -18,6 +17,8 @@ Readiness stays credentials alone, checked synchronously; the agent's sign-in fo
   There the check counts the agent as not ready: the seed falls back to the first row with its none-ready notice, so a Codex-only server seeds every agent on Claude and fails on the first run, and the readiness gate blocks a launch the agent would serve.
 
 ## Decision
+
+This record changes [DR-053](053-seeding-picks-a-ready-adapter.md) and the readiness gate it relies on only in what counts as an adapter's credential; readiness stays credentials alone, checked synchronously, the agent's sign-in folder still counts, and the fixed order and the second-adapter Reviewer of [DR-096](096-a-second-adapter-reviews.md) stand.
 
 - An adapter is ready when any of its forms is set, or its sign-in folder exists:
 

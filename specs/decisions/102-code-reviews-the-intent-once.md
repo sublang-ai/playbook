@@ -6,10 +6,8 @@
 ## Status
 
 Accepted (2026-11-08).
-Amends [DR-004](004-link-code-fsm-to-playbook-runtime.md) §3 in one scope: CODE invokes REVIEW once, after the direct phase or the final IR-task phase, over every `code`-owned commit of the run, instead of after each commit.
-Amends [DR-088](088-a-commit-outcome-takes-every-new-commit.md)'s consequence that CODE's review request names one commit: it now names each phase's receipt-owned commit, oldest first.
-Extends [DR-035](035-truthful-terminal-meaning.md) and [DR-048](048-typed-terminal-outcomes.md) to REVIEW: its bounded rounds end at a distinct failure terminal.
-Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in its consequence that CODE's GEARS carry three items: they carry three action items.
+Amends [DR-004](004-link-code-fsm-to-playbook-runtime.md), [DR-035](035-truthful-terminal-meaning.md), [DR-048](048-typed-terminal-outcomes.md), [DR-088](088-a-commit-outcome-takes-every-new-commit.md).
+Amended by [DR-108](108-compiled-gears-is-a-spec-package.md).
 
 ## Context
 
@@ -27,6 +25,7 @@ Amended by [DR-108](108-compiled-gears-is-a-spec-package.md) in its consequence 
 
 ### 1. One review per intent
 
+This replaces [DR-004](004-link-code-fsm-to-playbook-runtime.md) §3's review after each commit and [DR-088](088-a-commit-outcome-takes-every-new-commit.md)'s one-commit review request.
 CODE shall run its phases — a direct implementation, or a new-IR phase followed by one phase per IR task, or an existing IR's remaining tasks — each ending with one `code`-owned commit, and shall call REVIEW once after the direct phase or the final IR-task phase.
 A new-IR or nonfinal IR-task phase continues to the next IR-task phase without a review.
 The review request names the original intent, every phase's receipt-owned commit oldest first with the resulting repository state as the scope, the final phase's Coder output, and, for an IR, the IR number.
@@ -39,6 +38,7 @@ The later IR-task prompt instead tells the Coder that the intent's earlier phase
 
 ### 3. REVIEW runs at most three rounds
 
+The bound gives REVIEW a distinct failure terminal of its own, as [DR-035](035-truthful-terminal-meaning.md) and [DR-048](048-typed-terminal-outcomes.md) require of every distinct outcome.
 REVIEW shall run at most three Reviewer rounds: the first review and one further round after each of at most two Coder dispositions, a review-fix commit or an all-rejected rebuttal alike.
 When the Reviewer raises or keeps any finding at the third round, REVIEW shall end at a distinct failure terminal, `unsettled`, whose description states that findings remain unsettled and no further fix round runs, returning `{ noUnsettledFindings: false, reviewerOutput }` with the Reviewer's final findings; the Coder makes no further disposition.
 A Boss interruption that restarts the first review resets the round count; one that redoes a later round keeps it.
@@ -52,6 +52,6 @@ No caller reads REVIEW's state id or output fields to route the outcome.
 
 - Reviewer calls per intent fall from one REVIEW call per phase, each unbounded, to one REVIEW call of at most three Reviewer rounds: an intent of one new-IR phase and three tasks moves from four REVIEW calls to one.
 - REVIEW's public output interface gains a second variant; a caller that reads the output still sees the success variant unchanged.
-- CODE's GEARS carry three items — the first phase, the later IR-task phase, and the one REVIEW call — and the FSM has one nested-call state.
+- CODE's GEARS carry three action items ([DR-108](108-compiled-gears-is-a-spec-package.md)) — the first phase, the later IR-task phase, and the one REVIEW call — and the FSM has one nested-call state.
 - The `code-prior-review` integration suite and spec items `playbook-60` and `playbook-61` retire with the prior-phase relay; their request-scoped record-maintenance case moves into the remaining CODE integration coverage.
 - The Boss sees a review stopped at its bound as a failure with the findings attached, and decides what to do with them.

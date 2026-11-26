@@ -6,13 +6,8 @@
 ## Status
 
 Accepted (2026-09-28).
-Amends [DR-053](053-seeding-picks-a-ready-adapter.md) in one scope: model currency, which that record left out of scope, becomes a maintained property of its fixed per-adapter table; selection, precedence, efforts, and the none-ready notice stand.
-Amends [DR-044](044-dev-planning-workflow.md) in one scope: the seeded `dev.analyst` player takes its adapter's current seeded model rather than `claude-opus-5`; the player, its binding, and everything else of that record stand.
-Amended by [DR-075](075-subagent-model-is-tuning.md) in its Cligent floor alone, now `^0.29.0`.
-Amended by [DR-076](076-subagents-delegate-by-default.md) in its Cligent floor alone, now `^0.30.0`.
-
-Amended by [DR-104](104-parent-and-child-seed-models.md) in its fixed model-line choices: the parent models become Fable and Astra, with Opus and Sol child pins where supported.
-Amended by [DR-105](105-runtime-owned-seed-and-delegation.md) in model ownership and provider-dependent seed selection.
+Amends [DR-044](044-dev-planning-workflow.md), [DR-053](053-seeding-picks-a-ready-adapter.md).
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -30,17 +25,17 @@ Cligent 0.28.0 raises its Claude floor to the first runtime release serving `cla
 
 ## Decision
 
-- Every starter, default, or seed configuration and every user-facing example Playbook ships shall name the latest model of its line; the seed takes the Claude Opus line for `claude` and the GPT Sol line for `codex`, now `claude-opus-5-5` and `gpt-6-sol`.
-  This covers the seeded lineup ([[playbook-cli-11](../packages/playbook-cli.md#playbook-cli-11)]), the documentation's examples, the live acceptance gate's default models, and the CI acceptance configuration.
+- Every starter, default, or seed configuration and every user-facing example Playbook ships shall name the latest model of its line, a model currency [DR-053](053-seeding-picks-a-ready-adapter.md) left out of scope.
+  This covers the seeded lineup ([[playbook-cli-11](../packages/playbook-cli.md#playbook-cli-11)]), whose models Cligent selects under [DR-105](105-runtime-owned-seed-and-delegation.md), the documentation's examples, the live acceptance gate's default models, and the CI acceptance configuration.
+- The seeded `dev.analyst` player of [DR-044](044-dev-planning-workflow.md) takes its adapter's seeded model rather than a fixed one; the player, its binding, and everything else of that record stand.
 - Each example shall run as written against the default seed: an example retuning a seeded player names a model of that player's adapter, and an example on another adapter names that adapter.
-- Playbook's declared Cligent floor shall rise, where it is older, to the oldest Cligent release whose runtime floors serve every seeded model — for these models, 0.28.0 — so a seeded model and the floor serving it move together and no release seeds a model its Cligent floor does not serve.
+- Playbook's declared Cligent floor shall rise, where it is older, to the oldest Cligent release whose runtime floors serve every seeded model, so a seeded model and the floor serving it move together and no release seeds a model its Cligent floor does not serve.
   Playbook keeps no runtime-version knowledge of its own; it relies on Cligent's floors as [DR-027](027-runtime-compatibility-from-cligent.md) decided.
-- The per-adapter table stays fixed, with the efforts and precedence of [DR-053](053-seeding-picks-a-ready-adapter.md); seeding consults no source of current models.
 - Records of past runs — experiment evidence and fixtures captured from runs — keep the models they recorded, and test fixtures that stand for no default keep arbitrary names.
 
 ## Consequences
 
-- A fresh install seeds `claude-opus-5-5` or `gpt-6-sol`, as its credentials select, on a runtime the declared Cligent range guarantees can serve it.
+- A fresh install seeds the latest models its credentials select, on a runtime the declared Cligent range guarantees can serve them.
 - Existing configs are untouched: seeding writes only an absent file, and every seeded value stays tunable in place ([[playbook-cli-6](../packages/playbook-cli.md#playbook-cli-6)]).
-- Installs whose agent runtimes predate these models lose support; they meet the launch gate's named repair instead of a failed first call.
-- Adopting each newer model is a maintenance change to the seed table, the examples, the gates, and the Cligent floor together, made once a Cligent release's floors serve it.
+- Installs whose agent runtimes predate the seeded models lose support; they meet the launch gate's named repair instead of a failed first call.
+- Adopting each newer model is a maintenance change to the examples, the gates, and the Cligent floor together, made once a Cligent release serves it.

@@ -6,12 +6,8 @@
 ## Status
 
 Accepted (2026-09-30).
-Amends [DR-021](021-inline-agent-settings.md) §1 and [DR-032](032-explicit-roles-session-players.md): an agent block and a role binding carry a fourth tuning field, `subagentModel`.
-Amends [DR-074](074-seeds-name-the-latest-models.md) in its Cligent floor alone: `^0.29.0`, the first release whose Claude adapter serves the field.
-Cites [DR-027](027-runtime-compatibility-from-cligent.md): capability validation of the field is delegated to the installed Cligent, and Playbook keeps no adapter support list of its own.
-Amended by [DR-076](076-subagents-delegate-by-default.md): the field admits `inherit` and defaults to it where the adapter serves one, and `subagentEffort` joins it as a fifth tuning field.
-
-Amended by [DR-104](104-parent-and-child-seed-models.md) in its seed policy: supported adapters receive explicit child model pins.
+Amends [DR-021](021-inline-agent-settings.md), [DR-032](032-explicit-roles-session-players.md).
+Amended by [DR-076](076-subagents-delegate-by-default.md), [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -31,7 +27,7 @@ It is tuning.
 
 ### 1. `subagentModel` is a tuning field on agent blocks and role bindings
 
-A `captain` or `players.<player-id>` block may carry `subagentModel`, a nonblank string naming the model the agent's subagents use; the block's adapter must support it, and the launcher delegates that check to the installed Cligent contract exactly as it does for `fastMode`.
+A `captain` or `players.<player-id>` block may carry `subagentModel`, a nonblank string naming the model the agent's subagents use; the block's adapter must support it, and the launcher delegates that check to the installed Cligent contract exactly as it does for `fastMode`, keeping no adapter support list of its own ([DR-027](027-runtime-compatibility-from-cligent.md)).
 A `playbooks.<id>.roles.<role>` binding block may carry `subagentModel` beside `model`, `effort`, and `fastMode`: a nonblank string pins it for that role, boolean `false` selects the provider default explicitly, and omission inherits the player's top-level value.
 A `--with` overlay may retune it like the other tuning fields.
 
@@ -45,13 +41,13 @@ The shell forms cligent's atomic complete-call settings with `subagentModel` tak
 The structural projection, the shell's fixed-agent snapshot, and the drift check that compares a reopen against the stored structure exclude `subagentModel` as they exclude `model`, `effort`, and `fastMode`, so a compatible change applies on the next provider call.
 The execution projection, the shell snapshot's session agents, and the retained role bindings accept it as an optional string; a validator that lists the accepted keys lists it.
 
-### 4. Nothing is seeded
+### 4. The seed takes Cligent's child model
 
-The starter config names no subagent model, and no example turns it on by default; the documentation shows the field once, in the role-binding form, with what it does.
+The seed carries the child model Cligent returns for each selected adapter and provider ([DR-105](105-runtime-owned-seed-and-delegation.md)); no example turns the field on by default, and the documentation shows it once, in the role-binding form, with what it does.
 
 ## Consequences
 
 - The config gains one optional key in three places — agent blocks, role bindings, overlays — with the grammar the three tuning fields already have; a config that omits it is unchanged in every projection and every call.
-- The Cligent floor rises to `^0.29.0`, an additive release, so a host that installs this Playbook resolves one Cligent whose `AgentCallSettings` carries the field; the release-capabilities check probes it.
+- A host that installs this Playbook resolves one Cligent, within the floor of [DR-105](105-runtime-owned-seed-and-delegation.md), whose `AgentCallSettings` carries the field; the release-capabilities check probes it.
 - Session records written by this release may carry `subagentModel` in execution projections and shell snapshots; a host on 17.1 that reads such a record rejects the unknown field, so hosts sharing a session store upgrade together, and a record without the field reopens under both.
 - This is additive and ships in a MINOR release.

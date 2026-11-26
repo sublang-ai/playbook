@@ -6,11 +6,8 @@
 ## Status
 
 Accepted (2026-09-24).
-Amends [DR-019](019-shared-linked-runtime-factory.md) §1 and §4: the shared factory's domain gains the one parallel shape [gears2fsm](../../slc/gears2fsm.md) compiles, and DECIDE joins the factory-backed artifacts, so no maintained artifact keeps its own machinery.
-Amends [DR-011](011-composable-playbook-execution.md) §1 in one respect: the runtime that interprets the parallel proposal pair is the shared engine, not a linked runtime of its own.
-Everything else of both records stands.
-Recovery is refined by [DR-073](073-durable-step-progress.md): parallel regions record work without a single-invocation retry, while sequential steps after the join use saved-step recovery.
-Compiler question-storage selection clarified by [DR-079](079-topology-selects-question-storage.md).
+Amends [DR-011](011-composable-playbook-execution.md), [DR-019](019-shared-linked-runtime-factory.md), [DR-058](058-link-materialization-tool.md).
+Amended by [DR-073](073-durable-step-progress.md), [DR-079](079-topology-selects-question-storage.md).
 
 ## Context
 
@@ -26,6 +23,8 @@ Compiler question-storage selection clarified by [DR-079](079-topology-selects-q
 
 ## Decision
 
+This record extends DR-019 §1 and §4, the shared factory's domain gaining the one parallel shape gears2fsm compiles and DECIDE joining the factory-backed artifacts, and DR-011 §1, whose parallel proposal pair the shared engine now interprets rather than a linked runtime of its own; everything else of both records stands.
+
 ### 1. The shared factory interprets the compiled parallel shape
 
 - `createXStatePlaybookRuntime(machine, spec)` accepts a machine whose root states are flat except for root states of `type: 'parallel'` in the compiled shape: each region a compound state with exactly one working leaf that invokes the typed `player` actor and carries `playbook.busy`, exactly one wait leaf tagged `playbook.parked` whose `BOSS_REPLY` arms target that working leaf, and exactly one `type: 'final'` leaf, every leaf carrying a stable `meta.playbook.stateId` distinct from every other state's, and the parent's `onDone` the join.
@@ -33,6 +32,7 @@ Compiler question-storage selection clarified by [DR-079](079-topology-selects-q
   Any other compound state is rejected as before.
 - Pending Boss questions are a set: the keyed `context.pendingBossQuestions` and `context.bossReplies` of gears2fsm's Boss-reply suspension, a question pending only while its own wait leaf is active.
   For a machine that declares a parallel state, telemetry, the exported snapshot, and the control view carry the plural `pendingBossQuestions`; the classifier is offered every pending question and requires `questionId` when more than one is pending; statuses are emitted for each newly entered Boss-relevant state, and a status trace names a `stateId` only when exactly one Boss-relevant state is active.
+  A machine declaring a root parallel group keeps keyed question and reply fields throughout, its sequential working leaves included ([DR-079](079-topology-selects-question-storage.md)).
   A flat machine's observable output is unchanged.
 - The working leaves of one parallel state entered in one macrostep run as one declared all-`unchanged` cohort through the host's `runCohort` transaction of [[playbook-runtime-73](../packages/playbook-runtime.md#playbook-runtime-73)], at most once per turn: each member's result is adjudicated through the one reconciler of [[playbook-runtime-77](../packages/playbook-runtime.md#playbook-runtime-77)] in serial, a spent correction replaces every member's boundary in one acknowledged batch because the ledger's cohort invariant of [[playbook-runtime-69](../packages/playbook-runtime.md#playbook-runtime-69)] admits no half-complete cohort, members are acknowledged and their results released in completion order so the accepted-outcome marker names the target the machine actually reached, a member's failure cancels its siblings, and the cohort's failure carries the cause decided first, a runtime-issued cancellation deciding no cause of its own ([[playbook-55](../packages/playbook.md#playbook-55)]).
   An empty-`ok` corrective re-ask and a single region resuming after its Boss reply run exclusively, as every flat call does.
@@ -42,6 +42,7 @@ Compiler question-storage selection clarified by [DR-079](079-topology-selects-q
 
 - A deferred `needsBossReply` on the merge call binds the token-free `{v:1,playerId}` continuation, publishes the continuation inline, and closes the runtime on an indeterminate settlement, as [[playbook-runtime-69](../packages/playbook-runtime.md#playbook-runtime-69)] and [[playbook-runtime-73](../packages/playbook-runtime.md#playbook-runtime-73)] require of every artifact.
 - An `unchanged` boundary whose semantic reply is unacceptable takes the ordinary failure path with only the saved-step controls the engine can support; a governed judge outage settles the turn as failed rather than rejecting it.
+- Parallel regions journal their starts and results without a single-invocation checkpoint, while sequential steps after the join, the merge call included, use saved-step recovery ([DR-073](073-durable-step-progress.md)).
 - Retained-snapshot adoption ([DR-038](038-universal-run-resumption.md)) stays in the flat domain: the factory omits `adopt` for a machine that declares a parallel state, and member absence remains the capability boundary of [[playbook-runtime-61](../packages/playbook-runtime.md#playbook-runtime-61)].
 - The DECIDE conformance suites pin the parallel contract — blind concurrent proposals and their join, branch-local waits with several pending questions, the interrupt restart, completion-order markers, sibling cancellation and the first-decided cause, the nested REVIEW handoff, the pre-existing-changes block — and are rebaselined to the engine's wording and to the semantics above where they pinned the drift.
 

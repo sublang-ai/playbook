@@ -6,8 +6,7 @@
 ## Status
 
 Accepted (2026-10-20).
-
-Amended in tool-free delegation under [DR-105](105-runtime-owned-seed-and-delegation.md).
+Amended by [DR-105](105-runtime-owned-seed-and-delegation.md).
 
 ## Context
 
@@ -26,9 +25,9 @@ A resumed conversation keeps the skill listings and bodies already in its histor
 - Where it does not — Kimi Code — or reports nothing, those calls omit `nativeSkills`, and the Captain keeps its runtime's own skill discovery.
   The owner chose this documented reduction over refusing a Kimi Captain, as DR-013 A1 accepts prompt-only tool isolation.
 - Working-player and bounded recovery-preparation calls omit it: they are working actors, which DR-092 already gives their configured skills.
+- The same tool-free calls also omit child model and effort, so delegation settings never reach them ([DR-105](105-runtime-owned-seed-and-delegation.md)).
 - The durable session-Captain conversation keeps resuming ([[playbook-captain-31](../packages/playbook-captain.md#playbook-captain-31)]); Judge and sub-runtime control calls already start fresh.
 - The switch is fixed host behavior: no configuration field, durable execution field or structural-projection member, so ordinary reopening applies it at once.
-- The Cligent floor rises to 0.36.0.
 
 ## Consequences
 

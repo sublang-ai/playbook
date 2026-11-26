@@ -6,8 +6,7 @@
 ## Status
 
 Accepted (2026-09-20).
-Amends [DR-043](043-shared-spex-root-config.md) in one scope: the canonical directory under the shared root is `config/`, and DR-043's `playbook/` joins the former locations a launch relocates from.
-Everything else of that record stands.
+Amends [DR-043](043-shared-spex-root-config.md).
 
 ## Context
 
@@ -15,6 +14,7 @@ DR-043 moved the shared config under the Spex root as `playbook/playbook.config.
 The namespace never gained a second file.
 The rest of the root is laid out by what a directory holds — `sessions/`, `playbooks/`, `intents/` — not by which product owns it; this product's own sessions live at `sessions/`, not under `playbook/`.
 What remains is a directory that stutters, reads as a sibling of `playbooks/`, and holds one file.
+This record changes only DR-043's canonical directory, which becomes `config/`, adding DR-043's `playbook/` to the former locations a launch relocates from; everything else of that record stands.
 
 ## Decision
 

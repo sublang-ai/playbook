@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-10-01).
-Amends [DR-049](049-portable-session-contract.md) with session-owned immutable assets and [DR-029](029-session-scoped-conversational-captain.md) with attachment context and visible worker evidence.
+Amends [DR-029](029-session-scoped-conversational-captain.md), [DR-049](049-portable-session-contract.md).
 
 ## Context
 

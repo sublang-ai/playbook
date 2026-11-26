@@ -6,7 +6,7 @@
 ## Status
 
 Accepted (2026-10-12).
-Amends [DR-089](089-judge-replies-take-the-machines-shapes.md) §1 in its fallback: a semantic field whose shape the machine does not reveal no longer stays a string.
+Amends [DR-089](089-judge-replies-take-the-machines-shapes.md).
 
 ## Context
 
