@@ -24,6 +24,7 @@ Amended by [DR-038](038-universal-run-resumption.md), [DR-040](040-outcome-autho
 2. **Retry repeats only the interrupted step.**
    Retry reenters that invocation with its original context and input, preserving completed predecessor steps and parent/child ownership.
    Without an invocation checkpoint, no whole-playbook retry repeats earlier work ([DR-073](073-durable-step-progress.md)), and an effect-possible unresolved boundary advertises reconciliation as its only retry ([DR-040](040-outcome-authority-effect-reconciliation.md)).
+   New Boss input, unlike a step retry, keeps the effect checks over the whole attempt that a live failure uses.
 
 3. **The free-text invariants are unchanged.**
    `apply` never invents free text and never enters Boss-input classification.

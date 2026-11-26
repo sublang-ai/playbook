@@ -20,6 +20,7 @@ Amended by [DR-105](105-runtime-owned-seed-and-delegation.md).
 - The template's Captain and every player take effort `medium`.
 - Where both adapters are ready, `dev.reviewer` takes the second adapter with effort `high`, amending [DR-096](096-a-second-adapter-reviews.md)'s rule that the Reviewer keeps its own effort; where it takes the first adapter, it keeps the template's `medium`.
 - Selection, precedence, the none-ready notice and the public seed export of [DR-053](053-seeding-picks-a-ready-adapter.md) stand; the seeded models are Cligent's ([DR-105](105-runtime-owned-seed-and-delegation.md)).
+- The Codex SDK development floor is 0.159.1, the first Codex release bundling `gpt-6.1-sol`.
 
 ## Consequences
 

@@ -32,7 +32,7 @@ That needs an execution primitive the definitions do not have: a state kind that
 
 ### 2. Observability without new trace types
 
-- Script execution emits one status line (`Executed script for <stateId> (exit <status>).`) and one telemetry event under the `playbook.script` topic, carrying the command as executed, the step's duration, and a bounded tail of its output for hosts and people ([DR-106](106-a-script-step-records-its-output.md)).
+- Script execution emits one status line (`Executed script for <stateId> (exit <status>).`) and one telemetry event under the `playbook.script` topic, carrying the command as executed, the step's duration, and a bounded tail of its output for hosts and people ([DR-106](106-a-script-step-records-its-output.md), [DR-107](107-a-script-steps-command-is-on-record.md)).
 - No `*.call.*` trace pair is added: trace consumers ([DR-010](010-playbook-session-tracing-and-resume.md)) are unaffected; the FSM transition trace plus the `playbook.script` topic record the step.
 - Script stdout/stderr never enter machine context, guards, prompts, status lines, or traces; a script's effect is on the environment plus its exit status.
 
